@@ -44,6 +44,14 @@ compose() { (cd "$APP_DIR" && docker compose "$@"); }
 
 env_get() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- || true; }
 
+set_env() { # set_env KEY VALUE — update or append a key in .env
+  if grep -qE "^$1=" "$APP_DIR/.env" 2>/dev/null; then
+    sed -i "s|^$1=.*|$1=$2|" "$APP_DIR/.env"
+  else
+    echo "$1=$2" >> "$APP_DIR/.env"
+  fi
+}
+
 # ---------------------------------------------------------------- prerequisites
 
 install_prereqs() {
@@ -80,7 +88,7 @@ prompt_domain() {
   local ip; ip="$(public_ip)" || die "Could not determine this server's public IP."
   log "This server's public IP: $ip"
   while true; do
-    ask "Domain name for the site (e.g. edgebourne.com)"
+    ask "Domain name for the site (e.g. edgebourne.com)" "$(env_get DOMAIN)"
     DOMAIN="$REPLY"
     [ -n "$DOMAIN" ] || { warn "A domain is required for SSL."; continue; }
     SERVER_NAMES="$DOMAIN"
@@ -150,20 +158,35 @@ prune_backups() {
 
 cmd_install() {
   need_root
-  [ -d "$APP_DIR/.git" ] && die "Already installed at $APP_DIR — use the Update option instead."
+  local resume=0
+  if [ -d "$APP_DIR/.git" ]; then
+    [ -n "$(env_get COMPOSE_FILE)" ] && die "Already installed at $APP_DIR — use the Update option instead."
+    warn "Found an incomplete install (SSL was never issued) — resuming where it left off."
+    resume=1
+  fi
 
   install_prereqs
-  log "Cloning $REPO_URL → $APP_DIR"
-  git clone -q "$REPO_URL" "$APP_DIR"
+  if [ "$resume" -eq 1 ]; then
+    git -C "$APP_DIR" fetch -q origin main
+    git -C "$APP_DIR" reset -q --hard origin/main
+  else
+    log "Cloning $REPO_URL → $APP_DIR"
+    git clone -q "$REPO_URL" "$APP_DIR"
+  fi
 
   prompt_domain
   ask "Let's Encrypt notification email (blank for none)"
   LE_EMAIL="$REPLY"
-  ask "Admin panel password" "$(openssl rand -hex 8)"
-  ADMIN_PW="$REPLY"
 
-  log "Writing $APP_DIR/.env"
-  cat > "$APP_DIR/.env" <<EOF
+  if [ -f "$APP_DIR/.env" ]; then
+    ADMIN_PW="$(env_get ADMIN_INITIAL_PASSWORD)"
+    set_env DOMAIN "$DOMAIN"
+    set_env SERVER_NAMES "$SERVER_NAMES"
+  else
+    ask "Admin panel password" "$(openssl rand -hex 8)"
+    ADMIN_PW="$REPLY"
+    log "Writing $APP_DIR/.env"
+    cat > "$APP_DIR/.env" <<EOF
 SECRET_KEY=$(openssl rand -hex 32)
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
 ADMIN_INITIAL_PASSWORD=$ADMIN_PW
@@ -171,7 +194,8 @@ APP_PORT=80
 DOMAIN=$DOMAIN
 SERVER_NAMES=$SERVER_NAMES
 EOF
-  chmod 600 "$APP_DIR/.env"
+    chmod 600 "$APP_DIR/.env"
+  fi
 
   mkdir -p "$WEBROOT"
   open_firewall
@@ -189,7 +213,7 @@ EOF
 
   log "Switching to HTTPS…"
   render_ssl_conf "$DOMAIN" "$SERVER_NAMES"
-  echo "COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml" >> "$APP_DIR/.env"
+  set_env COMPOSE_FILE "docker-compose.yml:docker-compose.prod.yml"
   compose up -d --remove-orphans
   install_renew_hook
   wait_for_health "https://$DOMAIN/healthz"
