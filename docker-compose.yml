@@ -1,0 +1,69 @@
+# Production compose. For local development with live-reload:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: edgebourne-nginx
+    ports:
+      - "${APP_PORT:-8090}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./backend/static:/srv/static:ro
+      - uploads:/srv/uploads:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+    logging: *default-logging
+
+  backend:
+    build: ./backend
+    container_name: edgebourne-backend
+    env_file: .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=edgebourne
+      - POSTGRES_USER=edgebourne
+    volumes:
+      - uploads:/data/uploads
+      # Static files are served by nginx from the host dir; mounting them here
+      # too keeps the ?v= cache-buster in sync without an image rebuild.
+      - ./backend/static:/app/static:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: edgebourne-postgres
+    environment:
+      - POSTGRES_DB=edgebourne
+      - POSTGRES_USER=edgebourne
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    command:
+      - postgres
+      - "-c"
+      - "max_connections=50"
+      - "-c"
+      - "shared_buffers=128MB"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U edgebourne -d edgebourne"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    logging: *default-logging
+
+volumes:
+  pgdata:
+  uploads:

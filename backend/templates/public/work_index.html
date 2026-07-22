@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% set meta_title = 'Work — ' + setting('site_title', 'EdgeBourne') %}
+{% set meta_description = 'Case studies: custom software, integrations and automation built for real companies.' %}
+{% block content %}
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">WORK</p>
+    <h1>Problems we've<br><span class="accent">already solved.</span></h1>
+    <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="cards cards-2">
+      {% for cs in work %}
+      <a class="card card-link" href="/work/{{ cs.slug }}">
+        {% if cs.cover_thumb %}<img class="card-cover" src="{{ cs.cover_thumb }}" alt="" loading="lazy">{% endif %}
+        {% if cs.client %}<span class="card-date">{{ cs.client }}</span>{% endif %}
+        <h3>{{ cs.title }}</h3>
+        <p>{{ cs.summary }}</p>
+        {% if cs.tech_tags %}
+        <span class="tags">{% for t in cs.tech_tags %}<span class="tag">{{ t }}</span>{% endfor %}</span>
+        {% endif %}
+      </a>
+      {% else %}
+      <p class="empty">Case studies are on their way — in the meantime, <a href="/contact">ask us about past projects</a>.</p>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}

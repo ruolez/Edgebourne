@@ -1,0 +1,34 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block heading %}Dashboard{% endblock %}
+{% block content %}
+<div class="stat-grid">
+  <a class="stat" href="/admin/leads?show=unread"><span class="stat-n">{{ stats.unread }}</span><span class="stat-l">Unread leads</span></a>
+  <a class="stat" href="/admin/leads"><span class="stat-n">{{ stats.leads }}</span><span class="stat-l">Total leads</span></a>
+  <a class="stat" href="/admin/services"><span class="stat-n">{{ stats.services }}</span><span class="stat-l">Services live</span></a>
+  <a class="stat" href="/admin/work"><span class="stat-n">{{ stats.work }}</span><span class="stat-l">Case studies live</span></a>
+  <a class="stat" href="/admin/blog"><span class="stat-n">{{ stats.posts }}</span><span class="stat-l">Posts live</span></a>
+  <a class="stat" href="/admin/pages"><span class="stat-n">{{ stats.pages }}</span><span class="stat-l">Custom pages live</span></a>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><h2>Recent leads</h2><a href="/admin/leads">All leads →</a></div>
+  {% if recent %}
+  <table class="table">
+    <thead><tr><th>From</th><th>Company</th><th>Message</th><th>Received</th></tr></thead>
+    <tbody>
+      {% for l in recent %}
+      <tr class="{% if not l.is_read %}row-unread{% endif %} row-link" data-href="/admin/leads/{{ l.id }}">
+        <td>{{ l.name }}<br><span class="dim">{{ l.email }}</span></td>
+        <td>{{ l.company or '—' }}</td>
+        <td class="cell-clip">{{ l.message[:90] }}{% if l.message | length > 90 %}…{% endif %}</td>
+        <td class="dim">{{ l.created_at.strftime('%b %d, %H:%M') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No leads yet — they'll appear here when the contact form is submitted.</p>
+  {% endif %}
+</section>
+{% endblock %}

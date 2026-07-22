@@ -1,0 +1,19 @@
+<header class="site-header">
+  <div class="wrap nav">
+    <a class="brand" href="/" aria-label="EdgeBourne home">
+      <svg viewBox="0 0 190 190" class="brand-seal"><use href="#seal"/></svg>
+      <span class="wordmark">Edge<span class="accent">Bourne</span></span>
+    </a>
+    <nav class="nav-links" id="nav-links">
+      <a href="/services">Services</a>
+      <a href="/work">Work</a>
+      <a href="/about">About</a>
+      <a href="/blog">Blog</a>
+      {% for p in nav_pages %}<a href="/{{ p.slug }}">{{ p.nav_label or p.title }}</a>{% endfor %}
+      <a class="btn btn-primary btn-nav" href="/contact">Book a call</a>
+    </nav>
+    <button class="nav-toggle" id="nav-toggle" aria-label="Menu" aria-expanded="false" aria-controls="nav-links">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</header>

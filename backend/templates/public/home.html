@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <div class="wrap">
+    <p class="eyebrow eyebrow-hero"><strong>{{ setting('hero_eyebrow_strong', 'CUSTOM SOLUTIONS') }}</strong> · {{ setting('hero_eyebrow', 'WEB & MOBILE APPS · INTEGRATION · AUTOMATION') }}</p>
+    <h1>{{ setting('hero_title', 'Run the business.') }}<br><span class="accent">{{ setting('hero_title_accent', "We'll run the systems.") }}</span></h1>
+    <p class="lead">{{ setting('hero_sub') }}</p>
+    <div class="btn-row">
+      <a class="btn btn-primary btn-lg" href="{{ setting('hero_cta_primary_url', '/contact') }}">{{ setting('hero_cta_primary', 'Book a call') }}</a>
+      <a class="btn btn-outline btn-lg" href="{{ setting('hero_cta_secondary_url', '/work') }}">{{ setting('hero_cta_secondary', 'See our work') }}</a>
+    </div>
+    <svg class="stream stream-hero" viewBox="0 0 350 30"><use href="#stream"/></svg>
+  </div>
+</section>
+
+{% if services %}
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">WHAT WE DO</p>
+      <h2>Systems that fit the way you work</h2>
+    </div>
+    <div class="cards">
+      {% for s in services %}
+      <a class="card card-link" href="/services#{{ s.slug }}">
+        <span class="card-index">{{ '%02d' % loop.index }}</span>
+        <h3>{{ s.title }}</h3>
+        <p>{{ s.summary }}</p>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if work %}
+<section class="section section-dark">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">SELECTED WORK</p>
+      <h2>Problems we've already solved</h2>
+    </div>
+    <div class="cards">
+      {% for cs in work %}
+      <a class="card card-dark card-link" href="/work/{{ cs.slug }}">
+        {% if cs.cover_thumb %}<img class="card-cover" src="{{ cs.cover_thumb }}" alt="" loading="lazy">{% endif %}
+        <h3>{{ cs.title }}</h3>
+        <p>{{ cs.summary }}</p>
+        {% if cs.tech_tags %}
+        <span class="tags">{% for t in cs.tech_tags %}<span class="tag tag-dark">{{ t }}</span>{% endfor %}</span>
+        {% endif %}
+      </a>
+      {% endfor %}
+    </div>
+    <div class="section-more"><a class="btn btn-outline-light" href="/work">See all work</a></div>
+  </div>
+</section>
+{% endif %}
+
+{% if posts %}
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">FROM THE BLOG</p>
+      <h2>Notes on running better systems</h2>
+    </div>
+    <div class="cards">
+      {% for p in posts %}
+      <a class="card card-link" href="/blog/{{ p.slug }}">
+        {% if p.published_at %}<span class="card-date">{{ p.published_at.strftime('%b %d, %Y') }}</span>{% endif %}
+        <h3>{{ p.title }}</h3>
+        <p>{{ p.excerpt }}</p>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="section cta-band">
+  <div class="wrap cta-inner">
+    <div>
+      <h2>Ready to simplify how your company runs?</h2>
+      <p class="lead">Tell us what eats your team's time — we'll tell you what it takes to fix it.</p>
+    </div>
+    <a class="btn btn-primary btn-lg" href="/contact">{{ setting('hero_cta_primary', 'Book a call') }}</a>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input, textarea, md_editor, checkbox, save_bar %}
+{% block title %}{{ 'Edit page' if row else 'New page' }}{% endblock %}
+{% block heading %}{{ row.title if row else 'New page' }}{% endblock %}
+{% block content %}
+<form method="post" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-cols">
+    <div class="form-main">
+      <section class="panel">
+        {{ text_input('title', 'Title', row.title if row else '') }}
+        {{ text_input('slug', 'Slug', row.slug if row else '', help='Public URL: /<slug>. Leave blank to generate from the title.') }}
+        {{ md_editor('body_md', 'Body', row.body_md if row else '') }}
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2>SEO</h2></div>
+        {{ text_input('meta_title', 'Meta title (optional)', row.meta_title if row else '') }}
+        {{ textarea('meta_description', 'Meta description (optional)', row.meta_description if row else '', rows=2) }}
+      </section>
+    </div>
+    <div class="form-side">
+      <section class="panel">
+        {{ checkbox('is_published', 'Published', row.is_published if row else false) }}
+        {{ checkbox('show_in_nav', 'Show in site navigation', row.show_in_nav if row else false) }}
+        {{ text_input('nav_label', 'Nav label (optional)', row.nav_label if row else '', help='Defaults to the page title.') }}
+        {{ save_bar(row, '/admin/pages', '/admin/pages/' + (row.id | string) + '/delete' if row else None) }}
+      </section>
+    </div>
+  </div>
+</form>
+{% endblock %}

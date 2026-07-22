@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% set meta_title = page.meta_title or (page.title + ' — ' + setting('site_title', 'EdgeBourne')) %}
+{% set meta_description = page.meta_description or '' %}
+{% block content %}
+<section class="page-head">
+  <div class="wrap">
+    <h1>{{ page.title }}</h1>
+    <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
+  </div>
+</section>
+<section class="section">
+  <div class="wrap wrap-narrow">
+    <div class="prose prose-lg">{{ page.body_html | safe }}</div>
+  </div>
+</section>
+{% endblock %}

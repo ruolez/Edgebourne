@@ -1,0 +1,40 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Leads{% endblock %}
+{% block heading %}Leads{% endblock %}
+{% block actions %}
+<form method="post" action="/admin/leads/read-all">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="btn btn-ghost" type="submit">Mark all read</button>
+</form>
+{% endblock %}
+{% block content %}
+<div class="tabs">
+  <a href="/admin/leads" {% if show != 'unread' %}class="active"{% endif %}>All</a>
+  <a href="/admin/leads?show=unread" {% if show == 'unread' %}class="active"{% endif %}>Unread{% if unread_leads %} ({{ unread_leads }}){% endif %}</a>
+</div>
+<section class="panel">
+  {% if rows %}
+  <table class="table">
+    <thead><tr><th>From</th><th>Company</th><th>Message</th><th>Received</th><th></th></tr></thead>
+    <tbody>
+      {% for l in rows %}
+      <tr class="{% if not l.is_read %}row-unread{% endif %} row-link" data-href="/admin/leads/{{ l.id }}">
+        <td>{{ l.name }}<br><span class="dim">{{ l.email }}</span></td>
+        <td>{{ l.company or '—' }}</td>
+        <td class="cell-clip">{{ l.message[:90] }}{% if l.message | length > 90 %}…{% endif %}</td>
+        <td class="dim">{{ l.created_at.strftime('%b %d, %Y %H:%M') }}</td>
+        <td class="cell-actions">
+          <form method="post" action="/admin/leads/{{ l.id }}/delete" class="js-confirm" data-confirm="Delete this lead?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn-x" title="Delete">✕</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">{% if show == 'unread' %}No unread leads.{% else %}No leads yet.{% endif %}</p>
+  {% endif %}
+</section>
+{% endblock %}

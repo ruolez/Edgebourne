@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% set meta_title = 'Services — ' + setting('site_title', 'EdgeBourne') %}
+{% set meta_description = 'Custom web apps, mobile apps, systems integration and business automation for small and mid-size companies.' %}
+{% block content %}
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">SERVICES</p>
+    <h1>One partner for the systems<br><span class="accent">your business runs on.</span></h1>
+    <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap service-list">
+    {% for s in services %}
+    <article class="service-row card" id="{{ s.slug }}">
+      <div class="service-meta">
+        <span class="card-index">{{ '%02d' % loop.index }}</span>
+        <h2>{{ s.title }}</h2>
+        <p class="service-summary">{{ s.summary }}</p>
+      </div>
+      <div class="prose">{{ s.body_html | safe }}</div>
+    </article>
+    {% else %}
+    <p class="empty">Services are being written — check back soon.</p>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="section cta-band">
+  <div class="wrap cta-inner">
+    <div>
+      <h2>Not sure which of these you need?</h2>
+      <p class="lead">Most projects start as a conversation about what's slow today.</p>
+    </div>
+    <a class="btn btn-primary btn-lg" href="/contact">Book a call</a>
+  </div>
+</section>
+{% endblock %}

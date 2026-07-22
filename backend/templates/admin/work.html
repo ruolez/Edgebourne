@@ -1,0 +1,38 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Work{% endblock %}
+{% block heading %}Work / case studies{% endblock %}
+{% block actions %}<a class="btn btn-primary" href="/admin/work/new">+ New case study</a>{% endblock %}
+{% block content %}
+<section class="panel">
+  {% if rows %}
+  <table class="table">
+    <thead><tr><th>Order</th><th>Title</th><th>Client</th><th>Status</th><th>Updated</th><th></th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="cell-order">
+          <form method="post" action="/admin/work/{{ r.id }}/move" class="move-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button name="dir" value="up" {% if loop.first %}disabled{% endif %} title="Move up">↑</button>
+            <button name="dir" value="down" {% if loop.last %}disabled{% endif %} title="Move down">↓</button>
+          </form>
+        </td>
+        <td><a href="/admin/work/{{ r.id }}">{{ r.title }}</a></td>
+        <td class="dim">{{ r.client or '—' }}</td>
+        <td>{% if r.is_published %}<span class="pill pill-live">Live</span>{% else %}<span class="pill">Draft</span>{% endif %}</td>
+        <td class="dim">{{ r.updated_at.strftime('%b %d, %Y') }}</td>
+        <td class="cell-actions">
+          <form method="post" action="/admin/work/{{ r.id }}/delete" class="js-confirm" data-confirm="Delete case study “{{ r.title }}”?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn-x" title="Delete">✕</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No case studies yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

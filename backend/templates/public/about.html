@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% set meta_title = 'About — ' + setting('site_title', 'EdgeBourne') %}
+{% set meta_description = 'Who EdgeBourne is and how we work.' %}
+{% block content %}
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">ABOUT</p>
+    <h1>Small team.<br><span class="accent">Serious systems.</span></h1>
+    <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap wrap-narrow">
+    <div class="prose prose-lg">{{ setting('about_html') | safe }}</div>
+  </div>
+</section>
+
+<section class="section cta-band">
+  <div class="wrap cta-inner">
+    <div>
+      <h2>Sound like the partner you're after?</h2>
+      <p class="lead">The first call costs nothing and usually saves a few wrong turns.</p>
+    </div>
+    <a class="btn btn-primary btn-lg" href="/contact">Book a call</a>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,44 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input %}
+{% block title %}Email settings{% endblock %}
+{% block heading %}Email / SMTP{% endblock %}
+{% block content %}
+<form method="post" action="/admin/email" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <section class="panel">
+    <div class="panel-head"><h2>Lead notifications</h2></div>
+    <p class="help">When someone submits the contact form the lead is always saved here in the admin.
+      With SMTP configured, you'll also get an email. Local testing: host
+      <code>host.docker.internal</code>, port <code>1025</code>, encryption <code>none</code>
+      delivers to the mail catcher at <code>localhost:1080</code>.</p>
+    {{ text_input('notify_email', 'Send notifications to', v.notify_email, type='email', help='Leave blank to use the public contact email.') }}
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>SMTP server</h2></div>
+    <div class="field-row">
+      {{ text_input('smtp_host', 'Host', v.smtp_host, placeholder='smtp.example.com') }}
+      {{ text_input('smtp_port', 'Port', v.smtp_port, placeholder='587') }}
+    </div>
+    <div class="field-row">
+      {{ text_input('smtp_user', 'Username', v.smtp_user) }}
+      {{ text_input('smtp_password', 'Password', v.smtp_password, type='password') }}
+    </div>
+    <div class="field-row">
+      {{ text_input('smtp_from', 'From address', v.smtp_from, type='email', placeholder='noreply@edgebourne.com') }}
+      <div class="field">
+        <label for="f-smtp_tls">Encryption</label>
+        <select id="f-smtp_tls" name="smtp_tls">
+          <option value="starttls" {% if v.smtp_tls == 'starttls' %}selected{% endif %}>STARTTLS (port 587)</option>
+          <option value="ssl" {% if v.smtp_tls == 'ssl' %}selected{% endif %}>SSL (port 465)</option>
+          <option value="none" {% if v.smtp_tls == 'none' %}selected{% endif %}>None</option>
+        </select>
+      </div>
+    </div>
+  </section>
+  <div class="save-bar">
+    <button class="btn btn-primary" type="submit">Save settings</button>
+    <button class="btn btn-ghost" type="button" id="test-email">Send test email</button>
+    <span id="test-result" class="test-result"></span>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% set meta_title = 'Blog — ' + setting('site_title', 'EdgeBourne') %}
+{% set meta_description = 'Notes on custom software, integration and automation for growing companies.' %}
+{% block content %}
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">BLOG</p>
+    <h1>Notes on running<br><span class="accent">better systems.</span></h1>
+    <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap wrap-narrow">
+    <div class="post-list">
+      {% for p in posts %}
+      <a class="post-item card card-link" href="/blog/{{ p.slug }}">
+        {% if p.published_at %}<span class="card-date">{{ p.published_at.strftime('%B %d, %Y') }}</span>{% endif %}
+        <h3>{{ p.title }}</h3>
+        <p>{{ p.excerpt }}</p>
+      </a>
+      {% else %}
+      <p class="empty">First posts are being written — check back soon.</p>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}

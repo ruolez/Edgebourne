@@ -1,0 +1,14 @@
+# Dev overlay: live code reload + postgres exposed on host port 5480.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  backend:
+    volumes:
+      - ./backend:/app
+      - uploads:/data/uploads
+    command: >
+      sh -c "exec gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 4
+      --timeout 300 --reload 'app:create_app()'"
+
+  postgres:
+    ports:
+      - "5480:5432"

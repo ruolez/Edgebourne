@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="csrf" content="{{ csrf_token() }}">
+  <title>{% block title %}Admin{% endblock %} — EdgeBourne</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="{{ static_url('css/admin.css') }}">
+</head>
+<body class="admin">
+{% include "_svg_defs.html" %}
+<div class="admin-shell">
+  <aside class="sidebar">
+    <a class="brand" href="/admin">
+      <svg viewBox="0 0 190 190" class="brand-seal"><use href="#seal"/></svg>
+      <span class="wordmark">Edge<span class="accent">Bourne</span></span>
+    </a>
+    <nav class="side-nav">
+      <a href="/admin" {% if request.path in ('/admin', '/admin/') %}class="active"{% endif %}>Dashboard</a>
+      <a href="/admin/site" {% if request.path.startswith('/admin/site') %}class="active"{% endif %}>Site content</a>
+      <a href="/admin/services" {% if request.path.startswith('/admin/services') %}class="active"{% endif %}>Services</a>
+      <a href="/admin/work" {% if request.path.startswith('/admin/work') %}class="active"{% endif %}>Work</a>
+      <a href="/admin/blog" {% if request.path.startswith('/admin/blog') %}class="active"{% endif %}>Blog</a>
+      <a href="/admin/pages" {% if request.path.startswith('/admin/pages') %}class="active"{% endif %}>Pages</a>
+      <a href="/admin/leads" {% if request.path.startswith('/admin/leads') %}class="active"{% endif %}>Leads
+        {% if unread_leads %}<span class="badge">{{ unread_leads }}</span>{% endif %}</a>
+      <a href="/admin/email" {% if request.path.startswith('/admin/email') %}class="active"{% endif %}>Email</a>
+    </nav>
+    <div class="side-bottom">
+      <a href="/" target="_blank" rel="noopener">View site ↗</a>
+      <form method="post" action="/admin/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="link-btn">Log out</button>
+      </form>
+    </div>
+  </aside>
+  <main class="admin-main">
+    <header class="admin-topbar">
+      <h1>{% block heading %}{% endblock %}</h1>
+      <div class="topbar-actions">{% block actions %}{% endblock %}</div>
+    </header>
+    {% with msgs = get_flashed_messages(with_categories=true) %}
+      {% if msgs %}
+      <div class="flashes">
+        {% for cat, m in msgs %}<div class="flash flash-{{ cat }}">{{ m }}</div>{% endfor %}
+      </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<script src="{{ static_url('js/admin.js') }}" defer></script>
+</body>
+</html>

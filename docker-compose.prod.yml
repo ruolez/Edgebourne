@@ -1,0 +1,12 @@
+# VPS overlay: TLS termination in the nginx container.
+# Activated by install.sh via COMPOSE_FILE in .env; expects APP_PORT=80,
+# certs issued by certbot on the host, and nginx/nginx-ssl.conf rendered
+# from nginx/nginx-ssl.conf.template.
+services:
+  nginx:
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx/nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% set meta_title = post.meta_title or (post.title + ' — ' + setting('site_title', 'EdgeBourne')) %}
+{% set meta_description = post.meta_description or post.excerpt %}
+{% set og_image = post.cover_image %}
+{% set og_type = 'article' %}
+{% block content %}
+<article>
+  <section class="page-head">
+    <div class="wrap wrap-narrow">
+      {% if post.published_at %}<p class="eyebrow">{{ post.published_at.strftime('%B %d, %Y') | upper }}</p>{% endif %}
+      <h1>{{ post.title }}</h1>
+    </div>
+  </section>
+  <section class="section article-body">
+    <div class="wrap wrap-narrow">
+      {% if post.cover_image %}<img class="article-cover" src="{{ post.cover_image }}" alt="{{ post.title }}">{% endif %}
+      <div class="prose prose-lg">{{ post.body_html | safe }}</div>
+      <div class="article-back"><a href="/blog">← All posts</a></div>
+    </div>
+  </section>
+</article>
+{% endblock %}

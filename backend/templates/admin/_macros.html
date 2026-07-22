@@ -1,0 +1,63 @@
+{% macro text_input(name, label, value='', type='text', placeholder='', help='') %}
+<div class="field">
+  <label for="f-{{ name }}">{{ label }}</label>
+  <input type="{{ type }}" id="f-{{ name }}" name="{{ name }}" value="{{ value or '' }}" placeholder="{{ placeholder }}">
+  {% if help %}<p class="help">{{ help }}</p>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro textarea(name, label, value='', rows=4, help='') %}
+<div class="field">
+  <label for="f-{{ name }}">{{ label }}</label>
+  <textarea id="f-{{ name }}" name="{{ name }}" rows="{{ rows }}">{{ value or '' }}</textarea>
+  {% if help %}<p class="help">{{ help }}</p>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro checkbox(name, label, checked=false) %}
+<label class="check">
+  <input type="checkbox" name="{{ name }}" value="1" {% if checked %}checked{% endif %}>
+  <span>{{ label }}</span>
+</label>
+{% endmacro %}
+
+{% macro md_editor(name, label, value='') %}
+<div class="field md-field">
+  <label for="f-{{ name }}">{{ label }}</label>
+  <div class="md-toolbar" role="toolbar">
+    <button type="button" data-md="bold" title="Bold"><strong>B</strong></button>
+    <button type="button" data-md="italic" title="Italic"><em>I</em></button>
+    <button type="button" data-md="h2" title="Heading 2">H2</button>
+    <button type="button" data-md="h3" title="Heading 3">H3</button>
+    <button type="button" data-md="link" title="Link">Link</button>
+    <button type="button" data-md="ul" title="Bullet list">• List</button>
+    <button type="button" data-md="code" title="Code block">Code</button>
+    <button type="button" data-md="image" title="Insert image">Image</button>
+    <span class="md-spacer"></span>
+    <button type="button" class="md-preview-btn">Preview</button>
+  </div>
+  <textarea id="f-{{ name }}" name="{{ name }}" class="md-editor" rows="18">{{ value or '' }}</textarea>
+  <div class="md-preview prose" hidden></div>
+  <input type="file" class="md-image-input" accept="image/jpeg,image/png,image/webp" hidden>
+  <p class="help">Markdown: **bold**, ## headings, - lists, [links](url). Use Preview to check the result.</p>
+</div>
+{% endmacro %}
+
+{% macro cover_upload(current=None) %}
+<div class="field">
+  <label for="f-cover">Cover image</label>
+  {% if current %}<img class="cover-preview" src="{{ current }}" alt="Current cover">{% endif %}
+  <input type="file" id="f-cover" name="cover" accept="image/jpeg,image/png,image/webp">
+  <p class="help">JPEG/PNG/WebP, max 10&nbsp;MB. Re-encoded to WebP automatically.{% if current %} Choosing a new file replaces the current one.{% endif %}</p>
+</div>
+{% endmacro %}
+
+{% macro save_bar(row, list_url, delete_url=None) %}
+<div class="save-bar">
+  <button class="btn btn-primary" type="submit">Save</button>
+  <a class="btn btn-ghost" href="{{ list_url }}">Cancel</a>
+  {% if row and delete_url %}
+  <button class="btn btn-danger js-delete" type="button" data-action="{{ delete_url }}">Delete</button>
+  {% endif %}
+</div>
+{% endmacro %}

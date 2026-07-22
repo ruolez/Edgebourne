@@ -1,0 +1,7 @@
+# Bootstrap overlay used only during initial certificate issuance:
+# runs the plain-HTTP config with the ACME webroot mounted so certbot
+# can answer the http-01 challenge.
+services:
+  nginx:
+    volumes:
+      - /var/www/certbot:/var/www/certbot:ro

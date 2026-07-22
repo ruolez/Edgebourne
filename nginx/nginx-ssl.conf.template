@@ -1,0 +1,52 @@
+# Production TLS config. install.sh renders this to nginx/nginx-ssl.conf,
+# replacing __DOMAIN__ (primary cert name) and __SERVER_NAMES__.
+
+server {
+    listen 80;
+    server_name __SERVER_NAMES__;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name __SERVER_NAMES__;
+
+    ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    client_max_body_size 15m;
+
+    gzip on;
+    gzip_types text/css application/javascript image/svg+xml application/xml
+               application/xml+rss text/plain application/json;
+    gzip_min_length 1024;
+
+    location /static/ {
+        alias /srv/static/;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    location /uploads/ {
+        alias /srv/uploads/;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    location / {
+        proxy_pass http://backend:5000;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}

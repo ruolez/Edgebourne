@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {% set _title = meta_title or setting('seo_default_title', 'EdgeBourne') %}
+  {% set _desc = meta_description or setting('seo_default_description', '') %}
+  <title>{{ _title }}</title>
+  <meta name="description" content="{{ _desc }}">
+  <link rel="canonical" href="{{ canonical or request.base_url }}">
+  <meta property="og:site_name" content="{{ setting('site_title', 'EdgeBourne') }}">
+  <meta property="og:title" content="{{ _title }}">
+  <meta property="og:description" content="{{ _desc }}">
+  <meta property="og:type" content="{{ og_type or 'website' }}">
+  <meta property="og:url" content="{{ canonical or request.base_url }}">
+  {% if og_image %}<meta property="og:image" content="{{ request.url_root.rstrip('/') + og_image }}">{% endif %}
+  <meta name="twitter:card" content="{{ 'summary_large_image' if og_image else 'summary' }}">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="preload" href="/static/fonts/mulish-var.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ static_url('css/site.css') }}">
+</head>
+<body>
+{% include "_svg_defs.html" %}
+{% include "_nav.html" %}
+<main>
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% if msgs %}
+    <div class="wrap flashes">
+      {% for cat, m in msgs %}<div class="flash flash-{{ cat }}">{{ m }}</div>{% endfor %}
+    </div>
+    {% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+{% include "_footer.html" %}
+<script src="{{ static_url('js/site.js') }}" defer></script>
+</body>
+</html>

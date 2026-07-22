@@ -1,0 +1,33 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input, textarea, md_editor, checkbox, cover_upload, save_bar %}
+{% block title %}{{ 'Edit post' if row else 'New post' }}{% endblock %}
+{% block heading %}{{ row.title if row else 'New post' }}{% endblock %}
+{% block content %}
+<form method="post" enctype="multipart/form-data" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-cols">
+    <div class="form-main">
+      <section class="panel">
+        {{ text_input('title', 'Title', row.title if row else '') }}
+        {{ text_input('slug', 'Slug', row.slug if row else '', help='Public URL: /blog/<slug>. Leave blank to generate from the title.') }}
+        {{ textarea('excerpt', 'Excerpt', row.excerpt if row else '', rows=3, help='Shown on the blog index and in search results. Leave blank to auto-generate from the body.') }}
+        {{ md_editor('body_md', 'Body', row.body_md if row else '') }}
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2>SEO</h2></div>
+        {{ text_input('meta_title', 'Meta title (optional)', row.meta_title if row else '') }}
+        {{ textarea('meta_description', 'Meta description (optional)', row.meta_description if row else '', rows=2) }}
+      </section>
+    </div>
+    <div class="form-side">
+      <section class="panel">
+        {{ checkbox('is_published', 'Published', row.is_published if row else false) }}
+        {{ save_bar(row, '/admin/blog', '/admin/blog/' + (row.id | string) + '/delete' if row else None) }}
+      </section>
+      <section class="panel">
+        {{ cover_upload(row.cover_thumb if row else None) }}
+      </section>
+    </div>
+  </div>
+</form>
+{% endblock %}

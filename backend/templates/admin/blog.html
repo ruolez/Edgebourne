@@ -1,0 +1,31 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Blog{% endblock %}
+{% block heading %}Blog posts{% endblock %}
+{% block actions %}<a class="btn btn-primary" href="/admin/blog/new">+ New post</a>{% endblock %}
+{% block content %}
+<section class="panel">
+  {% if rows %}
+  <table class="table">
+    <thead><tr><th>Title</th><th>Slug</th><th>Status</th><th>Published</th><th></th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><a href="/admin/blog/{{ r.id }}">{{ r.title }}</a></td>
+        <td class="dim">{{ r.slug }}</td>
+        <td>{% if r.is_published %}<span class="pill pill-live">Live</span>{% else %}<span class="pill">Draft</span>{% endif %}</td>
+        <td class="dim">{{ r.published_at.strftime('%b %d, %Y') if r.published_at else '—' }}</td>
+        <td class="cell-actions">
+          <form method="post" action="/admin/blog/{{ r.id }}/delete" class="js-confirm" data-confirm="Delete post “{{ r.title }}”?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn-x" title="Delete">✕</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No posts yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

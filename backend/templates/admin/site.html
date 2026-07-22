@@ -1,0 +1,56 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input, textarea, md_editor %}
+{% block title %}Site content{% endblock %}
+{% block heading %}Site content{% endblock %}
+{% block content %}
+<form method="post" action="/admin/site" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <section class="panel">
+    <div class="panel-head"><h2>Homepage hero</h2></div>
+    <div class="field-row">
+      {{ text_input('hero_eyebrow_strong', 'Eyebrow — bold part', v.hero_eyebrow_strong) }}
+      {{ text_input('hero_eyebrow', 'Eyebrow — rest', v.hero_eyebrow) }}
+    </div>
+    <div class="field-row">
+      {{ text_input('hero_title', 'Headline line 1', v.hero_title) }}
+      {{ text_input('hero_title_accent', 'Headline line 2 (teal)', v.hero_title_accent) }}
+    </div>
+    {{ textarea('hero_sub', 'Sub-copy', v.hero_sub, rows=3) }}
+    <div class="field-row">
+      {{ text_input('hero_cta_primary', 'Primary button label', v.hero_cta_primary) }}
+      {{ text_input('hero_cta_primary_url', 'Primary button URL', v.hero_cta_primary_url) }}
+    </div>
+    <div class="field-row">
+      {{ text_input('hero_cta_secondary', 'Secondary button label', v.hero_cta_secondary) }}
+      {{ text_input('hero_cta_secondary_url', 'Secondary button URL', v.hero_cta_secondary_url) }}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>About page</h2></div>
+    {{ md_editor('about_md', 'About text', v.about_md) }}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>SEO defaults</h2></div>
+    {{ text_input('site_title', 'Site name', v.site_title) }}
+    {{ text_input('seo_default_title', 'Default meta title', v.seo_default_title) }}
+    {{ textarea('seo_default_description', 'Default meta description', v.seo_default_description, rows=2) }}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Contact & social</h2></div>
+    <div class="field-row">
+      {{ text_input('contact_email', 'Public contact email', v.contact_email, type='email') }}
+      {{ text_input('phone', 'Phone', v.phone) }}
+    </div>
+    <div class="field-row">
+      {{ text_input('social_linkedin', 'LinkedIn URL', v.social_linkedin) }}
+      {{ text_input('social_github', 'GitHub URL', v.social_github) }}
+    </div>
+  </section>
+
+  <div class="save-bar"><button class="btn btn-primary" type="submit">Save all</button></div>
+</form>
+{% endblock %}

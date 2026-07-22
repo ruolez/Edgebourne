@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% set meta_title = 'Page not found — ' + setting('site_title', 'EdgeBourne') %}
+{% block content %}
+<section class="section notfound">
+  <div class="wrap notfound-inner">
+    <svg viewBox="0 0 190 190" class="notfound-seal"><use href="#seal"/></svg>
+    <p class="eyebrow">404</p>
+    <h1>This page doesn't exist.</h1>
+    <p class="lead">The link may be old, or the page was moved.</p>
+    <div class="btn-row"><a class="btn btn-primary" href="/">Back to home</a></div>
+  </div>
+</section>
+{% endblock %}

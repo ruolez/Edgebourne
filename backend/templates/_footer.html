@@ -1,0 +1,28 @@
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div class="footer-brand">
+      <a class="brand" href="/" aria-label="EdgeBourne home">
+        <svg viewBox="0 0 190 190" class="brand-seal"><use href="#seal"/></svg>
+        <span class="wordmark wordmark-light">Edge<span class="accent">Bourne</span></span>
+      </a>
+      <p class="footer-strap">{{ setting('hero_eyebrow_strong', 'CUSTOM SOLUTIONS') }} · {{ setting('hero_eyebrow', 'WEB & MOBILE APPS · INTEGRATION · AUTOMATION') }}</p>
+      <svg class="stream stream-footer" viewBox="0 0 350 30"><use href="#stream"/></svg>
+    </div>
+    <nav class="footer-col" aria-label="Footer">
+      <h4>Explore</h4>
+      <a href="/services">Services</a>
+      <a href="/work">Work</a>
+      <a href="/about">About</a>
+      <a href="/blog">Blog</a>
+      <a href="/contact">Contact</a>
+    </nav>
+    <div class="footer-col">
+      <h4>Contact</h4>
+      {% if setting('contact_email') %}<a href="mailto:{{ setting('contact_email') }}">{{ setting('contact_email') }}</a>{% endif %}
+      {% if setting('phone') %}<a href="tel:{{ setting('phone') | replace(' ', '') }}">{{ setting('phone') }}</a>{% endif %}
+      {% if setting('social_linkedin') %}<a href="{{ setting('social_linkedin') }}" rel="noopener">LinkedIn</a>{% endif %}
+      {% if setting('social_github') %}<a href="{{ setting('social_github') }}" rel="noopener">GitHub</a>{% endif %}
+    </div>
+  </div>
+  <div class="wrap footer-bottom">© {{ current_year }} {{ setting('site_title', 'EdgeBourne') }}. All rights reserved.</div>
+</footer>

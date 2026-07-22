@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% set meta_title = 'Book a call — ' + setting('site_title', 'EdgeBourne') %}
+{% set meta_description = 'Tell us about your project — we reply within one business day.' %}
+{% block content %}
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">CONTACT</p>
+    <h1>Tell us what's slow.<br><span class="accent">We'll take it from there.</span></h1>
+    <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap contact-grid">
+    <div class="contact-info">
+      <h2>Book a call</h2>
+      <p class="lead">A short conversation about what your team does by hand today, and what it would take to automate it. No pitch deck, no obligation.</p>
+      {% if setting('contact_email') %}
+      <p class="contact-line"><span class="eyebrow">EMAIL</span><br><a href="mailto:{{ setting('contact_email') }}">{{ setting('contact_email') }}</a></p>
+      {% endif %}
+      {% if setting('phone') %}
+      <p class="contact-line"><span class="eyebrow">PHONE</span><br><a href="tel:{{ setting('phone') | replace(' ', '') }}">{{ setting('phone') }}</a></p>
+      {% endif %}
+    </div>
+    <form class="card contact-form" method="post" action="/contact">
+      <div class="hp" aria-hidden="true">
+        <label>Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label>
+      </div>
+      <div class="field">
+        <label for="name">Name *</label>
+        <input type="text" id="name" name="name" required autocomplete="name">
+      </div>
+      <div class="field">
+        <label for="email">Email *</label>
+        <input type="email" id="email" name="email" required autocomplete="email">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="company">Company</label>
+          <input type="text" id="company" name="company" autocomplete="organization">
+        </div>
+        <div class="field">
+          <label for="phone">Phone</label>
+          <input type="tel" id="phone" name="phone" autocomplete="tel">
+        </div>
+      </div>
+      <div class="field">
+        <label for="message">What should we look at first? *</label>
+        <textarea id="message" name="message" rows="6" required></textarea>
+      </div>
+      <button class="btn btn-primary btn-lg" type="submit">Send message</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

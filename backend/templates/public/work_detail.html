@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% set meta_title = cs.meta_title or (cs.title + ' — ' + setting('site_title', 'EdgeBourne')) %}
+{% set meta_description = cs.meta_description or cs.summary %}
+{% set og_image = cs.cover_image %}
+{% set og_type = 'article' %}
+{% block content %}
+<article>
+  <section class="page-head">
+    <div class="wrap">
+      <p class="eyebrow">CASE STUDY{% if cs.client %} · {{ cs.client | upper }}{% endif %}</p>
+      <h1>{{ cs.title }}</h1>
+      {% if cs.tech_tags %}
+      <span class="tags">{% for t in cs.tech_tags %}<span class="tag">{{ t }}</span>{% endfor %}</span>
+      {% endif %}
+    </div>
+  </section>
+  <section class="section article-body">
+    <div class="wrap wrap-narrow">
+      {% if cs.cover_image %}<img class="article-cover" src="{{ cs.cover_image }}" alt="{{ cs.title }}">{% endif %}
+      <div class="prose">{{ cs.body_html | safe }}</div>
+      <div class="article-back"><a href="/work">← All work</a></div>
+    </div>
+  </section>
+</article>
+
+<section class="section cta-band">
+  <div class="wrap cta-inner">
+    <div>
+      <h2>Have a similar problem?</h2>
+      <p class="lead">We've probably seen a version of it before.</p>
+    </div>
+    <a class="btn btn-primary btn-lg" href="/contact">Book a call</a>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Lead — {{ lead.name }}{% endblock %}
+{% block heading %}Lead from {{ lead.name }}{% endblock %}
+{% block actions %}
+<form method="post" action="/admin/leads/{{ lead.id }}/delete" class="js-confirm" data-confirm="Delete this lead?">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="btn btn-danger" type="submit">Delete</button>
+</form>
+{% endblock %}
+{% block content %}
+<section class="panel lead-view">
+  <dl class="lead-meta">
+    <div><dt>Email</dt><dd><a href="mailto:{{ lead.email }}">{{ lead.email }}</a></dd></div>
+    <div><dt>Company</dt><dd>{{ lead.company or '—' }}</dd></div>
+    <div><dt>Phone</dt><dd>{% if lead.phone %}<a href="tel:{{ lead.phone | replace(' ', '') }}">{{ lead.phone }}</a>{% else %}—{% endif %}</dd></div>
+    <div><dt>Received</dt><dd>{{ lead.created_at.strftime('%B %d, %Y at %H:%M') }}</dd></div>
+    <div><dt>Page</dt><dd>{{ lead.source_page or '—' }}</dd></div>
+  </dl>
+  <div class="lead-message">
+    <h2>Message</h2>
+    <p>{{ lead.message }}</p>
+  </div>
+  <a class="btn btn-ghost" href="/admin/leads">← Back to leads</a>
+</section>
+{% endblock %}
