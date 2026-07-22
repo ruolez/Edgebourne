@@ -65,8 +65,10 @@ The installer menu offers:
 2. **Update from GitHub** — backs up PostgreSQL to `/var/backups/edgebourne` (last 14 kept),
    pulls the latest code, rebuilds, applies any new DB migrations automatically at startup,
    and prunes unused Docker images.
-3. **Renew SSL now** — manual renewal check, in addition to the automatic timer.
-4. **Remove** — deletes containers, volumes, and the app directory (with an optional final DB
+3. **Install SSL only** — sets up (or redoes) the Let's Encrypt certificate on an existing
+   installation, e.g. after fixing DNS or changing the domain.
+4. **Renew SSL now** — manual renewal check, in addition to the automatic timer.
+5. **Remove** — deletes containers, volumes, and the app directory (with an optional final DB
    backup to `/root` and optional certificate deletion).
 
 Production TLS uses `docker-compose.prod.yml` + `nginx/nginx-ssl.conf` (rendered from

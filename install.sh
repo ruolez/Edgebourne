@@ -7,8 +7,9 @@
 # Options:
 #   1) Install       — Docker + app + Let's Encrypt SSL (auto-renewing)
 #   2) Update        — pull latest from GitHub, keep all data, apply migrations
-#   3) Renew SSL     — force a certificate renewal check right now
-#   4) Remove        — cleanly remove the installation
+#   3) Install SSL   — set up (or redo) the certificate on an existing install
+#   4) Renew SSL     — run a certificate renewal check right now
+#   5) Remove        — cleanly remove the installation
 #
 set -euo pipefail
 
@@ -154,6 +155,54 @@ prune_backups() {
   ls -1t "$BACKUP_DIR"/edgebourne-*.sql.gz 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
 }
 
+# ---------------------------------------------------------------- ssl setup
+
+setup_ssl() { # needs: DOMAIN, SERVER_NAMES, CERT_ARGS, LE_EMAIL
+  mkdir -p "$WEBROOT"
+  open_firewall
+
+  if [ -z "$(env_get COMPOSE_FILE)" ]; then
+    set_env APP_PORT 80
+    log "Starting the stack (HTTP) to answer the certificate challenge…"
+    compose -f docker-compose.yml -f docker-compose.certbot.yml up -d --build
+  else
+    compose up -d
+  fi
+  wait_for_health "http://localhost/healthz"
+
+  log "Requesting Let's Encrypt certificate for: $SERVER_NAMES"
+  local email_args=(--register-unsafely-without-email)
+  [ -n "$LE_EMAIL" ] && email_args=(-m "$LE_EMAIL")
+  certbot certonly --webroot -w "$WEBROOT" "${CERT_ARGS[@]}" \
+    --non-interactive --agree-tos "${email_args[@]}" \
+    || die "Certificate issuance failed — verify DNS points at this server, then retry."
+
+  log "Switching to HTTPS…"
+  render_ssl_conf "$DOMAIN" "$SERVER_NAMES"
+  set_env COMPOSE_FILE "docker-compose.yml:docker-compose.prod.yml"
+  compose up -d --remove-orphans
+  install_renew_hook
+  wait_for_health "https://$DOMAIN/healthz"
+}
+
+cmd_ssl() {
+  need_root
+  [ -d "$APP_DIR/.git" ] || die "No installation found at $APP_DIR — run Install first."
+  export DEBIAN_FRONTEND=noninteractive
+  command -v certbot >/dev/null 2>&1 || { apt-get update -qq; apt-get install -y -qq certbot >/dev/null; }
+
+  prompt_domain
+  ask "Let's Encrypt notification email (blank for none)"
+  LE_EMAIL="$REPLY"
+  set_env DOMAIN "$DOMAIN"
+  set_env SERVER_NAMES "$SERVER_NAMES"
+
+  setup_ssl
+  echo
+  ok "SSL is set up and auto-renewing."
+  echo -e "   Site: ${C_GRN}https://$DOMAIN${C_OFF}"
+}
+
 # ---------------------------------------------------------------- install
 
 cmd_install() {
@@ -197,26 +246,7 @@ EOF
     chmod 600 "$APP_DIR/.env"
   fi
 
-  mkdir -p "$WEBROOT"
-  open_firewall
-
-  log "Starting the stack (HTTP) to answer the certificate challenge…"
-  compose -f docker-compose.yml -f docker-compose.certbot.yml up -d --build
-  wait_for_health "http://localhost/healthz"
-
-  log "Requesting Let's Encrypt certificate for: $SERVER_NAMES"
-  local email_args=(--register-unsafely-without-email)
-  [ -n "$LE_EMAIL" ] && email_args=(-m "$LE_EMAIL")
-  certbot certonly --webroot -w "$WEBROOT" "${CERT_ARGS[@]}" \
-    --non-interactive --agree-tos "${email_args[@]}" \
-    || die "Certificate issuance failed — verify DNS points at this server, then re-run Install."
-
-  log "Switching to HTTPS…"
-  render_ssl_conf "$DOMAIN" "$SERVER_NAMES"
-  set_env COMPOSE_FILE "docker-compose.yml:docker-compose.prod.yml"
-  compose up -d --remove-orphans
-  install_renew_hook
-  wait_for_health "https://$DOMAIN/healthz"
+  setup_ssl
 
   echo
   ok  "EdgeBourne is live."
@@ -304,15 +334,17 @@ echo -e "${C_TEAL}   EdgeBourne — server installer${C_OFF}"
 echo -e "${C_TEAL}  ══════════════════════════════════${C_OFF}"
 echo "   1) Install (clean Ubuntu 24 server)"
 echo "   2) Update from GitHub (keeps all data)"
-echo "   3) Renew SSL certificate now"
-echo "   4) Remove installation"
-echo "   5) Exit"
+echo "   3) Install SSL only (app already installed)"
+echo "   4) Renew SSL certificate now"
+echo "   5) Remove installation"
+echo "   6) Exit"
 echo
 ask "Choose an option" "1"
 case "$REPLY" in
   1) cmd_install ;;
   2) cmd_update ;;
-  3) cmd_renew ;;
-  4) cmd_remove ;;
+  3) cmd_ssl ;;
+  4) cmd_renew ;;
+  5) cmd_remove ;;
   *) echo "Bye." ;;
 esac
