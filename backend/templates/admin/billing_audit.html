@@ -1,0 +1,73 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Consistency check{% endblock %}
+{% block heading %}Consistency check{% endblock %}
+{% block content %}
+
+<section class="panel">
+  <div class="panel-head"><h2>Ledger vs. records</h2></div>
+  <p class="help">
+    Each customer's ledger balance is rebuilt independently from the invoice, payment and refund
+    tables — issued invoice totals, minus payments received, plus refunds, minus credit granted,
+    plus credit applied. If the two disagree, something wrote money outside
+    <code>billing.py</code> and the difference is shown in red.
+  </p>
+
+  {% if problems %}
+  <div class="flash flash-error">
+    {{ problems|length }} customer{{ 's' if problems|length != 1 }} need{{ '' if problems|length != 1 else 's' }} attention.
+  </div>
+  {% endif %}
+
+  {% if rows %}
+  <table class="table">
+    <thead>
+      <tr><th>Customer</th><th class="num">Ledger</th><th class="num">Expected</th>
+        <th class="num">Drift</th><th class="num">Open invoices</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr class="{{ 'row-warn' if not r.ok }}">
+        <td><a href="/admin/customers/{{ r.id }}">{{ r.display_name }}</a></td>
+        <td class="num">{{ r.ledger_balance|money(r.currency) }}</td>
+        <td class="num">{{ r.expected_balance|money(r.currency) }}</td>
+        <td class="num {{ 'money-neg num-strong' if r.drift_cents }}">
+          {{ r.drift_cents|money(r.currency) }}</td>
+        <td class="num">{{ r.open_balance|money(r.currency) }}</td>
+        <td>
+          {% if r.currencies > 1 %}<span class="pill pill-overdue">{{ r.currencies }} currencies</span>{% endif %}
+          {% if r.needs_review %}<span class="pill pill-overdue">{{ r.needs_review }} to review</span>{% endif %}
+          {% if r.ok %}<span class="pill pill-paid">OK</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No customers yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>Recent money actions</h2></div>
+  {% if recent %}
+  <table class="table">
+    <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Record</th><th>Detail</th></tr></thead>
+    <tbody>
+      {% for a in recent %}
+      <tr>
+        <td>{{ a.created_at.strftime('%d %b %Y %H:%M') }}</td>
+        <td>{{ a.username or '—' }}<span class="line-detail-ro">{{ a.ip }}</span></td>
+        <td>{{ a.action|replace('_', ' ') }}</td>
+        <td>{% if a.entity == 'invoice' %}<a href="/admin/invoices/{{ a.entity_id }}">invoice #{{ a.entity_id }}</a>
+            {% elif a.entity == 'customer' %}<a href="/admin/customers/{{ a.entity_id }}">customer #{{ a.entity_id }}</a>
+            {% else %}{{ a.entity }} {{ a.entity_id or '' }}{% endif %}</td>
+        <td>{{ a.detail or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">Nothing recorded yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,8 @@
+{% extends "portal/_base.html" %}
+{% block title %}{{ company.company_name or 'EdgeBourne' }}{% endblock %}
+{% block content %}
+<div class="doc-sheet doc-sheet-narrow">
+  <p class="doc-eyebrow">Notice</p>
+  <h1>{{ message }}</h1>
+</div>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% if reminder is none %}Hello{% if customer.contact_name %} {{ customer.contact_name }}{% endif %},
+
+Please find invoice {{ inv.number }} from {{ company.company_name }}.
+{% elif reminder > 0 %}Hello{% if customer.contact_name %} {{ customer.contact_name }}{% endif %},
+
+Invoice {{ inv.number }} was due on {{ inv.due_date.strftime('%d %B %Y') }} and is still outstanding.
+{% else %}Hello{% if customer.contact_name %} {{ customer.contact_name }}{% endif %},
+
+A reminder that invoice {{ inv.number }} is due on {{ inv.due_date.strftime('%d %B %Y') }}.
+{% endif %}
+
+  Amount due: {{ inv.balance_due_cents|money(inv.currency) }}
+  Issued:     {{ inv.issue_date.strftime('%d %B %Y') }}
+{% if inv.due_date %}  Due:        {{ inv.due_date.strftime('%d %B %Y') }}
+{% endif %}
+
+View and pay online:
+{{ pay_url }}
+{% if company.payment_instructions %}
+
+Prefer to pay another way?
+
+{{ company.payment_instructions }}
+{% endif %}
+
+Thanks,
+{{ company.company_name }}
+{% if company.company_email %}{{ company.company_email }}{% endif %}

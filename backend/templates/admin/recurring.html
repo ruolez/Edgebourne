@@ -1,0 +1,48 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_billing_macros.html" import status_pill %}
+{% block title %}Recurring{% endblock %}
+{% block heading %}Recurring invoices{% endblock %}
+{% block actions %}<a class="btn btn-primary" href="/admin/recurring/new">New retainer</a>{% endblock %}
+{% block content %}
+
+{% if not heartbeat or not heartbeat.last_run_at %}
+<div class="flash flash-error">
+  The scheduler has never checked in. Recurring invoices will not generate until it runs —
+  start it with <code>docker compose up -d scheduler</code>.
+</div>
+{% elif heartbeat.stale %}
+<div class="flash flash-error">
+  The scheduler last checked in {{ heartbeat.last_run_at.strftime('%d %b %Y at %H:%M') }} UTC.
+  Retainers are not being generated.
+</div>
+{% endif %}
+
+<section class="panel">
+  {% if rows %}
+  <table class="table">
+    <thead>
+      <tr><th>Retainer</th><th>Customer</th><th>Every</th><th>Next run</th><th>Status</th>
+        <th class="num">Amount</th><th class="num">Issued</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr class="row-link {{ 'row-warn' if r.last_error }}" data-href="/admin/recurring/{{ r.id }}">
+        <td><a href="/admin/recurring/{{ r.id }}">{{ r.name }}</a>
+          {% if r.last_error %}<span class="line-detail-ro">Last run failed</span>{% endif %}</td>
+        <td><a href="/admin/customers/{{ r.customer_id }}">{{ r.customer_name }}</a></td>
+        <td>{% if r.interval_count > 1 %}{{ r.interval_count }} × {% endif %}{{ intervals[r.interval] }}</td>
+        <td>{{ r.next_run_at.strftime('%d %b %Y') if r.next_run_at else '—' }}</td>
+        <td>{{ status_pill(r.status) }}
+          {% if not r.auto_send %}<span class="pill">Draft only</span>{% endif %}</td>
+        <td class="num">{{ r.total_cents|money(r.currency) }}</td>
+        <td class="num">{{ r.generated }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No recurring invoices yet. Set one up for a monthly retainer and it will bill
+    itself.</p>
+  {% endif %}
+</section>
+{% endblock %}

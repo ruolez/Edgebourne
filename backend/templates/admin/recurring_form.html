@@ -1,0 +1,125 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input, md_editor, checkbox, save_bar %}
+{% from "admin/_billing_macros.html" import select_field, date_input, line_items,
+        doc_totals, status_pill %}
+{% block title %}{{ row.name or 'New retainer' }}{% endblock %}
+{% block heading %}{{ row.name or 'New retainer' }}
+  {% if not is_new %}{{ status_pill(row.status) }}{% endif %}{% endblock %}
+{% block content %}
+
+{% if row.last_error %}
+<div class="flash flash-error">Last run failed: {{ row.last_error }}</div>
+{% endif %}
+
+<form method="post" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-cols">
+    <div class="form-main">
+      <section class="panel">
+        {{ text_input('name', 'Name', row.name,
+            help='Becomes the invoice title, e.g. “Support retainer”.') }}
+        {{ line_items(lines, row.currency, true) }}
+        {{ doc_totals(row, true) }}
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Notes &amp; terms</h2></div>
+        {{ md_editor('notes_md', 'Notes on each invoice', row.notes_md) }}
+        {{ md_editor('terms_md', 'Payment terms', row.terms_md) }}
+      </section>
+
+      {% if preview %}
+      <section class="panel">
+        <div class="panel-head"><h2>Next periods</h2></div>
+        <p class="help">Each period is computed from the start date, not from the previous one, so
+          a retainer that starts on the 31st bills Feb 28/29 and then goes back to the 31st.</p>
+        <table class="table">
+          <thead><tr><th>Period</th><th>Covers</th><th>Generates</th></tr></thead>
+          <tbody>
+            {% for p in preview %}
+            <tr><td>{{ p.key }}</td>
+              <td>{{ p.start.strftime('%d %b %Y') }} – {{ p.end.strftime('%d %b %Y') }}</td>
+              <td>{{ p.run_at.strftime('%d %b %Y, %H:%M') }} UTC</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+      {% endif %}
+
+      {% if runs %}
+      <section class="panel">
+        <div class="panel-head"><h2>History</h2></div>
+        <table class="table">
+          <thead><tr><th>Period</th><th>Invoice</th><th>Status</th><th>Error</th></tr></thead>
+          <tbody>
+            {% for r in runs %}
+            <tr>
+              <td>{{ r.period_key }}</td>
+              <td>{% if r.invoice_id %}<a href="/admin/invoices/{{ r.invoice_id }}">{{ r.invoice_number or '#' ~ r.invoice_id }}</a>{% else %}—{% endif %}</td>
+              <td>{{ status_pill(r.status if r.status != 'success' else 'paid') }}</td>
+              <td class="help">{{ r.last_error or '' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+      {% endif %}
+    </div>
+
+    <div class="form-side">
+      <section class="panel">
+        {% if is_new %}
+        {{ select_field('customer_id', 'Customer', row.customer_id, customers, blank='Choose a customer…') }}
+        {% else %}
+        <div class="field"><label>Customer</label>
+          <p class="kv-v"><a href="/admin/customers/{{ row.customer_id }}">{{ row.customer_name }}</a></p>
+          <input type="hidden" name="customer_id" value="{{ row.customer_id }}"></div>
+        {% endif %}
+        {{ select_field('project_id', 'Project', row.project_id, projects, blank='No project') }}
+        {{ select_field('status', 'Status', row.status, statuses) }}
+        <div class="field-row">
+          {{ select_field('interval', 'Bill every', row.interval, intervals) }}
+          {{ text_input('interval_count', 'Repeat', row.interval_count,
+              help='2 with “Weekly” means fortnightly.') }}
+        </div>
+        <div class="field-row">
+          {{ date_input('start_date', 'First period starts', row.start_date) }}
+          {{ date_input('end_date', 'Stop after', row.end_date) }}
+        </div>
+        {{ text_input('max_occurrences', 'Or stop after N invoices', row.max_occurrences or '') }}
+        <div class="field-row">
+          {{ text_input('timezone', 'Timezone', row.timezone, placeholder='America/Chicago') }}
+          {{ text_input('run_hour', 'At hour', row.run_hour) }}
+        </div>
+        {{ text_input('terms_days', 'Payment terms (days)', row.terms_days) }}
+        {{ checkbox('auto_send', 'Email each invoice automatically', row.auto_send) }}
+        <p class="help">Generated invoices wait
+          {{ setting('billing_send_delay_minutes', '15') }} minutes before sending, so you can
+          cancel a mistake. Catch-up runs after downtime are always held as drafts.</p>
+        {{ save_bar(row if not is_new else none, '/admin/recurring',
+            '/admin/recurring/' ~ row.id ~ '/delete' if not is_new else None) }}
+      </section>
+
+      {% if not is_new %}
+      <section class="panel">
+        <div class="panel-head"><h2>Schedule</h2></div>
+        <div class="kv">
+          <span class="kv-k">Next run</span>
+          <span class="kv-v">{{ row.next_run_at.strftime('%d %b %Y, %H:%M') ~ ' UTC' if row.next_run_at else '—' }}</span>
+          <span class="kv-k">Generated</span><span class="kv-v">{{ row.occurrences_generated }}</span>
+          <span class="kv-k">Last run</span>
+          <span class="kv-v">{{ row.last_run_at.strftime('%d %b %Y, %H:%M') if row.last_run_at else 'never' }}</span>
+        </div>
+        <button class="btn btn-ghost btn-block" type="button" style="margin-top:14px"
+                onclick="if(confirm('Generate the next due invoice now?')) document.getElementById('run-form').submit()">Run now</button>
+      </section>
+      {% endif %}
+    </div>
+  </div>
+</form>
+
+{% if not is_new %}
+<form method="post" action="/admin/recurring/{{ row.id }}/run-now" id="run-form" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+{% endif %}
+{% endblock %}

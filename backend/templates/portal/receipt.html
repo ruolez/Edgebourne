@@ -1,0 +1,23 @@
+{% extends "portal/_base.html" %}
+{% block title %}Payment received — {{ company.company_name }}{% endblock %}
+{% block content %}
+<div class="doc-sheet doc-sheet-narrow">
+  {% if settled %}
+  <p class="doc-eyebrow">Payment received</p>
+  <h1>Thank you — {{ pay.amount_cents|money(pay.currency) }} received.</h1>
+  <p class="doc-hint">
+    {% if inv.balance_due_cents > 0 %}
+      {{ inv.balance_due_cents|money(inv.currency) }} remains on invoice {{ inv.number }}.
+    {% else %}
+      Invoice {{ inv.number }} is now paid in full.
+    {% endif %}
+    A receipt is on its way to your inbox.
+  </p>
+  {% else %}
+  <p class="doc-eyebrow">Processing</p>
+  <h1>Your payment is being processed.</h1>
+  <p class="doc-hint">This usually takes a few seconds. You'll get a receipt by email as soon
+    as it settles — there's nothing else you need to do.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "portal/_base.html" %}
+{% from "portal/_document.html" import document with context %}
+{% block title %}Estimate {{ est.number }} — {{ company.company_name }}{% endblock %}
+{% block content %}
+<div class="doc-sheet">
+  {% if est.status == 'accepted' %}
+  <p class="doc-paid">Accepted on {{ est.accepted_at.strftime('%d %B %Y') }}
+    by {{ est.accepted_name }} — thank you. We'll be in touch to get started.</p>
+  {% elif expired %}
+  <p class="doc-note">This estimate expired on {{ est.valid_until.strftime('%d %B %Y') }}.
+    Get in touch and we'll be happy to refresh it.</p>
+  {% endif %}
+
+  {{ document(est, customer, company, lines, 'Estimate') }}
+
+  {% if est.notes_md %}<div class="doc-notes">{{ est.notes_md }}</div>{% endif %}
+  {% if est.terms_md %}<div class="doc-notes doc-terms">{{ est.terms_md }}</div>{% endif %}
+
+  {% if est.status == 'sent' and not expired %}
+  <div class="doc-pay">
+    <form method="post" action="/estimate/{{ token }}/accept">
+      <input type="text" name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <label class="doc-pay-amount" for="sig">Type your full name to accept</label>
+      <div class="doc-pay-row">
+        <input type="text" id="sig" name="accepted_name" required
+               placeholder="Your full name" autocomplete="name">
+        <button class="btn btn-primary btn-lg" type="submit">Accept estimate</button>
+      </div>
+      {% if request.args.get('error') == 'name' %}
+      <p class="doc-hint doc-hint-err">Please type your name to accept.</p>
+      {% endif %}
+      <p class="doc-hint">Accepting records your name, the date and your IP address as
+        confirmation of this estimate.</p>
+    </form>
+    <form method="post" action="/estimate/{{ token }}/decline" class="doc-decline"
+          onsubmit="return confirm('Decline this estimate?')">
+      <input type="text" name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <button class="btn btn-ghost" type="submit">Decline</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="doc-actions no-print">
+    <button class="btn btn-ghost" onclick="window.print()">Print / save as PDF</button>
+  </div>
+</div>
+{% endblock %}

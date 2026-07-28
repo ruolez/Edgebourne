@@ -1,0 +1,56 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Customers{% endblock %}
+{% block heading %}Customers{% endblock %}
+{% block actions %}<a class="btn btn-primary" href="/admin/customers/new">New customer</a>{% endblock %}
+{% block content %}
+<div class="tabs">
+  <a href="/admin/customers" class="{{ 'active' if show == 'active' }}">Active</a>
+  <a href="/admin/customers?show=archived" class="{{ 'active' if show == 'archived' }}">Archived</a>
+  <a href="/admin/customers?show=all" class="{{ 'active' if show == 'all' }}">All</a>
+</div>
+
+<section class="panel">
+  <form method="get" action="/admin/customers" class="filter-form">
+    <input type="hidden" name="show" value="{{ show }}">
+    <div class="field">
+      <input type="search" name="q" value="{{ q }}" placeholder="Search name, company or email…">
+    </div>
+  </form>
+
+  {% if rows %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Customer</th><th>Contact</th><th>Open</th>
+        <th class="num">Balance</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr class="row-link {{ 'row-warn' if r.overdue_invoices }}" data-href="/admin/customers/{{ r.id }}">
+        <td>
+          <a href="/admin/customers/{{ r.id }}">{{ r.display_name }}</a>
+          {% if r.company and r.company != r.display_name %}<span class="line-detail-ro">{{ r.company }}</span>{% endif %}
+        </td>
+        <td>{{ r.email or '—' }}</td>
+        <td>
+          {% if r.overdue_invoices %}<span class="pill pill-overdue">{{ r.overdue_invoices }} overdue</span>
+          {% elif r.open_invoices %}<span class="pill pill-open">{{ r.open_invoices }} open</span>
+          {% else %}—{% endif %}
+        </td>
+        <td class="num {{ 'money-neg' if r.balance_cents < 0 }}">
+          {{ r.balance_cents|money(r.currency) }}
+          {% if r.balance_cents < 0 %}<span class="line-detail-ro">in credit</span>{% endif %}
+        </td>
+        <td class="cell-actions">
+          {% if r.is_archived %}<span class="pill">Archived</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">{% if q %}No customers match “{{ q }}”.{% else %}No customers yet.{% endif %}</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -117,6 +117,8 @@ def contact_post():
 
 @bp.get("/sitemap.xml")
 def sitemap():
+    # NOTE: customer document pages (/pay/<token>, /estimate/<token>) must NEVER
+    # be listed here -- the token is the credential.
     base = request.url_root.rstrip("/")
     entries = [(f"{base}/", None)]
     for path in ("/services", "/work", "/about", "/blog", "/contact"):
@@ -147,7 +149,10 @@ def sitemap():
 @bp.get("/robots.txt")
 def robots():
     base = request.url_root.rstrip("/")
-    body = f"User-agent: *\nDisallow: /admin\nSitemap: {base}/sitemap.xml\n"
+    body = (
+        "User-agent: *\nDisallow: /admin\nDisallow: /pay/\nDisallow: /estimate/\n"
+        f"Sitemap: {base}/sitemap.xml\n"
+    )
     return Response(body, mimetype="text/plain")
 
 

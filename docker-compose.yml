@@ -41,6 +41,28 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  # Recurring invoices, email retries and Stripe reconciliation. Its own process
+  # rather than a thread in Flask: gunicorn runs --preload in production and does
+  # NOT in the dev overlay, so a thread would land in the arbiter in one and in a
+  # worker in the other -- different behaviour in the code path that generates
+  # invoices. It also takes a Postgres advisory lock, so running two is safe.
+  scheduler:
+    build: ./backend
+    container_name: edgebourne-scheduler
+    env_file: .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=edgebourne
+      - POSTGRES_USER=edgebourne
+    command: ["python", "-u", "scheduler.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+    logging: *default-logging
+
   postgres:
     image: postgres:16-alpine
     container_name: edgebourne-postgres

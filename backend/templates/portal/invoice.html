@@ -1,0 +1,53 @@
+{% extends "portal/_base.html" %}
+{% from "portal/_document.html" import document with context %}
+{% block title %}Invoice {{ inv.number }} — {{ company.company_name }}{% endblock %}
+{% block content %}
+<div class="doc-sheet">
+  {% if canceled %}
+  <p class="doc-note">Payment cancelled — nothing was charged. You can try again below.</p>
+  {% endif %}
+
+  {% if inv.status == 'paid' %}
+  <p class="doc-paid">Paid in full — thank you.</p>
+  {% endif %}
+
+  {{ document(inv, customer, company, lines, 'Invoice', payments) }}
+
+  {% if can_pay %}
+  <div class="doc-pay">
+    <form method="post" action="/pay/{{ token }}/checkout">
+      {% if allow_partial %}
+      <label class="doc-pay-amount" for="pay-amount">Amount to pay</label>
+      <div class="doc-pay-row">
+        <span class="doc-affix">{{ currency_symbol(inv.currency) }}</span>
+        <input type="text" inputmode="decimal" id="pay-amount" name="amount"
+               value="{{ inv.balance_due_cents|money_plain }}">
+        <button class="btn btn-primary btn-lg" type="submit">Pay by card</button>
+      </div>
+      <p class="doc-hint">You can pay the full {{ inv.balance_due_cents|money(inv.currency) }}
+        or a part of it.</p>
+      {% else %}
+      <button class="btn btn-primary btn-lg" type="submit">
+        Pay {{ inv.balance_due_cents|money(inv.currency) }} by card</button>
+      {% endif %}
+      <p class="doc-hint">You'll be taken to Stripe's secure checkout. We never see your card details.</p>
+    </form>
+  </div>
+  {% elif inv.balance_due_cents > 0 and inv.status in ('open', 'partial') %}
+  <p class="doc-note">Card payment isn't available for this invoice — please use the payment
+    details below.</p>
+  {% endif %}
+
+  {% if inv.notes_md %}<div class="doc-notes">{{ inv.notes_md }}</div>{% endif %}
+  {% if inv.balance_due_cents > 0 and company.payment_instructions %}
+  <div class="doc-notes"><strong>Other ways to pay</strong>
+    <div class="doc-addr">{{ company.payment_instructions }}</div></div>
+  {% endif %}
+  {% if inv.terms_md %}<div class="doc-notes doc-terms">{{ inv.terms_md }}</div>{% endif %}
+  {% if company.footer_notes %}<div class="doc-notes doc-terms">{{ company.footer_notes }}</div>{% endif %}
+
+  <div class="doc-actions no-print">
+    <button class="btn btn-ghost" onclick="window.print()">Print / save as PDF</button>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,83 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input, md_editor, save_bar %}
+{% from "admin/_billing_macros.html" import select_field, money_input, date_input, status_pill %}
+{% block title %}{{ row.name if row else 'New project' }}{% endblock %}
+{% block heading %}{{ row.name if row else 'New project' }}{% endblock %}
+{% block content %}
+<form method="post" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-cols">
+    <div class="form-main">
+      <section class="panel">
+        {{ text_input('name', 'Project name', row.name if row else '') }}
+        {{ text_input('code', 'Reference', row.code if row else '',
+            help='Optional internal code or PO number.') }}
+        {{ md_editor('description_md', 'Description', row.description_md if row else '') }}
+      </section>
+
+      {% if row %}
+      <section class="panel">
+        <div class="panel-head"><h2>Documents</h2>
+          <a href="/admin/invoices/new?customer={{ row.customer_id }}&project={{ row.id }}">New invoice</a></div>
+        {% if related.invoices or related.estimates %}
+        <table class="table">
+          <thead><tr><th>Document</th><th>Date</th><th>Status</th><th class="num">Total</th></tr></thead>
+          <tbody>
+            {% for e in related.estimates %}
+            <tr class="row-link" data-href="/admin/estimates/{{ e.id }}">
+              <td><a href="/admin/estimates/{{ e.id }}">Estimate {{ e.number or '#' ~ e.id }}</a></td>
+              <td>{{ e.issue_date.strftime('%d %b %Y') }}</td>
+              <td>{{ status_pill(e.status) }}</td>
+              <td class="num">{{ e.total_cents|money(row.currency) }}</td>
+            </tr>
+            {% endfor %}
+            {% for i in related.invoices %}
+            <tr class="row-link" data-href="/admin/invoices/{{ i.id }}">
+              <td><a href="/admin/invoices/{{ i.id }}">Invoice {{ i.number or '#' ~ i.id }}</a></td>
+              <td>{{ i.issue_date.strftime('%d %b %Y') }}</td>
+              <td>{{ status_pill(i.status, i.is_overdue) }}</td>
+              <td class="num">{{ i.total_cents|money(row.currency) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}<p class="empty">Nothing billed to this project yet.</p>{% endif %}
+      </section>
+      {% endif %}
+    </div>
+
+    <div class="form-side">
+      <section class="panel">
+        {{ select_field('customer_id', 'Customer',
+            row.customer_id if row else preset_customer, customers, blank='Choose a customer…') }}
+        {{ select_field('status', 'Status', row.status if row else 'active', statuses) }}
+        <div class="field-row">
+          {{ date_input('start_date', 'Starts', row.start_date if row else none) }}
+          {{ date_input('end_date', 'Ends', row.end_date if row else none) }}
+        </div>
+        {{ money_input('budget_cents', 'Budget', row.budget_cents if row else 0,
+            currency=row.currency if row else none,
+            help='Compared against what has actually been invoiced.') }}
+        {{ save_bar(row, '/admin/projects', '/admin/projects/' ~ row.id ~ '/delete' if row else None) }}
+      </section>
+
+      {% if row %}
+      <section class="panel">
+        <div class="panel-head"><h2>Budget</h2></div>
+        <div class="kv">
+          <span class="kv-k">Budget</span>
+          <span class="kv-v">{{ row.budget_cents|money(row.currency) }}</span>
+          <span class="kv-k">Invoiced</span>
+          <span class="kv-v {{ 'money-neg' if row.budget_cents and related.billed_cents > row.budget_cents }}">
+            {{ related.billed_cents|money(row.currency) }}</span>
+          <span class="kv-k">Remaining</span>
+          <span class="kv-v">{{ (row.budget_cents - related.billed_cents)|money(row.currency) }}</span>
+        </div>
+        <p class="help">Voided invoices are excluded. Deleting a project keeps its invoices and
+          estimates — they simply stop being grouped.</p>
+      </section>
+      {% endif %}
+    </div>
+  </div>
+</form>
+{% endblock %}

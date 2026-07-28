@@ -10,6 +10,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# zoneinfo (used for recurring-invoice period dates) needs the system tz
+# database, which python:3.12-slim does not ship. Without it ZoneInfo raises
+# at runtime in production while working fine on a developer's Mac.
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /wheels /wheels
 COPY requirements.txt .
 RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \

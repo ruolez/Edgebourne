@@ -1,0 +1,165 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input, textarea, checkbox %}
+{% from "admin/_billing_macros.html" import select_field, money_input, rate_input %}
+{% block title %}Billing settings{% endblock %}
+{% block heading %}Billing settings{% endblock %}
+{% block content %}
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Stripe</h2>
+    {% if stripe.configured %}
+      <span class="pill {% if stripe.livemode %}pill-paid{% else %}pill-partial{% endif %}">{{ stripe.mode|upper }}</span>
+    {% else %}
+      <span class="pill">Not configured</span>
+    {% endif %}
+  </div>
+  <p class="help">Stripe keys are read from the server environment (<code>.env</code>), not from
+    this page, and cannot be changed here. A key that could be rewritten through the admin UI
+    would let anyone with a stolen session redirect payment confirmations. Change them with
+    <code>sudo ./install.sh</code> → Configure Stripe, or by editing <code>.env</code> and
+    restarting.</p>
+  <div class="kv">
+    <span class="kv-k">Secret key</span>
+    <span class="kv-v">{{ stripe.fingerprint or '— not set —' }}</span>
+    <span class="kv-k">Webhook secret</span>
+    <span class="kv-v">{{ 'configured' if stripe.webhook_secret_set else '— not set —' }}</span>
+    <span class="kv-k">Public base URL</span>
+    <span class="kv-v">{{ stripe.public_base_url or '— not set (PUBLIC_BASE_URL) —' }}</span>
+    <span class="kv-k">Webhook endpoint</span>
+    <span class="kv-v">
+      <span class="token-link">
+        <input type="text" class="js-copy-src" value="{{ stripe.webhook_url }}" readonly>
+        <button type="button" class="btn btn-ghost js-copy">Copy</button>
+      </span>
+    </span>
+    <span class="kv-k">Last webhook</span>
+    <span class="kv-v">
+      {% if last_event_at %}{{ last_event_at.strftime('%d %b %Y, %H:%M') }} UTC
+      {% else %}<em>none received yet</em>{% endif %}
+    </span>
+  </div>
+  <div class="save-bar">
+    <button class="btn btn-ghost" type="button" id="stripe-test">Test connection</button>
+    <span id="stripe-test-result" class="test-result"></span>
+  </div>
+  {% if recent_events %}
+  <table class="table">
+    <thead><tr><th>Event</th><th>Type</th><th>Status</th><th>Received</th></tr></thead>
+    <tbody>
+      {% for e in recent_events %}
+      <tr>
+        <td><code>{{ e.stripe_event_id }}</code></td>
+        <td>{{ e.type }}</td>
+        <td><span class="pill pill-{{ 'paid' if e.status == 'processed' else ('overdue' if e.status == 'failed' else 'draft') }}">{{ e.status }}</span></td>
+        <td>{{ e.received_at.strftime('%d %b %H:%M') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<form method="post" action="/admin/billing" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <section class="panel">
+    <div class="panel-head"><h2>Your business</h2></div>
+    <p class="help">Shown at the top of every invoice and estimate the customer sees.</p>
+    {{ text_input('billing_company_name', 'Business name', v.billing_company_name) }}
+    {{ textarea('billing_company_address', 'Address', v.billing_company_address, rows=4) }}
+    <div class="field-row">
+      {{ text_input('billing_company_email', 'Billing email', v.billing_company_email, type='email') }}
+      {{ text_input('billing_company_phone', 'Phone', v.billing_company_phone) }}
+    </div>
+    {{ text_input('billing_tax_number', 'Tax / VAT number', v.billing_tax_number, help='Optional. Printed on documents when set.') }}
+    {{ textarea('billing_payment_instructions', 'Payment instructions', v.billing_payment_instructions, rows=4,
+        help='Bank / ACH details, shown alongside the card button so customers can pay another way.') }}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Money</h2></div>
+    <div class="field-row">
+      {{ text_input('billing_currency', 'Currency', v.billing_currency, placeholder='USD',
+          help='Three-letter code. Zero-decimal currencies (JPY, KRW) are not supported.') }}
+      {{ text_input('billing_default_terms_days', 'Default payment terms (days)', v.billing_default_terms_days) }}
+    </div>
+    <div class="field-row">
+      {{ rate_input('billing_tax_rate_milli', 'Default tax rate', v.billing_tax_rate_milli|int,
+          help='Applied to new line items. Per-line rates override it.') }}
+      {{ text_input('billing_tax_label', 'Tax label', v.billing_tax_label, placeholder='Sales tax / VAT / GST') }}
+    </div>
+    <p class="help"><strong>This is not a tax engine.</strong> One configured rate is correct for a
+      single jurisdiction. US multi-state sales tax or EU VAT need an accountant's rules.</p>
+    {{ checkbox('billing_allow_partial_payment', 'Let customers pay part of an invoice online', v.billing_allow_partial_payment) }}
+    <div class="field-row">
+      {{ money_input('billing_min_payment_cents', 'Minimum online payment', v.billing_min_payment_cents|int,
+          help="Must clear Stripe's own minimum (about $0.50).") }}
+      {{ text_input('billing_statement_descriptor_suffix', 'Card statement suffix', v.billing_statement_descriptor_suffix,
+          help='Max 22 characters. Shown on the customer\'s card statement.') }}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Numbering</h2></div>
+    <p class="help">Numbers are assigned when a document is issued, not when it is created, so
+      deleting an abandoned draft never leaves a gap.</p>
+    <div class="field-row">
+      {{ text_input('billing_invoice_prefix', 'Invoice prefix', v.billing_invoice_prefix, placeholder='INV') }}
+      {{ text_input('billing_estimate_prefix', 'Estimate prefix', v.billing_estimate_prefix, placeholder='EST') }}
+    </div>
+    <div class="field-row">
+      {{ select_field('billing_number_period', 'Restart numbering', v.billing_number_period,
+          [('year', 'Every year — INV-2026-0001'), ('none', 'Never — INV-0001')]) }}
+      {{ text_input('billing_number_pad', 'Digits', v.billing_number_pad, help='4 gives 0001.') }}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Documents</h2></div>
+    {{ textarea('billing_default_terms_text', 'Default terms', v.billing_default_terms_text, rows=4,
+        help='Pre-filled on new invoices and estimates. Markdown.') }}
+    {{ textarea('billing_footer_notes', 'Document footer', v.billing_footer_notes, rows=3) }}
+    {{ text_input('billing_estimate_valid_days', 'Estimates valid for (days)', v.billing_estimate_valid_days) }}
+    {{ text_input('billing_token_ttl_days', 'Customer links expire after (days)', v.billing_token_ttl_days,
+        help='Extended each time you resend.') }}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Automation</h2></div>
+    <div class="field-row">
+      {{ text_input('billing_timezone', 'Timezone', v.billing_timezone, placeholder='America/Chicago',
+          help='Used for recurring invoice dates, so a retainer never dates itself to the previous day.') }}
+      {{ text_input('billing_run_hour', 'Generate recurring invoices at (hour)', v.billing_run_hour) }}
+    </div>
+    {{ checkbox('billing_default_auto_send', 'Email recurring invoices automatically', v.billing_default_auto_send) }}
+    <div class="field-row">
+      {{ text_input('billing_send_delay_minutes', 'Hold before sending (minutes)', v.billing_send_delay_minutes,
+          help='A generated invoice waits this long so you can cancel it before it leaves. Do not set to 0.') }}
+      {{ money_input('billing_auto_send_max_cents', 'Never auto-send above', v.billing_auto_send_max_cents|int,
+          help='Larger invoices are held as drafts. A sanity cap against a bad run.') }}
+    </div>
+    {{ select_field('billing_catchup_mode', 'After downtime', v.billing_catchup_mode,
+        [('all', 'Generate every missed period (as drafts)'), ('skip', 'Skip ahead to the current period')]) }}
+    {{ checkbox('billing_reminder_enabled', 'Send overdue reminders', v.billing_reminder_enabled) }}
+    {{ text_input('billing_reminder_days', 'Reminder schedule', v.billing_reminder_days,
+        help='Days relative to the due date, comma separated. Negative is before. e.g. -3,0,7,14,30') }}
+    {{ text_input('billing_admin_alert_email', 'Send billing alerts to', v.billing_admin_alert_email, type='email',
+        help='Overpayments, disputes, failed sends, scheduler problems. Falls back to the notification email.') }}
+    {{ text_input('billing_test_email_override', 'Test-mode email override', v.billing_test_email_override, type='email',
+        help='While Stripe is in test mode all customer email goes here instead of to the customer.') }}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Master switch</h2></div>
+    {{ checkbox('billing_enabled', 'Billing enabled', v.billing_enabled) }}
+    <p class="help">Turning this off hides the billing sections and refuses new online payments.
+      Existing records are untouched.</p>
+  </section>
+
+  <div class="save-bar">
+    <button class="btn btn-primary" type="submit">Save settings</button>
+    <a class="btn btn-ghost" href="/admin/billing/audit">Consistency check</a>
+  </div>
+</form>
+{% endblock %}

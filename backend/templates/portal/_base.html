@@ -1,0 +1,30 @@
+{# Deliberately NOT extending base.html: _nav.html and _footer.html would put the
+   whole site structure on a page emailed to a stranger's inbox. Zero
+   third-party resources -- fonts are self-hosted and there is no analytics. #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="referrer" content="no-referrer">
+  <title>{% block title %}{{ company.company_name or 'EdgeBourne' }}{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="preload" href="/static/fonts/mulish-var.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ static_url('css/site.css') }}">
+</head>
+<body class="portal">
+{% include "_svg_defs.html" %}
+<main class="doc-wrap">
+  <div class="doc-brand">
+    <svg viewBox="0 0 190 190" class="doc-seal"><use href="#seal"/></svg>
+    <span>{{ company.company_name or 'EdgeBourne' }}</span>
+  </div>
+  {% block content %}{% endblock %}
+  <p class="doc-legal">
+    Questions about this document? Reply to the email it came with{% if company.company_email %}
+    or write to {{ company.company_email }}{% endif %}.
+  </p>
+</main>
+</body>
+</html>

@@ -19,6 +19,21 @@
     </a>
     <nav class="side-nav">
       <a href="/admin" {% if request.path in ('/admin', '/admin/') %}class="active"{% endif %}>Dashboard</a>
+
+      <span class="side-label">Billing</span>
+      <a href="/admin/customers" {% if request.path.startswith('/admin/customers') %}class="active"{% endif %}>Customers</a>
+      <a href="/admin/projects" {% if request.path.startswith('/admin/projects') %}class="active"{% endif %}>Projects</a>
+      <a href="/admin/estimates" {% if request.path.startswith('/admin/estimates') and request.args.get('status') != 'accepted' %}class="active"{% endif %}>Estimates</a>
+      {# Work orders are accepted estimates -- a filter, not a separate route.
+         A real /admin/work-orders path would also collide with the
+         startswith('/admin/work') check used by Work below. #}
+      <a href="/admin/estimates?status=accepted" {% if request.path.startswith('/admin/estimates') and request.args.get('status') == 'accepted' %}class="active"{% endif %}>Work orders</a>
+      <a href="/admin/invoices" {% if request.path.startswith('/admin/invoices') %}class="active"{% endif %}>Invoices
+        {% if overdue_count %}<span class="badge badge-warn">{{ overdue_count }}</span>{% endif %}</a>
+      <a href="/admin/payments" {% if request.path.startswith('/admin/payments') %}class="active"{% endif %}>Payments</a>
+      <a href="/admin/recurring" {% if request.path.startswith('/admin/recurring') %}class="active"{% endif %}>Recurring</a>
+
+      <span class="side-label">Site</span>
       <a href="/admin/site" {% if request.path.startswith('/admin/site') %}class="active"{% endif %}>Site content</a>
       <a href="/admin/services" {% if request.path.startswith('/admin/services') %}class="active"{% endif %}>Services</a>
       <a href="/admin/work" {% if request.path.startswith('/admin/work') %}class="active"{% endif %}>Work</a>
@@ -26,7 +41,12 @@
       <a href="/admin/pages" {% if request.path.startswith('/admin/pages') %}class="active"{% endif %}>Pages</a>
       <a href="/admin/leads" {% if request.path.startswith('/admin/leads') %}class="active"{% endif %}>Leads
         {% if unread_leads %}<span class="badge">{{ unread_leads }}</span>{% endif %}</a>
+
+      <span class="side-label">Setup</span>
       <a href="/admin/email" {% if request.path.startswith('/admin/email') %}class="active"{% endif %}>Email</a>
+      <a href="/admin/billing" {% if request.path == '/admin/billing' %}class="active"{% endif %}>Billing settings</a>
+      <a href="/admin/billing/email-log" {% if request.path.startswith('/admin/billing/email-log') %}class="active"{% endif %}>Email log
+        {% if failed_emails %}<span class="badge badge-warn">{{ failed_emails }}</span>{% endif %}</a>
     </nav>
     <div class="side-bottom">
       <a href="/" target="_blank" rel="noopener">View site ↗</a>

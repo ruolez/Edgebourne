@@ -1,0 +1,260 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input, md_editor %}
+{% from "admin/_billing_macros.html" import select_field, date_input, line_items,
+        doc_totals, status_pill, money_input, copy_link %}
+{% set editable = row.status == 'draft' %}
+{% block title %}{{ row.number or ('New invoice' if is_new else 'Draft #' ~ row.id) }}{% endblock %}
+{% block heading %}
+  {{ row.number or ('New invoice' if is_new else 'Draft #' ~ row.id) }}
+  {% if not is_new %}{{ status_pill(row.status, row.is_overdue) }}{% endif %}
+{% endblock %}
+{% block actions %}
+  {% if not is_new %}
+  <a class="btn btn-ghost" href="/admin/invoices/{{ row.id }}/print" target="_blank" rel="noopener">Print</a>
+  {% endif %}
+{% endblock %}
+{% block content %}
+
+{% if not editable %}
+<div class="flash flash-success" style="margin-bottom:18px">
+  This invoice has been issued, so its line items are locked. To change what was billed,
+  void it and reissue, or record a credit.
+</div>
+{% endif %}
+
+<form method="post" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-cols">
+    <div class="form-main">
+
+      <section class="panel">
+        {{ text_input('title', 'Title', row.title,
+            help='Optional. e.g. “Warehouse portal — phase 2”. Shown to the customer.') }}
+        {{ line_items(lines, row.currency, editable) }}
+        {{ doc_totals(row, editable, show_paid=not is_new and row.status != 'draft') }}
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Notes &amp; terms</h2></div>
+        {{ md_editor('notes_md', 'Notes to the customer', row.notes_md) }}
+        {{ md_editor('terms_md', 'Payment terms', row.terms_md) }}
+      </section>
+
+      {% if not is_new and row.status not in ('draft', 'void') %}
+      <section class="panel">
+        <div class="panel-head"><h2>Payments</h2></div>
+        {% if payments %}
+        <table class="table">
+          <thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Status</th>
+            <th class="num">Amount</th><th></th></tr></thead>
+          <tbody>
+            {% for p in payments %}
+            <tr>
+              <td>{{ p.received_on.strftime('%d %b %Y') }}</td>
+              <td>{{ p.method|replace('_', ' ')|capitalize }}</td>
+              <td>{{ p.reference or p.memo or '—' }}</td>
+              <td>{{ status_pill(p.status) }}</td>
+              <td class="num">{{ p.amount_cents|money(row.currency) }}</td>
+              <td class="cell-actions">
+                {% if p.status == 'succeeded' and p.method not in ('card', 'credit') %}
+                <form method="post" action="/admin/payments/{{ p.id }}/void" class="js-confirm"
+                      data-confirm="Void this payment? The invoice balance will go back up.">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn-x" type="submit" title="Void payment">✕</button>
+                </form>
+                {% endif %}
+                {% if p.status == 'succeeded' and p.method != 'credit' %}
+                <button type="button" class="btn-x js-refund" title="Refund"
+                        data-pid="{{ p.id }}" data-amount="{{ p.amount_cents|money_plain }}"
+                        data-label="{{ p.amount_cents|money(row.currency) }} ({{ p.method|replace('_',' ') }})">↺</button>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}<p class="empty">Nothing received yet.</p>{% endif %}
+
+        {% if row.balance_due_cents > 0 %}
+        <div class="panel-head" style="margin-top:20px"><h2>Record a payment</h2></div>
+        <p class="help">For money received outside Stripe — a transfer, cheque or cash.
+          Paying more than the balance leaves the excess as credit on the customer's account.</p>
+        <form method="post" action="/admin/invoices/{{ row.id }}/payments">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="field-row">
+            {{ money_input('amount', 'Amount', row.balance_due_cents, currency=row.currency) }}
+            {{ date_input('received_on', 'Received on', none) }}
+          </div>
+          <div class="field-row">
+            {{ select_field('method', 'Method', 'bank_transfer', methods) }}
+            {{ text_input('reference', 'Reference', '', placeholder='Cheque no. / wire ref') }}
+          </div>
+          <button class="btn btn-primary" type="submit">Record payment</button>
+        </form>
+        {% endif %}
+      </section>
+      {% endif %}
+    </div>
+
+    <div class="form-side">
+      <section class="panel">
+        {% if is_new %}
+        {{ select_field('customer_id', 'Customer', row.customer_id, customers, blank='Choose a customer…') }}
+        {% else %}
+        <div class="field">
+          <label>Customer</label>
+          <p class="kv-v"><a href="/admin/customers/{{ row.customer_id }}">{{ row.customer_name }}</a></p>
+          <input type="hidden" name="customer_id" value="{{ row.customer_id }}">
+          <p class="help">Fixed after creation — duplicate the invoice to bill someone else.</p>
+        </div>
+        {% endif %}
+        {{ select_field('project_id', 'Project', row.project_id, projects, blank='No project') }}
+        <div class="field-row">
+          {{ date_input('issue_date', 'Issue date', row.issue_date) }}
+          {{ date_input('due_date', 'Due date', row.due_date) }}
+        </div>
+        {% if editable %}
+        <div class="save-bar">
+          <button class="btn btn-primary" type="submit">Save draft</button>
+          <a class="btn btn-ghost" href="/admin/invoices">Cancel</a>
+        </div>
+        {% endif %}
+      </section>
+
+      {% if not is_new %}
+      {% if editable %}
+      <section class="panel">
+        <div class="panel-head"><h2>Issue</h2></div>
+        <p class="help">Assigns the invoice number, posts the charge to
+          {{ row.customer_name }}'s ledger and creates the customer payment link.
+          After this, line items are locked — corrections go through void-and-reissue.</p>
+        <button class="btn btn-primary btn-block" type="button"
+                onclick="document.getElementById('issue-form').submit()">Issue invoice</button>
+        <button class="btn btn-ghost btn-block" type="button" style="margin-top:8px"
+                onclick="document.getElementById('send-form').submit()">Issue &amp; email now</button>
+      </section>
+      {% elif row.status not in ('void', 'uncollectible') %}
+      <section class="panel">
+        <div class="panel-head"><h2>Send</h2></div>
+        <p class="help">
+          {% if row.sent_at %}Last sent {{ row.sent_at.strftime('%d %b %Y at %H:%M') }}.
+          {% else %}Not sent yet.{% endif %}
+          {% if row.last_viewed_at %}<br>Customer last opened it
+            {{ row.last_viewed_at.strftime('%d %b %Y at %H:%M') }}.{% endif %}
+        </p>
+        <button class="btn btn-primary btn-block" type="button"
+                onclick="document.getElementById('send-form').submit()">
+          {{ 'Resend to customer' if row.sent_at else 'Email to customer' }}</button>
+        <p class="help">Resending issues a new link (the old one keeps working for 24 hours).</p>
+      </section>
+      {% endif %}
+
+      {% if fresh_token %}
+      <section class="panel">
+        <div class="panel-head"><h2>Customer link</h2></div>
+        <p class="help"><strong>Copy this now.</strong> Only a hash of the link is stored, so it
+          cannot be shown again — if you lose it, generate a new one (which invalidates this one).</p>
+        {{ copy_link(base_url ~ '/pay/' ~ fresh_token) }}
+      </section>
+      {% endif %}
+
+      <section class="panel">
+        <div class="panel-head"><h2>Actions</h2></div>
+        <div class="save-bar">
+          <button class="btn btn-ghost btn-block" type="button"
+                  onclick="document.getElementById('dup-form').submit()">Duplicate</button>
+          {% if row.status not in ('draft', 'void') %}
+          <button class="btn btn-ghost btn-block" type="button"
+                  onclick="if(confirm('Generate a new link? The current one stops working in 24 hours.')) document.getElementById('token-form').submit()">New customer link</button>
+          {% endif %}
+        </div>
+      </section>
+
+      {% if bal and bal.credit_cents and row.status in ('open', 'partial') %}
+      <section class="panel">
+        <div class="panel-head"><h2>Account credit</h2></div>
+        <p class="help">{{ row.customer_name }} has
+          <strong>{{ bal.credit_cents|money(row.currency) }}</strong> available.
+          Applying it does not change their balance — the money was already counted — it just
+          settles this invoice.</p>
+        <form method="post" action="/admin/invoices/{{ row.id }}/apply-credit">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          {{ money_input('amount', 'Amount to apply',
+              [bal.credit_cents, row.balance_due_cents]|min, currency=row.currency) }}
+          <button class="btn btn-primary btn-block" type="submit">Apply credit</button>
+        </form>
+      </section>
+      {% endif %}
+
+      {% if editable %}
+      <section class="panel">
+        <button class="btn btn-danger btn-block js-delete" type="button"
+                data-action="/admin/invoices/{{ row.id }}/delete">Delete draft</button>
+      </section>
+      {% elif row.status not in ('void', 'paid') %}
+      <section class="panel">
+        <div class="panel-head"><h2>Void</h2></div>
+        <p class="help">Reverses the charge on the ledger. Only possible while no payment has been
+          received — refund first otherwise.</p>
+        <button class="btn btn-danger btn-block" type="button"
+                onclick="if(confirm('Void this invoice? It stays on record but is reversed on the ledger.')) document.getElementById('void-form').submit()">Void invoice</button>
+      </section>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+</form>
+
+{% if not is_new %}
+{# Kept outside the main form -- nested <form> elements are invalid HTML. #}
+<form method="post" action="/admin/invoices/{{ row.id }}/duplicate" id="dup-form" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+<form method="post" action="/admin/invoices/{{ row.id }}/issue" id="issue-form" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+<form method="post" action="/admin/invoices/{{ row.id }}/void" id="void-form" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+<form method="post" action="/admin/invoices/{{ row.id }}/token" id="token-form" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+<form method="post" action="/admin/invoices/{{ row.id }}/send" id="send-form" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+
+{% if payments %}
+<div class="modal" id="refund-modal" hidden>
+  <form method="post" id="refund-form" class="modal-card">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <h2>Refund a payment</h2>
+    <p class="help">Refunding <strong id="refund-label"></strong>. Card payments go back through
+      Stripe; other methods are recorded here so your books match what you actually sent.</p>
+    <div class="field">
+      <label for="refund-amount">Amount</label>
+      <div class="money-wrap">
+        <span class="affix">{{ currency_symbol(row.currency) }}</span>
+        <input type="text" inputmode="decimal" id="refund-amount" name="amount" class="js-money">
+      </div>
+      <p class="help">Leave as-is for a full refund of that payment.</p>
+    </div>
+    <div class="field">
+      <label for="refund-reason">Reason</label>
+      <input type="text" id="refund-reason" name="reason" required
+             placeholder="Why is this being refunded?">
+    </div>
+    <label class="check">
+      <input type="checkbox" name="credit_note" value="1" checked>
+      <span>Also issue a credit note, so this invoice stays settled</span>
+    </label>
+    <p class="help">Leave ticked when you refunded because the work is not happening — the invoice
+      then reads as settled rather than reopening a balance the customer does not owe.</p>
+    <div class="field">
+      <label for="refund-password">Confirm with your password</label>
+      <input type="password" id="refund-password" name="password" required autocomplete="off">
+      <p class="help">Required because this moves money out of your account.</p>
+    </div>
+    <div class="save-bar">
+      <button class="btn btn-danger" type="submit">Issue refund</button>
+      <button class="btn btn-ghost" type="button" id="refund-cancel">Cancel</button>
+    </div>
+  </form>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

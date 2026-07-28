@@ -9,6 +9,12 @@ services:
       sh -c "exec gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 4
       --timeout 300 --reload 'app:create_app()'"
 
+  scheduler:
+    volumes:
+      - ./backend:/app
+    environment:
+      - SCHEDULER_TICK_SECONDS=10
+
   postgres:
     ports:
       - "5480:5432"

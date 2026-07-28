@@ -1,0 +1,13 @@
+Hello{% if customer.contact_name %} {{ customer.contact_name }}{% endif %},
+
+Here is estimate {{ est.number }} from {{ company.company_name }}{% if est.title %} for {{ est.title }}{% endif %}.
+
+  Total: {{ est.total_cents|money(est.currency) }}
+{% if est.valid_until %}  Valid until: {{ est.valid_until.strftime('%d %B %Y') }}
+{% endif %}
+
+Review it and accept online:
+{{ view_url }}
+
+Thanks,
+{{ company.company_name }}

@@ -1,0 +1,84 @@
+{# Shared document body: letterhead, parties, line items, totals.
+   Shows only what an invoice legally needs. Never the customer's email or
+   phone, never internal notes, never any other document, and nothing that
+   reveals an admin exists. #}
+{% macro document(doc, customer, company, lines, kind, payments=None) %}
+<div class="doc-head">
+  <div>
+    <p class="doc-eyebrow">{{ kind }}</p>
+    <h1>{{ doc.number }}</h1>
+    {% if doc.title %}<p class="doc-title">{{ doc.title }}</p>{% endif %}
+  </div>
+  <div class="doc-dates">
+    <span>Issued</span><strong>{{ doc.issue_date.strftime('%d %b %Y') }}</strong>
+    {% if kind == 'Invoice' and doc.due_date %}
+    <span>Due</span><strong>{{ doc.due_date.strftime('%d %b %Y') }}</strong>
+    {% elif doc.valid_until %}
+    <span>Valid until</span><strong>{{ doc.valid_until.strftime('%d %b %Y') }}</strong>
+    {% endif %}
+  </div>
+</div>
+
+<div class="doc-parties">
+  <div>
+    <p class="doc-eyebrow">From</p>
+    <strong>{{ company.company_name }}</strong>
+    {% if company.company_address %}<div class="doc-addr">{{ company.company_address }}</div>{% endif %}
+    {% if company.company_email %}<div class="doc-addr">{{ company.company_email }}</div>{% endif %}
+    {% if company.tax_number %}<div class="doc-addr">Tax no. {{ company.tax_number }}</div>{% endif %}
+  </div>
+  <div>
+    <p class="doc-eyebrow">To</p>
+    <strong>{{ customer.company or customer.display_name }}</strong>
+    <div class="doc-addr">
+      {%- if customer.address_line1 %}{{ customer.address_line1 }}<br>{% endif %}
+      {%- if customer.address_line2 %}{{ customer.address_line2 }}<br>{% endif %}
+      {%- if customer.address_city %}{{ customer.address_city }}{% if customer.address_region %}, {{ customer.address_region }}{% endif %}<br>{% endif %}
+      {%- if customer.address_postcode %}{{ customer.address_postcode }}<br>{% endif %}
+      {%- if customer.address_country %}{{ customer.address_country }}{% endif %}
+    </div>
+    {% if customer.tax_number %}<div class="doc-addr">Tax no. {{ customer.tax_number }}</div>{% endif %}
+  </div>
+</div>
+
+<table class="doc-lines">
+  <thead><tr>
+    <th>Description</th><th class="num">Qty</th><th class="num">Price</th>
+    {% if doc.tax_cents %}<th class="num">Tax</th>{% endif %}<th class="num">Amount</th>
+  </tr></thead>
+  <tbody>
+    {% for l in lines %}
+    {% if l.kind == 'heading' %}
+    <tr class="is-heading"><td colspan="{{ 5 if doc.tax_cents else 4 }}">{{ l.description }}</td></tr>
+    {% else %}
+    <tr>
+      <td>{{ l.description }}{% if l.detail %}<span class="doc-line-detail">{{ l.detail }}</span>{% endif %}</td>
+      <td class="num">{{ l.qty_milli|qty }}{% if l.unit %} {{ l.unit }}{% endif %}</td>
+      <td class="num">{{ l.unit_price_cents|money(doc.currency) }}</td>
+      {% if doc.tax_cents %}<td class="num">{{ l.tax_rate_milli|rate }}%</td>{% endif %}
+      <td class="num">{{ l.amount_cents|money(doc.currency) }}</td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </tbody>
+</table>
+
+<dl class="doc-sum">
+  <dt>Subtotal</dt><dd class="num">{{ doc.subtotal_cents|money(doc.currency) }}</dd>
+  {% if doc.discount_cents %}
+  <dt>Discount</dt><dd class="num">−{{ doc.discount_cents|money(doc.currency) }}</dd>
+  {% endif %}
+  {% if doc.tax_cents %}
+  <dt>{{ setting('billing_tax_label', 'Tax') }}</dt><dd class="num">{{ doc.tax_cents|money(doc.currency) }}</dd>
+  {% endif %}
+  <dt class="grand">Total</dt><dd class="grand num">{{ doc.total_cents|money(doc.currency) }}</dd>
+  {% if payments %}
+  {% for p in payments %}
+  <dt>Paid {{ p.received_on.strftime('%d %b %Y') }}</dt>
+  <dd class="num">−{{ p.amount_cents|money(doc.currency) }}</dd>
+  {% endfor %}
+  <dt class="grand">Amount due</dt>
+  <dd class="grand num">{{ doc.balance_due_cents|money(doc.currency) }}</dd>
+  {% endif %}
+</dl>
+{% endmacro %}

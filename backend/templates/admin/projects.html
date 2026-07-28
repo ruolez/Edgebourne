@@ -1,0 +1,42 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_billing_macros.html" import status_pill %}
+{% block title %}Projects{% endblock %}
+{% block heading %}Projects{% endblock %}
+{% block actions %}<a class="btn btn-primary" href="/admin/projects/new">New project</a>{% endblock %}
+{% block content %}
+<div class="tabs">
+  <a href="/admin/projects" class="{{ 'active' if not status }}">All</a>
+  <a href="/admin/projects?status=active" class="{{ 'active' if status == 'active' }}">Active</a>
+  <a href="/admin/projects?status=lead" class="{{ 'active' if status == 'lead' }}">Leads</a>
+  <a href="/admin/projects?status=on_hold" class="{{ 'active' if status == 'on_hold' }}">On hold</a>
+  <a href="/admin/projects?status=completed" class="{{ 'active' if status == 'completed' }}">Completed</a>
+</div>
+
+<section class="panel">
+  {% if rows %}
+  <table class="table">
+    <thead>
+      <tr><th>Project</th><th>Customer</th><th>Status</th><th>Dates</th>
+        <th class="num">Budget</th><th class="num">Billed</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr class="row-link" data-href="/admin/projects/{{ r.id }}">
+        <td><a href="/admin/projects/{{ r.id }}">{{ r.name }}</a>
+          {% if r.code %}<span class="line-detail-ro">{{ r.code }}</span>{% endif %}</td>
+        <td><a href="/admin/customers/{{ r.customer_id }}">{{ r.customer_name }}</a></td>
+        <td>{{ status_pill(r.status) }}</td>
+        <td>{{ r.start_date.strftime('%d %b %Y') if r.start_date else '—' }}
+          {%- if r.end_date %} → {{ r.end_date.strftime('%d %b %Y') }}{% endif %}</td>
+        <td class="num">{{ r.budget_cents|money(r.currency, blank_zero=true) or '—' }}</td>
+        <td class="num {{ 'money-neg' if r.budget_cents and r.billed_cents > r.budget_cents }}">
+          {{ r.billed_cents|money(r.currency) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No projects{{ ' with that status' if status }} yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

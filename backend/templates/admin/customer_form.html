@@ -1,0 +1,90 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input, md_editor, checkbox, save_bar %}
+{% from "admin/_billing_macros.html" import rate_input %}
+{% block title %}{{ row.display_name if row else 'New customer' }}{% endblock %}
+{% block heading %}{{ row.display_name if row else 'New customer' }}{% endblock %}
+{% block content %}
+<form method="post" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-cols">
+    <div class="form-main">
+
+      <section class="panel">
+        <div class="panel-head"><h2>Identity</h2></div>
+        {{ text_input('display_name', 'Name', row.display_name if row else '',
+            help='How this customer appears throughout the admin.') }}
+        {{ text_input('company', 'Company', row.company if row else '',
+            help='Legal entity name, if different. Printed on invoices.') }}
+        <div class="field-row">
+          {{ text_input('contact_name', 'Contact person', row.contact_name if row else '') }}
+          {{ text_input('phone', 'Phone', row.phone if row else '') }}
+        </div>
+        <div class="field-row">
+          {{ text_input('email', 'Billing email', row.email if row else '', type='email',
+              help='Where invoices and estimates are sent.') }}
+          {{ text_input('cc_emails', 'CC', row.cc_emails if row else '',
+              help='Comma separated. Accounts payable, etc.') }}
+        </div>
+        {{ text_input('website', 'Website', row.website if row else '') }}
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Billing address</h2></div>
+        <p class="help">Printed on every invoice — most jurisdictions require the customer's
+          registered address on a tax document.</p>
+        {{ text_input('address_line1', 'Address line 1', row.address_line1 if row else '') }}
+        {{ text_input('address_line2', 'Address line 2', row.address_line2 if row else '') }}
+        <div class="field-row">
+          {{ text_input('address_city', 'City', row.address_city if row else '') }}
+          {{ text_input('address_region', 'State / region', row.address_region if row else '') }}
+        </div>
+        <div class="field-row">
+          {{ text_input('address_postcode', 'Postcode', row.address_postcode if row else '') }}
+          {{ text_input('address_country', 'Country', row.address_country if row else '') }}
+        </div>
+        {{ text_input('tax_number', 'Tax / VAT number', row.tax_number if row else '') }}
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Notes</h2></div>
+        {{ md_editor('notes_md', 'Internal notes', row.notes_md if row else '') }}
+        <p class="help">Never shown to the customer.</p>
+      </section>
+    </div>
+
+    <div class="form-side">
+      <section class="panel">
+        <div class="field">
+          <label for="f-currency">Currency</label>
+          {% if row %}
+          <input type="text" id="f-currency" value="{{ row.currency }}" readonly>
+          <p class="help">Set at creation and fixed afterwards. The account ledger sums a single
+            currency; changing it would silently mix them.</p>
+          {% else %}
+          <input type="text" id="f-currency" name="currency" value="{{ default_currency() }}">
+          <p class="help">Cannot be changed once the customer is created.</p>
+          {% endif %}
+        </div>
+        {{ text_input('terms_days', 'Payment terms (days)',
+            row.terms_days if row else setting('billing_default_terms_days', '14'),
+            help='Sets the due date on new invoices.') }}
+        {{ rate_input('default_tax_rate_milli', 'Default tax rate',
+            row.default_tax_rate_milli if row else setting('billing_tax_rate_milli', '0')|int,
+            help='Pre-fills new line items for this customer.') }}
+        {% if row %}{{ checkbox('is_archived', 'Archived', row.is_archived) }}{% endif %}
+        {{ save_bar(row, '/admin/customers') }}
+      </section>
+
+      {% if row %}
+      <section class="panel">
+        <div class="panel-head"><h2>Danger zone</h2></div>
+        <p class="help">Archiving hides the customer but keeps every record. Deleting is only
+          possible while they have no projects, invoices, estimates or payments.</p>
+        <button class="btn btn-danger btn-block js-delete" type="button"
+                data-action="/admin/customers/{{ row.id }}/delete">Delete customer</button>
+      </section>
+      {% endif %}
+    </div>
+  </div>
+</form>
+{% endblock %}

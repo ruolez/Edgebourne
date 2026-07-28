@@ -13,6 +13,10 @@ def _guard():
         check_csrf()
 
 
+# This import block is what registers the routes on the blueprint. A module
+# missing from here has no routes at all, with no error anywhere -- just 404s.
 from . import (  # noqa: E402,F401
-    blog, dashboard, email_settings, leads, media, pages, services, site, work,
+    billing_settings, blog, customers, dashboard, email_settings, estimates,
+    invoices, leads, media, pages, payments, projects, recurring, services, site,
+    work,
 )

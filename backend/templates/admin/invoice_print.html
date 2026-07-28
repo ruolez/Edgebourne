@@ -1,0 +1,140 @@
+{# Standalone printable invoice. Does NOT extend base_admin.html -- no sidebar,
+   no topbar, nothing that would end up on the page. This is the "PDF": the
+   customer presses Ctrl-P and saves. No PDF library, no native toolchain. #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>{{ inv.number or 'Draft' }} — {{ setting('billing_company_name', 'EdgeBourne') }}</title>
+  <link rel="stylesheet" href="{{ static_url('css/admin.css') }}">
+  <style>
+    body { background: #fff; padding: 40px; }
+    .sheet { max-width: 820px; margin: 0 auto; font-size: 14px; color: var(--ink); }
+    .sheet-head { display: flex; justify-content: space-between; gap: 40px; margin-bottom: 36px; }
+    .sheet h1 { font-size: 28px; letter-spacing: -0.5px; margin: 0 0 4px; }
+    .sheet-meta { text-align: right; }
+    .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 32px; }
+    .party-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 2px;
+                   text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+    .sheet .line-table-ro { margin-bottom: 20px; }
+    .sheet-foot { margin-top: 36px; border-top: 1px solid var(--card-border); padding-top: 20px;
+                  font-size: 13px; color: var(--muted); }
+    .print-bar { max-width: 820px; margin: 0 auto 24px; display: flex; gap: 10px; }
+    @media print { .print-bar { display: none; } body { padding: 0; } }
+  </style>
+</head>
+<body>
+<div class="print-bar">
+  <button class="btn btn-primary" onclick="window.print()">Print / Save as PDF</button>
+  <a class="btn btn-ghost" href="/admin/invoices/{{ inv.id }}">Back to invoice</a>
+</div>
+
+<div class="sheet">
+  <div class="sheet-head">
+    <div>
+      <h1>{{ setting('billing_company_name', 'EdgeBourne') }}</h1>
+      <div class="help" style="white-space: pre-line">{{ setting('billing_company_address', '') }}</div>
+      <div class="help">
+        {{ setting('billing_company_email', '') }}
+        {% if setting('billing_company_phone') %} · {{ setting('billing_company_phone') }}{% endif %}
+      </div>
+      {% if setting('billing_tax_number') %}
+      <div class="help">Tax no. {{ setting('billing_tax_number') }}</div>
+      {% endif %}
+    </div>
+    <div class="sheet-meta">
+      <div class="party-label">{{ 'Invoice' if inv.number else 'Draft invoice' }}</div>
+      <h1>{{ inv.number or '—' }}</h1>
+      <div class="kv" style="grid-template-columns: auto auto; justify-content: end">
+        <span class="kv-k">Issued</span><span class="kv-v">{{ inv.issue_date.strftime('%d %b %Y') }}</span>
+        {% if inv.due_date %}
+        <span class="kv-k">Due</span><span class="kv-v">{{ inv.due_date.strftime('%d %b %Y') }}</span>
+        {% endif %}
+        {% if inv.period_start %}
+        <span class="kv-k">Period</span>
+        <span class="kv-v">{{ inv.period_start.strftime('%d %b') }} – {{ inv.period_end.strftime('%d %b %Y') if inv.period_end }}</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="parties">
+    <div>
+      <div class="party-label">Billed to</div>
+      <strong>{{ customer.company or customer.display_name }}</strong><br>
+      {% if customer.contact_name %}{{ customer.contact_name }}<br>{% endif %}
+      {% if customer.address_line1 %}{{ customer.address_line1 }}<br>{% endif %}
+      {% if customer.address_line2 %}{{ customer.address_line2 }}<br>{% endif %}
+      {% if customer.address_city %}{{ customer.address_city }}{% if customer.address_region %}, {{ customer.address_region }}{% endif %}<br>{% endif %}
+      {% if customer.address_postcode %}{{ customer.address_postcode }}<br>{% endif %}
+      {% if customer.address_country %}{{ customer.address_country }}<br>{% endif %}
+      {% if customer.tax_number %}<span class="help">Tax no. {{ customer.tax_number }}</span>{% endif %}
+    </div>
+    {% if inv.title %}
+    <div>
+      <div class="party-label">For</div>
+      <strong>{{ inv.title }}</strong>
+      {% if inv.project_name %}<br><span class="help">{{ inv.project_name }}</span>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  <table class="line-table line-table-ro">
+    <thead><tr>
+      <th>Description</th><th class="num">Qty</th><th>Unit</th>
+      <th class="num">Price</th>{% if inv.tax_cents %}<th class="num">Tax</th>{% endif %}<th class="num">Amount</th>
+    </tr></thead>
+    <tbody>
+      {% for l in lines %}
+      {% if l.kind == 'heading' %}
+      <tr class="is-heading"><td colspan="{{ 6 if inv.tax_cents else 5 }}"><strong>{{ l.description }}</strong></td></tr>
+      {% else %}
+      <tr>
+        <td>{{ l.description }}{% if l.detail %}<span class="line-detail-ro">{{ l.detail }}</span>{% endif %}</td>
+        <td class="num">{{ l.qty_milli|qty }}</td>
+        <td>{{ l.unit }}</td>
+        <td class="num">{{ l.unit_price_cents|money(inv.currency) }}</td>
+        {% if inv.tax_cents %}<td class="num">{{ l.tax_rate_milli|rate }}%</td>{% endif %}
+        <td class="num">{{ l.amount_cents|money(inv.currency) }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="doc-totals">
+    <dl>
+      <dt>Subtotal</dt><dd class="num">{{ inv.subtotal_cents|money(inv.currency) }}</dd>
+      {% if inv.discount_cents %}
+      <dt>Discount</dt><dd class="num">−{{ inv.discount_cents|money(inv.currency) }}</dd>
+      {% endif %}
+      {% if inv.tax_cents %}
+      <dt>{{ setting('billing_tax_label', 'Tax') }}</dt><dd class="num">{{ inv.tax_cents|money(inv.currency) }}</dd>
+      {% endif %}
+      <dt class="grand">Total</dt><dd class="grand num">{{ inv.total_cents|money(inv.currency) }}</dd>
+      {% if payments %}
+      {% for p in payments %}
+      <dt>Paid {{ p.received_on.strftime('%d %b %Y') }}</dt>
+      <dd class="num">−{{ p.amount_cents|money(inv.currency) }}</dd>
+      {% endfor %}
+      <dt class="grand">Balance due</dt>
+      <dd class="grand num">{{ inv.balance_due_cents|money(inv.currency) }}</dd>
+      {% endif %}
+    </dl>
+  </div>
+
+  <div class="sheet-foot">
+    {% if inv.notes_md %}<div class="prose">{{ inv.notes_md }}</div>{% endif %}
+    {% if inv.terms_md %}<div class="prose">{{ inv.terms_md }}</div>{% endif %}
+    {% if setting('billing_payment_instructions') %}
+    <p style="white-space: pre-line">{{ setting('billing_payment_instructions') }}</p>
+    {% endif %}
+    {% if setting('billing_footer_notes') %}
+    <p style="white-space: pre-line">{{ setting('billing_footer_notes') }}</p>
+    {% endif %}
+  </div>
+</div>
+</body>
+</html>

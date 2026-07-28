@@ -1,0 +1,20 @@
+<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#1C2B33;max-width:560px">
+  <p>Hello{% if customer.contact_name %} {{ customer.contact_name }}{% endif %},</p>
+  <p>Thank you — we've received your payment of
+    <strong>{{ payment.amount_cents|money(inv.currency) }}</strong> for invoice
+    <strong>{{ inv.number }}</strong>.</p>
+  <table cellpadding="0" cellspacing="0" style="margin:24px 0">
+    <tr><td style="padding:4px 24px 4px 0;color:#6B7A84">Paid</td>
+        <td style="padding:4px 0;font-weight:700">{{ payment.amount_cents|money(inv.currency) }}</td></tr>
+    <tr><td style="padding:4px 24px 4px 0;color:#6B7A84">Invoice total</td>
+        <td style="padding:4px 0">{{ inv.total_cents|money(inv.currency) }}</td></tr>
+    <tr><td style="padding:4px 24px 4px 0;color:#6B7A84">Balance</td>
+        <td style="padding:4px 0;font-weight:700">{{ inv.balance_due_cents|money(inv.currency) }}</td></tr>
+  </table>
+  {% if inv.balance_due_cents > 0 %}
+  <p>There is still {{ inv.balance_due_cents|money(inv.currency) }} outstanding on this invoice.</p>
+  {% else %}
+  <p>This invoice is now paid in full.</p>
+  {% endif %}
+  <p style="font-size:13px;color:#6B7A84;border-top:1px solid #EDEAE3;padding-top:16px">{{ company.company_name }}</p>
+</div>

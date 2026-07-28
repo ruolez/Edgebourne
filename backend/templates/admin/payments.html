@@ -1,0 +1,48 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_billing_macros.html" import status_pill %}
+{% block title %}Payments{% endblock %}
+{% block heading %}Payments{% endblock %}
+{% block content %}
+
+<div class="stat-grid">
+  <div class="stat">
+    <span class="stat-n">{{ totals.mtd|money }}</span>
+    <span class="stat-l">Collected this month</span>
+  </div>
+</div>
+
+<div class="tabs">
+  <a href="/admin/payments" class="{{ 'active' if not method }}">All</a>
+  {% for m, label in methods %}
+  <a href="/admin/payments?method={{ m }}" class="{{ 'active' if method == m }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+<section class="panel">
+  {% if rows %}
+  <table class="table">
+    <thead>
+      <tr><th>Date</th><th>Customer</th><th>Invoice</th><th>Method</th>
+        <th>Reference</th><th>Status</th><th class="num">Amount</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.received_on.strftime('%d %b %Y') }}</td>
+        <td><a href="/admin/customers/{{ r.customer_id }}">{{ r.customer_name }}</a></td>
+        <td>{% if r.invoice_id %}<a href="/admin/invoices/{{ r.invoice_id }}">{{ r.invoice_number or '#' ~ r.invoice_id }}</a>
+            {% else %}<em>On account</em>{% endif %}</td>
+        <td>{{ r.method|replace('_', ' ')|capitalize }}</td>
+        <td>{{ r.reference or r.memo or '—' }}</td>
+        <td>{{ status_pill(r.status) }}
+          {% if r.needs_review %}<span class="pill pill-overdue">Review</span>{% endif %}</td>
+        <td class="num">{{ r.amount_cents|money(r.currency) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No payments recorded yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

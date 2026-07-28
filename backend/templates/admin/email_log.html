@@ -1,0 +1,45 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_billing_macros.html" import status_pill %}
+{% block title %}Email log{% endblock %}
+{% block heading %}Email log{% endblock %}
+{% block content %}
+<section class="panel">
+  <p class="help">Every billing email is written here before it is sent, then retried with backoff.
+    A message that fails permanently stays visible — email cannot be the only way you find out
+    that email is broken.</p>
+  {% if rows %}
+  <table class="table">
+    <thead><tr><th>When</th><th>To</th><th>Subject</th><th>Status</th><th>Error</th><th></th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr class="{{ 'row-warn' if r.status in ('failed', 'permanently_failed') }}">
+        <td>{{ r.created_at.strftime('%d %b %H:%M') }}
+          {% if r.send_after > r.created_at %}<span class="line-detail-ro">holds until {{ r.send_after.strftime('%H:%M') }}</span>{% endif %}</td>
+        <td>{{ r.to_addr }}
+          {% if r.customer_name %}<span class="line-detail-ro">{{ r.customer_name }}</span>{% endif %}</td>
+        <td>{{ r.subject }}
+          {% if r.invoice_id %}<span class="line-detail-ro"><a href="/admin/invoices/{{ r.invoice_id }}">{{ r.invoice_number or 'invoice #' ~ r.invoice_id }}</a></span>{% endif %}</td>
+        <td><span class="pill pill-{{ {'sent':'paid','queued':'draft','failed':'overdue',
+              'permanently_failed':'overdue','canceled':'void','sending':'partial'}[r.status] }}">{{ r.status|replace('_',' ') }}</span>
+          {% if r.attempts %}<span class="line-detail-ro">{{ r.attempts }} attempt{{ 's' if r.attempts != 1 }}</span>{% endif %}</td>
+        <td class="help">{{ (r.error or '')[:120] }}</td>
+        <td class="cell-actions">
+          {% if r.status in ('queued', 'failed') %}
+          <form method="post" action="/admin/billing/email-log/{{ r.id }}/cancel" class="js-confirm"
+                data-confirm="Cancel this email? It will not be sent.">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn-x" type="submit" title="Cancel">✕</button></form>
+          {% endif %}
+          {% if r.status in ('failed', 'permanently_failed', 'canceled', 'sent') %}
+          <form method="post" action="/admin/billing/email-log/{{ r.id }}/resend">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn-x" type="submit" title="Send again">↺</button></form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">No billing email yet.</p>{% endif %}
+</section>
+{% endblock %}

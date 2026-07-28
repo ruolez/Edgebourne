@@ -1,0 +1,74 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_billing_macros.html" import status_pill %}
+{% block title %}{{ 'Work orders' if work_orders else 'Estimates' }}{% endblock %}
+{% block heading %}{{ 'Work orders' if work_orders else 'Estimates' }}{% endblock %}
+{% block actions %}<a class="btn btn-primary" href="/admin/estimates/new">New estimate</a>{% endblock %}
+{% block content %}
+
+{% if work_orders %}
+<p class="help" style="margin-bottom:18px">Work orders are estimates the customer has accepted.
+  Each one tracks how much of it has been invoiced so far.</p>
+{% endif %}
+
+<div class="stat-grid">
+  <a class="stat" href="/admin/estimates?status=sent">
+    <span class="stat-n">{{ totals.pipeline|money }}</span>
+    <span class="stat-l">Out for signature</span>
+  </a>
+  <a class="stat" href="/admin/estimates?status=accepted">
+    <span class="stat-n">{{ totals.won|money }}</span>
+    <span class="stat-l">Accepted</span>
+  </a>
+</div>
+
+<div class="tabs">
+  <a href="/admin/estimates" class="{{ 'active' if not status }}">All</a>
+  {% for s, label in statuses %}
+  <a href="/admin/estimates?status={{ s }}" class="{{ 'active' if status == s }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+<section class="panel">
+  {% if rows %}
+  <table class="table">
+    <thead>
+      <tr><th>Number</th><th>Customer</th><th>Issued</th>
+        <th>{{ 'Accepted' if work_orders else 'Valid until' }}</th><th>Status</th>
+        <th class="num">Total</th><th class="num">{{ 'Invoiced' if work_orders else 'Left to bill' }}</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr class="row-link" data-href="/admin/estimates/{{ r.id }}">
+        <td><a href="/admin/estimates/{{ r.id }}">{{ r.number or 'Draft #' ~ r.id }}</a>
+          {% if r.title %}<span class="line-detail-ro">{{ r.title }}</span>{% endif %}</td>
+        <td><a href="/admin/customers/{{ r.customer_id }}">{{ r.customer_name }}</a>
+          {% if r.project_name %}<span class="line-detail-ro">{{ r.project_name }}</span>{% endif %}</td>
+        <td>{{ r.issue_date.strftime('%d %b %Y') }}</td>
+        <td>
+          {% if work_orders %}
+            {{ r.accepted_at.strftime('%d %b %Y') if r.accepted_at else '—' }}
+            {% if r.accepted_name %}<span class="line-detail-ro">{{ r.accepted_name }}</span>{% endif %}
+          {% else %}
+            {{ r.valid_until.strftime('%d %b %Y') if r.valid_until else '—' }}
+          {% endif %}
+        </td>
+        <td>{{ status_pill(r.status) }}</td>
+        <td class="num">{{ r.total_cents|money(r.currency) }}</td>
+        <td class="num">
+          {% if r.status == 'accepted' %}
+            {% if work_orders %}{{ r.invoiced_cents|money(r.currency) }}
+            {% else %}{{ (r.total_cents - r.invoiced_cents)|money(r.currency) }}{% endif %}
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">
+    {% if work_orders %}No accepted estimates yet — they'll appear here once a customer signs one.
+    {% else %}No estimates{{ ' in this view' if status }} yet.{% endif %}
+  </p>
+  {% endif %}
+</section>
+{% endblock %}

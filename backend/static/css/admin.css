@@ -425,3 +425,176 @@ h1, h2, h3 { margin: 0; }
   .form-side { position: static; }
   .field-row { grid-template-columns: 1fr; }
 }
+
+/* ---------- billing ---------- */
+
+.side-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #5C6E79;
+  padding: 16px 10px 4px;
+}
+.badge-warn { background: #b3261e; }
+
+/* Numeric cells: tabular figures so money columns line up on the decimal. */
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.num-strong { font-weight: 800; }
+.money-neg { color: #b3261e; }
+
+/* Status pills -- extends the existing .pill / .pill-live pair. */
+.pill-open, .pill-sent, .pill-active { background: rgba(46, 125, 116, 0.13); color: var(--teal); }
+.pill-partial { background: rgba(214, 158, 46, 0.18); color: #8a6100; }
+.pill-paid, .pill-accepted, .pill-completed { background: rgba(46, 125, 116, 0.22); color: #1f5a53; }
+.pill-overdue, .pill-disputed, .pill-declined { background: rgba(217, 48, 37, 0.1); color: #b3261e; }
+.pill-void, .pill-cancelled, .pill-expired, .pill-uncollectible {
+  background: var(--sand-2);
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.pill-on_hold, .pill-paused { background: rgba(214, 158, 46, 0.14); color: #8a6100; }
+
+/* Line item editor */
+.line-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.line-table th {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  padding: 0 6px 8px;
+  font-weight: 600;
+}
+.line-table th.num { text-align: right; }
+.line-table td { padding: 4px; vertical-align: top; }
+.line-table input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid rgba(28, 43, 51, 0.18);
+  border-radius: var(--r-btn);
+}
+.line-table input:focus { outline: none; border-color: var(--teal); box-shadow: 0 0 0 3px rgba(46, 125, 116, 0.12); }
+.line-table .line-detail { margin-top: 4px; font-size: 13px; color: var(--muted); }
+.line-table .col-qty input, .line-table .col-price input,
+.line-table .col-rate input { text-align: right; font-variant-numeric: tabular-nums; }
+.line-row .col-drag { width: 24px; cursor: grab; color: #C7CDD1; padding-top: 14px; user-select: none; }
+.line-row .col-qty { width: 84px; }
+.line-row .col-unit { width: 84px; }
+.line-row .col-price { width: 124px; }
+.line-row .col-rate { width: 80px; }
+.line-row .col-amt { width: 120px; padding-top: 16px; }
+.line-row .col-del { width: 34px; padding-top: 10px; }
+.line-row.is-heading .col-qty, .line-row.is-heading .col-unit,
+.line-row.is-heading .col-price, .line-row.is-heading .col-rate,
+.line-row.is-heading .col-amt { visibility: hidden; }
+.line-row.is-heading .line-desc { font-weight: 800; }
+.line-row.is-heading .line-detail { display: none; }
+.line-row.dragging { opacity: 0.45; }
+.line-actions { display: flex; gap: 8px; margin-top: 10px; }
+.line-table-ro td { padding: 10px 6px; border-bottom: 1px solid var(--card-border); }
+.line-table-ro tr.is-heading td { border-bottom: 0; padding-top: 16px; }
+.line-detail-ro { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+/* Money input with a currency affix */
+.money-wrap { display: flex; align-items: stretch; }
+.money-wrap .affix {
+  display: flex;
+  align-items: center;
+  background: var(--sand-2);
+  border: 1px solid rgba(28, 43, 51, 0.18);
+  border-right: 0;
+  border-radius: var(--r-btn) 0 0 var(--r-btn);
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--muted);
+}
+.money-wrap input {
+  border-radius: 0 var(--r-btn) var(--r-btn) 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.money-wrap-suffix .affix { border-right: 1px solid rgba(28, 43, 51, 0.18); border-left: 0; border-radius: 0 var(--r-btn) var(--r-btn) 0; }
+.money-wrap-suffix input { border-radius: var(--r-btn) 0 0 var(--r-btn); }
+.money-wrap-sm { width: 140px; margin-left: auto; }
+.money-wrap-sm input, .money-wrap-sm .affix { padding-top: 4px; padding-bottom: 4px; font-size: 13px; }
+
+/* Document totals block */
+.doc-totals { margin-left: auto; width: 340px; padding-top: 8px; }
+/* column-gap is 0 and the spacing lives in dt's padding, so the two .grand
+   border-tops meet and read as one rule across the block. */
+.doc-totals dl { display: grid; grid-template-columns: 1fr auto; gap: 8px 0; margin: 0; align-items: center; }
+.doc-totals dt { color: var(--muted); font-size: 14px; padding-right: 24px; }
+.doc-totals dd { margin: 0; font-weight: 700; }
+.doc-totals .grand { border-top: 2px solid var(--ink); padding-top: 10px; margin-top: 2px; font-weight: 900; font-size: 18px; }
+.doc-totals dt.grand { color: var(--ink); }
+
+/* Detail hub */
+.detail-grid { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; align-items: center; font-size: 14px; }
+.kv-k {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.kv-v { font-weight: 700; word-break: break-word; }
+
+/* Copy-to-clipboard link row */
+.token-link { display: flex; gap: 6px; align-items: stretch; }
+.token-link input {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(28, 43, 51, 0.18);
+  border-radius: var(--r-btn);
+  background: var(--sand-2);
+  color: var(--ink);
+}
+
+/* Ledger */
+.ledger-table .amt-pos { color: var(--ink); }
+.ledger-table .amt-neg { color: var(--teal); }
+
+.empty { color: var(--muted); font-size: 14px; padding: 18px 0; }
+.row-warn td { background: rgba(217, 48, 37, 0.05); }
+
+@media print {
+  .sidebar, .admin-topbar, .save-bar, .flashes, .no-print, .tabs { display: none !important; }
+  .admin-main { padding: 0; }
+  .panel { border: 0; box-shadow: none; padding: 0; }
+  body, .admin-shell { background: #fff; }
+}
+
+@media (max-width: 900px) {
+  .detail-grid { grid-template-columns: 1fr; }
+  .line-table { display: block; overflow-x: auto; white-space: nowrap; }
+  .doc-totals { width: 100%; }
+  .side-label { padding: 8px 6px 2px; width: 100%; }
+}
+
+/* Refund dialog — the only modal in the admin; deletes still use confirm(). */
+.modal {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(28, 43, 51, 0.45);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.modal[hidden] { display: none; }
+.modal-card {
+  background: #fff; border-radius: var(--r-card); padding: 30px 32px;
+  width: 100%; max-width: 460px; max-height: 90vh; overflow-y: auto;
+}
+.modal-card h2 { font-weight: 800; font-size: 19px; margin: 0 0 8px; }

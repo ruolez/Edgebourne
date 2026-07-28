@@ -1,0 +1,36 @@
+<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#1C2B33;max-width:560px">
+  <p>Hello{% if customer.contact_name %} {{ customer.contact_name }}{% endif %},</p>
+  {% if reminder is none %}
+  <p>Please find invoice <strong>{{ inv.number }}</strong> from {{ company.company_name }}.</p>
+  {% elif reminder > 0 %}
+  <p>Invoice <strong>{{ inv.number }}</strong> was due on {{ inv.due_date.strftime('%d %B %Y') }} and is still outstanding.</p>
+  {% else %}
+  <p>A reminder that invoice <strong>{{ inv.number }}</strong> is due on {{ inv.due_date.strftime('%d %B %Y') }}.</p>
+  {% endif %}
+
+  <table cellpadding="0" cellspacing="0" style="margin:24px 0;border-collapse:collapse">
+    <tr><td style="padding:4px 24px 4px 0;color:#6B7A84">Amount due</td>
+        <td style="padding:4px 0;font-weight:700;font-size:20px">{{ inv.balance_due_cents|money(inv.currency) }}</td></tr>
+    <tr><td style="padding:4px 24px 4px 0;color:#6B7A84">Issued</td>
+        <td style="padding:4px 0">{{ inv.issue_date.strftime('%d %B %Y') }}</td></tr>
+    {% if inv.due_date %}
+    <tr><td style="padding:4px 24px 4px 0;color:#6B7A84">Due</td>
+        <td style="padding:4px 0">{{ inv.due_date.strftime('%d %B %Y') }}</td></tr>
+    {% endif %}
+  </table>
+
+  <p><a href="{{ pay_url }}" style="display:inline-block;background:#2E7D74;color:#fff;text-decoration:none;padding:13px 26px;border-radius:8px;font-weight:700">View &amp; pay invoice</a></p>
+  <!-- Some clients strip buttons; a client who cannot find the link will not pay. -->
+  <p style="font-size:13px;color:#6B7A84">Or paste this into your browser:<br>
+    <a href="{{ pay_url }}" style="color:#2E7D74;word-break:break-all">{{ pay_url }}</a></p>
+
+  {% if company.payment_instructions %}
+  <p style="font-size:13px;color:#6B7A84;border-top:1px solid #EDEAE3;padding-top:16px">
+    <strong>Prefer to pay another way?</strong><br>
+    <span style="white-space:pre-line">{{ company.payment_instructions }}</span></p>
+  {% endif %}
+
+  <p style="font-size:13px;color:#6B7A84;border-top:1px solid #EDEAE3;padding-top:16px">
+    {{ company.company_name }}{% if company.company_email %}<br>{{ company.company_email }}{% endif %}
+    {% if company.company_phone %}<br>{{ company.company_phone }}{% endif %}</p>
+</div>

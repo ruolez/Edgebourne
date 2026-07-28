@@ -1,0 +1,197 @@
+{# Billing form components. The base library in _macros.html has no select,
+   no money input and no repeatable-row editor, so they live here. #}
+
+{% macro select_field(name, label, value, options, help='', blank=None, id=None, attrs='') %}
+{# options: list of (value, label) tuples. `blank` adds an empty first option
+   with that label, for optional FKs like project_id. #}
+<div class="field">
+  <label for="f-{{ id or name }}">{{ label }}</label>
+  <select id="f-{{ id or name }}" name="{{ name }}" {{ attrs|safe }}>
+    {% if blank is not none %}<option value="">{{ blank }}</option>{% endif %}
+    {% for val, text in options %}
+    <option value="{{ val }}" {% if value is not none and val|string == value|string %}selected{% endif %}>{{ text }}</option>
+    {% endfor %}
+  </select>
+  {% if help %}<p class="help">{{ help }}</p>{% endif %}
+</div>
+{% endmacro %}
+
+
+{% macro money_input(name, label, cents=None, help='', currency=None, id=None, placeholder='0.00') %}
+{# Value is rendered with money_plain so it round-trips through
+   money.parse_money() on save. The server always re-parses; the client-side
+   normalization is cosmetic. #}
+<div class="field">
+  <label for="f-{{ id or name }}">{{ label }}</label>
+  <div class="money-wrap">
+    <span class="affix">{{ currency_symbol(currency or default_currency()) }}</span>
+    <input type="text" inputmode="decimal" id="f-{{ id or name }}" name="{{ name }}"
+           class="js-money" value="{{ cents|money_plain }}" placeholder="{{ placeholder }}">
+  </div>
+  {% if help %}<p class="help">{{ help }}</p>{% endif %}
+</div>
+{% endmacro %}
+
+
+{% macro rate_input(name, label, rate_milli=0, help='', id=None) %}
+<div class="field">
+  <label for="f-{{ id or name }}">{{ label }}</label>
+  <div class="money-wrap money-wrap-suffix">
+    <input type="text" inputmode="decimal" id="f-{{ id or name }}" name="{{ name }}"
+           value="{{ rate_milli|rate }}" placeholder="0">
+    <span class="affix">%</span>
+  </div>
+  {% if help %}<p class="help">{{ help }}</p>{% endif %}
+</div>
+{% endmacro %}
+
+
+{% macro date_input(name, label, value=None, help='', id=None) %}
+<div class="field">
+  <label for="f-{{ id or name }}">{{ label }}</label>
+  <input type="date" id="f-{{ id or name }}" name="{{ name }}"
+         value="{{ value.isoformat() if value else '' }}">
+  {% if help %}<p class="help">{{ help }}</p>{% endif %}
+</div>
+{% endmacro %}
+
+
+{% macro status_pill(status, is_overdue=false) %}
+{# Overdue outranks the stored status: an invoice past its due date reads
+   "Overdue", not "Sent". is_overdue is computed in the query, never stored. #}
+{%- if is_overdue and status in ('open', 'partial') -%}
+<span class="pill pill-overdue">Overdue</span>
+{%- else -%}
+<span class="pill pill-{{ status }}">{{ {'draft':'Draft','open':'Sent','partial':'Part paid',
+  'paid':'Paid','void':'Void','uncollectible':'Written off','disputed':'Disputed',
+  'sent':'Sent','accepted':'Accepted','declined':'Declined','expired':'Expired',
+  'active':'Active','paused':'Paused','ended':'Ended','lead':'Lead','on_hold':'On hold',
+  'completed':'Completed','cancelled':'Cancelled'}.get(status, status|capitalize) }}</span>
+{%- endif -%}
+{% endmacro %}
+
+
+{% macro line_row(row=None, currency=None) %}
+{# One editable line. Inputs are name-indexed parallel arrays read with
+   request.form.getlist(); billing.read_lines() verifies every list is the same
+   length, because mismatched lists would silently shift prices onto the wrong
+   descriptions. #}
+<tr class="line-row{% if row and row.kind == 'heading' %} is-heading{% endif %}">
+  <td class="col-drag" title="Drag to reorder">⠿</td>
+  <td class="col-desc">
+    <input type="hidden" name="line_id" value="{{ row.id if row else '' }}">
+    <input type="hidden" name="line_kind" class="line-kind" value="{{ row.kind if row else 'item' }}">
+    <input type="text" name="line_description" class="line-desc"
+           value="{{ row.description if row else '' }}" placeholder="Description">
+    <input type="text" name="line_detail" class="line-detail"
+           value="{{ row.detail if row else '' }}" placeholder="Extra detail (optional)">
+  </td>
+  <td class="col-qty"><input type="text" inputmode="decimal" name="line_qty"
+        class="line-qty" value="{{ (row.qty_milli if row else 1000)|qty }}"></td>
+  <td class="col-unit"><input type="text" name="line_unit"
+        value="{{ row.unit if row else '' }}" placeholder="hrs"></td>
+  <td class="col-price"><input type="text" inputmode="decimal" name="line_price"
+        class="line-price js-money" value="{{ (row.unit_price_cents if row else 0)|money_plain }}"></td>
+  <td class="col-rate"><input type="text" inputmode="decimal" name="line_rate"
+        class="line-rate" value="{{ (row.tax_rate_milli if row else 0)|rate }}"></td>
+  <td class="col-amt num line-amount">{{ (row.amount_cents if row else 0)|money(currency) }}</td>
+  <td class="col-del"><button type="button" class="btn-x line-del" title="Remove line">✕</button></td>
+</tr>
+{% endmacro %}
+
+
+{% macro line_items(rows, currency=None, editable=true) %}
+<div class="field md-field">
+  <label>Line items</label>
+  {% if editable %}
+  <table class="line-table">
+    <thead><tr>
+      <th></th><th>Description</th><th class="num">Qty</th><th>Unit</th>
+      <th class="num">Price</th><th class="num">Tax %</th><th class="num">Amount</th><th></th>
+    </tr></thead>
+    <tbody id="line-body">
+      {% for row in rows %}{{ line_row(row, currency) }}{% endfor %}
+      {% if not rows %}{{ line_row(None, currency) }}{% endif %}
+    </tbody>
+  </table>
+  <div class="line-actions">
+    <button type="button" class="btn btn-ghost line-add">+ Add line</button>
+    <button type="button" class="btn btn-ghost line-add" data-kind="heading">+ Add heading</button>
+  </div>
+  <template id="line-row-tpl">{{ line_row(None, currency) }}</template>
+  {% else %}
+  <table class="line-table line-table-ro">
+    <thead><tr>
+      <th>Description</th><th class="num">Qty</th><th>Unit</th>
+      <th class="num">Price</th><th class="num">Tax %</th><th class="num">Amount</th>
+    </tr></thead>
+    <tbody>
+      {% for row in rows %}
+      {% if row.kind == 'heading' %}
+      <tr class="is-heading"><td colspan="6"><strong>{{ row.description }}</strong></td></tr>
+      {% else %}
+      <tr>
+        <td>{{ row.description }}{% if row.detail %}<span class="line-detail-ro">{{ row.detail }}</span>{% endif %}</td>
+        <td class="num">{{ row.qty_milli|qty }}</td>
+        <td>{{ row.unit }}</td>
+        <td class="num">{{ row.unit_price_cents|money(currency) }}</td>
+        <td class="num">{{ row.tax_rate_milli|rate }}</td>
+        <td class="num">{{ row.amount_cents|money(currency) }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="help">Line items are locked once a document is issued. Void and reissue,
+    or record a credit, to change what was billed.</p>
+  {% endif %}
+</div>
+{% endmacro %}
+
+
+{% macro doc_totals(doc, editable=true, show_paid=false) %}
+{# The client-side figures are a PREVIEW. billing.recompute_totals() recomputes
+   everything in SQL on every save; nothing here is trusted. #}
+<div class="doc-totals">
+  <dl>
+    <dt>Subtotal</dt><dd class="num" id="tot-subtotal">{{ doc.subtotal_cents|money(doc.currency) }}</dd>
+    {% if editable %}
+    <dt>Discount</dt>
+    <dd class="num"><div class="money-wrap money-wrap-sm">
+      <span class="affix">{{ currency_symbol(doc.currency) }}</span>
+      <input type="text" inputmode="decimal" name="discount" id="f-discount"
+             class="js-money" value="{{ doc.discount_cents|money_plain }}">
+    </div></dd>
+    {% elif doc.discount_cents %}
+    <dt>Discount</dt><dd class="num">−{{ doc.discount_cents|money(doc.currency) }}</dd>
+    {% endif %}
+    <dt>{{ setting('billing_tax_label', 'Tax') }}</dt>
+    <dd class="num" id="tot-tax">{{ doc.tax_cents|money(doc.currency) }}</dd>
+    <dt class="grand">Total</dt>
+    <dd class="grand num" id="tot-total">{{ doc.total_cents|money(doc.currency) }}</dd>
+    {% if show_paid %}
+    <dt>Paid</dt><dd class="num">{{ doc.amount_paid_cents|money(doc.currency) }}</dd>
+    <dt class="grand">Balance due</dt>
+    <dd class="grand num {% if doc.balance_due_cents < 0 %}money-neg{% endif %}">{{ doc.balance_due_cents|money(doc.currency) }}</dd>
+    {% endif %}
+  </dl>
+</div>
+{% endmacro %}
+
+
+{% macro copy_link(url, label='Customer link') %}
+<div class="field">
+  <label>{{ label }}</label>
+  <div class="token-link">
+    <input type="text" class="js-copy-src" value="{{ url }}" readonly>
+    <button type="button" class="btn btn-ghost js-copy">Copy</button>
+  </div>
+</div>
+{% endmacro %}
+
+
+{% macro kv(pairs) %}
+<div class="kv">
+  {% for k, v in pairs %}<span class="kv-k">{{ k }}</span><span class="kv-v">{{ v }}</span>{% endfor %}
+</div>
+{% endmacro %}

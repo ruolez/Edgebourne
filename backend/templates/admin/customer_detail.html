@@ -1,0 +1,201 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_billing_macros.html" import status_pill, money_input %}
+{% block title %}{{ c.display_name }}{% endblock %}
+{% block heading %}{{ c.display_name }}{% if c.is_archived %} <span class="pill">Archived</span>{% endif %}{% endblock %}
+{% block actions %}
+<a class="btn btn-ghost" href="/admin/customers/{{ c.id }}/edit">Edit</a>
+<a class="btn btn-primary" href="/admin/invoices/new?customer={{ c.id }}">New invoice</a>
+{% endblock %}
+{% block content %}
+
+<div class="stat-grid">
+  <div class="stat">
+    <span class="stat-n {{ 'money-neg' if bal.balance_cents > 0 }}">{{ bal.balance_cents|money(c.currency) }}</span>
+    <span class="stat-l">{% if bal.balance_cents > 0 %}Owed to you{% elif bal.balance_cents < 0 %}In credit{% else %}Settled{% endif %}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-n">{{ bal.credit_cents|money(c.currency) }}</span>
+    <span class="stat-l">Credit available</span>
+  </div>
+  <div class="stat">
+    <span class="stat-n">{{ invoices|selectattr('status', 'in', ['open','partial'])|list|length }}</span>
+    <span class="stat-l">Open invoices</span>
+  </div>
+  <div class="stat">
+    <span class="stat-n">{{ projects|selectattr('status', 'equalto', 'active')|list|length }}</span>
+    <span class="stat-l">Active projects</span>
+  </div>
+</div>
+
+<div class="detail-grid">
+  <div>
+    <div class="tabs">
+      <a href="?tab=invoices" class="{{ 'active' if tab == 'invoices' }}">Invoices</a>
+      <a href="?tab=estimates" class="{{ 'active' if tab == 'estimates' }}">Estimates</a>
+      <a href="?tab=projects" class="{{ 'active' if tab == 'projects' }}">Projects</a>
+      <a href="?tab=payments" class="{{ 'active' if tab == 'payments' }}">Payments</a>
+      <a href="?tab=ledger" class="{{ 'active' if tab == 'ledger' }}">Ledger</a>
+    </div>
+
+    <section class="panel">
+      {% if tab == 'invoices' %}
+        <div class="panel-head"><h2>Invoices</h2>
+          <a href="/admin/invoices/new?customer={{ c.id }}">New invoice</a></div>
+        {% if invoices %}
+        <table class="table">
+          <thead><tr><th>Number</th><th>Issued</th><th>Due</th><th>Status</th>
+            <th class="num">Total</th><th class="num">Due</th></tr></thead>
+          <tbody>
+            {% for i in invoices %}
+            <tr class="row-link" data-href="/admin/invoices/{{ i.id }}">
+              <td><a href="/admin/invoices/{{ i.id }}">{{ i.number or 'Draft #' ~ i.id }}</a></td>
+              <td>{{ i.issue_date.strftime('%d %b %Y') }}</td>
+              <td>{{ i.due_date.strftime('%d %b %Y') if i.due_date else '—' }}</td>
+              <td>{{ status_pill(i.status, i.is_overdue) }}</td>
+              <td class="num">{{ i.total_cents|money(i.currency) }}</td>
+              <td class="num">{{ i.balance_due_cents|money(i.currency) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}<p class="empty">No invoices yet.</p>{% endif %}
+
+      {% elif tab == 'estimates' %}
+        <div class="panel-head"><h2>Estimates</h2>
+          <a href="/admin/estimates/new?customer={{ c.id }}">New estimate</a></div>
+        {% if estimates %}
+        <table class="table">
+          <thead><tr><th>Number</th><th>Title</th><th>Issued</th><th>Status</th><th class="num">Total</th></tr></thead>
+          <tbody>
+            {% for e in estimates %}
+            <tr class="row-link" data-href="/admin/estimates/{{ e.id }}">
+              <td><a href="/admin/estimates/{{ e.id }}">{{ e.number or 'Draft #' ~ e.id }}</a></td>
+              <td>{{ e.title or '—' }}</td>
+              <td>{{ e.issue_date.strftime('%d %b %Y') }}</td>
+              <td>{{ status_pill(e.status) }}</td>
+              <td class="num">{{ e.total_cents|money(e.currency) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}<p class="empty">No estimates yet.</p>{% endif %}
+
+      {% elif tab == 'projects' %}
+        <div class="panel-head"><h2>Projects</h2>
+          <a href="/admin/projects/new?customer={{ c.id }}">New project</a></div>
+        {% if projects %}
+        <table class="table">
+          <thead><tr><th>Project</th><th>Status</th><th>Dates</th><th class="num">Budget</th></tr></thead>
+          <tbody>
+            {% for p in projects %}
+            <tr class="row-link" data-href="/admin/projects/{{ p.id }}">
+              <td><a href="/admin/projects/{{ p.id }}">{{ p.name }}</a></td>
+              <td>{{ status_pill(p.status) }}</td>
+              <td>{{ p.start_date.strftime('%d %b %Y') if p.start_date else '—' }}
+                {%- if p.end_date %} → {{ p.end_date.strftime('%d %b %Y') }}{% endif %}</td>
+              <td class="num">{{ p.budget_cents|money(c.currency, blank_zero=true) or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}<p class="empty">No projects yet.</p>{% endif %}
+
+      {% elif tab == 'payments' %}
+        <div class="panel-head"><h2>Payments</h2></div>
+        {% if payments %}
+        <table class="table">
+          <thead><tr><th>Date</th><th>Invoice</th><th>Method</th><th>Status</th><th class="num">Amount</th></tr></thead>
+          <tbody>
+            {% for p in payments %}
+            <tr>
+              <td>{{ p.received_on.strftime('%d %b %Y') }}</td>
+              <td>{% if p.invoice_id %}<a href="/admin/invoices/{{ p.invoice_id }}">{{ p.invoice_number or '#' ~ p.invoice_id }}</a>
+                  {% else %}<em>On account</em>{% endif %}</td>
+              <td>{{ p.method|replace('_', ' ')|capitalize }}</td>
+              <td>{{ status_pill(p.status) }}</td>
+              <td class="num">{{ p.amount_cents|money(p.currency) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}<p class="empty">No payments recorded.</p>{% endif %}
+
+      {% else %}
+        <div class="panel-head"><h2>Account ledger</h2></div>
+        <p class="help">Positive entries increase what the customer owes; negative entries reduce it.
+          The balance is the running sum — it is never stored.</p>
+        {% if ledger %}
+        <table class="table ledger-table">
+          <thead><tr><th>Date</th><th>Entry</th><th>Reference</th><th class="num">Amount</th></tr></thead>
+          <tbody>
+            {% for l in ledger %}
+            <tr>
+              <td>{{ l.occurred_on.strftime('%d %b %Y') }}</td>
+              <td>{{ l.kind|replace('_', ' ')|capitalize }}{% if l.memo %}<span class="line-detail-ro">{{ l.memo }}</span>{% endif %}</td>
+              <td>{% if l.invoice_id %}<a href="/admin/invoices/{{ l.invoice_id }}">{{ l.invoice_number or '#' ~ l.invoice_id }}</a>{% else %}—{% endif %}</td>
+              <td class="num {{ 'amt-neg' if l.delta_cents < 0 else 'amt-pos' }}">
+                {{ '+' if l.delta_cents > 0 }}{{ l.delta_cents|money(l.currency) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}<p class="empty">No ledger entries yet.</p>{% endif %}
+      {% endif %}
+    </section>
+  </div>
+
+  <div>
+    <section class="panel">
+      <div class="panel-head"><h2>Details</h2></div>
+      <div class="kv">
+        <span class="kv-k">Contact</span><span class="kv-v">{{ c.contact_name or '—' }}</span>
+        <span class="kv-k">Email</span><span class="kv-v">{{ c.email or '—' }}</span>
+        {% if c.cc_emails %}<span class="kv-k">CC</span><span class="kv-v">{{ c.cc_emails }}</span>{% endif %}
+        <span class="kv-k">Phone</span><span class="kv-v">{{ c.phone or '—' }}</span>
+        <span class="kv-k">Currency</span><span class="kv-v">{{ c.currency }}</span>
+        <span class="kv-k">Terms</span><span class="kv-v">{{ c.terms_days }} days</span>
+        {% if c.tax_number %}<span class="kv-k">Tax no.</span><span class="kv-v">{{ c.tax_number }}</span>{% endif %}
+      </div>
+      {% if c.address_line1 or c.address_city %}
+      <p class="help" style="margin-top:14px">
+        {{ c.address_line1 }}{% if c.address_line2 %}<br>{{ c.address_line2 }}{% endif %}
+        {% if c.address_city %}<br>{{ c.address_city }}{% if c.address_region %}, {{ c.address_region }}{% endif %}{% endif %}
+        {% if c.address_postcode %}<br>{{ c.address_postcode }}{% endif %}
+        {% if c.address_country %}<br>{{ c.address_country }}{% endif %}
+      </p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Grant credit</h2></div>
+      <p class="help">Adds credit to the account — goodwill, or a retainer paid up front.
+        It reduces the balance now and can be applied to a future invoice.</p>
+      <form method="post" action="/admin/customers/{{ c.id }}/credit">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {{ money_input('amount', 'Amount', none, currency=c.currency) }}
+        <div class="field">
+          <label for="f-memo">Reason</label>
+          <input type="text" id="f-memo" name="memo" placeholder="Goodwill credit">
+        </div>
+        <button class="btn btn-primary btn-block" type="submit">Grant credit</button>
+      </form>
+    </section>
+
+    {% if c.notes_html %}
+    <section class="panel">
+      <div class="panel-head"><h2>Notes</h2></div>
+      <div class="prose">{{ c.notes_html|safe }}</div>
+    </section>
+    {% endif %}
+
+    <section class="panel">
+      <form method="post" action="/admin/customers/{{ c.id }}/archive" class="js-confirm"
+            data-confirm="{{ 'Restore this customer?' if c.is_archived else 'Archive this customer?' }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-ghost btn-block" type="submit">
+          {{ 'Restore customer' if c.is_archived else 'Archive customer' }}</button>
+      </form>
+    </section>
+  </div>
+</div>
+{% endblock %}

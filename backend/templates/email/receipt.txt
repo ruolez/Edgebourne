@@ -1,0 +1,15 @@
+Hello{% if customer.contact_name %} {{ customer.contact_name }}{% endif %},
+
+Thank you — we've received your payment of {{ payment.amount_cents|money(inv.currency) }}
+for invoice {{ inv.number }}.
+
+  Paid:         {{ payment.amount_cents|money(inv.currency) }}
+  Invoice total:{{ inv.total_cents|money(inv.currency) }}
+  Balance:      {{ inv.balance_due_cents|money(inv.currency) }}
+
+{% if inv.balance_due_cents > 0 %}There is still {{ inv.balance_due_cents|money(inv.currency) }} outstanding on this invoice.
+{% else %}This invoice is now paid in full.
+{% endif %}
+
+Thanks,
+{{ company.company_name }}

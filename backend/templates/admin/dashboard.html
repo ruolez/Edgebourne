@@ -2,6 +2,99 @@
 {% block title %}Dashboard{% endblock %}
 {% block heading %}Dashboard{% endblock %}
 {% block content %}
+
+{% if money %}
+{% if heartbeat and heartbeat.stale %}
+<div class="flash flash-error">
+  The scheduler last checked in {{ heartbeat.minutes }} minutes ago. Recurring invoices, email
+  retries and Stripe reconciliation are not running —
+  check <code>docker compose logs scheduler</code>.
+</div>
+{% elif not heartbeat %}
+<div class="flash flash-error">
+  The scheduler has never checked in. Start it with
+  <code>docker compose up -d scheduler</code> so retainers generate and queued email goes out.
+</div>
+{% endif %}
+
+{% if money.failed_emails %}
+<div class="flash flash-error">
+  {{ money.failed_emails }} billing email{{ 's' if money.failed_emails != 1 }} failed to send.
+  <a href="/admin/billing/email-log">Open the email log →</a>
+</div>
+{% endif %}
+{% if money.needs_review %}
+<div class="flash flash-error">
+  {{ money.needs_review }} payment{{ 's' if money.needs_review != 1 }} need
+  {{ '' if money.needs_review != 1 else 's' }} review — Stripe took an amount that didn't match,
+  or an invoice was overpaid. <a href="/admin/payments">Open payments →</a>
+</div>
+{% endif %}
+
+<div class="stat-grid">
+  <a class="stat" href="/admin/invoices?status=unpaid">
+    <span class="stat-n">{{ money.outstanding|money }}</span><span class="stat-l">Outstanding</span></a>
+  <a class="stat" href="/admin/invoices?status=overdue">
+    <span class="stat-n {{ 'money-neg' if money.overdue_cents }}">{{ money.overdue_cents|money }}</span>
+    <span class="stat-l">Overdue{% if money.overdue_n %} ({{ money.overdue_n }}){% endif %}</span></a>
+  <a class="stat" href="/admin/payments">
+    <span class="stat-n">{{ money.collected_mtd|money }}</span><span class="stat-l">Collected this month</span></a>
+  <a class="stat" href="/admin/estimates?status=sent">
+    <span class="stat-n">{{ money.pipeline|money }}</span><span class="stat-l">Out for signature</span></a>
+</div>
+
+<div class="stat-grid">
+  <a class="stat" href="/admin/invoices?status=draft">
+    <span class="stat-n">{{ money.drafts }}</span><span class="stat-l">Draft invoices</span></a>
+  <a class="stat" href="/admin/estimates?status=sent">
+    <span class="stat-n">{{ money.open_estimates }}</span><span class="stat-l">Open estimates</span></a>
+  <a class="stat" href="/admin/projects?status=active">
+    <span class="stat-n">{{ money.active_projects }}</span><span class="stat-l">Active projects</span></a>
+  <a class="stat" href="/admin/recurring">
+    <span class="stat-n">{{ money.retainers }}</span><span class="stat-l">Active retainers</span></a>
+</div>
+
+<div class="detail-grid">
+  <section class="panel">
+    <div class="panel-head"><h2>Overdue</h2><a href="/admin/invoices?status=overdue">All →</a></div>
+    {% if overdue %}
+    <table class="table">
+      <thead><tr><th>Invoice</th><th>Customer</th><th>Late</th><th class="num">Due</th></tr></thead>
+      <tbody>
+        {% for i in overdue %}
+        <tr class="row-link row-warn" data-href="/admin/invoices/{{ i.id }}">
+          <td><a href="/admin/invoices/{{ i.id }}">{{ i.number }}</a></td>
+          <td>{{ i.customer_name }}</td>
+          <td>{{ i.days_late }} day{{ 's' if i.days_late != 1 }}</td>
+          <td class="num">{{ i.balance_due_cents|money(i.currency) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">Nothing overdue.</p>{% endif %}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Recent payments</h2><a href="/admin/payments">All →</a></div>
+    {% if payments %}
+    <table class="table">
+      <thead><tr><th>Customer</th><th class="num">Amount</th></tr></thead>
+      <tbody>
+        {% for p in payments %}
+        <tr>
+          <td>{{ p.customer_name }}
+            <span class="line-detail-ro">{{ p.received_on.strftime('%d %b') }} ·
+              {{ p.method|replace('_', ' ') }}</span></td>
+          <td class="num">{{ p.amount_cents|money(p.currency) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">No payments yet.</p>{% endif %}
+  </section>
+</div>
+{% endif %}
+
 <div class="stat-grid">
   <a class="stat" href="/admin/leads?show=unread"><span class="stat-n">{{ stats.unread }}</span><span class="stat-l">Unread leads</span></a>
   <a class="stat" href="/admin/leads"><span class="stat-n">{{ stats.leads }}</span><span class="stat-l">Total leads</span></a>

@@ -1,0 +1,55 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_billing_macros.html" import status_pill %}
+{% block title %}Invoices{% endblock %}
+{% block heading %}Invoices{% endblock %}
+{% block actions %}<a class="btn btn-primary" href="/admin/invoices/new">New invoice</a>{% endblock %}
+{% block content %}
+
+<div class="stat-grid">
+  <div class="stat">
+    <span class="stat-n">{{ totals.outstanding|money }}</span>
+    <span class="stat-l">Outstanding</span>
+  </div>
+  <a class="stat" href="/admin/invoices?status=overdue">
+    <span class="stat-n {{ 'money-neg' if totals.overdue }}">{{ totals.overdue|money }}</span>
+    <span class="stat-l">Overdue</span>
+  </a>
+</div>
+
+<div class="tabs">
+  <a href="/admin/invoices" class="{{ 'active' if not status }}">All</a>
+  <a href="/admin/invoices?status=draft" class="{{ 'active' if status == 'draft' }}">Drafts</a>
+  <a href="/admin/invoices?status=unpaid" class="{{ 'active' if status == 'unpaid' }}">Unpaid</a>
+  <a href="/admin/invoices?status=overdue" class="{{ 'active' if status == 'overdue' }}">Overdue</a>
+  <a href="/admin/invoices?status=paid" class="{{ 'active' if status == 'paid' }}">Paid</a>
+  <a href="/admin/invoices?status=void" class="{{ 'active' if status == 'void' }}">Void</a>
+</div>
+
+<section class="panel">
+  {% if rows %}
+  <table class="table">
+    <thead>
+      <tr><th>Number</th><th>Customer</th><th>Issued</th><th>Due</th><th>Status</th>
+        <th class="num">Total</th><th class="num">Balance</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr class="row-link {{ 'row-warn' if r.is_overdue }}" data-href="/admin/invoices/{{ r.id }}">
+        <td><a href="/admin/invoices/{{ r.id }}">{{ r.number or 'Draft #' ~ r.id }}</a>
+          {% if r.title %}<span class="line-detail-ro">{{ r.title }}</span>{% endif %}</td>
+        <td><a href="/admin/customers/{{ r.customer_id }}">{{ r.customer_name }}</a>
+          {% if r.project_name %}<span class="line-detail-ro">{{ r.project_name }}</span>{% endif %}</td>
+        <td>{{ r.issue_date.strftime('%d %b %Y') }}</td>
+        <td>{{ r.due_date.strftime('%d %b %Y') if r.due_date else '—' }}</td>
+        <td>{{ status_pill(r.status, r.is_overdue) }}</td>
+        <td class="num">{{ r.total_cents|money(r.currency) }}</td>
+        <td class="num {{ 'num-strong' if r.balance_due_cents > 0 }}">{{ r.balance_due_cents|money(r.currency) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No invoices{{ ' in this view' if status }} yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

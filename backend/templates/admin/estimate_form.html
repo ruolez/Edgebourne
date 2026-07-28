@@ -1,0 +1,188 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input, md_editor %}
+{% from "admin/_billing_macros.html" import select_field, date_input, line_items,
+        doc_totals, status_pill, copy_link %}
+{% set editable = row.status == 'draft' %}
+{% block title %}{{ row.number or ('New estimate' if is_new else 'Draft #' ~ row.id) }}{% endblock %}
+{% block heading %}
+  {{ row.number or ('New estimate' if is_new else 'Draft #' ~ row.id) }}
+  {% if not is_new %}{{ status_pill(row.status) }}{% endif %}
+{% endblock %}
+{% block actions %}
+  {% if not is_new %}
+  <a class="btn btn-ghost" href="/admin/estimates/{{ row.id }}/print" target="_blank" rel="noopener">Print</a>
+  {% endif %}
+{% endblock %}
+{% block content %}
+
+{% if not editable %}
+<div class="flash flash-success" style="margin-bottom:18px">
+  This estimate has been sent, so its line items are locked. Duplicate it to build a revised one.
+</div>
+{% endif %}
+
+<form method="post" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-cols">
+    <div class="form-main">
+      <section class="panel">
+        {{ text_input('title', 'Title', row.title,
+            help='What this estimate is for. Shown to the customer.') }}
+        {{ line_items(lines, row.currency, editable) }}
+        {{ doc_totals(row, editable) }}
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Notes &amp; terms</h2></div>
+        {{ md_editor('notes_md', 'Notes to the customer', row.notes_md) }}
+        {{ md_editor('terms_md', 'Terms', row.terms_md) }}
+      </section>
+
+      {% if invoices %}
+      <section class="panel">
+        <div class="panel-head"><h2>Invoiced against this estimate</h2></div>
+        <table class="table">
+          <thead><tr><th>Invoice</th><th>Issued</th><th>Status</th><th class="num">Total</th></tr></thead>
+          <tbody>
+            {% for i in invoices %}
+            <tr class="row-link" data-href="/admin/invoices/{{ i.id }}">
+              <td><a href="/admin/invoices/{{ i.id }}">{{ i.number or 'Draft #' ~ i.id }}</a></td>
+              <td>{{ i.issue_date.strftime('%d %b %Y') }}</td>
+              <td>{{ status_pill(i.status, i.is_overdue) }}</td>
+              <td class="num">{{ i.total_cents|money(row.currency) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="doc-totals">
+          <dl>
+            <dt>Estimate total</dt><dd class="num">{{ row.total_cents|money(row.currency) }}</dd>
+            <dt>Invoiced</dt><dd class="num">{{ invoiced|money(row.currency) }}</dd>
+            <dt class="grand">Left to bill</dt>
+            <dd class="grand num">{{ (row.total_cents - invoiced)|money(row.currency) }}</dd>
+          </dl>
+        </div>
+      </section>
+      {% endif %}
+    </div>
+
+    <div class="form-side">
+      <section class="panel">
+        {% if is_new %}
+        {{ select_field('customer_id', 'Customer', row.customer_id, customers, blank='Choose a customer…') }}
+        {% else %}
+        <div class="field">
+          <label>Customer</label>
+          <p class="kv-v"><a href="/admin/customers/{{ row.customer_id }}">{{ row.customer_name }}</a></p>
+          <input type="hidden" name="customer_id" value="{{ row.customer_id }}">
+        </div>
+        {% endif %}
+        {{ select_field('project_id', 'Project', row.project_id, projects, blank='No project') }}
+        <div class="field-row">
+          {{ date_input('issue_date', 'Issue date', row.issue_date) }}
+          {{ date_input('valid_until', 'Valid until', row.valid_until) }}
+        </div>
+        {% if editable %}
+        <div class="save-bar">
+          <button class="btn btn-primary" type="submit">Save draft</button>
+          <a class="btn btn-ghost" href="/admin/estimates">Cancel</a>
+        </div>
+        {% endif %}
+      </section>
+
+      {% if not is_new %}
+      {% if row.status in ('draft', 'sent') %}
+      <section class="panel">
+        <div class="panel-head"><h2>Send</h2></div>
+        <p class="help">
+          {% if row.sent_at %}Last sent {{ row.sent_at.strftime('%d %b %Y at %H:%M') }}.
+          {% else %}Sending assigns the estimate number and creates the customer link where they
+            can accept it online.{% endif %}
+          {% if row.last_viewed_at %}<br>Customer last opened it
+            {{ row.last_viewed_at.strftime('%d %b %Y at %H:%M') }}.{% endif %}
+        </p>
+        <button class="btn btn-primary btn-block" type="button"
+                onclick="document.getElementById('send-form').submit()">
+          {{ 'Resend to customer' if row.sent_at else 'Send to customer' }}</button>
+      </section>
+      {% endif %}
+
+      {% if fresh_token %}
+      <section class="panel">
+        <div class="panel-head"><h2>Customer link</h2></div>
+        <p class="help"><strong>Copy this now.</strong> Only a hash of the link is stored, so it
+          cannot be shown again — generate a new one if you lose it.</p>
+        {{ copy_link(base_url ~ '/estimate/' ~ fresh_token) }}
+      </section>
+      {% endif %}
+
+      {% if row.status == 'accepted' %}
+      <section class="panel">
+        <div class="panel-head"><h2>Accepted</h2></div>
+        <div class="kv">
+          <span class="kv-k">When</span>
+          <span class="kv-v">{{ row.accepted_at.strftime('%d %b %Y, %H:%M') if row.accepted_at }}</span>
+          <span class="kv-k">Signed</span><span class="kv-v">{{ row.accepted_name or '—' }}</span>
+          {% if row.accepted_ip %}<span class="kv-k">IP</span><span class="kv-v">{{ row.accepted_ip }}</span>{% endif %}
+        </div>
+        <p class="help">This is the record Stripe asks for if a payment on the resulting invoice
+          is ever disputed.</p>
+      </section>
+      {% endif %}
+
+      {% if row.status in ('sent', 'accepted') %}
+      <section class="panel">
+        <div class="panel-head"><h2>Convert</h2></div>
+        <p class="help">Creates a <strong>draft</strong> invoice with these line items. Nothing hits
+          the customer's ledger until you issue it, so you can trim the lines to bill part of the
+          work.</p>
+        <button class="btn btn-primary btn-block" type="button"
+                onclick="document.getElementById('convert-form').submit()">Create invoice</button>
+      </section>
+      {% endif %}
+
+      <section class="panel">
+        <div class="panel-head"><h2>Actions</h2></div>
+        <div class="save-bar">
+          <button class="btn btn-ghost btn-block" type="button"
+                  onclick="document.getElementById('dup-form').submit()">Duplicate</button>
+          {% if row.status != 'draft' %}
+          <button class="btn btn-ghost btn-block" type="button"
+                  onclick="if(confirm('Generate a new link? The current one stops working in 24 hours.')) document.getElementById('token-form').submit()">New customer link</button>
+          {% endif %}
+        </div>
+        {% if row.status == 'sent' %}
+        <form method="post" action="/admin/estimates/{{ row.id }}/status" style="margin-top:12px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <p class="help">Accepted over the phone or by email? Record it here.</p>
+          <div class="save-bar">
+            <button class="btn btn-ghost" type="submit" name="status" value="accepted">Mark accepted</button>
+            <button class="btn btn-ghost" type="submit" name="status" value="declined">Mark declined</button>
+          </div>
+        </form>
+        {% endif %}
+      </section>
+
+      {% if editable %}
+      <section class="panel">
+        <button class="btn btn-danger btn-block js-delete" type="button"
+                data-action="/admin/estimates/{{ row.id }}/delete">Delete draft</button>
+      </section>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+</form>
+
+{% if not is_new %}
+{# Outside the main form -- nested <form> elements are invalid HTML. #}
+<form method="post" action="/admin/estimates/{{ row.id }}/duplicate" id="dup-form" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+<form method="post" action="/admin/estimates/{{ row.id }}/send" id="send-form" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+<form method="post" action="/admin/estimates/{{ row.id }}/convert" id="convert-form" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+<form method="post" action="/admin/estimates/{{ row.id }}/token" id="token-form" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+{% endif %}
+{% endblock %}

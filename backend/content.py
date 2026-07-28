@@ -5,6 +5,11 @@ import markdown as md_lib
 RESERVED_SLUGS = {
     "services", "work", "about", "contact", "blog", "admin", "static",
     "uploads", "healthz", "sitemap.xml", "robots.txt", "favicon.ico", "index",
+    # Billing portal + webhooks. These are two-segment routes so they cannot be
+    # shadowed by the catch-all; reserving them protects the namespace and keeps
+    # a future /pay index available.
+    "pay", "estimate", "estimates", "invoice", "invoices", "billing", "stripe",
+    "receipt", "tasks",
 }
 
 SLUG_RE = re.compile(r"^[a-z0-9-]{1,120}$")

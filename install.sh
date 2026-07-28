@@ -242,11 +242,18 @@ ADMIN_INITIAL_PASSWORD=$ADMIN_PW
 APP_PORT=80
 DOMAIN=$DOMAIN
 SERVER_NAMES=$SERVER_NAMES
+PUBLIC_BASE_URL=https://$DOMAIN
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_WEBHOOK_SECRET_PREVIOUS=
+SCHEDULER_ENABLED=1
+SCHEDULER_TICK_SECONDS=60
 EOF
     chmod 600 "$APP_DIR/.env"
   fi
 
   setup_ssl
+  install_backup_timer
 
   echo
   ok  "EdgeBourne is live."
@@ -254,6 +261,7 @@ EOF
   echo -e "   Admin:  ${C_GRN}https://$DOMAIN/admin${C_OFF}  (user: admin  password: $ADMIN_PW)"
   echo -e "   SSL:    auto-renews via certbot.timer (deploy hook reloads nginx)"
   echo -e "   Update: re-run this script and choose Update"
+  echo -e "   Stripe: re-run this script and choose Configure Stripe"
 }
 
 # ---------------------------------------------------------------- update
@@ -283,6 +291,7 @@ cmd_update() {
 
   wait_for_health "http://localhost/healthz"
   [ -n "$domain" ] && wait_for_health "https://$domain/healthz"
+  install_backup_timer
   ok "Update complete. Backup saved in $BACKUP_DIR (last $KEEP_BACKUPS kept)."
 }
 
@@ -301,16 +310,109 @@ cmd_renew() {
 
 # ---------------------------------------------------------------- remove
 
+cmd_stripe() {
+  need_root
+  [ -f "$APP_DIR/.env" ] || die "No installation found at $APP_DIR — run Install first."
+
+  echo
+  echo "  Stripe keys are read from the environment, never from the admin UI:"
+  echo "  a stolen admin session must not be able to point payment confirmations"
+  echo "  somewhere else, and .env stays out of the database backups."
+  echo
+  echo "  Find them at https://dashboard.stripe.com/apikeys"
+  echo "  Test mode keys start sk_test_ — live keys start sk_live_."
+  echo
+
+  ask "Stripe secret key (sk_test_… or sk_live_…, blank to leave unchanged)"
+  [ -n "$REPLY" ] && set_env STRIPE_SECRET_KEY "$REPLY"
+
+  local domain webhook_url
+  domain="$(env_get DOMAIN)"
+  if [ -n "$domain" ]; then webhook_url="https://$domain/billing/webhook/stripe"
+  else webhook_url="http://$(env_get APP_PORT 2>/dev/null || echo localhost:8090)/billing/webhook/stripe"; fi
+
+  echo
+  echo "  Now add this endpoint in the Stripe Dashboard"
+  echo "  (Developers → Webhooks → Add endpoint):"
+  echo
+  echo "      $webhook_url"
+  echo
+  echo "  Subscribe it to: checkout.session.completed, checkout.session.expired,"
+  echo "  checkout.session.async_payment_succeeded, checkout.session.async_payment_failed,"
+  echo "  payment_intent.succeeded, payment_intent.payment_failed, charge.succeeded,"
+  echo "  charge.refunded, charge.refund.updated, charge.dispute.created,"
+  echo "  charge.dispute.closed"
+  echo
+  echo "  Stripe then shows a signing secret starting whsec_ — paste it here."
+  echo
+
+  ask "Stripe webhook signing secret (whsec_…, blank to leave unchanged)"
+  if [ -n "$REPLY" ]; then
+    # Keep the old secret accepted for one deploy so rotation has no downtime.
+    local previous
+    previous="$(env_get STRIPE_WEBHOOK_SECRET)"
+    [ -n "$previous" ] && set_env STRIPE_WEBHOOK_SECRET_PREVIOUS "$previous"
+    set_env STRIPE_WEBHOOK_SECRET "$REPLY"
+  fi
+
+  [ -n "$domain" ] && set_env PUBLIC_BASE_URL "https://$domain"
+
+  log "Restarting so the new keys are picked up…"
+  compose up -d --force-recreate backend scheduler
+  ok "Stripe configured. Check Billing settings in the admin for a LIVE/TEST badge."
+}
+
+install_backup_timer() {
+  # Financial records need a schedule, not just a backup on update. The backup
+  # directory holds customer PII and Stripe ids, so it is not world-readable.
+  mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR"
+  cat > /etc/systemd/system/edgebourne-backup.service <<EOF
+[Unit]
+Description=EdgeBourne nightly database backup
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/bin/docker exec edgebourne-postgres pg_dump -U edgebourne edgebourne | gzip > $BACKUP_DIR/edgebourne-\$(date +%%Y%%m%%d-%%H%%M%%S).sql.gz; ls -1t $BACKUP_DIR/edgebourne-*.sql.gz | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f'
+EOF
+  cat > /etc/systemd/system/edgebourne-backup.timer <<'EOF'
+[Unit]
+Description=Nightly EdgeBourne database backup
+[Timer]
+OnCalendar=*-*-* 03:20:00
+RandomizedDelaySec=20m
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now edgebourne-backup.timer >/dev/null 2>&1 || true
+  ok "Nightly database backup enabled (03:20, keeping $KEEP_BACKUPS)."
+}
+
 cmd_remove() {
   need_root
   [ -d "$APP_DIR" ] || die "Nothing to remove — $APP_DIR does not exist."
 
   warn "This removes the app, its containers AND all data volumes (database, uploads)."
-  ask 'Type REMOVE to confirm'
-  [ "$REPLY" = "REMOVE" ] || die "Aborted."
 
-  if confirm "Save a final database backup to /root first?"; then
+  # Financial records are typically required to be kept for seven years, so
+  # once any invoice has been issued the final backup is NOT optional.
+  local invoices=0
+  if docker ps --format '{{.Names}}' | grep -q '^edgebourne-postgres$'; then
+    invoices="$(docker exec edgebourne-postgres psql -U edgebourne -d edgebourne -tAc \
+      "SELECT COUNT(*) FROM invoices WHERE status <> 'draft'" 2>/dev/null || echo 0)"
+  fi
+
+  if [ "${invoices:-0}" -gt 0 ]; then
+    warn "This installation holds $invoices issued invoice(s) — real financial records."
+    ask 'Type DELETE INVOICES to confirm you have what you need'
+    [ "$REPLY" = "DELETE INVOICES" ] || die "Aborted."
     backup_db "/root/edgebourne-final-$(date +%Y%m%d-%H%M%S).sql.gz"
+  else
+    ask 'Type REMOVE to confirm'
+    [ "$REPLY" = "REMOVE" ] || die "Aborted."
+    if confirm "Save a final database backup to /root first?"; then
+      backup_db "/root/edgebourne-final-$(date +%Y%m%d-%H%M%S).sql.gz"
+    fi
   fi
 
   log "Stopping and deleting containers + volumes…"
@@ -336,8 +438,9 @@ echo "   1) Install (clean Ubuntu 24 server)"
 echo "   2) Update from GitHub (keeps all data)"
 echo "   3) Install SSL only (app already installed)"
 echo "   4) Renew SSL certificate now"
-echo "   5) Remove installation"
-echo "   6) Exit"
+echo "   5) Configure Stripe payments"
+echo "   6) Remove installation"
+echo "   7) Exit"
 echo
 ask "Choose an option" "1"
 case "$REPLY" in
@@ -345,6 +448,7 @@ case "$REPLY" in
   2) cmd_update ;;
   3) cmd_ssl ;;
   4) cmd_renew ;;
-  5) cmd_remove ;;
+  5) cmd_stripe ;;
+  6) cmd_remove ;;
   *) echo "Bye." ;;
 esac
