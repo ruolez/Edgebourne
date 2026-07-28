@@ -441,7 +441,10 @@ def _alert(conn, subject, body):
 
 def drain_email_queue(conn, now):
     import mailer
+    import secrets_store
+
     settings = {k: setting(conn, k) for k in mailer.SETTING_KEYS}
+    settings["smtp_password"] = secrets_store.decrypt(settings.get("smtp_password") or "")
     return mailer.drain(conn, settings, limit=25)
 
 

@@ -32,14 +32,30 @@ def create_app():
         MAX_CONTENT_LENGTH=config.MAX_CONTENT_LENGTH,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
-        # An admin session can move money now. Gated on the deployment actually
-        # being https so local http development still works.
-        SESSION_COOKIE_SECURE=config.PUBLIC_BASE_URL.startswith("https"),
+        # An admin session can move money now, so the cookie is https-only in a
+        # real deployment. Set just below, once the database is reachable.
         PERMANENT_SESSION_LIFETIME=43200,
     )
     logging.basicConfig(level=logging.INFO)
 
     db.run_migrations()
+
+    # Decided at boot, so it cannot read flask.g. Falls back to the site_url
+    # setting when PUBLIC_BASE_URL is not in the environment.
+    def _https_deployment():
+        if config.PUBLIC_BASE_URL:
+            return config.PUBLIC_BASE_URL.startswith("https")
+        try:
+            with db.standalone() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT value FROM settings WHERE key = 'site_url'")
+                    row = cur.fetchone()
+                conn.commit()
+            return bool(row and (row[0] or "").startswith("https"))
+        except Exception:
+            return False
+
+    app.config["SESSION_COOKIE_SECURE"] = _https_deployment()
 
     app.teardown_appcontext(db.close_db)
     app.register_blueprint(auth.bp)

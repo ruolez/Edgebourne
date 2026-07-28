@@ -115,7 +115,7 @@ def invoice_form(iid=None):
     return render_template(
         "admin/invoice_form.html",
         row=row, lines=lines, payments=payments, bal=bal, is_new=iid is None,
-        fresh_token=fresh_token, base_url=config.PUBLIC_BASE_URL or request.url_root.rstrip("/"),
+        fresh_token=fresh_token, base_url=config.site_base_url(request.url_root),
         methods=[("bank_transfer", "Bank transfer / ACH"), ("check", "Cheque"),
                  ("cash", "Cash"), ("other", "Other")],
         customers=billing.customer_options(include_archived=bool(iid)),
@@ -263,7 +263,7 @@ def invoice_send(iid):
     except Exception:
         pass
 
-    pay_url = f"{config.PUBLIC_BASE_URL or request.url_root.rstrip('/')}/pay/{token}"
+    pay_url = f"{config.site_base_url(request.url_root)}/pay/{token}"
     log_id = billing_mail.send_invoice(dict(row), dict(customer), pay_url, livemode=livemode)
     db.execute("UPDATE invoices SET sent_at = now(), updated_at = now() WHERE id = %s", (iid,))
     if log_id:

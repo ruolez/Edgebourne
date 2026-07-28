@@ -18,7 +18,16 @@ SETTING_KEYS = [
 def smtp_settings():
     """Read SMTP settings inside a request context; the result is a plain dict
     safe to hand to a background thread."""
-    return {k: db.get_setting(k) for k in SETTING_KEYS}
+    values = {k: db.get_setting(k) for k in SETTING_KEYS}
+    # Stored encrypted alongside the payment keys. decrypt() passes plaintext
+    # through unchanged, so a mailbox configured before this keeps working.
+    try:
+        import secrets_store
+
+        values["smtp_password"] = secrets_store.decrypt(values.get("smtp_password") or "")
+    except Exception:
+        log.exception("could not decrypt the SMTP password")
+    return values
 
 
 def is_configured(s):

@@ -123,7 +123,7 @@ def estimate_form(eid=None):
         "admin/estimate_form.html",
         row=row, lines=lines, invoices=invoices, invoiced=invoiced,
         is_new=eid is None, statuses=STATUSES, fresh_token=fresh_token,
-        base_url=config.PUBLIC_BASE_URL or request.url_root.rstrip("/"),
+        base_url=config.site_base_url(request.url_root),
         customers=billing.customer_options(include_archived=bool(eid)),
         projects=billing.project_options(),
     )
@@ -220,7 +220,7 @@ def estimate_send(eid):
         pass
 
     customer = db.query("SELECT * FROM customers WHERE id = %s", (row["customer_id"],), one=True)
-    view_url = f"{config.PUBLIC_BASE_URL or request.url_root.rstrip('/')}/estimate/{token}"
+    view_url = f"{config.site_base_url(request.url_root)}/estimate/{token}"
     log_id = billing_mail.send_estimate(dict(row), dict(customer), view_url, livemode=livemode)
     db.execute("UPDATE estimates SET sent_at = now(), updated_at = now() WHERE id = %s", (eid,))
     if log_id:

@@ -314,26 +314,27 @@ cmd_stripe() {
   need_root
   [ -f "$APP_DIR/.env" ] || die "No installation found at $APP_DIR — run Install first."
 
-  echo
-  echo "  Stripe keys are read from the environment, never from the admin UI:"
-  echo "  a stolen admin session must not be able to point payment confirmations"
-  echo "  somewhere else, and .env stays out of the database backups."
-  echo
-  echo "  Find them at https://dashboard.stripe.com/apikeys"
-  echo "  Test mode keys start sk_test_ — live keys start sk_live_."
-  echo
-
-  ask "Stripe secret key (sk_test_… or sk_live_…, blank to leave unchanged)"
-  [ -n "$REPLY" ] && set_env STRIPE_SECRET_KEY "$REPLY"
-
-  local domain webhook_url
+  local domain webhook_url admin_url
   domain="$(env_get DOMAIN)"
-  if [ -n "$domain" ]; then webhook_url="https://$domain/billing/webhook/stripe"
-  else webhook_url="http://$(env_get APP_PORT 2>/dev/null || echo localhost:8090)/billing/webhook/stripe"; fi
+  if [ -n "$domain" ]; then
+    webhook_url="https://$domain/billing/webhook/stripe"
+    admin_url="https://$domain/admin/billing"
+  else
+    webhook_url="http://localhost/billing/webhook/stripe"
+    admin_url="http://localhost/admin/billing"
+  fi
 
   echo
-  echo "  Now add this endpoint in the Stripe Dashboard"
-  echo "  (Developers → Webhooks → Add endpoint):"
+  echo "  Stripe keys are configured in the admin panel, not here:"
+  echo
+  echo "      $admin_url"
+  echo
+  echo "  They are stored encrypted — the encryption key is derived from"
+  echo "  SECRET_KEY in .env, which never reaches the database, so a stolen"
+  echo "  database backup contains nothing usable. Changing them requires the"
+  echo "  admin password and is logged and emailed."
+  echo
+  echo "  In the Stripe Dashboard (Developers → Webhooks → Add endpoint), use:"
   echo
   echo "      $webhook_url"
   echo
@@ -343,23 +344,20 @@ cmd_stripe() {
   echo "  charge.refunded, charge.refund.updated, charge.dispute.created,"
   echo "  charge.dispute.closed"
   echo
-  echo "  Stripe then shows a signing secret starting whsec_ — paste it here."
+  echo "  Then paste the signing secret it shows you into the admin page above."
   echo
 
-  ask "Stripe webhook signing secret (whsec_…, blank to leave unchanged)"
-  if [ -n "$REPLY" ]; then
-    # Keep the old secret accepted for one deploy so rotation has no downtime.
-    local previous
-    previous="$(env_get STRIPE_WEBHOOK_SECRET)"
-    [ -n "$previous" ] && set_env STRIPE_WEBHOOK_SECRET_PREVIOUS "$previous"
-    set_env STRIPE_WEBHOOK_SECRET "$REPLY"
+  # PUBLIC_BASE_URL still wins over the admin setting when present, which is
+  # what an operator wants after issuing a certificate.
+  if [ -n "$domain" ] && [ "$(env_get PUBLIC_BASE_URL)" != "https://$domain" ]; then
+    if confirm "Pin the public address to https://$domain in .env?"; then
+      set_env PUBLIC_BASE_URL "https://$domain"
+      compose up -d --force-recreate backend scheduler
+      ok "Public address pinned and services restarted."
+      return
+    fi
   fi
-
-  [ -n "$domain" ] && set_env PUBLIC_BASE_URL "https://$domain"
-
-  log "Restarting so the new keys are picked up…"
-  compose up -d --force-recreate backend scheduler
-  ok "Stripe configured. Check Billing settings in the admin for a LIVE/TEST badge."
+  ok "Nothing to change here — configure the keys in the admin panel."
 }
 
 install_backup_timer() {
@@ -438,7 +436,7 @@ echo "   1) Install (clean Ubuntu 24 server)"
 echo "   2) Update from GitHub (keeps all data)"
 echo "   3) Install SSL only (app already installed)"
 echo "   4) Renew SSL certificate now"
-echo "   5) Configure Stripe payments"
+echo "   5) Stripe / webhook setup info"
 echo "   6) Remove installation"
 echo "   7) Exit"
 echo

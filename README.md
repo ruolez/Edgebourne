@@ -88,19 +88,27 @@ at-least-once, out-of-order webhook delivery harmless.
 
 ### Stripe setup
 
-Keys live in the **environment**, never in the settings table — a stolen admin session must not
-be able to swap the webhook secret and forge payment confirmations, and `.env` stays out of the
-`pg_dump` backups.
+Keys are configured in **Billing settings** in the admin panel. They are **encrypted at rest**
+with a key derived from `SECRET_KEY`, which lives in `.env` and is never written to the
+database — so a stolen `pg_dump` yields ciphertext, and restoring it elsewhere gets you nothing.
+The same applies to the SMTP password.
 
-```bash
-sudo ./install.sh      # → "Configure Stripe"
-```
+Because a settable webhook secret is precisely what someone with a stolen admin session would
+want (point it at a secret they control, then post forged "payment succeeded" events), changing
+any payment key requires the admin password again and is written to the audit log and emailed to
+the alert address. Replacing the webhook secret keeps the previous one valid for one rotation, so
+events already in flight are not rejected.
 
-It prompts for the secret key, prints the webhook URL to register
-(`https://<domain>/billing/webhook/stripe`) and the events to subscribe to, then takes the
-signing secret. Test vs. live mode is derived from the key prefix (`sk_test_` / `sk_live_`) —
-there is no separate toggle to fall out of sync. While in test mode, customer email is
-suppressed unless you set a test-email override in Billing settings.
+Setting `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` or `PUBLIC_BASE_URL` in the environment
+still takes precedence; those fields then show as locked in the UI. Use that if you would rather
+keep keys off the box entirely.
+
+Test vs. live mode is derived from the key prefix (`sk_test_` / `sk_live_`) — there is no
+separate toggle to fall out of sync. While in test mode, customer email is suppressed unless you
+set a test-email override.
+
+`sudo ./install.sh` → "Stripe / webhook setup info" prints the webhook URL to register and the
+events to subscribe to.
 
 Locally:
 

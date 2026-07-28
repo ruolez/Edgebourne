@@ -42,7 +42,7 @@ def _client_ip():
 
 
 def base_url():
-    return config.PUBLIC_BASE_URL or request.url_root.rstrip("/")
+    return config.site_base_url(request.url_root)
 
 
 def _lookup(table, prefix, token):

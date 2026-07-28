@@ -9,40 +9,103 @@
   <div class="panel-head">
     <h2>Stripe</h2>
     {% if stripe.configured %}
-      <span class="pill {% if stripe.livemode %}pill-paid{% else %}pill-partial{% endif %}">{{ stripe.mode|upper }}</span>
+      <span class="pill {% if stripe.livemode %}pill-paid{% else %}pill-partial{% endif %}">{{ stripe.mode|upper }} MODE</span>
     {% else %}
       <span class="pill">Not configured</span>
     {% endif %}
   </div>
-  <p class="help">Stripe keys are read from the server environment (<code>.env</code>), not from
-    this page, and cannot be changed here. A key that could be rewritten through the admin UI
-    would let anyone with a stolen session redirect payment confirmations. Change them with
-    <code>sudo ./install.sh</code> → Configure Stripe, or by editing <code>.env</code> and
-    restarting.</p>
-  <div class="kv">
-    <span class="kv-k">Secret key</span>
-    <span class="kv-v">{{ stripe.fingerprint or '— not set —' }}</span>
-    <span class="kv-k">Webhook secret</span>
-    <span class="kv-v">{{ 'configured' if stripe.webhook_secret_set else '— not set —' }}</span>
-    <span class="kv-k">Public base URL</span>
-    <span class="kv-v">{{ stripe.public_base_url or '— not set (PUBLIC_BASE_URL) —' }}</span>
-    <span class="kv-k">Webhook endpoint</span>
-    <span class="kv-v">
-      <span class="token-link">
-        <input type="text" class="js-copy-src" value="{{ stripe.webhook_url }}" readonly>
-        <button type="button" class="btn btn-ghost js-copy">Copy</button>
-      </span>
-    </span>
+
+  <p class="help">Keys are stored encrypted — the encryption key comes from the server's
+    <code>SECRET_KEY</code>, which is never written to the database, so a stolen database backup
+    contains nothing usable. Test or live mode is decided by the key itself
+    (<code>sk_test_</code> vs <code>sk_live_</code>); there is no separate switch to get wrong.</p>
+
+  {% if stripe.any_env_locked %}
+  <p class="help">Some values are set in the server environment and take precedence, so they are
+    shown here as locked.</p>
+  {% endif %}
+
+  <form method="post" action="/admin/billing/keys">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    {% for key, label, placeholder in secret_fields %}
+    <div class="field">
+      <label for="f-{{ key }}">{{ label }}</label>
+      {% if stripe.env_locked[key] %}
+      <input type="text" id="f-{{ key }}" value="Set in the server environment" readonly>
+      <p class="help">Managed outside the app. Remove it from <code>.env</code> to edit it here.</p>
+      {% else %}
+      <input type="password" id="f-{{ key }}" name="{{ key }}" value="{{ v[key] }}"
+             placeholder="{{ placeholder }}" autocomplete="off">
+      <p class="help">
+        {% if key == 'stripe_secret_key' %}
+          From Stripe → Developers → API keys.
+          {% if stripe.fingerprint %}Currently <code>{{ stripe.fingerprint }}</code>.{% endif %}
+        {% else %}
+          Shown by Stripe when you add the webhook endpoint below. Replacing it keeps the old one
+          working for one rotation, so events already in flight are not rejected.
+        {% endif %}
+        Leave the dots untouched to keep the current value; clear the field to remove it.
+      </p>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    <div class="field">
+      <label for="f-site_url">Public site address</label>
+      {% if stripe.env_locked.site_url %}
+      <input type="text" id="f-site_url" value="{{ stripe.site_url }}" readonly>
+      <p class="help">Set by <code>PUBLIC_BASE_URL</code> in the server environment.</p>
+      {% else %}
+      <input type="text" id="f-site_url" name="site_url" value="{{ v.site_url }}"
+             placeholder="https://edgebourne.com">
+      <p class="help">Used to build payment links in emails and Stripe redirects, where there is no
+        browser request to infer it from. Must be the address customers actually reach.</p>
+      {% endif %}
+    </div>
+
+    <div class="field">
+      <label for="f-key-password">Confirm with your password</label>
+      <input type="password" id="f-key-password" name="password" required autocomplete="off">
+      <p class="help">Required to change payment keys. Every change is logged and emailed to your
+        alert address — swapping the webhook secret is the one thing that would let someone forge
+        payment confirmations.</p>
+    </div>
+
+    <div class="save-bar">
+      <button class="btn btn-primary" type="submit">Save payment keys</button>
+    </div>
+  </form>
+
+  <div class="panel-head" style="margin-top:26px"><h2>Webhook endpoint</h2></div>
+  <p class="help">Add this in Stripe → Developers → Webhooks → Add endpoint, then paste the signing
+    secret above. Without it, card payments are taken but never recorded here.</p>
+  <div class="token-link">
+    <input type="text" class="js-copy-src" value="{{ stripe.webhook_url }}" readonly>
+    <button type="button" class="btn btn-ghost js-copy">Copy</button>
+  </div>
+  <p class="help" style="margin-top:10px">Subscribe it to:
+    <code>checkout.session.completed</code>, <code>checkout.session.expired</code>,
+    <code>checkout.session.async_payment_succeeded</code>,
+    <code>checkout.session.async_payment_failed</code>,
+    <code>payment_intent.succeeded</code>, <code>payment_intent.payment_failed</code>,
+    <code>charge.succeeded</code>, <code>charge.refunded</code>,
+    <code>charge.refund.updated</code>, <code>charge.dispute.created</code>,
+    <code>charge.dispute.closed</code></p>
+
+  <div class="kv" style="margin-top:18px">
     <span class="kv-k">Last webhook</span>
     <span class="kv-v">
       {% if last_event_at %}{{ last_event_at.strftime('%d %b %Y, %H:%M') }} UTC
       {% else %}<em>none received yet</em>{% endif %}
     </span>
   </div>
-  <div class="save-bar">
+
+  <div class="save-bar" style="margin-top:14px">
     <button class="btn btn-ghost" type="button" id="stripe-test">Test connection</button>
     <span id="stripe-test-result" class="test-result"></span>
   </div>
+
   {% if recent_events %}
   <table class="table">
     <thead><tr><th>Event</th><th>Type</th><th>Status</th><th>Received</th></tr></thead>

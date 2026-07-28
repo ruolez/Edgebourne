@@ -5,14 +5,16 @@ import mailer
 
 from . import bp
 
-MASK = "••••••••"
+import secrets_store
+
+MASK = secrets_store.MASK
 FIELDS = ["smtp_host", "smtp_port", "smtp_user", "smtp_from", "smtp_tls", "notify_email"]
 
 
 @bp.get("/email")
 def email():
     values = {k: db.get_setting(k, "") for k in FIELDS}
-    values["smtp_password"] = MASK if db.get_setting("smtp_password") else ""
+    values["smtp_password"] = MASK if secrets_store.is_set("smtp_password") else ""
     return render_template("admin/email.html", v=values)
 
 
@@ -20,11 +22,8 @@ def email():
 def email_save():
     for key in FIELDS:
         db.set_setting(key, (request.form.get(key) or "").strip())
-    password = request.form.get("smtp_password") or ""
-    if password and password != MASK:
-        db.set_setting("smtp_password", password)
-    elif not password:
-        db.set_setting("smtp_password", "")
+    # Encrypted at rest, so a database backup does not hand over the mailbox.
+    secrets_store.save_masked("smtp_password", request.form.get("smtp_password"))
     flash("Email settings saved.", "success")
     return redirect(url_for("admin.email"))
 

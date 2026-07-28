@@ -7,9 +7,12 @@ parsing (including multiple signatures during secret rotation and the replay
 tolerance window), idempotency-key retry semantics, and the error taxonomy all
 correct -- and each is a money bug when wrong.
 
-Keys come from the ENVIRONMENT, never the settings table -- see config.py for
-the four reasons. Mode is derived from the key prefix so it cannot desynchronise
-from a separate toggle.
+Keys are configured in the admin UI and stored ENCRYPTED at rest (see
+secrets_store.py), so a stolen database dump yields ciphertext -- decrypting it
+also requires SECRET_KEY from .env. Environment variables still win if set, so
+an operator who prefers to manage keys outside the app can, and existing
+deployments keep working. Mode is derived from the key prefix, so it cannot
+desynchronise from a separate toggle.
 
 Every idempotency key is derived from a local row id that is ALREADY COMMITTED
 before the call, so a timeout-and-retry returns the original object instead of
@@ -25,6 +28,37 @@ import time
 import config
 
 log = logging.getLogger(__name__)
+
+
+def secret_key():
+    """Environment first, then the encrypted admin setting."""
+    if config.STRIPE_SECRET_KEY:
+        return config.STRIPE_SECRET_KEY
+    try:
+        import secrets_store
+        return secrets_store.get_secret("stripe_secret_key")
+    except Exception:
+        log.exception("could not read the stored Stripe secret key")
+        return ""
+
+
+def webhook_secrets():
+    """Current secret first, then the previous one, so rotation has no downtime."""
+    out = []
+    if config.STRIPE_WEBHOOK_SECRET:
+        out.append(config.STRIPE_WEBHOOK_SECRET)
+    if config.STRIPE_WEBHOOK_SECRET_PREVIOUS:
+        out.append(config.STRIPE_WEBHOOK_SECRET_PREVIOUS)
+    if not out:
+        try:
+            import secrets_store
+            for key in ("stripe_webhook_secret", "stripe_webhook_secret_previous"):
+                value = secrets_store.get_secret(key)
+                if value:
+                    out.append(value)
+        except Exception:
+            log.exception("could not read the stored Stripe webhook secret")
+    return out
 
 # Pinned in code, not only in the Dashboard: someone clicking "upgrade" there
 # must not be able to change webhook payload shapes under a running integration.
@@ -58,11 +92,12 @@ def _stripe():
     """Lazy import + configure. gunicorn --preload runs create_app() in the
     arbiter, so a module-level api_key assignment would execute there; a missing
     or bad key must degrade the billing UI, never crash boot."""
-    if not config.STRIPE_SECRET_KEY:
-        raise StripeNotConfigured("STRIPE_SECRET_KEY is not set.")
+    key = secret_key()
+    if not key:
+        raise StripeNotConfigured("No Stripe secret key is configured.")
     import stripe
 
-    stripe.api_key = config.STRIPE_SECRET_KEY
+    stripe.api_key = key
     stripe.api_version = STRIPE_API_VERSION
     stripe.max_network_retries = 1  # request path; the scheduler raises this
     return stripe
@@ -100,11 +135,11 @@ def _call(fn, *args, **kwargs):
 # ---------------------------------------------------------------------------
 
 def is_configured():
-    return bool(config.STRIPE_SECRET_KEY)
+    return bool(secret_key())
 
 
 def livemode():
-    return config.STRIPE_SECRET_KEY.startswith("sk_live_")
+    return secret_key().startswith("sk_live_")
 
 
 def mode_label():
@@ -112,7 +147,7 @@ def mode_label():
 
 
 def key_fingerprint():
-    key = config.STRIPE_SECRET_KEY
+    key = secret_key()
     return f"{key[:8]}…{key[-4:]}" if len(key) > 16 else ""
 
 
@@ -286,9 +321,7 @@ def list_payment_intents_since(ts, limit=100):
 # ---------------------------------------------------------------------------
 
 def _webhook_secrets():
-    for secret in (config.STRIPE_WEBHOOK_SECRET, config.STRIPE_WEBHOOK_SECRET_PREVIOUS):
-        if secret:
-            yield secret
+    return webhook_secrets()
 
 
 def construct_event(payload, sig_header):
