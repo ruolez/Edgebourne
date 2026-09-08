@@ -44,6 +44,43 @@ Volumes: `pgdata` (database), `uploads` (admin-uploaded images, re-encoded to We
   best-effort on top. For local testing use host `host.docker.internal`, port `1025`,
   encryption `none` (delivers to the mail catcher at http://localhost:1080).
 
+## Portfolio content
+
+The public site is content-driven: ten case studies, four blog posts, eight FAQs and the
+Process / Industries pages ship as seeded content in `backend/migrations/007_portfolio_seed.sql`,
+so a fresh install or a production update arrives with the site already populated. Nothing has
+to be re-entered in the admin after a deploy.
+
+**Case studies** (`case_studies`) carry, beyond the basics:
+
+| Column | Purpose |
+|---|---|
+| `industry` | Drives the filter chips on `/work`. Keep the set small — a chip per case study is not a filter. |
+| `engagement` | e.g. "6 weeks to first sync · ongoing support" |
+| `problem_lede` | 1-2 sentences, rendered as the pull-quote at the top of the page |
+| `metrics` | JSONB `[{value, label}]`, max 4, shown as the stat row and inline in the homepage showcase |
+| `gallery` | JSONB `[{src, thumb, caption}]`, the screenshot gallery + lightbox |
+| `stack` | Full stack list for the sidebar (distinct from `tech_tags`, which are the card chips) |
+| `is_featured` | The three alternating showcase rows on the homepage |
+
+**Screenshots** are committed static files under `backend/static/media/work/<slug>/`
+(`cover.webp` 1600x1000, `cover-thumb.webp` 800x500, `NN-name.webp` + `NN-name-thumb.webp`).
+They are served by nginx from the host bind-mount, so they deploy with a `git pull` and need no
+image rebuild and no re-upload. The admin can still upload gallery images the normal way; those
+land in the `uploads` volume instead.
+
+**Testimonials are approval-gated.** Rows seed with `is_approved = false` and the public site
+renders only approved ones — `/` and `/work/<slug>` show nothing until someone ticks the box in
+**Admin → Testimonials**. The seeded quotes are drafts written to match real client feedback;
+confirm the wording with the client before approving. This is deliberate: nothing attributed to a
+named human goes live without a person deciding it should.
+
+**FAQs** (`faqs`) render as the homepage accordion, markdown rendered to HTML on save.
+
+Homepage stats, the process strip, industry tiles and the tech list are inline `{% set %}` lists
+at the top of `backend/templates/public/home.html` — they have no DB contract, so edit the
+template to change them.
+
 ## Billing
 
 A full back office: **Customers → Projects → Estimates → Invoices → Payments**, with a

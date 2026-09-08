@@ -31,7 +31,23 @@ def home():
         """SELECT * FROM posts WHERE is_published
            ORDER BY published_at DESC NULLS LAST LIMIT 3"""
     )
-    return render_template("public/home.html", services=services, work=work, posts=posts)
+    featured = db.query(
+        """SELECT * FROM case_studies WHERE is_published AND is_featured
+           ORDER BY sort_order, id LIMIT 3"""
+    )
+    testimonials = db.query(
+        "SELECT * FROM testimonials WHERE is_approved ORDER BY sort_order, id"
+    )
+    faqs = db.query("SELECT * FROM faqs WHERE is_published ORDER BY sort_order, id")
+    return render_template(
+        "public/home.html",
+        services=services,
+        work=work,
+        posts=posts,
+        featured=featured,
+        testimonials=testimonials,
+        faqs=faqs,
+    )
 
 
 @bp.get("/services")
@@ -45,7 +61,15 @@ def work_index():
     rows = db.query(
         "SELECT * FROM case_studies WHERE is_published ORDER BY sort_order, id"
     )
-    return render_template("public/work_index.html", work=rows)
+    industries = db.query(
+        """SELECT DISTINCT industry FROM case_studies
+           WHERE is_published AND industry <> '' ORDER BY industry"""
+    )
+    return render_template(
+        "public/work_index.html",
+        work=rows,
+        industries=[r["industry"] for r in industries],
+    )
 
 
 @bp.get("/work/<slug>")
@@ -55,7 +79,35 @@ def work_detail(slug):
     )
     if not row:
         abort(404)
-    return render_template("public/work_detail.html", cs=row)
+    testimonial = db.query(
+        """SELECT * FROM testimonials
+           WHERE case_study_slug = %s AND is_approved
+           ORDER BY sort_order, id LIMIT 1""",
+        (slug,),
+        one=True,
+    )
+    # Same industry first, then simply the next case studies in running order --
+    # so a lone case study in its industry still gets two neighbours.
+    related = db.query(
+        """SELECT * FROM case_studies
+           WHERE is_published AND id <> %s
+           ORDER BY (industry <> '' AND industry = %s) DESC, sort_order, id
+           LIMIT 2""",
+        (row["id"], row["industry"]),
+    )
+    return render_template(
+        "public/work_detail.html", cs=row, testimonial=testimonial, related=related
+    )
+
+
+@bp.get("/process")
+def process():
+    return render_template("public/process.html")
+
+
+@bp.get("/industries")
+def industries():
+    return render_template("public/industries.html")
 
 
 @bp.get("/about")
@@ -121,7 +173,9 @@ def sitemap():
     # be listed here -- the token is the credential.
     base = request.url_root.rstrip("/")
     entries = [(f"{base}/", None)]
-    for path in ("/services", "/work", "/about", "/blog", "/contact"):
+    for path in (
+        "/services", "/work", "/process", "/industries", "/about", "/blog", "/contact"
+    ):
         entries.append((base + path, None))
     for row in db.query(
         "SELECT slug, updated_at FROM case_studies WHERE is_published"

@@ -1,0 +1,23 @@
+{# Portfolio card. Expects `cs`. #}
+<a class="work-card" href="/work/{{ cs.slug }}"
+   {% if cs.industry %}data-industry="{{ cs.industry }}"{% endif %}>
+  <div class="work-shot">
+    {% if cs.cover_thumb or cs.cover_image %}
+    <img src="{{ cs.cover_thumb or cs.cover_image }}" alt="Screenshot of the {{ cs.title }} system" loading="lazy" decoding="async">
+    {% else %}
+    <span class="work-shot-empty" aria-hidden="true"><svg viewBox="0 0 190 190"><use href="#seal"/></svg></span>
+    {% endif %}
+  </div>
+  <div class="work-body">
+    <p class="work-meta">
+      {% if cs.industry %}<span class="work-industry">{{ cs.industry }}</span>{% endif %}
+      {% if cs.engagement %}<span class="work-engagement">{{ cs.engagement }}</span>{% endif %}
+    </p>
+    <h3 class="work-title">{{ cs.title }}</h3>
+    <p class="work-summary">{{ cs.problem_lede or cs.summary }}</p>
+    {% if cs.tech_tags %}
+    <span class="tags">{% for t in cs.tech_tags[:4] %}<span class="tag">{{ t }}</span>{% endfor %}</span>
+    {% endif %}
+    <span class="link-go work-go">Read the case study<span aria-hidden="true">→</span></span>
+  </div>
+</a>

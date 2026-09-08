@@ -3,33 +3,156 @@
 {% set meta_description = cs.meta_description or cs.summary %}
 {% set og_image = cs.cover_image %}
 {% set og_type = 'article' %}
+{% set cta_title = 'Have a similar problem?' %}
+{% set cta_text = "We've probably seen a version of it before — and we can tell you quickly whether it's worth building." %}
 {% block content %}
-<article>
-  <section class="page-head">
+<article class="case">
+
+  {# ---------- header ---------- #}
+  <section class="page-head case-head">
     <div class="wrap">
       <p class="eyebrow">CASE STUDY{% if cs.client %} · {{ cs.client | upper }}{% endif %}</p>
       <h1>{{ cs.title }}</h1>
+      {% if cs.summary %}<p class="lead case-summary">{{ cs.summary }}</p>{% endif %}
+      {% if cs.industry or cs.engagement %}
+      <dl class="case-meta">
+        {% if cs.industry %}<div><dt>Industry</dt><dd>{{ cs.industry }}</dd></div>{% endif %}
+        {% if cs.engagement %}<div><dt>Engagement</dt><dd>{{ cs.engagement }}</dd></div>{% endif %}
+      </dl>
+      {% endif %}
       {% if cs.tech_tags %}
       <span class="tags">{% for t in cs.tech_tags %}<span class="tag">{{ t }}</span>{% endfor %}</span>
       {% endif %}
     </div>
   </section>
-  <section class="section article-body">
-    <div class="wrap wrap-narrow">
-      {% if cs.cover_image %}<img class="article-cover" src="{{ cs.cover_image }}" alt="{{ cs.title }}">{% endif %}
-      <div class="prose">{{ cs.body_html | safe }}</div>
-      <div class="article-back"><a href="/work">← All work</a></div>
+
+  {# ---------- the problem, as a pull-quote ---------- #}
+  {% if cs.problem_lede %}
+  <section class="case-lede-band">
+    <div class="wrap" data-reveal>
+      <p class="eyebrow">THE PROBLEM</p>
+      <p class="case-lede">{{ cs.problem_lede }}</p>
     </div>
   </section>
+  {% endif %}
+
+  {# ---------- metrics ---------- #}
+  {% if cs.metrics %}
+  <section class="case-metrics">
+    <div class="wrap">
+      <ul class="metric-strip" data-reveal>
+        {% for m in cs.metrics[:4] %}
+        <li><span class="metric-value">{{ m.value }}</span><span class="metric-label">{{ m.label }}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ---------- cover ---------- #}
+  {% if cs.cover_image or cs.cover_thumb %}
+  <section class="case-cover">
+    <div class="wrap" data-reveal>
+      <div class="frame frame-lg">
+        <span class="frame-bar" aria-hidden="true"><i></i><i></i><i></i><span class="frame-url">{{ cs.slug }}</span></span>
+        <img src="{{ cs.cover_image or cs.cover_thumb }}" alt="The {{ cs.title }} system in use" decoding="async">
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ---------- body + sidebar ---------- #}
+  <section class="section case-body">
+    <div class="wrap case-grid">
+      <div class="case-main prose prose-lg">{{ cs.body_html | safe }}</div>
+      <aside class="case-side">
+        {% if cs.stack %}
+        <div class="side-block" data-reveal>
+          <h2 class="side-title">Stack</h2>
+          <ul class="stack-list">
+            {% for s in cs.stack %}<li>{{ s }}</li>{% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+        <div class="side-block side-cta" data-reveal>
+          <h2 class="side-title">Same problem?</h2>
+          <p>Tell us what your team does by hand today. We'll tell you what it takes to remove it.</p>
+          <a class="btn btn-primary" href="/contact">Book a call</a>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  {# ---------- gallery ---------- #}
+  {% if cs.gallery %}
+  <section class="section section-tint case-gallery-band">
+    <div class="wrap">
+      <div class="section-head" data-reveal>
+        <p class="eyebrow">INSIDE THE SYSTEM</p>
+        <h2>What it actually looks like</h2>
+      </div>
+      <div class="gallery" id="gallery" data-reveal>
+        {% for g in cs.gallery %}
+        <figure class="shot">
+          <a class="shot-link" href="{{ g.src }}" data-lightbox data-caption="{{ g.caption }}">
+            <span class="frame">
+              <span class="frame-bar" aria-hidden="true"><i></i><i></i><i></i></span>
+              <img src="{{ g.thumb or g.src }}" alt="{{ g.caption or cs.title }}" loading="lazy" decoding="async">
+            </span>
+            <span class="shot-zoom" aria-hidden="true">⤢</span>
+          </a>
+          {% if g.caption %}<figcaption>{{ g.caption }}</figcaption>{% endif %}
+        </figure>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ---------- testimonial ---------- #}
+  {% if testimonial %}
+  <section class="section case-quote-band">
+    <div class="wrap">
+      <figure class="quote-card quote-card-lg" data-reveal>
+        <span class="quote-mark" aria-hidden="true">&ldquo;</span>
+        <blockquote>{{ testimonial.quote }}</blockquote>
+        <figcaption>
+          <span class="quote-role">{{ testimonial.author_role }}</span>
+          {% if testimonial.industry %}<span class="quote-industry">{{ testimonial.industry }}</span>{% endif %}
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ---------- related ---------- #}
+  {% if related %}
+  <section class="section section-tint">
+    <div class="wrap">
+      <div class="section-head" data-reveal>
+        <p class="eyebrow">NEXT</p>
+        <h2>Related work</h2>
+      </div>
+      <div class="work-grid work-grid-2" data-reveal>
+        {% for cs in related[:2] %}{% include "public/_work_card.html" %}{% endfor %}
+      </div>
+      <div class="section-more"><a class="btn btn-outline" href="/work">All case studies</a></div>
+    </div>
+  </section>
+  {% else %}
+  <div class="wrap article-back"><a class="link-go" href="/work"><span aria-hidden="true">←</span> All work</a></div>
+  {% endif %}
 </article>
 
-<section class="section cta-band">
-  <div class="wrap cta-inner">
-    <div>
-      <h2>Have a similar problem?</h2>
-      <p class="lead">We've probably seen a version of it before.</p>
-    </div>
-    <a class="btn btn-primary btn-lg" href="/contact">Book a call</a>
-  </div>
-</section>
+{% include "public/_cta.html" %}
+
+<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="Screenshot viewer">
+  <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Close viewer">✕</button>
+  <figure class="lightbox-figure">
+    {# No src= until a shot is opened: an empty src resolves to the page URL and
+       makes every browser re-download this page as an image. #}
+    <img id="lightbox-img" alt="">
+    <figcaption id="lightbox-cap"></figcaption>
+  </figure>
+</div>
 {% endblock %}

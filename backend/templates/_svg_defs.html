@@ -1,3 +1,6 @@
+{# Set before first paint so scroll-reveal / filters / lightbox degrade cleanly
+   with JavaScript off, instead of hiding content that never un-hides. #}
+<script>document.documentElement.className += ' js';</script>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="mono" viewBox="0 0 358 228">
     <rect x="194" y="0" width="36" height="228" fill="currentColor"></rect>

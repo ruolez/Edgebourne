@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% set meta_title = 'Process — ' + setting('site_title', 'EdgeBourne') %}
+{% set meta_description = 'How an EdgeBourne project runs: map, prototype, build, deploy, support. Fixed price per phase, working software every cycle, code you keep.' %}
+{% set cta_title = 'Start at step one.' %}
+{% set cta_text = 'Map is a fixed fee and a small one. It ends in a written process map and an honest recommendation — including the one where you buy instead of build.' %}
+
+{% set STEPS = [
+  {
+    'title': 'Map',
+    'sub': 'We learn your process before we propose anything.',
+    'text': 'We sit with the people doing the work and follow one record end to end — an order, a delivery, a new product. We count the systems it touches, the steps a person performs, and the minutes each takes. Most projects change shape here, because the expensive problem is rarely the one that got us called.',
+    'gets': ['A written process map', 'A timed cost of the current workaround', 'A scoped recommendation — including the honest answer if the right move is to buy something instead of build']
+  },
+  {
+    'title': 'Prototype',
+    'sub': 'You use a working screen before we build the real one.',
+    'text': 'We build the narrowest version of the thing that proves it works — usually one workflow against real data, running on our infrastructure. Your team clicks it. Assumptions that were wrong become obvious in a week rather than in month four, which is the entire point of doing it.',
+    'gets': ['A live prototype you can log into and try', 'A revised scope with a fixed price', 'A written list of what we got wrong in Map']
+  },
+  {
+    'title': 'Build',
+    'sub': 'Short cycles, working software, no dark months.',
+    'text': 'We build in one-to-two week cycles against the agreed scope. You see the running system at the end of each one. Integrations are written against your real systems from the start, in a sandbox where the vendor provides one, because integration surprises found late are the main reason software projects overrun.',
+    'gets': ['A running system that grows every cycle', 'A short written update after each cycle', 'Access to the repository from day one']
+  },
+  {
+    'title': 'Deploy',
+    'sub': 'One command to install, on your infrastructure or ours.',
+    'text': 'The system ships as a Docker Compose stack with healthchecks, plain-SQL migrations that run at boot, and a one-line installer that handles install, update and remove. We run it alongside your existing process until the numbers agree, then switch over. We train your team on the screens they will actually use.',
+    'gets': ['Production deployment, the installer and backups configured', 'A short operator guide', 'A training session recorded for the next hire']
+  },
+  {
+    'title': 'Support',
+    'sub': 'The people who built it are the people who maintain it.',
+    'text': 'Software that touches other companies\' APIs needs someone watching it. We monitor the services we run, fix what breaks, and keep up with the platform version changes that arrive whether you asked for them or not. Most clients keep a small monthly retainer; some take the code and run it themselves.',
+    'gets': ['Monitored services and an agreed response time', 'A monthly note on what changed', 'A standing option to walk away with everything']
+  }
+] %}
+
+{% block content %}
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">PROCESS</p>
+    <h1>Five steps.<br><span class="accent">No surprises.</span></h1>
+    <p class="lead">Every engagement runs the same five steps. They exist so you always know what is happening, what you are getting next, and what it costs — and so you can stop after any one of them and still be left with something useful.</p>
+    <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <ol class="timeline">
+      {% for s in STEPS %}
+      <li class="tl-step" data-reveal>
+        <div class="tl-marker" aria-hidden="true"><span class="tl-num">{{ '%02d' % loop.index }}</span></div>
+        <div class="tl-body">
+          <p class="eyebrow">STEP {{ '%02d' % loop.index }}</p>
+          <h2>{{ s.title }}</h2>
+          <p class="lead">{{ s.sub }}</p>
+          <p class="tl-text">{{ s.text }}</p>
+          {% if s.gets %}
+          <div class="tl-gets">
+            <h3>What you get</h3>
+            <ul>{% for g in s.gets %}<li>{{ g }}</li>{% endfor %}</ul>
+          </div>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ol>
+  </div>
+</section>
+
+<section class="section section-dark">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <p class="eyebrow">PRICING &amp; SHAPE</p>
+      <h2>What it costs, and how long it runs</h2>
+    </div>
+    <div class="cards" data-reveal>
+      {% set rules = [
+        {'t': setting('onboarding_fee') or 'Onboarding is a fixed fee',
+         'p': setting('onboarding_fee_note') or 'A flat onboarding fee covers Map and Prototype. It is deliberately small — it exists so both of us can decide properly before anyone commits to a build.'},
+        {'t': 'A fixed price per phase', 'p': 'Build work is quoted once the prototype has settled the scope, which means the number you approve is the number you pay.'},
+        {'t': 'Two to four weeks', 'p': 'A working prototype in the first week or two, and a system your team is using one or two weeks after that. Larger builds spanning several external systems run longer — the case studies name their real timelines.'},
+        {'t': 'Support you can cancel', 'p': 'A modest monthly retainer, and you keep the code and the data whether or not you keep us.'}
+      ] %}
+      {% for r in rules %}
+      <div class="card card-dark card-rule">
+        <span class="card-index">{{ '%02d' % loop.index }}</span>
+        <h3>{{ r.t }}</h3>
+        <p>{{ r.p }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+{% include "public/_cta.html" %}
+{% endblock %}

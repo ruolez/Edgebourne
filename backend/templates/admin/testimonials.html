@@ -1,0 +1,43 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Testimonials{% endblock %}
+{% block heading %}Testimonials{% endblock %}
+{% block actions %}<a class="btn btn-primary" href="/admin/testimonials/new">+ New testimonial</a>{% endblock %}
+{% block content %}
+<section class="panel">
+  <p class="help">Only <strong>approved</strong> quotes appear anywhere on the public site.
+    A quote drafted for a client stays invisible until that client signs it off.</p>
+  {% if rows %}
+  <table class="table">
+    <thead><tr><th>Order</th><th>Quote</th><th>Attribution</th><th>Case study</th><th>Approval</th><th></th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr {% if not r.is_approved %}class="row-warn"{% endif %}>
+        <td class="cell-order">
+          <form method="post" action="/admin/testimonials/{{ r.id }}/move" class="move-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button name="dir" value="up" {% if loop.first %}disabled{% endif %} title="Move up">↑</button>
+            <button name="dir" value="down" {% if loop.last %}disabled{% endif %} title="Move down">↓</button>
+          </form>
+        </td>
+        <td><a href="/admin/testimonials/{{ r.id }}">“{{ r.quote | truncate(90) }}”</a></td>
+        <td class="dim">{{ r.author_role or '—' }}{% if r.industry %}, {{ r.industry }}{% endif %}</td>
+        <td class="dim">{{ r.case_study_slug or '—' }}</td>
+        <td>
+          {% if r.is_approved %}<span class="pill pill-live">Approved</span>
+          {% else %}<span class="pill pill-overdue">Awaiting client approval</span>{% endif %}
+        </td>
+        <td class="cell-actions">
+          <form method="post" action="/admin/testimonials/{{ r.id }}/delete" class="js-confirm" data-confirm="Delete this testimonial?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn-x" title="Delete">✕</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No testimonials yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

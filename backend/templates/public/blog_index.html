@@ -1,28 +1,52 @@
 {% extends "base.html" %}
 {% set meta_title = 'Blog — ' + setting('site_title', 'EdgeBourne') %}
 {% set meta_description = 'Notes on custom software, integration and automation for growing companies.' %}
+{% set cta_title = 'Prefer to talk it through?' %}
+{% set cta_text = 'Most of these posts started as a question a client asked on a call.' %}
 {% block content %}
 <section class="page-head">
   <div class="wrap">
     <p class="eyebrow">BLOG</p>
     <h1>Notes on running<br><span class="accent">better systems.</span></h1>
+    <p class="lead">Short, concrete pieces on integration, automation and the software small companies actually need.</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
   </div>
 </section>
 
 <section class="section">
-  <div class="wrap wrap-narrow">
-    <div class="post-list">
-      {% for p in posts %}
-      <a class="post-item card card-link" href="/blog/{{ p.slug }}">
-        {% if p.published_at %}<span class="card-date">{{ p.published_at.strftime('%B %d, %Y') }}</span>{% endif %}
-        <h3>{{ p.title }}</h3>
-        <p>{{ p.excerpt }}</p>
+  <div class="wrap">
+    {% if posts %}
+      {% set lead_post = posts[0] %}
+      <a class="post-feature" href="/blog/{{ lead_post.slug }}" data-reveal>
+        {% if lead_post.cover_image %}
+        <div class="post-feature-shot"><img src="{{ lead_post.cover_image }}" alt="" loading="lazy" decoding="async"></div>
+        {% endif %}
+        <div class="post-feature-body">
+          <p class="eyebrow">LATEST{% if lead_post.published_at %} · {{ lead_post.published_at.strftime('%B %d, %Y') | upper }}{% endif %}</p>
+          <h2 class="post-feature-title">{{ lead_post.title }}</h2>
+          <p class="post-feature-excerpt">{{ lead_post.excerpt }}</p>
+          <span class="link-go">Read the post<span aria-hidden="true">→</span></span>
+        </div>
       </a>
-      {% else %}
+
+      {% if posts | length > 1 %}
+      <div class="cards cards-2 post-grid" data-reveal>
+        {% for p in posts[1:] %}
+        <a class="card card-link card-post" href="/blog/{{ p.slug }}">
+          {% if p.cover_image %}<img class="card-cover" src="{{ p.cover_image }}" alt="" loading="lazy" decoding="async">{% endif %}
+          {% if p.published_at %}<span class="card-date">{{ p.published_at.strftime('%B %d, %Y') }}</span>{% endif %}
+          <h3>{{ p.title }}</h3>
+          <p>{{ p.excerpt }}</p>
+          <span class="card-go" aria-hidden="true">→</span>
+        </a>
+        {% endfor %}
+      </div>
+      {% endif %}
+    {% else %}
       <p class="empty">First posts are being written — check back soon.</p>
-      {% endfor %}
-    </div>
+    {% endif %}
   </div>
 </section>
+
+{% include "public/_cta.html" %}
 {% endblock %}

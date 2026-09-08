@@ -598,3 +598,29 @@ h1, h2, h3 { margin: 0; }
   width: 100%; max-width: 460px; max-height: 90vh; overflow-y: auto;
 }
 .modal-card h2 { font-weight: 800; font-size: 19px; margin: 0 0 8px; }
+
+/* Repeatable field rows -- the metrics and gallery editors on a case study.
+   A fixed number of server-rendered rows, so there is no JS state to keep in
+   sync: clearing a row's key field is how you delete it. */
+.repeat { display: grid; gap: 12px; }
+.repeat-row {
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid rgba(28, 43, 51, 0.1);
+  border-radius: 10px;
+}
+.repeat-row .field:last-child { margin-bottom: 0; }
+.repeat-row .field-row { margin-bottom: 0; }
+.repeat-metric { display: grid; grid-template-columns: 150px 1fr; gap: 14px; align-items: start; }
+.repeat-gallery { display: grid; gap: 14px; align-items: start; }
+.repeat-gallery.has-thumb { grid-template-columns: 120px 1fr; }
+.repeat-thumb { width: 100%; border-radius: 8px; }
+.repeat-fields { min-width: 0; }
+
+/* Testimonial approval gate. An unapproved quote appears nowhere on the public
+   site, so the checkbox carries the weight of the decision it actually is. */
+.approval { border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+.approval .check { margin-bottom: 0; }
+.approval .help { margin-top: 8px; }
+.approval.is-pending { background: rgba(217, 48, 37, 0.07); border: 1px solid rgba(217, 48, 37, 0.25); }
+.approval.is-approved { background: rgba(46, 125, 116, 0.09); border: 1px solid rgba(46, 125, 116, 0.28); }

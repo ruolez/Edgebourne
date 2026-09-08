@@ -1,0 +1,47 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input, textarea, save_bar %}
+{# select_field lives in _billing_macros.html only because that is where the
+   first select in the admin was needed; it is a generic field. #}
+{% from "admin/_billing_macros.html" import select_field %}
+{% block title %}{{ 'Edit testimonial' if row else 'New testimonial' }}{% endblock %}
+{% block heading %}{{ 'Edit testimonial' if row else 'New testimonial' }}{% endblock %}
+{% block content %}
+<form method="post" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-cols">
+    <div class="form-main">
+      <section class="panel">
+        {{ textarea('quote', 'Quote', row.quote if row else '', rows=5, help='Plain text, no quotation marks — the site adds them.') }}
+        <div class="field-row">
+          {{ text_input('author_role', 'Attribution', row.author_role if row else '', help='Role only, never a name. e.g. “Operations Manager”.') }}
+          {{ text_input('industry', 'Industry', row.industry if row else '', help='e.g. “multi-store specialty retail”') }}
+        </div>
+        {{ select_field('case_study_slug', 'Shown on case study',
+                        row.case_study_slug if row else '', case_studies,
+                        blank='— none, site-wide quote —',
+                        help='The case study page shows its own approved quote. Leave blank for a quote used on the homepage only.') }}
+      </section>
+    </div>
+    <div class="form-side">
+      <section class="panel">
+        <div class="approval {{ 'is-approved' if row and row.is_approved else 'is-pending' }}">
+          <label class="check">
+            <input type="checkbox" name="is_approved" value="1" {% if row and row.is_approved %}checked{% endif %}>
+            <span>Approved by client for publication</span>
+          </label>
+          <p class="help">
+            {% if row and row.is_approved %}
+            This quote is live. Unticking it removes it from the site immediately.
+            {% else %}
+            Unticked, this quote is a draft: it does <strong>not</strong> appear on the
+            site, on the homepage or on any case study. Only tick this once the client
+            has seen the wording and agreed to it.
+            {% endif %}
+          </p>
+        </div>
+        {{ save_bar(row, '/admin/testimonials', '/admin/testimonials/' + (row.id | string) + '/delete' if row else None) }}
+      </section>
+    </div>
+  </div>
+</form>
+{% endblock %}

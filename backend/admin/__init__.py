@@ -17,6 +17,6 @@ def _guard():
 # missing from here has no routes at all, with no error anywhere -- just 404s.
 from . import (  # noqa: E402,F401
     billing_settings, blog, customers, dashboard, email_settings, estimates,
-    invoices, leads, media, pages, payments, projects, recurring, services, site,
-    work,
+    faqs, invoices, leads, media, pages, payments, projects, recurring, services,
+    site, testimonials, work,
 )

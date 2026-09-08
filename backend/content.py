@@ -3,7 +3,8 @@ import re
 import markdown as md_lib
 
 RESERVED_SLUGS = {
-    "services", "work", "about", "contact", "blog", "admin", "static",
+    "services", "work", "about", "contact", "blog", "process", "industries",
+    "admin", "static",
     "uploads", "healthz", "sitemap.xml", "robots.txt", "favicon.ico", "index",
     # Billing portal + webhooks. These are two-segment routes so they cannot be
     # shadowed by the catch-all; reserving them protects the namespace and keeps

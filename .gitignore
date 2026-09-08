@@ -5,3 +5,4 @@ __pycache__/
 data/
 nginx/nginx-ssl.conf
 backups/
+prodcred.md

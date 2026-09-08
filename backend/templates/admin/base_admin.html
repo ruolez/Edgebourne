@@ -38,6 +38,8 @@
       <a href="/admin/services" {% if request.path.startswith('/admin/services') %}class="active"{% endif %}>Services</a>
       <a href="/admin/work" {% if request.path.startswith('/admin/work') %}class="active"{% endif %}>Work</a>
       <a href="/admin/blog" {% if request.path.startswith('/admin/blog') %}class="active"{% endif %}>Blog</a>
+      <a href="/admin/testimonials" {% if request.path.startswith('/admin/testimonials') %}class="active"{% endif %}>Testimonials</a>
+      <a href="/admin/faqs" {% if request.path.startswith('/admin/faqs') %}class="active"{% endif %}>FAQ</a>
       <a href="/admin/pages" {% if request.path.startswith('/admin/pages') %}class="active"{% endif %}>Pages</a>
       <a href="/admin/leads" {% if request.path.startswith('/admin/leads') %}class="active"{% endif %}>Leads
         {% if unread_leads %}<span class="badge">{{ unread_leads }}</span>{% endif %}</a>

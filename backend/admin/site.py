@@ -13,6 +13,9 @@ FIELDS = [
     "hero_cta_secondary", "hero_cta_secondary_url",
     "seo_default_title", "seo_default_description",
     "contact_email", "phone", "social_linkedin", "social_github",
+    # Shown on /process and /contact. Blank hides the pricing figure entirely
+    # rather than printing an empty box, so it is safe to leave unset.
+    "onboarding_fee", "onboarding_fee_note",
 ]
 
 

@@ -1,0 +1,37 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}FAQ{% endblock %}
+{% block heading %}FAQ{% endblock %}
+{% block actions %}<a class="btn btn-primary" href="/admin/faqs/new">+ New question</a>{% endblock %}
+{% block content %}
+<section class="panel">
+  {% if rows %}
+  <table class="table">
+    <thead><tr><th>Order</th><th>Question</th><th>Status</th><th>Added</th><th></th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="cell-order">
+          <form method="post" action="/admin/faqs/{{ r.id }}/move" class="move-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button name="dir" value="up" {% if loop.first %}disabled{% endif %} title="Move up">↑</button>
+            <button name="dir" value="down" {% if loop.last %}disabled{% endif %} title="Move down">↓</button>
+          </form>
+        </td>
+        <td><a href="/admin/faqs/{{ r.id }}">{{ r.question }}</a></td>
+        <td>{% if r.is_published %}<span class="pill pill-live">Live</span>{% else %}<span class="pill">Draft</span>{% endif %}</td>
+        <td class="dim">{{ r.created_at.strftime('%b %d, %Y') }}</td>
+        <td class="cell-actions">
+          <form method="post" action="/admin/faqs/{{ r.id }}/delete" class="js-confirm" data-confirm="Delete “{{ r.question }}”?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn-x" title="Delete">✕</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No questions yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

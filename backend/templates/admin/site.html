@@ -40,6 +40,18 @@
   </section>
 
   <section class="panel">
+    <div class="panel-head"><h2>Onboarding fee</h2></div>
+    <p class="help">Shown to customers on the Process page and the Contact page. Leave the
+      fee blank to hide it from the site completely.</p>
+    <div class="field-row">
+      {{ text_input('onboarding_fee', 'Fee', v.onboarding_fee,
+         placeholder='e.g. $1,500', help='Displayed exactly as you type it, including the currency symbol.') }}
+      {{ text_input('onboarding_fee_note', 'Note beneath the fee', v.onboarding_fee_note,
+         placeholder='e.g. Credited against the build if you go ahead.') }}
+    </div>
+  </section>
+
+  <section class="panel">
     <div class="panel-head"><h2>Contact & social</h2></div>
     <div class="field-row">
       {{ text_input('contact_email', 'Public contact email', v.contact_email, type='email') }}

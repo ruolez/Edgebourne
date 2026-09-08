@@ -6,6 +6,7 @@
   <div class="wrap">
     <p class="eyebrow">CONTACT</p>
     <h1>Tell us what's slow.<br><span class="accent">We'll take it from there.</span></h1>
+    <p class="lead">One short conversation about what your team does by hand today. No pitch deck, no obligation.</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
   </div>
 </section>
@@ -13,16 +14,43 @@
 <section class="section">
   <div class="wrap contact-grid">
     <div class="contact-info">
-      <h2>Book a call</h2>
-      <p class="lead">A short conversation about what your team does by hand today, and what it would take to automate it. No pitch deck, no obligation.</p>
-      {% if setting('contact_email') %}
-      <p class="contact-line"><span class="eyebrow">EMAIL</span><br><a href="mailto:{{ setting('contact_email') }}">{{ setting('contact_email') }}</a></p>
+      <h2>What happens next</h2>
+      <ol class="next-steps">
+        <li>
+          <span class="next-num">01</span>
+          <span class="next-body"><strong>We reply within one business day.</strong> A real answer from the person who would do the work, not an auto-responder.</span>
+        </li>
+        <li>
+          <span class="next-num">02</span>
+          <span class="next-body"><strong>A 30-minute call.</strong> You walk us through the slow part. We ask about volumes, systems and who touches what.</span>
+        </li>
+        <li>
+          <span class="next-num">03</span>
+          <span class="next-body"><strong>A written summary and a price.</strong> What we would build first, what it costs, and an honest note if you do not need us.</span>
+        </li>
+      </ol>
+
+      {% if setting('onboarding_fee') %}
+      <div class="fee-note">
+        <span class="eyebrow">ONBOARDING</span>
+        <p class="fee-value">{{ setting('onboarding_fee') }}</p>
+        {% if setting('onboarding_fee_note') %}<p class="fee-sub">{{ setting('onboarding_fee_note') }}</p>{% endif %}
+      </div>
       {% endif %}
-      {% if setting('phone') %}
-      <p class="contact-line"><span class="eyebrow">PHONE</span><br><a href="tel:{{ setting('phone') | replace(' ', '') }}">{{ setting('phone') }}</a></p>
-      {% endif %}
+
+      <div class="contact-lines">
+        {% if setting('contact_email') %}
+        <p class="contact-line"><span class="eyebrow">EMAIL</span><br><a href="mailto:{{ setting('contact_email') }}">{{ setting('contact_email') }}</a></p>
+        {% endif %}
+        {% if setting('phone') %}
+        <p class="contact-line"><span class="eyebrow">PHONE</span><br><a href="tel:{{ setting('phone') | replace(' ', '') }}">{{ setting('phone') }}</a></p>
+        {% endif %}
+      </div>
+      <svg class="stream stream-contact" viewBox="0 0 350 30"><use href="#stream"/></svg>
     </div>
+
     <form class="card contact-form" method="post" action="/contact">
+      <p class="eyebrow">SEND A MESSAGE</p>
       <div class="hp" aria-hidden="true">
         <label>Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label>
       </div>
@@ -46,9 +74,10 @@
       </div>
       <div class="field">
         <label for="message">What should we look at first? *</label>
-        <textarea id="message" name="message" rows="6" required></textarea>
+        <textarea id="message" name="message" rows="6" required placeholder="The job your team does by hand, roughly how often, and which systems are involved."></textarea>
       </div>
-      <button class="btn btn-primary btn-lg" type="submit">Send message</button>
+      <button class="btn btn-primary btn-lg btn-block" type="submit">Send message</button>
+      <p class="form-note">We use this only to reply to you. No list, no newsletter, no sharing.</p>
     </form>
   </div>
 </section>

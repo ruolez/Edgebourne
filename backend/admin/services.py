@@ -82,7 +82,7 @@ def service_move(sid):
 
 def move_row(table, row_id, direction):
     """Swap a row with its neighbor in sort_order, then renumber 0..n."""
-    assert table in ("services", "case_studies", "pages")
+    assert table in ("services", "case_studies", "pages", "testimonials", "faqs")
     rows = db.query(f"SELECT id FROM {table} ORDER BY sort_order, id")
     ids = [r["id"] for r in rows]
     if row_id not in ids:

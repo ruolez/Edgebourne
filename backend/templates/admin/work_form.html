@@ -10,10 +10,71 @@
       <section class="panel">
         {{ text_input('title', 'Title', row.title if row else '') }}
         {{ text_input('slug', 'Slug', row.slug if row else '', help='Public URL: /work/<slug>. Leave blank to generate from the title.') }}
-        {{ text_input('client', 'Client', row.client if row else '') }}
+        <div class="field-row">
+          {{ text_input('client', 'Client', row.client if row else '', help='Anonymised, e.g. “a multi-store specialty retailer”.') }}
+          {{ text_input('industry', 'Industry', row.industry if row else '', help='Drives the filter chips on /work. Reuse an existing spelling.') }}
+        </div>
+        {{ text_input('engagement', 'Engagement', row.engagement if row else '', help='e.g. “6 weeks · ongoing support”') }}
         {{ textarea('summary', 'Summary (shown on cards)', row.summary if row else '', rows=3) }}
+        {{ textarea('problem_lede', 'Problem lede', row.problem_lede if row else '', rows=2, help='One or two sentences, shown as a pull-quote above the body.') }}
         {{ md_editor('body_md', 'Body', row.body_md if row else '') }}
       </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Metrics</h2></div>
+        <p class="help">Up to {{ metric_rows | length }} results, shown as a strip on the case study.
+          Keep them defensible — “~90% less keying”, not invented precision. Empty rows are dropped.</p>
+        <div class="repeat">
+          {% for m in metric_rows %}
+          <div class="repeat-row repeat-metric">
+            <div class="field">
+              <label for="f-metric-value-{{ loop.index0 }}">Value</label>
+              <input type="text" id="f-metric-value-{{ loop.index0 }}" name="metric_value" value="{{ m.value or '' }}" placeholder="0">
+            </div>
+            <div class="field">
+              <label for="f-metric-label-{{ loop.index0 }}">Label</label>
+              <input type="text" id="f-metric-label-{{ loop.index0 }}" name="metric_label" value="{{ m.label or '' }}" placeholder="orders re-keyed">
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Gallery</h2></div>
+        <p class="help">Screenshots live as committed files under
+          <code>/static/media/work/{{ row.slug if row else 'my-slug' }}/</code> — paste the path.
+          Or upload a one-off image and the paths fill themselves in.
+          Clear a row's path to remove that image.</p>
+        <div class="repeat">
+          {% for img in gallery_rows %}
+          <div class="repeat-row repeat-gallery{% if img.thumb or img.src %} has-thumb{% endif %}">
+            {% if img.thumb or img.src %}<img class="repeat-thumb" src="{{ img.thumb or img.src }}" alt="">{% endif %}
+            <div class="repeat-fields">
+              <div class="field-row">
+                <div class="field">
+                  <label for="f-gallery-src-{{ loop.index0 }}">Image path</label>
+                  <input type="text" id="f-gallery-src-{{ loop.index0 }}" name="gallery_src" value="{{ img.src or '' }}" placeholder="/static/media/work/slug/01-screen.webp">
+                </div>
+                <div class="field">
+                  <label for="f-gallery-thumb-{{ loop.index0 }}">Thumb path</label>
+                  <input type="text" id="f-gallery-thumb-{{ loop.index0 }}" name="gallery_thumb" value="{{ img.thumb or '' }}" placeholder="…/01-screen-thumb.webp">
+                </div>
+              </div>
+              <div class="field">
+                <label for="f-gallery-caption-{{ loop.index0 }}">Caption</label>
+                <input type="text" id="f-gallery-caption-{{ loop.index0 }}" name="gallery_caption" value="{{ img.caption or '' }}">
+              </div>
+              <div class="field">
+                <label for="f-gallery-file-{{ loop.index0 }}">Or upload</label>
+                <input type="file" id="f-gallery-file-{{ loop.index0 }}" name="gallery_file_{{ loop.index0 }}" accept="image/jpeg,image/png,image/webp">
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+
       <section class="panel">
         <div class="panel-head"><h2>SEO</h2></div>
         {{ text_input('meta_title', 'Meta title (optional)', row.meta_title if row else '') }}
@@ -23,11 +84,13 @@
     <div class="form-side">
       <section class="panel">
         {{ checkbox('is_published', 'Published', row.is_published if row else false) }}
+        {{ checkbox('is_featured', 'Featured on the homepage', row.is_featured if row else false) }}
         {{ save_bar(row, '/admin/work', '/admin/work/' + (row.id | string) + '/delete' if row else None) }}
       </section>
       <section class="panel">
         {{ cover_upload(row.cover_thumb if row else None) }}
-        {{ text_input('tech_tags', 'Tech tags', (row.tech_tags | join(', ')) if row else '', help='Comma-separated, e.g. Python, PostgreSQL, Docker') }}
+        {{ text_input('tech_tags', 'Tech tags', (row.tech_tags | join(', ')) if row else '', help='Comma-separated card badges, e.g. Python, PostgreSQL, Docker') }}
+        {{ text_input('stack', 'Full stack', (row.stack | join(', ')) if row else '', help='Comma-separated, listed on the case study page.') }}
       </section>
     </div>
   </div>

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% set meta_title = 'Industries — ' + setting('site_title', 'EdgeBourne') %}
+{% set meta_description = 'Where EdgeBourne already knows the work: distribution and wholesale, multi-store retail and e-commerce, warehousing and 3PL, professional services, legal, finance and accounting.' %}
+{% set cta_title = 'Not on the list?' %}
+{% set cta_text = 'The pattern is usually the same — two systems that do not talk, and a person in the middle retyping.' %}
+
+{% set SECTORS = [
+  {
+    'slug': 'distribution-wholesale',
+    'name': 'Distribution & wholesale',
+    'lede': 'Your back office was built for a phone-and-fax business and now has to feed a storefront, a marketplace and a warehouse. Stock counts drift because reservations live in one system and sales happen in another. Purchasing runs on a spreadsheet and someone\'s memory of what moved last month. We make the numbers agree and the reorders defensible.',
+    'signs': ['A back office built for phone and fax, now feeding three channels', 'Reservations in one system, sales in another, counts that drift', 'Buying decided by a spreadsheet and last month\'s memory'],
+    'caps': ['True sellable-stock computed across every channel and pushed on a schedule', 'Reorder points from real sales velocity, with per-product overrides', 'Barcode and price consistency across multiple back-office databases'],
+    'cases': [
+      {'slug': 'realtime-inventory-sync', 'title': 'Stop overselling across every storefront'},
+      {'slug': 'demand-driven-purchasing', 'title': 'Reorder points that follow real demand'},
+      {'slug': 'barcode-price-integrity', 'title': 'One barcode truth across every system'}
+    ]
+  },
+  {
+    'slug': 'retail-ecommerce',
+    'name': 'Multi-store retail & e‑commerce',
+    'lede': 'Every new product means the same data typed into six places, and every one of them is a chance to be wrong. Prices and barcodes disagree between stores. A unit reserved on one channel is still for sale on another, so you oversell, then hold back stock to compensate — and that cushion is capital doing nothing. We give you one place where the truth lives.',
+    'signs': ['The same new product typed into six places', 'Prices and barcodes that disagree between stores', 'Stock held back to cover for overselling'],
+    'caps': ['Add a SKU once; it reaches the ERP and every storefront with images and variants', 'Automatic publish and unpublish as availability crosses zero', 'AI-assisted catalogue SEO with a human approving every published change'],
+    'cases': [
+      {'slug': 'product-onboarding-automation', 'title': 'Add a product once, everywhere'},
+      {'slug': 'realtime-inventory-sync', 'title': 'Stop overselling across every storefront'},
+      {'slug': 'ai-seo-catalog', 'title': '916 catalogue pages, scored and rewritten'}
+    ]
+  },
+  {
+    'slug': 'warehousing-3pl',
+    'name': 'Warehousing & 3PL',
+    'lede': 'The floor runs on paper and on the two people who know how it really works. A short delivery is found weeks later at reconciliation. Nobody can say who packed the order that went out wrong. Counts happen once a year because they take the building offline. We put a scanner in the workflow and an audit trail behind every scan.',
+    'signs': ['The floor runs on paper and on two people\'s memory', 'Short deliveries found weeks later, at reconciliation', 'Counts once a year, because they take the building offline'],
+    'caps': ['Scan-verify inbound deliveries against the purchase order at the door', 'Bin and slot tracking with transactional quantity updates', 'Per-packer accountability and mobile cycle counts written to an audit table'],
+    'cases': [
+      {'slug': 'warehouse-floor-suite', 'title': 'Four scan stations, one shared source of truth'},
+      {'slug': 'realtime-inventory-sync', 'title': 'Stop overselling across every storefront'}
+    ]
+  },
+  {
+    'slug': 'professional-services',
+    'name': 'Professional services',
+    'lede': 'The work is billable and the admin is not, yet the admin is what fills the evenings — chasing statuses, rebuilding the same report, retyping a client\'s details into the third system this week. And your website is a change request to an agency who take a fortnight and charge for a paragraph. We automate the admin and hand you the keys to the site.',
+    'signs': ['Evenings spent on admin nobody can bill', 'The same report rebuilt by hand every month', 'A fortnight and an invoice to change one paragraph'],
+    'caps': ['Client portals and intake flows that create the record without a phone call', 'Scheduled reporting and document generation from live data', 'Websites with a real CMS, so your team edits pages, media and navigation'],
+    'cases': [
+      {'slug': 'owner-editable-website', 'title': 'Websites the owner can actually edit'},
+      {'slug': 'legal-intake-portal', 'title': 'Intake without the clipboard or the callback'}
+    ]
+  },
+  {
+    'slug': 'legal',
+    'name': 'Legal',
+    'lede': 'Intake is a clipboard, a phone call and a spreadsheet, and the first honest answer a potential client gets about their case is weeks away. Leads go cold in an inbox. Nobody can say which stage a matter is at without asking. And every change to the intake questions is a developer ticket. We make intake self-service and the pipeline visible.',
+    'signs': ['Intake is a clipboard, a phone call and a spreadsheet', 'Leads going cold in an inbox', 'A developer ticket to change one intake question'],
+    'caps': ['No-login guided questionnaires that produce a transparent range summary immediately', 'Leads converted into tracked accounts through a defined stage pipeline with email notifications', 'Drag-and-drop questionnaire and template building, with no developer involved'],
+    'cases': [
+      {'slug': 'legal-intake-portal', 'title': 'Intake without the clipboard or the callback'},
+      {'slug': 'owner-editable-website', 'title': 'Websites the owner can actually edit'}
+    ]
+  },
+  {
+    'slug': 'finance-accounting',
+    'name': 'Finance & accounting',
+    'lede': 'Statements arrive as CSV from one bank, Excel from another and a scanned PDF from the third, and somebody spends a day a month turning them into rows. Categorisation is redone from scratch every period because nothing remembers last time\'s decisions. Reconciliation is a game of find-the-duplicate. We automate the ingestion and keep the judgement with you.',
+    'signs': ['CSV from one bank, Excel from the next, a scan from the third', 'A day a month spent turning statements into rows', 'Categorisation redone from scratch every period'],
+    'caps': ['CSV, Excel and scanned-PDF statement import with automatic bank detection and OCR', 'Categorisation that learns from your corrections, with AI suggestions never auto-confirmed', 'Duplicate detection at preview, before anything is committed'],
+    'cases': [
+      {'slug': 'statement-intelligence', 'title': 'Statements in, categorised spending out'},
+      {'slug': 'owner-editable-website', 'title': 'Websites the owner can actually edit'}
+    ]
+  }
+] %}
+
+{% block content %}
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">INDUSTRIES</p>
+    <h1>We already know<br><span class="accent">how your day runs.</span></h1>
+    <p class="lead">Six industries where we have shipped systems that people use every shift. The vocabulary is different; the bottleneck rarely is.</p>
+    <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
+    <nav class="jumpbar" aria-label="Jump to industry">
+      {% for s in SECTORS %}<a href="#{{ s.slug }}">{{ s.name }}</a>{% endfor %}
+    </nav>
+  </div>
+</section>
+
+{% for s in SECTORS %}
+<section class="section sector{% if loop.index is even %} section-tint{% endif %}" id="{{ s.slug }}">
+  <div class="wrap sector-grid" data-reveal>
+    <div class="sector-lead">
+      <p class="eyebrow">{{ '%02d' % loop.index }} · INDUSTRY</p>
+      <h2>{{ s.name }}</h2>
+      <p class="lead">{{ s.lede }}</p>
+      {% if s.signs %}
+      <ul class="sign-list">
+        {% for sign in s.signs %}<li>{{ sign }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    <div class="sector-body">
+      <h3 class="side-title">What we build here</h3>
+      <ul class="cap-list">
+        {% for c in s.caps %}<li>{{ c }}</li>{% endfor %}
+      </ul>
+      {% if s.cases %}
+      <h3 class="side-title">Relevant work</h3>
+      <div class="sector-cases">
+        {% for c in s.cases %}
+        <a class="sector-case" href="/work/{{ c.slug }}">
+          <span>{{ c.title }}</span><span class="link-arrow" aria-hidden="true">→</span>
+        </a>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endfor %}
+
+{% include "public/_cta.html" %}
+{% endblock %}

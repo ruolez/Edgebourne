@@ -7,14 +7,24 @@
       </a>
       <p class="footer-strap">{{ setting('hero_eyebrow_strong', 'CUSTOM SOLUTIONS') }} · {{ setting('hero_eyebrow', 'WEB & MOBILE APPS · INTEGRATION · AUTOMATION') }}</p>
       <svg class="stream stream-footer" viewBox="0 0 350 30"><use href="#stream"/></svg>
+      <p class="footer-note">Custom systems for small and mid-size companies. Built on your own infrastructure, documented, and handed over.</p>
     </div>
-    <nav class="footer-col" aria-label="Footer">
+    <nav class="footer-col" aria-label="Explore">
       <h4>Explore</h4>
-      <a href="/services">Services</a>
       <a href="/work">Work</a>
+      <a href="/services">Services</a>
+      <a href="/process">Process</a>
+      <a href="/industries">Industries</a>
       <a href="/about">About</a>
       <a href="/blog">Blog</a>
-      <a href="/contact">Contact</a>
+    </nav>
+    <nav class="footer-col" aria-label="What we build">
+      <h4>What we build</h4>
+      <a href="/services">Custom web apps</a>
+      <a href="/services">Systems integration</a>
+      <a href="/services">Business automation</a>
+      <a href="/services">Mobile &amp; floor tools</a>
+      <a href="/work">Case studies</a>
     </nav>
     <div class="footer-col">
       <h4>Contact</h4>
@@ -22,7 +32,11 @@
       {% if setting('phone') %}<a href="tel:{{ setting('phone') | replace(' ', '') }}">{{ setting('phone') }}</a>{% endif %}
       {% if setting('social_linkedin') %}<a href="{{ setting('social_linkedin') }}" rel="noopener">LinkedIn</a>{% endif %}
       {% if setting('social_github') %}<a href="{{ setting('social_github') }}" rel="noopener">GitHub</a>{% endif %}
+      <a class="btn btn-primary btn-footer" href="/contact">Book a call</a>
     </div>
   </div>
-  <div class="wrap footer-bottom">© {{ current_year }} {{ setting('site_title', 'EdgeBourne') }}. All rights reserved.</div>
+  <div class="wrap footer-bottom">
+    <span>© {{ current_year }} {{ setting('site_title', 'EdgeBourne') }}. All rights reserved.</span>
+    <span class="footer-bottom-right">Replies within one business day</span>
+  </div>
 </footer>

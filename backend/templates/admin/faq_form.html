@@ -1,0 +1,23 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input, md_editor, checkbox, save_bar %}
+{% block title %}{{ 'Edit question' if row else 'New question' }}{% endblock %}
+{% block heading %}{{ row.question if row else 'New question' }}{% endblock %}
+{% block content %}
+<form method="post" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-cols">
+    <div class="form-main">
+      <section class="panel">
+        {{ text_input('question', 'Question', row.question if row else '') }}
+        {{ md_editor('answer_md', 'Answer', row.answer_md if row else '') }}
+      </section>
+    </div>
+    <div class="form-side">
+      <section class="panel">
+        {{ checkbox('is_published', 'Published', row.is_published if row else true) }}
+        {{ save_bar(row, '/admin/faqs', '/admin/faqs/' + (row.id | string) + '/delete' if row else None) }}
+      </section>
+    </div>
+  </div>
+</form>
+{% endblock %}

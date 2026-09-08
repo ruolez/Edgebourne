@@ -3,20 +3,25 @@
 {% set meta_description = post.meta_description or post.excerpt %}
 {% set og_image = post.cover_image %}
 {% set og_type = 'article' %}
+{% set cta_title = 'Got a version of this problem?' %}
+{% set cta_text = 'Tell us what it looks like in your business and we will say whether it is worth building.' %}
 {% block content %}
 <article>
-  <section class="page-head">
+  <section class="page-head post-head">
     <div class="wrap wrap-narrow">
-      {% if post.published_at %}<p class="eyebrow">{{ post.published_at.strftime('%B %d, %Y') | upper }}</p>{% endif %}
+      <p class="eyebrow"><a class="crumb" href="/blog">BLOG</a>{% if post.published_at %} · {{ post.published_at.strftime('%B %d, %Y') | upper }}{% endif %}</p>
       <h1>{{ post.title }}</h1>
+      {% if post.excerpt %}<p class="lead">{{ post.excerpt }}</p>{% endif %}
     </div>
   </section>
   <section class="section article-body">
     <div class="wrap wrap-narrow">
-      {% if post.cover_image %}<img class="article-cover" src="{{ post.cover_image }}" alt="{{ post.title }}">{% endif %}
+      {% if post.cover_image %}<img class="article-cover" src="{{ post.cover_image }}" alt="" decoding="async">{% endif %}
       <div class="prose prose-lg">{{ post.body_html | safe }}</div>
-      <div class="article-back"><a href="/blog">← All posts</a></div>
+      <div class="article-back"><a class="link-go" href="/blog"><span aria-hidden="true">←</span> All posts</a></div>
     </div>
   </section>
 </article>
+
+{% include "public/_cta.html" %}
 {% endblock %}

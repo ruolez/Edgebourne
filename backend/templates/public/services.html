@@ -1,25 +1,34 @@
 {% extends "base.html" %}
 {% set meta_title = 'Services — ' + setting('site_title', 'EdgeBourne') %}
 {% set meta_description = 'Custom web apps, mobile apps, systems integration and business automation for small and mid-size companies.' %}
+{% set cta_title = 'Not sure which of these you need?' %}
+{% set cta_text = "Most projects start as a conversation about what's slow today." %}
 {% block content %}
 <section class="page-head">
   <div class="wrap">
     <p class="eyebrow">SERVICES</p>
     <h1>One partner for the systems<br><span class="accent">your business runs on.</span></h1>
+    <p class="lead">Four ways in. Most engagements use two of them before they are finished.</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
+    {% if services %}
+    <nav class="jumpbar" aria-label="Jump to service">
+      {% for s in services %}<a href="#{{ s.slug }}"><span class="jump-num">{{ '%02d' % loop.index }}</span>{{ s.title }}</a>{% endfor %}
+    </nav>
+    {% endif %}
   </div>
 </section>
 
 <section class="section">
   <div class="wrap service-list">
     {% for s in services %}
-    <article class="service-row card" id="{{ s.slug }}">
+    <article class="service-row card" id="{{ s.slug }}" data-reveal>
       <div class="service-meta">
         <span class="card-index">{{ '%02d' % loop.index }}</span>
         <h2>{{ s.title }}</h2>
         <p class="service-summary">{{ s.summary }}</p>
+        <a class="link-go" href="/contact">Talk about this<span aria-hidden="true">→</span></a>
       </div>
-      <div class="prose">{{ s.body_html | safe }}</div>
+      <div class="prose service-prose">{{ s.body_html | safe }}</div>
     </article>
     {% else %}
     <p class="empty">Services are being written — check back soon.</p>
@@ -27,13 +36,29 @@
   </div>
 </section>
 
-<section class="section cta-band">
-  <div class="wrap cta-inner">
-    <div>
-      <h2>Not sure which of these you need?</h2>
-      <p class="lead">Most projects start as a conversation about what's slow today.</p>
+<section class="section section-dark">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <p class="eyebrow">HOW ENGAGEMENTS ARE SHAPED</p>
+      <h2>Three ways to start</h2>
     </div>
-    <a class="btn btn-primary btn-lg" href="/contact">Book a call</a>
+    {% set shapes = [
+      {'t': 'A single integration', 'p': 'Two systems that should already be talking. Usually two to four weeks, fixed price.', 'k': 'FROM 2 WEEKS'},
+      {'t': 'A system your team lives in', 'p': 'A full application for one part of the business — the floor, the desk, the portal.', 'k': 'FROM 6 WEEKS'},
+      {'t': 'Ongoing partner', 'p': 'A monthly arrangement: changes, monitoring and the next phase, without a new contract each time.', 'k': 'MONTHLY'}
+    ] %}
+    <div class="cards" data-reveal>
+      {% for s in shapes %}
+      <div class="card card-dark card-rule">
+        <span class="card-index">{{ s.k }}</span>
+        <h3>{{ s.t }}</h3>
+        <p>{{ s.p }}</p>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="section-more"><a class="btn btn-outline-light" href="/process">See how a project runs</a></div>
   </div>
 </section>
+
+{% include "public/_cta.html" %}
 {% endblock %}
