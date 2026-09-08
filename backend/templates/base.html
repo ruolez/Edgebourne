@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  {% set _title = meta_title or setting('seo_default_title', 'EdgeBourne') %}
+  {% set _title = meta_title or setting('seo_default_title', 'Edge Bourne Consulting') %}
   {% set _desc = meta_description or setting('seo_default_description', '') %}
   <title>{{ _title }}</title>
   <meta name="description" content="{{ _desc }}">
   <link rel="canonical" href="{{ canonical or request.base_url }}">
-  <meta property="og:site_name" content="{{ setting('site_title', 'EdgeBourne') }}">
+  <meta property="og:site_name" content="{{ setting('site_title', 'Edge Bourne Consulting') }}">
   <meta property="og:title" content="{{ _title }}">
   <meta property="og:description" content="{{ _desc }}">
   <meta property="og:type" content="{{ og_type or 'website' }}">

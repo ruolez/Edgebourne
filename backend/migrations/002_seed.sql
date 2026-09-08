@@ -1,5 +1,5 @@
 INSERT INTO settings (key, value) VALUES
-  ('site_title', 'EdgeBourne'),
+  ('site_title', 'Edge Bourne Consulting'),
   ('hero_eyebrow_strong', 'CUSTOM SOLUTIONS'),
   ('hero_eyebrow', 'WEB & MOBILE APPS · INTEGRATION · AUTOMATION'),
   ('hero_title', 'Run the business.'),
@@ -9,14 +9,14 @@ INSERT INTO settings (key, value) VALUES
   ('hero_cta_primary_url', '/contact'),
   ('hero_cta_secondary', 'See our work'),
   ('hero_cta_secondary_url', '/work'),
-  ('seo_default_title', 'EdgeBourne — Custom Software, Integration & Automation'),
+  ('seo_default_title', 'Edge Bourne Consulting — Custom Software, Integration & Automation'),
   ('seo_default_description', 'Custom web and mobile apps, automation and integration for small and mid-size companies — built to fit the way you already work.'),
   ('contact_email', 'eugene@stop-by.com'),
   ('notify_email', ''),
   ('phone', ''),
   ('social_linkedin', ''),
   ('social_github', ''),
-  ('about_md', 'EdgeBourne exists for one reason: most small and mid-size companies run on systems that don''t talk to each other. Orders live in one place, inventory in another, accounting in a third — and people fill the gaps by retyping data.
+  ('about_md', 'Edge Bourne Consulting exists for one reason: most small and mid-size companies run on systems that don''t talk to each other. Orders live in one place, inventory in another, accounting in a third — and people fill the gaps by retyping data.
 
 We build the connective tissue. Custom web and mobile applications, integrations between the platforms you already use, and automation that removes the repetitive work entirely.
 
@@ -27,7 +27,7 @@ We build the connective tissue. Custom web and mobile applications, integrations
 - **Boringly reliable.** Docker deployments, monitored services, plain documentation your next hire can read.
 
 If your team spends hours a week moving data between systems, that''s usually the first thing we fix — and it usually pays for itself within months.'),
-  ('about_html', '<p>EdgeBourne exists for one reason: most small and mid-size companies run on systems that don&rsquo;t talk to each other. Orders live in one place, inventory in another, accounting in a third &mdash; and people fill the gaps by retyping data.</p>
+  ('about_html', '<p>Edge Bourne Consulting exists for one reason: most small and mid-size companies run on systems that don&rsquo;t talk to each other. Orders live in one place, inventory in another, accounting in a third &mdash; and people fill the gaps by retyping data.</p>
 <p>We build the connective tissue. Custom web and mobile applications, integrations between the platforms you already use, and automation that removes the repetitive work entirely.</p>
 <p><strong>How we work</strong></p>
 <ul>
