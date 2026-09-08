@@ -116,13 +116,106 @@
 </section>
 {% endif %}
 
-{# ---------- process strip ---------- #}
+{# ---------- optimize with AI ---------- #}
+{% set cascade = [
+  {'name': 'Rules',              'note': 'Mappings you can read and change.',        'fill': '100%'},
+  {'name': 'Learned memory',     'note': 'Every correction you already made.',       'fill': '58%'},
+  {'name': 'Lookups',            'note': 'Your catalogue, ledger and history.',      'fill': '34%'},
+  {'name': "AI on what's left",  'note': 'The model sees only the remainder.',       'fill': '17%', 'kind': 'is-ai'},
+  {'name': 'A person approves',  'note': 'Confidence and a reason, then a click.',   'fill': '17%', 'kind': 'is-end', 'done': True}
+] %}
+{% set principles = [
+  {'t': 'AI runs last, not first.',
+   'p': 'Rules, learned memory and lookups handle everything they can. The model only sees the remainder — cheaper per record, more predictable, and a model outage degrades the system instead of stopping it.'},
+  {'t': 'Nothing commits itself.',
+   'p': 'Suggestions arrive with a confidence and a reason, and a person confirms them. Catalogues and ledgers are never edited by a model acting alone.'},
+  {'t': 'Grounded in your data.',
+   'p': 'The model gets your actual numbers — search queries, click-through curves, product records, historical categories — not a general impression of your industry.'},
+  {'t': 'It gets cheaper over time.',
+   'p': 'Every correction becomes memory, so the share of records needing a model at all falls month over month.'}
+] %}
+{% set ai_apps = [
+  {'t': 'Catalogue copy at scale.',   'p': 'Titles, descriptions and image alt text across thousands of products, written against your real search data.'},
+  {'t': 'Documents into data.',       'p': 'Statements, invoices and scanned PDFs read, structured and filed — including the ones that arrive as a photograph.'},
+  {'t': 'Classification that learns.','p': 'Transactions, products and tickets sorted automatically, and corrected once rather than every month.'},
+  {'t': 'AI search visibility.',      'p': 'Whether the assistants your customers now ask are recommending you, and what it takes to change that.'}
+] %}
+<section class="section ai-band" id="ai" aria-labelledby="ai-title">
+  <div class="wrap">
+    <div class="section-head ai-head" data-reveal>
+      <p class="eyebrow">OPTIMIZE WITH AI</p>
+      <h2 id="ai-title">AI on the work that is too big to do by hand</h2>
+      <p class="lead">Everything a rule can still do, a rule keeps doing. The model only sees what is left over — and a person still approves what it changes.</p>
+    </div>
+
+    <figure class="ai-cascade" data-reveal>
+      <figcaption class="ai-cascade-head">
+        <span class="side-title">What happens to one record</span>
+        <p class="ai-cascade-sub">The bar above each stage is what still needs handling when a record reaches it. Illustrative — the real split depends on your data.</p>
+      </figcaption>
+      <ol class="ai-flow">
+        {% for c in cascade %}
+        <li class="ai-stage {{ c.kind or '' }}" style="--i:{{ loop.index0 }}">
+          <span class="ai-stage-num">{{ '%02d' % loop.index }}</span>
+          <span class="ai-stage-name">{{ c.name }}</span>
+          <span class="ai-stage-note">{{ c.note }}</span>
+          <span class="ai-stage-bar" aria-hidden="true"><i style="--w:{{ c.fill }}"></i></span>
+          {% if c.done %}<span class="ai-stage-done" aria-hidden="true"><i></i>Confirmed</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+    </figure>
+
+    <div class="cards ai-principles" data-reveal>
+      {% for p in principles %}
+      <div class="card card-rule ai-principle" style="--i:{{ loop.index0 }}">
+        <span class="card-index">{{ '%02d' % loop.index }}</span>
+        <h3>{{ p.t }}</h3>
+        <p>{{ p.p }}</p>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="ai-close" data-reveal>
+      <div class="ai-apps">
+        <h3 class="side-title">What it does today</h3>
+        <ul class="cap-list ai-app-list">
+          {% for a in ai_apps %}
+          <li><strong>{{ a.t }}</strong> {{ a.p }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      <div class="ai-proof">
+        <h3 class="side-title">Already running in production</h3>
+        <div class="sector-cases">
+          <a class="sector-case" href="/work/ai-seo-catalog">
+            <span>916 catalogue pages, scored and rewritten</span>
+            <span class="link-arrow" aria-hidden="true">&rarr;</span>
+          </a>
+          <a class="sector-case" href="/work/statement-intelligence">
+            <span>Statements in, categorised spending out</span>
+            <span class="link-arrow" aria-hidden="true">&rarr;</span>
+          </a>
+        </div>
+        <p class="ai-proof-note">If a rule solves your problem, we write the rule and charge you less.</p>
+        <div class="btn-row ai-btns">
+          <a class="btn btn-primary" href="/services#optimize-with-ai">How we approach AI</a>
+          <a class="btn btn-outline" href="/contact">Talk about your data</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{# ---------- process strip ----------
+   Step names must match /process exactly -- a visitor clicking through should
+   not meet a second, differently-named process. #}
 {% set steps = [
-  {'title': 'Look',    'text': 'A walk through the work as it happens today.'},
-  {'title': 'Scope',   'text': 'A fixed plan: what gets built, in what order.'},
-  {'title': 'Build',   'text': 'Working software in front of you every week.'},
-  {'title': 'Deploy',  'text': 'On your server, in Docker, with your data.'},
-  {'title': 'Support', 'text': 'We stay on for changes, or hand over clean.'}
+  {'title': 'Map',       'text': 'We follow one record end to end and time what it costs today.'},
+  {'title': 'Prototype', 'text': 'A working screen you can log into, before we build the real one.'},
+  {'title': 'Build',     'text': 'Working software in front of you every week.'},
+  {'title': 'Deploy',    'text': 'On your server, in Docker, with your data.'},
+  {'title': 'Support',   'text': 'We stay on for changes, or hand over clean.'}
 ] %}
 <section class="section section-dark process-band">
   <div class="wrap">
