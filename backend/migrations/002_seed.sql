@@ -1,7 +1,7 @@
 INSERT INTO settings (key, value) VALUES
   ('site_title', 'Edge Bourne Consulting'),
   ('hero_eyebrow_strong', 'CUSTOM SOLUTIONS'),
-  ('hero_eyebrow', 'WEB & MOBILE APPS · INTEGRATION · AUTOMATION'),
+  ('hero_eyebrow', 'APPS · INTEGRATION · AUTOMATION · AI'),
   ('hero_title', 'Run the business.'),
   ('hero_title_accent', 'We''ll run the systems.'),
   ('hero_sub', 'Custom web and mobile apps, automation and integration for small and mid-size companies — built to fit the way you already work.'),
