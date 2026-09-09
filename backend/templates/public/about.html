@@ -33,7 +33,6 @@
     <div class="cards" data-reveal>
       {% for b in blocks('about_beliefs') %}
       <div class="card card-rule">
-        <span class="card-index">{{ '%02d' % loop.index }}</span>
         <h3>{{ b.title }}</h3>
         <p>{{ b.body }}</p>
       </div>

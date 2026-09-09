@@ -55,7 +55,6 @@
     <div class="cards" data-reveal>
       {% for s in services %}
       <a class="card card-link card-service" href="/services#{{ s.slug }}" style="--i:{{ loop.index0 }}">
-        <span class="card-index">{{ '%02d' % loop.index }}</span>
         <h3>{{ s.title }}</h3>
         <p>{{ s.summary }}</p>
         <span class="card-go" aria-hidden="true">→</span>
@@ -153,7 +152,6 @@
     <div class="cards ai-principles" data-reveal>
       {% for p in blocks('home_ai_principles') %}
       <div class="card card-rule ai-principle" style="--i:{{ loop.index0 }}">
-        <span class="card-index">{{ '%02d' % loop.index }}</span>
         <h3>{{ p.title }}</h3>
         <p>{{ p.body }}</p>
       </div>

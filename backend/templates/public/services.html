@@ -25,7 +25,6 @@
     {% for s in services %}
     <article class="service-row card" id="{{ s.slug }}" data-reveal>
       <div class="service-meta">
-        <span class="card-index">{{ '%02d' % loop.index }}</span>
         <h2>{{ s.title }}</h2>
         <p class="service-summary">{{ s.summary }}</p>
         <a class="link-go" href="/contact">Talk about this<span aria-hidden="true">→</span></a>

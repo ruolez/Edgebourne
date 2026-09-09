@@ -55,7 +55,6 @@
       {# A card may defer to a Site-content setting -- the onboarding fee is
          edited there and must not be stated twice. #}
       <div class="card card-dark card-rule">
-        <span class="card-index">{{ '%02d' % loop.index }}</span>
         <h3>{{ setting(r.extra.title_setting or '', r.title) }}</h3>
         <p>{{ setting(r.extra.body_setting or '', r.body) }}</p>
       </div>
