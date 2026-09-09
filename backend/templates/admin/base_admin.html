@@ -11,54 +11,113 @@
 </head>
 <body class="admin">
 {% include "_svg_defs.html" %}
+{% include "admin/_admin_icons.html" %}
+
+{#- One <a> per destination. `icon` names a symbol in _admin_icons.html. -#}
+{%- macro navlink(href, icon, label, active, badge=0, badge_class='badge') -%}
+<a href="{{ href }}" class="nav-link{% if active %} active{% endif %}"{% if active %} aria-current="page"{% endif %}>
+  <svg class="nav-i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-{{ icon }}"/></svg>
+  <span class="nav-t">{{ label }}</span>
+  {%- if badge %}<span class="badge {{ badge_class }}">{{ badge }}</span>{% endif -%}
+</a>
+{%- endmacro -%}
+
+{#- A collapsible section. `active` means the current page lives in this group:
+    it is stamped on the element as data-has-active so the boot script below
+    always leaves that group open, whatever localStorage says. The rolled-up
+    badge is rendered unconditionally and revealed by CSS only while the group
+    is collapsed, so folding Billing can never hide an overdue invoice. -#}
+{%- macro navgroup(id, label, active, badge=0, badge_class='badge') -%}
+<div class="nav-group" data-group="{{ id }}"{% if active %} data-has-active="1"{% endif %}>
+  <h2 class="group-h">
+    <button type="button" class="group-head" aria-expanded="true" aria-controls="nav-{{ id }}">
+      <span class="group-t">{{ label }}</span>
+      {%- if badge %}<span class="badge {{ badge_class }} group-badge">{{ badge }}</span>{% endif -%}
+      <svg class="group-caret" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-caret"/></svg>
+    </button>
+  </h2>
+  <div class="group-items" id="nav-{{ id }}">
+    <div class="group-inner">{{ caller() }}</div>
+  </div>
+</div>
+{%- endmacro -%}
+
+{%- set path = request.path -%}
+{%- set g_website = path.startswith(('/admin/site', '/admin/content', '/admin/services', '/admin/work', '/admin/blog', '/admin/pages', '/admin/faqs', '/admin/testimonials')) -%}
+{%- set g_inbox = path.startswith('/admin/leads') -%}
+{%- set g_billing = path.startswith(('/admin/customers', '/admin/projects', '/admin/estimates', '/admin/invoices', '/admin/payments', '/admin/recurring')) -%}
+{%- set g_settings = path.startswith(('/admin/email', '/admin/billing')) -%}
+
 <div class="admin-shell">
   <aside class="sidebar">
     <a class="brand" href="/admin">
       <svg viewBox="0 0 190 190" class="brand-seal"><use href="#seal"/></svg>
       <span class="wordmark">Edge<span class="accent">Bourne</span></span>
     </a>
-    <nav class="side-nav">
-      <a href="/admin" {% if request.path in ('/admin', '/admin/') %}class="active"{% endif %}>Dashboard</a>
+    <nav class="side-nav" aria-label="Admin sections">
+      {{ navlink('/admin', 'dash', 'Dashboard', path in ('/admin', '/admin/')) }}
 
-      <span class="side-label">Website</span>
-      <a href="/admin/site" {% if request.path.startswith('/admin/site') %}class="active"{% endif %}>Site content</a>
-      <a href="/admin/content" {% if request.path.startswith('/admin/content') %}class="active"{% endif %}>Sections &amp; text</a>
-      <a href="/admin/services" {% if request.path.startswith('/admin/services') %}class="active"{% endif %}>Services</a>
-      <a href="/admin/work" {% if request.path.startswith('/admin/work') %}class="active"{% endif %}>Work</a>
-      <a href="/admin/blog" {% if request.path.startswith('/admin/blog') %}class="active"{% endif %}>Blog</a>
-      <a href="/admin/pages" {% if request.path.startswith('/admin/pages') %}class="active"{% endif %}>Pages</a>
-      <a href="/admin/faqs" {% if request.path.startswith('/admin/faqs') %}class="active"{% endif %}>FAQ</a>
-      <a href="/admin/testimonials" {% if request.path.startswith('/admin/testimonials') %}class="active"{% endif %}>Testimonials
-        {% if unapproved_testimonials %}<span class="badge badge-warn">{{ unapproved_testimonials }}</span>{% endif %}</a>
+      {% call navgroup('website', 'Website', g_website, unapproved_testimonials, 'badge-warn') %}
+        {{ navlink('/admin/site', 'site', 'Site content', path.startswith('/admin/site')) }}
+        {{ navlink('/admin/content', 'sections', 'Sections & text', path.startswith('/admin/content')) }}
+        {{ navlink('/admin/services', 'services', 'Services', path.startswith('/admin/services')) }}
+        {{ navlink('/admin/work', 'work', 'Work', path.startswith('/admin/work')) }}
+        {{ navlink('/admin/blog', 'blog', 'Blog', path.startswith('/admin/blog')) }}
+        {{ navlink('/admin/pages', 'pages', 'Pages', path.startswith('/admin/pages')) }}
+        {{ navlink('/admin/faqs', 'faq', 'FAQ', path.startswith('/admin/faqs')) }}
+        {{ navlink('/admin/testimonials', 'testimonials', 'Testimonials', path.startswith('/admin/testimonials'), unapproved_testimonials, 'badge-warn') }}
+      {% endcall %}
 
-      <span class="side-label">Inbox</span>
-      <a href="/admin/leads" {% if request.path.startswith('/admin/leads') %}class="active"{% endif %}>Leads
-        {% if unread_leads %}<span class="badge">{{ unread_leads }}</span>{% endif %}</a>
+      {% call navgroup('inbox', 'Inbox', g_inbox, unread_leads) %}
+        {{ navlink('/admin/leads', 'leads', 'Leads', path.startswith('/admin/leads'), unread_leads) }}
+      {% endcall %}
 
-      <span class="side-label">Billing</span>
-      <a href="/admin/customers" {% if request.path.startswith('/admin/customers') %}class="active"{% endif %}>Customers</a>
-      <a href="/admin/projects" {% if request.path.startswith('/admin/projects') %}class="active"{% endif %}>Projects</a>
-      <a href="/admin/estimates" {% if request.path.startswith('/admin/estimates') and request.args.get('status') != 'accepted' %}class="active"{% endif %}>Estimates</a>
-      {# Work orders are accepted estimates -- a filter, not a separate route.
-         A real /admin/work-orders path would also collide with the
-         startswith('/admin/work') check used by Work above. #}
-      <a href="/admin/estimates?status=accepted" {% if request.path.startswith('/admin/estimates') and request.args.get('status') == 'accepted' %}class="active"{% endif %}>Work orders</a>
-      <a href="/admin/invoices" {% if request.path.startswith('/admin/invoices') %}class="active"{% endif %}>Invoices
-        {% if overdue_count %}<span class="badge badge-warn">{{ overdue_count }}</span>{% endif %}</a>
-      <a href="/admin/payments" {% if request.path.startswith('/admin/payments') %}class="active"{% endif %}>Payments</a>
-      <a href="/admin/recurring" {% if request.path.startswith('/admin/recurring') %}class="active"{% endif %}>Recurring</a>
+      {% call navgroup('billing', 'Billing', g_billing, overdue_count, 'badge-warn') %}
+        {{ navlink('/admin/customers', 'customers', 'Customers', path.startswith('/admin/customers')) }}
+        {{ navlink('/admin/projects', 'projects', 'Projects', path.startswith('/admin/projects')) }}
+        {{ navlink('/admin/estimates', 'estimates', 'Estimates', path.startswith('/admin/estimates') and request.args.get('status') != 'accepted') }}
+        {# Work orders are accepted estimates -- a filter, not a separate route.
+           A real /admin/work-orders path would also collide with the
+           startswith('/admin/work') check used by Work above. #}
+        {{ navlink('/admin/estimates?status=accepted', 'workorders', 'Work orders', path.startswith('/admin/estimates') and request.args.get('status') == 'accepted') }}
+        {{ navlink('/admin/invoices', 'invoices', 'Invoices', path.startswith('/admin/invoices'), overdue_count, 'badge-warn') }}
+        {{ navlink('/admin/payments', 'payments', 'Payments', path.startswith('/admin/payments')) }}
+        {{ navlink('/admin/recurring', 'recurring', 'Recurring', path.startswith('/admin/recurring')) }}
+      {% endcall %}
 
-      <span class="side-label">Settings</span>
-      <a href="/admin/email" {% if request.path.startswith('/admin/email') %}class="active"{% endif %}>Email</a>
-      <a href="/admin/billing" {% if request.path == '/admin/billing' %}class="active"{% endif %}>Billing settings</a>
-      <a href="/admin/billing/email-log" {% if request.path.startswith('/admin/billing/email-log') %}class="active"{% endif %}>Email log
-        {% if failed_emails %}<span class="badge badge-warn">{{ failed_emails }}</span>{% endif %}</a>
+      {% call navgroup('settings', 'Settings', g_settings, failed_emails, 'badge-warn') %}
+        {{ navlink('/admin/email', 'email', 'Email', path.startswith('/admin/email')) }}
+        {{ navlink('/admin/billing', 'settings', 'Billing settings', path == '/admin/billing') }}
+        {{ navlink('/admin/billing/email-log', 'emaillog', 'Email log', path.startswith('/admin/billing/email-log'), failed_emails, 'badge-warn') }}
+      {% endcall %}
     </nav>
+    {# Inline and synchronous so a folded group is never painted open and then
+       snapped shut. admin.js owns the clicking; this only restores state. #}
+    <script>
+      (function () {
+        try {
+          var saved = JSON.parse(localStorage.getItem('eb-nav-groups') || '{}');
+          document.querySelectorAll('.nav-group').forEach(function (g) {
+            if (g.dataset.hasActive === '1') return;
+            if (saved[g.dataset.group] === false) {
+              g.setAttribute('data-collapsed', '');
+              g.querySelector('.group-head').setAttribute('aria-expanded', 'false');
+            }
+          });
+        } catch (e) { /* private mode, corrupt value: leave everything open */ }
+      })();
+    </script>
     <div class="side-bottom">
-      <a href="/" target="_blank" rel="noopener">View site ↗</a>
+      <a href="/" target="_blank" rel="noopener">
+        <svg class="nav-i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-external"/></svg>
+        <span>View site</span>
+      </a>
       <form method="post" action="/admin/logout">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="link-btn">Log out</button>
+        <button type="submit" class="link-btn">
+          <svg class="nav-i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-logout"/></svg>
+          <span>Log out</span>
+        </button>
       </form>
     </div>
   </aside>

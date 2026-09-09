@@ -4,6 +4,64 @@
   var csrfMeta = document.querySelector('meta[name="csrf"]');
   var CSRF = csrfMeta ? csrfMeta.content : '';
 
+  /* ---- sidebar: collapsible groups ----
+     The stored map is {groupId: false} for folded groups only; the inline boot
+     script in base_admin.html applies it before first paint (and deliberately
+     ignores it for the group holding the current page). This half owns the
+     clicking and writing back. */
+  var NAV_KEY = 'eb-nav-groups';
+
+  function readNavState() {
+    try {
+      var v = JSON.parse(localStorage.getItem(NAV_KEY) || '{}');
+      return v && typeof v === 'object' ? v : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  var sidebar = document.querySelector('.sidebar');
+  var sideNav = document.querySelector('.side-nav');
+
+  /* The bottom fade is only honest while the list actually overflows. */
+  function syncNavOverflow() {
+    if (!sidebar || !sideNav) return;
+    var over = sideNav.scrollHeight - sideNav.clientHeight > 1;
+    if (over) sidebar.setAttribute('data-nav-overflow', '');
+    else sidebar.removeAttribute('data-nav-overflow');
+  }
+
+  document.querySelectorAll('.nav-group').forEach(function (group) {
+    var head = group.querySelector('.group-head');
+    if (!head) return;
+    head.addEventListener('click', function () {
+      var collapsed = group.hasAttribute('data-collapsed');
+      if (collapsed) group.removeAttribute('data-collapsed');
+      else group.setAttribute('data-collapsed', '');
+      head.setAttribute('aria-expanded', collapsed ? 'true' : 'false');
+      var state = readNavState();
+      state[group.dataset.group] = collapsed;
+      try {
+        localStorage.setItem(NAV_KEY, JSON.stringify(state));
+      } catch (e) { /* private mode: the fold still works, it just won't stick */ }
+      syncNavOverflow();
+    });
+  });
+
+  if (sideNav) {
+    syncNavOverflow();
+    window.addEventListener('resize', syncNavOverflow);
+    /* Deep in a long list, the active row can start below the fold. */
+    var current = sideNav.querySelector('a.active');
+    if (current) {
+      var box = current.getBoundingClientRect();
+      var navBox = sideNav.getBoundingClientRect();
+      if (box.top < navBox.top || box.bottom > navBox.bottom) {
+        current.scrollIntoView({ block: 'nearest' });
+      }
+    }
+  }
+
   /* ---- delete confirmations ---- */
   document.querySelectorAll('form.js-confirm').forEach(function (form) {
     form.addEventListener('submit', function (e) {

@@ -50,18 +50,26 @@ h1, h2, h3 { margin: 0; }
 
 .admin-shell { display: flex; min-height: 100vh; }
 
-/* ---------- sidebar ---------- */
+/* ---------- sidebar ----------
+   Three bands in one column: brand, a scrolling link list, and the account
+   actions. The sidebar itself must never scroll (it is position:sticky at
+   100vh, so anything past the fold is simply painted off-screen and is
+   unreachable) -- so it clips, and .side-nav is the only scroller. `min-height:0`
+   is what actually lets it shrink: a flex child defaults to min-height:auto and
+   would otherwise refuse to be smaller than its content. */
 .sidebar {
-  width: 230px;
+  width: 234px;
   flex-shrink: 0;
   background: var(--ink);
   color: #D8DDE0;
   display: flex;
   flex-direction: column;
-  padding: 24px 16px;
+  padding: 20px 14px 16px;
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 .sidebar .brand {
   display: flex;
@@ -69,50 +77,210 @@ h1, h2, h3 { margin: 0; }
   gap: 10px;
   text-decoration: none;
   color: #fff;
-  padding: 0 10px 22px;
+  padding: 0 8px 16px;
+  flex-shrink: 0;
 }
-.brand-seal { width: 30px; height: 30px; }
+.brand-seal { width: 29px; height: 29px; }
 .wordmark { font-weight: 800; font-size: 17px; color: #fff; }
 .wordmark .accent { color: var(--teal-light); }
 .wordmark-dark { color: var(--ink); font-weight: 800; font-size: 22px; }
 .wordmark-dark .accent { color: var(--teal); }
 
-.side-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.side-nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+/* Overlay-thin, and only drawn while the list actually overflows. */
+.side-nav::-webkit-scrollbar { width: 6px; }
+.side-nav::-webkit-scrollbar-track { background: transparent; }
+.side-nav::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 999px; }
+.side-nav::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.28); }
+
 .side-nav a {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   color: #8FA0AA;
   text-decoration: none;
   font-weight: 700;
-  font-size: 14px;
-  padding: 9px 10px;
+  font-size: 13.5px;
+  line-height: 1.3;
+  padding: 6px 9px;
   border-radius: var(--r-btn);
 }
-.side-nav a:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
-.side-nav a.active { color: #fff; background: rgba(46, 125, 116, 0.35); }
+.side-nav a:hover { color: #fff; background: rgba(255, 255, 255, 0.055); }
+
+/* Icons: 17px, no fill, currentColor stroke -- they pick up the link colour,
+   the hover lift and the active state without a second rule. */
+.nav-i {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.65;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.82;
+}
+.side-nav a:hover .nav-i, .side-nav a.active .nav-i { opacity: 1; }
+.nav-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Active: a teal wash plus a left accent rail, sized to sit inside the pill's
+   corner radius. Far easier to find than a flat background alone. */
+.side-nav a.active {
+  color: #fff;
+  background: rgba(46, 125, 116, 0.42);
+}
+.side-nav a.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--teal-light);
+}
+.side-nav a.active .nav-i { color: var(--teal-light); stroke-width: 1.8; }
+
+/* ---- collapsible groups ---- */
+.nav-group { display: block; }
+.group-h { margin: 0; }
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #5C6E79;
+  padding: 11px 9px 4px;
+  border-radius: var(--r-btn);
+}
+.group-head:hover { color: #93A4AE; }
+.group-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-caret {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.18s ease;
+}
+.nav-group[data-collapsed] .group-caret { transform: rotate(-90deg); }
+/* Folded, the header's 4px bottom padding is all that separates it from the
+   next header -- give the stack of shut groups some air. */
+.nav-group[data-collapsed] .group-head { padding-bottom: 8px; }
+/* Rolled up onto the header, and shown only while the group is shut -- a folded
+   Billing must still announce an overdue invoice. */
+.group-badge { display: none; letter-spacing: 0; }
+.nav-group[data-collapsed] .group-badge { display: inline-block; }
+
+/* No display:none anywhere in the resting state: with JS off nothing sets
+   data-collapsed, so every group renders open. The 1fr -> 0fr grid row is the
+   collapse; visibility keeps folded links out of the tab order. */
+.group-items {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.18s ease;
+}
+.group-inner {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.nav-group[data-collapsed] .group-items { grid-template-rows: 0fr; }
+.nav-group[data-collapsed] .group-inner { visibility: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .group-items, .group-caret { transition: none; }
+}
+
 .badge {
   background: var(--teal);
   color: #fff;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 800;
+  font-family: var(--font-body);
+  line-height: 1.6;
   border-radius: 999px;
-  padding: 1px 8px;
+  padding: 0 7px;
+  margin-left: auto;
+  flex-shrink: 0;
 }
-.side-bottom { padding: 14px 10px 0; border-top: 1px solid rgba(255, 255, 255, 0.08); }
-.side-bottom a { display: block; color: #8FA0AA; font-weight: 700; font-size: 13px; text-decoration: none; margin-bottom: 10px; }
-.side-bottom a:hover { color: #fff; }
-.link-btn {
-  background: none;
-  border: 0;
-  padding: 0;
+
+/* ---- account actions: pinned, always visible ---- */
+.side-bottom {
+  flex-shrink: 0;
+  position: relative;
+  padding: 10px 0 0;
+  margin-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Only while the list overflows: a short fade so the cut edge reads as
+   "there is more", not as a clipped row. */
+.sidebar[data-nav-overflow] .side-bottom::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 20px;
+  background: linear-gradient(to top, var(--ink), rgba(28, 43, 51, 0));
+  pointer-events: none;
+}
+.side-bottom a, .link-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
   color: #8FA0AA;
   font-family: var(--font-body);
   font-weight: 700;
   font-size: 13px;
+  text-decoration: none;
+  background: none;
+  border: 0;
   cursor: pointer;
+  padding: 6px 9px;
+  border-radius: var(--r-btn);
 }
-.link-btn:hover { color: #fff; }
+.side-bottom a:hover, .link-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.055); }
+
+.side-nav a:focus-visible,
+.group-head:focus-visible,
+.side-bottom a:focus-visible,
+.link-btn:focus-visible,
+.sidebar .brand:focus-visible {
+  outline: 2px solid var(--teal-light);
+  outline-offset: -1px;
+  border-radius: var(--r-btn);
+}
 
 /* ---------- main ---------- */
 .admin-main { flex: 1; padding: 28px 36px 64px; min-width: 0; }
@@ -419,11 +587,26 @@ h1, h2, h3 { margin: 0; }
 /* ---------- responsive ---------- */
 @media (max-width: 900px) {
   .admin-shell { flex-direction: column; }
-  .sidebar { width: 100%; height: auto; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px; padding: 12px 16px; }
-  .sidebar .brand { padding: 0 12px 0 0; }
-  .side-nav { flex-direction: row; flex-wrap: wrap; }
-  .side-bottom { border: 0; padding: 0 0 0 8px; display: flex; gap: 14px; }
-  .side-bottom a { margin: 0; }
+  /* The sidebar becomes a banner: no fixed height, so no scroller and no
+     clipping -- the whole nav is on the page. Brand and account actions share
+     the top line; .side-nav drops below them at full width and stays the
+     horizontal wrapping row it has always been. */
+  .sidebar { width: 100%; height: auto; position: static; overflow: visible; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0; padding: 12px 16px 14px; }
+  .sidebar .brand { padding: 0; }
+  .side-nav { flex: 1 0 100%; flex-direction: row; flex-wrap: wrap; align-content: flex-start; gap: 2px 4px; overflow: visible; min-height: 0; margin-top: 6px; padding-right: 0; }
+  .side-nav a { font-size: 13px; gap: 8px; }
+  /* Groups dissolve into the row: the header and its links each take a full
+     line, which is how the old .side-label behaved. */
+  .nav-group { display: contents; }
+  .group-h, .group-items { width: 100%; flex: 0 0 100%; }
+  .group-head { padding: 9px 6px 3px; }
+  .group-inner { flex-direction: row; flex-wrap: wrap; gap: 2px 4px; }
+  .side-nav a .badge, .group-badge { margin-left: 2px; }
+  /* Stays after the nav in DOM order, so it reads as the banner's footer rule
+     rather than being visually reordered away from where it is announced. */
+  .side-bottom { flex: 1 0 100%; margin: 8px 0 0; padding: 8px 0 0; flex-direction: row; align-items: center; gap: 4px; }
+  .side-bottom a, .link-btn { width: auto; }
+  .sidebar[data-nav-overflow] .side-bottom::before { display: none; }
   .admin-main { padding: 20px 16px 48px; }
   .form-cols { grid-template-columns: 1fr; }
   .form-side { position: static; }
@@ -432,14 +615,6 @@ h1, h2, h3 { margin: 0; }
 
 /* ---------- billing ---------- */
 
-.side-label {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: #5C6E79;
-  padding: 16px 10px 4px;
-}
 .badge-warn { background: #b3261e; }
 
 /* Numeric cells: tabular figures so money columns line up on the decimal. */
@@ -587,7 +762,6 @@ h1, h2, h3 { margin: 0; }
   .detail-grid { grid-template-columns: 1fr; }
   .line-table { display: block; overflow-x: auto; white-space: nowrap; }
   .doc-totals { width: 100%; }
-  .side-label { padding: 8px 6px 2px; width: 100%; }
 }
 
 /* Refund dialog — the only modal in the admin; deletes still use confirm(). */
