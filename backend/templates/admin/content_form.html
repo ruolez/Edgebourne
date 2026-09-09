@@ -1,0 +1,47 @@
+{% extends "admin/base_admin.html" %}
+{% from "admin/_macros.html" import text_input, textarea, checkbox, save_bar %}
+{% from "admin/_billing_macros.html" import select_field %}
+{% set named = grp.rows.get(row.block_key) if row and grp.rows else None %}
+{% block title %}{{ grp.label }}{% endblock %}
+{% block heading %}{{ row_label(grp, row) if row else 'New item' }}{% endblock %}
+{% block content %}
+<form method="post" class="form-page">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-cols">
+    <div class="form-main">
+      <section class="panel">
+        <p class="help">{{ grp.label }} — {{ grp.desc }}{% if named and named[1] %} {{ named[1] }}{% endif %}</p>
+        {% if grp.key_label %}
+        {{ text_input('block_key', grp.key_label, row.block_key if row else '', help=grp.key_help or '') }}
+        {% endif %}
+        {% for f in grp.fields %}
+          {% set value = (row.extra.get(f.name, '') if row else '') if f.store == 'extra' else (row[f.name] if row else '') %}
+          {% if f.type == 'textarea' %}
+            {{ textarea(f.name, f.label, value, rows=5, help=f.help) }}
+          {% elif f.type == 'checkbox' %}
+            {{ checkbox(f.name, f.label, value) }}
+            {% if f.help %}<p class="help field-help">{{ f.help }}</p>{% endif %}
+          {% elif f.type == 'select' %}
+            {{ select_field(f.name, f.label, value, f.options, help=f.help) }}
+          {% else %}
+            {{ text_input(f.name, f.label, value, help=f.help) }}
+          {% endif %}
+        {% endfor %}
+      </section>
+    </div>
+    <div class="form-side">
+      <section class="panel">
+        {% if grp.fixed %}
+        <p class="help">This block is part of the page layout, so it cannot be added
+          or removed — only reworded. Clearing a field restores the wording built
+          into the template.</p>
+        {% else %}
+        {{ checkbox('is_published', 'Visible on the site', row.is_published if row else true) }}
+        {% endif %}
+        {{ save_bar(row if (row and not grp.fixed) else None, '/admin/content/' + grp.key,
+                    ('/admin/content/' + grp.key + '/' + (row.id | string) + '/delete') if (row and not grp.fixed) else None) }}
+      </section>
+    </div>
+  </div>
+</form>
+{% endblock %}

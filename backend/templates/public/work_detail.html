@@ -3,9 +3,13 @@
 {% set meta_description = cs.meta_description or cs.summary %}
 {% set og_image = cs.cover_image %}
 {% set og_type = 'article' %}
-{% set cta_title = 'Have a similar problem?' %}
-{% set cta_text = "We've probably seen a version of it before — and we can tell you quickly whether it's worth building." %}
+{% set cta_key = 'work_detail' %}
 {% block content %}
+{% set h_prob = block('sections', 'work_problem') %}
+{% set h_stack = block('sections', 'work_stack') %}
+{% set h_side = block('sections', 'work_side_cta') %}
+{% set h_gal = block('sections', 'work_gallery') %}
+{% set h_rel = block('sections', 'work_related') %}
 <article class="case">
 
   {# ---------- header ---------- #}
@@ -30,7 +34,7 @@
   {% if cs.problem_lede %}
   <section class="case-lede-band">
     <div class="wrap" data-reveal>
-      <p class="eyebrow">THE PROBLEM</p>
+      <p class="eyebrow">{{ h_prob.subtitle or 'THE PROBLEM' }}</p>
       <p class="case-lede">{{ cs.problem_lede }}</p>
     </div>
   </section>
@@ -68,16 +72,16 @@
       <aside class="case-side">
         {% if cs.stack %}
         <div class="side-block" data-reveal>
-          <h2 class="side-title">Stack</h2>
+          <h2 class="side-title">{{ h_stack.title or 'Stack' }}</h2>
           <ul class="stack-list">
             {% for s in cs.stack %}<li>{{ s }}</li>{% endfor %}
           </ul>
         </div>
         {% endif %}
         <div class="side-block side-cta" data-reveal>
-          <h2 class="side-title">Same problem?</h2>
-          <p>Tell us what your team does by hand today. We'll tell you what it takes to remove it.</p>
-          <a class="btn btn-primary" href="/contact">Book a call</a>
+          <h2 class="side-title">{{ h_side.title or 'Same problem?' }}</h2>
+          <p>{{ h_side.body or "Tell us what your team does by hand today. We'll tell you what it takes to remove it." }}</p>
+          <a class="btn btn-primary" href="{{ h_side.link_url or '/contact' }}">{{ h_side.link_label or 'Book a call' }}</a>
         </div>
       </aside>
     </div>
@@ -88,8 +92,8 @@
   <section class="section section-tint case-gallery-band">
     <div class="wrap">
       <div class="section-head" data-reveal>
-        <p class="eyebrow">INSIDE THE SYSTEM</p>
-        <h2>What it actually looks like</h2>
+        <p class="eyebrow">{{ h_gal.subtitle or 'INSIDE THE SYSTEM' }}</p>
+        <h2>{{ h_gal.title or 'What it actually looks like' }}</h2>
       </div>
       <div class="gallery" id="gallery" data-reveal>
         {% for g in cs.gallery %}
@@ -130,13 +134,13 @@
   <section class="section section-tint">
     <div class="wrap">
       <div class="section-head" data-reveal>
-        <p class="eyebrow">NEXT</p>
-        <h2>Related work</h2>
+        <p class="eyebrow">{{ h_rel.subtitle or 'NEXT' }}</p>
+        <h2>{{ h_rel.title or 'Related work' }}</h2>
       </div>
       <div class="work-grid work-grid-2" data-reveal>
         {% for cs in related[:2] %}{% include "public/_work_card.html" %}{% endfor %}
       </div>
-      <div class="section-more"><a class="btn btn-outline" href="/work">All case studies</a></div>
+      <div class="section-more"><a class="btn btn-outline" href="{{ h_rel.link_url or '/work' }}">{{ h_rel.link_label or 'All case studies' }}</a></div>
     </div>
   </section>
   {% else %}

@@ -17,41 +17,40 @@
       <a class="btn btn-outline btn-lg" href="{{ setting('hero_cta_secondary_url', '/work') }}">{{ setting('hero_cta_secondary', 'See our work') }}</a>
     </div>
     <svg class="stream stream-hero" viewBox="0 0 350 30"><use href="#stream"/></svg>
+    {% set proof = block('home_proof', 'proof')['items'] | lines %}
+    {% if proof %}
     <ul class="proof-strip">
-      <li>10 systems in production</li>
-      <li>Docker-deployed on your own server</li>
-      <li>You own the code</li>
+      {% for p in proof %}<li>{{ p }}</li>
+      {% endfor %}
     </ul>
+    {% endif %}
   </div>
 </section>
 
 {# ---------- stats band ---------- #}
-{% set stats = [
-  {'value': '10',   'label': 'systems in production'},
-  {'value': '6',    'label': 'industries served'},
-  {'value': '0',    'label': 'per-seat licence fees'},
-  {'value': '100%', 'label': 'of the code is yours'}
-] %}
+{% if blocks('home_stats') %}
 <section class="section stats-band section-dark">
   <div class="wrap">
     <div class="stats-grid" data-reveal>
-      {% for s in stats %}
+      {% for s in blocks('home_stats') %}
       <div class="stat" style="--i:{{ loop.index0 }}">
-        <span class="stat-value">{{ s.value }}</span>
-        <span class="stat-label">{{ s.label }}</span>
+        <span class="stat-value">{{ s.title }}</span>
+        <span class="stat-label">{{ s.subtitle }}</span>
       </div>
       {% endfor %}
     </div>
   </div>
 </section>
+{% endif %}
 
 {# ---------- services ---------- #}
 {% if services %}
+{% set h_srv = block('sections', 'home_services') %}
 <section class="section">
   <div class="wrap">
     <div class="section-head" data-reveal>
-      <p class="eyebrow">WHAT WE DO</p>
-      <h2>Systems that fit the way you work</h2>
+      <p class="eyebrow">{{ h_srv.subtitle or 'WHAT WE DO' }}</p>
+      <h2>{{ h_srv.title or 'Systems that fit the way you work' }}</h2>
     </div>
     <div class="cards" data-reveal>
       {% for s in services %}
@@ -63,7 +62,7 @@
       </a>
       {% endfor %}
     </div>
-    <div class="section-more"><a class="btn btn-outline" href="/services">All services</a></div>
+    <div class="section-more"><a class="btn btn-outline" href="{{ h_srv.link_url or '/services' }}">{{ h_srv.link_label or 'All services' }}</a></div>
   </div>
 </section>
 {% endif %}
@@ -71,11 +70,12 @@
 {# ---------- featured work showcase ---------- #}
 {% set showcase = featured or work %}
 {% if showcase %}
+{% set h_show = block('sections', 'home_showcase') %}
 <section class="section section-tint showcase">
   <div class="wrap">
     <div class="section-head" data-reveal>
-      <p class="eyebrow">SELECTED WORK</p>
-      <h2>Problems we've already solved</h2>
+      <p class="eyebrow">{{ h_show.subtitle or 'SELECTED WORK' }}</p>
+      <h2>{{ h_show.title or "Problems we've already solved" }}</h2>
     </div>
     {% for cs in showcase[:3] %}
     <article class="showcase-row" data-reveal>
@@ -111,96 +111,80 @@
       </div>
     </article>
     {% endfor %}
-    <div class="section-more"><a class="btn btn-outline" href="/work">See all ten case studies</a></div>
+    <div class="section-more"><a class="btn btn-outline" href="{{ h_show.link_url or '/work' }}">{{ h_show.link_label or 'See all ten case studies' }}</a></div>
   </div>
 </section>
 {% endif %}
 
 {# ---------- optimize with AI ---------- #}
-{% set cascade = [
-  {'name': 'Rules',              'note': 'Mappings you can read and change.',        'fill': '100%'},
-  {'name': 'Learned memory',     'note': 'Every correction you already made.',       'fill': '58%'},
-  {'name': 'Lookups',            'note': 'Your catalogue, ledger and history.',      'fill': '34%'},
-  {'name': "AI on what's left",  'note': 'The model sees only the remainder.',       'fill': '17%', 'kind': 'is-ai'},
-  {'name': 'A person approves',  'note': 'Confidence and a reason, then a click.',   'fill': '17%', 'kind': 'is-end', 'done': True}
-] %}
-{% set principles = [
-  {'t': 'AI runs last, not first.',
-   'p': 'Rules, learned memory and lookups handle everything they can. The model only sees the remainder — cheaper per record, more predictable, and a model outage degrades the system instead of stopping it.'},
-  {'t': 'Nothing commits itself.',
-   'p': 'Suggestions arrive with a confidence and a reason, and a person confirms them. Catalogues and ledgers are never edited by a model acting alone.'},
-  {'t': 'Grounded in your data.',
-   'p': 'The model gets your actual numbers — search queries, click-through curves, product records, historical categories — not a general impression of your industry.'},
-  {'t': 'It gets cheaper over time.',
-   'p': 'Every correction becomes memory, so the share of records needing a model at all falls month over month.'}
-] %}
-{% set ai_apps = [
-  {'t': 'Catalogue copy at scale.',   'p': 'Titles, descriptions and image alt text across thousands of products, written against your real search data.'},
-  {'t': 'Documents into data.',       'p': 'Statements, invoices and scanned PDFs read, structured and filed — including the ones that arrive as a photograph.'},
-  {'t': 'Classification that learns.','p': 'Transactions, products and tickets sorted automatically, and corrected once rather than every month.'},
-  {'t': 'AI search visibility.',      'p': 'Whether the assistants your customers now ask are recommending you, and what it takes to change that.'}
-] %}
+{% set h_ai = block('sections', 'home_ai') %}
+{% set h_casc = block('sections', 'home_ai_cascade') %}
+{% set h_apps = block('sections', 'home_ai_apps') %}
+{% set h_proof = block('sections', 'home_ai_proof') %}
 <section class="section ai-band" id="ai" aria-labelledby="ai-title">
   <div class="wrap">
     <div class="section-head ai-head" data-reveal>
-      <p class="eyebrow">OPTIMIZE WITH AI</p>
-      <h2 id="ai-title">AI on the work that is too big to do by hand</h2>
-      <p class="lead">Everything a rule can still do, a rule keeps doing. The model only sees what is left over — and a person still approves what it changes.</p>
+      <p class="eyebrow">{{ h_ai.subtitle or 'OPTIMIZE WITH AI' }}</p>
+      <h2 id="ai-title">{{ h_ai.title or 'AI on the work that is too big to do by hand' }}</h2>
+      <p class="lead">{{ h_ai.body or 'Everything a rule can still do, a rule keeps doing. The model only sees what is left over — and a person still approves what it changes.' }}</p>
     </div>
 
+    {% if blocks('home_cascade') %}
     <figure class="ai-cascade" data-reveal>
       <figcaption class="ai-cascade-head">
-        <span class="side-title">What happens to one record</span>
-        <p class="ai-cascade-sub">The bar above each stage is what still needs handling when a record reaches it. Illustrative — the real split depends on your data.</p>
+        <span class="side-title">{{ h_casc.title or 'What happens to one record' }}</span>
+        <p class="ai-cascade-sub">{{ h_casc.body or 'The bar above each stage is what still needs handling when a record reaches it. Illustrative — the real split depends on your data.' }}</p>
       </figcaption>
       <ol class="ai-flow">
-        {% for c in cascade %}
-        <li class="ai-stage {{ c.kind or '' }}" style="--i:{{ loop.index0 }}">
+        {% for c in blocks('home_cascade') %}
+        <li class="ai-stage {{ c.extra.kind or '' }}" style="--i:{{ loop.index0 }}">
           <span class="ai-stage-num">{{ '%02d' % loop.index }}</span>
-          <span class="ai-stage-name">{{ c.name }}</span>
-          <span class="ai-stage-note">{{ c.note }}</span>
-          <span class="ai-stage-bar" aria-hidden="true"><i style="--w:{{ c.fill }}"></i></span>
-          {% if c.done %}<span class="ai-stage-done" aria-hidden="true"><i></i>Confirmed</span>{% endif %}
+          <span class="ai-stage-name">{{ c.title }}</span>
+          <span class="ai-stage-note">{{ c.subtitle }}</span>
+          <span class="ai-stage-bar" aria-hidden="true"><i style="--w:{{ c.extra.fill }}"></i></span>
+          {% if c.extra.done %}<span class="ai-stage-done" aria-hidden="true"><i></i>Confirmed</span>{% endif %}
         </li>
         {% endfor %}
       </ol>
     </figure>
+    {% endif %}
 
+    {% if blocks('home_ai_principles') %}
     <div class="cards ai-principles" data-reveal>
-      {% for p in principles %}
+      {% for p in blocks('home_ai_principles') %}
       <div class="card card-rule ai-principle" style="--i:{{ loop.index0 }}">
         <span class="card-index">{{ '%02d' % loop.index }}</span>
-        <h3>{{ p.t }}</h3>
-        <p>{{ p.p }}</p>
+        <h3>{{ p.title }}</h3>
+        <p>{{ p.body }}</p>
       </div>
       {% endfor %}
     </div>
+    {% endif %}
 
     <div class="ai-close" data-reveal>
       <div class="ai-apps">
-        <h3 class="side-title">What it does today</h3>
+        <h3 class="side-title">{{ h_apps.title or 'What it does today' }}</h3>
         <ul class="cap-list ai-app-list">
-          {% for a in ai_apps %}
-          <li><strong>{{ a.t }}</strong> {{ a.p }}</li>
+          {% for a in blocks('home_ai_apps') %}
+          <li><strong>{{ a.title }}</strong> {{ a.body }}</li>
           {% endfor %}
         </ul>
       </div>
       <div class="ai-proof">
-        <h3 class="side-title">Already running in production</h3>
+        <h3 class="side-title">{{ h_proof.title or 'Already running in production' }}</h3>
         <div class="sector-cases">
-          <a class="sector-case" href="/work/ai-seo-catalog">
-            <span>916 catalogue pages, scored and rewritten</span>
+          {% for r in blocks('home_ai_proof') %}
+          <a class="sector-case" href="{{ r.link_url }}">
+            <span>{{ r.title }}</span>
             <span class="link-arrow" aria-hidden="true">&rarr;</span>
           </a>
-          <a class="sector-case" href="/work/statement-intelligence">
-            <span>Statements in, categorised spending out</span>
-            <span class="link-arrow" aria-hidden="true">&rarr;</span>
-          </a>
+          {% endfor %}
         </div>
-        <p class="ai-proof-note">If a rule solves your problem, we write the rule and charge you less.</p>
+        <p class="ai-proof-note">{{ h_proof.body or 'If a rule solves your problem, we write the rule and charge you less.' }}</p>
         <div class="btn-row ai-btns">
-          <a class="btn btn-primary" href="/services#optimize-with-ai">How we approach AI</a>
-          <a class="btn btn-outline" href="/contact">Talk about your data</a>
+          {% for b in blocks('home_ai_buttons') %}
+          <a class="btn {{ 'btn-primary' if loop.first else 'btn-outline' }}" href="{{ b.link_url }}">{{ b.title }}</a>
+          {% endfor %}
         </div>
       </div>
     </div>
@@ -210,65 +194,57 @@
 {# ---------- process strip ----------
    Step names must match /process exactly -- a visitor clicking through should
    not meet a second, differently-named process. #}
-{% set steps = [
-  {'title': 'Map',       'text': 'We follow one record end to end and time what it costs today.'},
-  {'title': 'Prototype', 'text': 'A working screen you can log into, before we build the real one.'},
-  {'title': 'Build',     'text': 'Working software in front of you every week.'},
-  {'title': 'Deploy',    'text': 'On your server, in Docker, with your data.'},
-  {'title': 'Support',   'text': 'We stay on for changes, or hand over clean.'}
-] %}
+{% if blocks('home_process_steps') %}
+{% set h_proc = block('sections', 'home_process') %}
 <section class="section section-dark process-band">
   <div class="wrap">
     <div class="section-head" data-reveal>
-      <p class="eyebrow">HOW IT GOES</p>
-      <h2>Five steps, no surprises</h2>
+      <p class="eyebrow">{{ h_proc.subtitle or 'HOW IT GOES' }}</p>
+      <h2>{{ h_proc.title or 'Five steps, no surprises' }}</h2>
     </div>
     <ol class="process-strip" data-reveal>
-      {% for s in steps %}
+      {% for s in blocks('home_process_steps') %}
       <li class="process-step">
         <span class="process-num">{{ '%02d' % loop.index }}</span>
         <h3>{{ s.title }}</h3>
-        <p>{{ s.text }}</p>
+        <p>{{ s.body }}</p>
       </li>
       {% endfor %}
     </ol>
-    <div class="section-more"><a class="btn btn-outline-light" href="/process">See the full process</a></div>
+    <div class="section-more"><a class="btn btn-outline-light" href="{{ h_proc.link_url or '/process' }}">{{ h_proc.link_label or 'See the full process' }}</a></div>
   </div>
 </section>
+{% endif %}
 
 {# ---------- industries ---------- #}
-{% set sectors = [
-  {'slug': 'retail-ecommerce',      'name': 'Retail &amp; ecommerce',     'note': 'Multi-store stock, pricing, catalogue'},
-  {'slug': 'wholesale-distribution','name': 'Wholesale &amp; distribution','note': 'Purchasing, order entry, invoicing'},
-  {'slug': 'warehouse-logistics',   'name': 'Warehouse &amp; logistics',   'note': 'Scanning, bins, picking, shipping'},
-  {'slug': 'legal-services',        'name': 'Legal services',          'note': 'Client intake, documents, case files'},
-  {'slug': 'professional-services', 'name': 'Professional services',   'note': 'Client portals, statements, reporting'},
-  {'slug': 'food-beverage',         'name': 'Food &amp; beverage',         'note': 'Lot tracking, replenishment, margins'}
-] %}
+{% if blocks('home_sectors') %}
+{% set h_ind = block('sections', 'home_industries') %}
 <section class="section">
   <div class="wrap">
     <div class="section-head" data-reveal>
-      <p class="eyebrow">WHO WE BUILD FOR</p>
-      <h2>Industries we already know</h2>
+      <p class="eyebrow">{{ h_ind.subtitle or 'WHO WE BUILD FOR' }}</p>
+      <h2>{{ h_ind.title or 'Industries we already know' }}</h2>
     </div>
     <div class="industry-grid" data-reveal>
-      {% for s in sectors %}
-      <a class="industry-tile" href="/industries#{{ s.slug }}">
-        <span class="industry-name">{{ s.name | safe }}</span>
-        <span class="industry-note">{{ s.note }}</span>
+      {% for s in blocks('home_sectors') %}
+      <a class="industry-tile" href="/industries#{{ s.block_key }}">
+        <span class="industry-name">{{ s.title }}</span>
+        <span class="industry-note">{{ s.subtitle }}</span>
       </a>
       {% endfor %}
     </div>
   </div>
 </section>
+{% endif %}
 
 {# ---------- testimonials + tech ---------- #}
 {% if testimonials %}
+{% set h_quo = block('sections', 'home_testimonials') %}
 <section class="section section-tint">
   <div class="wrap">
     <div class="section-head" data-reveal>
-      <p class="eyebrow">IN THEIR WORDS</p>
-      <h2>What it's like to work with us</h2>
+      <p class="eyebrow">{{ h_quo.subtitle or 'IN THEIR WORDS' }}</p>
+      <h2>{{ h_quo.title or "What it's like to work with us" }}</h2>
     </div>
     <div class="quote-grid" data-reveal>
       {% for t in testimonials[:3] %}
@@ -286,10 +262,12 @@
 </section>
 {% endif %}
 
-{% set techs = ['Python', 'Flask', 'FastAPI', 'PostgreSQL', 'Docker', 'nginx', 'JavaScript', 'React', 'TypeScript', 'Shopify GraphQL', 'Stripe', 'SQL Server', 'Redis', 'Celery', 'Tesseract OCR'] %}
+{% set tech = block('home_tech', 'tech') %}
+{% set techs = tech['items'] | lines %}
+{% if techs %}
 <section class="tech-band">
   <div class="wrap tech-head">
-    <p class="eyebrow">BUILT WITH</p>
+    <p class="eyebrow">{{ tech.subtitle or 'BUILT WITH' }}</p>
   </div>
   <div class="marquee" aria-label="Technologies we build with">
     <div class="marquee-track">
@@ -301,14 +279,16 @@
     </div>
   </div>
 </section>
+{% endif %}
 
 {# ---------- FAQ ---------- #}
 {% if faqs %}
+{% set h_faq = block('sections', 'home_faq') %}
 <section class="section">
   <div class="wrap faq-wrap">
     <div class="section-head" data-reveal>
-      <p class="eyebrow">STRAIGHT ANSWERS</p>
-      <h2>Questions we get asked</h2>
+      <p class="eyebrow">{{ h_faq.subtitle or 'STRAIGHT ANSWERS' }}</p>
+      <h2>{{ h_faq.title or 'Questions we get asked' }}</h2>
     </div>
     <div class="faq-list" data-reveal>
       {% for f in faqs %}
@@ -324,11 +304,12 @@
 
 {# ---------- blog ---------- #}
 {% if posts %}
+{% set h_blog = block('sections', 'home_blog') %}
 <section class="section section-tint">
   <div class="wrap">
     <div class="section-head" data-reveal>
-      <p class="eyebrow">FROM THE BLOG</p>
-      <h2>Notes on running better systems</h2>
+      <p class="eyebrow">{{ h_blog.subtitle or 'FROM THE BLOG' }}</p>
+      <h2>{{ h_blog.title or 'Notes on running better systems' }}</h2>
     </div>
     <div class="cards" data-reveal>
       {% for p in posts %}

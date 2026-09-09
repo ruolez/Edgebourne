@@ -1,3 +1,8 @@
+{% set f_note = block('sections', 'footer_note') %}
+{% set f_explore = block('sections', 'footer_explore') %}
+{% set f_build = block('sections', 'footer_build') %}
+{% set f_contact = block('sections', 'footer_contact') %}
+{% set f_bottom = block('sections', 'footer_bottom') %}
 <footer class="site-footer">
   <div class="wrap footer-grid">
     <div class="footer-brand">
@@ -7,37 +12,33 @@
       </a>
       <p class="footer-strap">{{ setting('hero_eyebrow_strong', 'CUSTOM SOLUTIONS') }} · {{ setting('hero_eyebrow', 'APPS · INTEGRATION · AUTOMATION · AI') }}</p>
       <svg class="stream stream-footer" viewBox="0 0 350 30"><use href="#stream"/></svg>
-      <p class="footer-note">Custom systems for small and mid-size companies. Built on your own infrastructure, documented, and handed over.</p>
+      <p class="footer-note">{{ f_note.body or 'Custom systems for small and mid-size companies. Built on your own infrastructure, documented, and handed over.' }}</p>
     </div>
-    <nav class="footer-col" aria-label="Explore">
-      <h4>Explore</h4>
-      <a href="/work">Work</a>
-      <a href="/services">Services</a>
-      <a href="/process">Process</a>
-      <a href="/industries">Industries</a>
-      <a href="/about">About</a>
-      <a href="/blog">Blog</a>
+    {% if blocks('footer_explore') %}
+    <nav class="footer-col" aria-label="{{ f_explore.title or 'Explore' }}">
+      <h4>{{ f_explore.title or 'Explore' }}</h4>
+      {% for l in blocks('footer_explore') %}<a href="{{ l.link_url }}">{{ l.title }}</a>
+      {% endfor %}
     </nav>
-    <nav class="footer-col" aria-label="What we build">
-      <h4>What we build</h4>
-      <a href="/services#custom-web-apps">Custom web apps</a>
-      <a href="/services#systems-integration">Systems integration</a>
-      <a href="/services#business-automation">Business automation</a>
-      <a href="/services#optimize-with-ai">Optimize with AI</a>
-      <a href="/services#mobile-apps">Mobile &amp; floor tools</a>
-      <a href="/work">Case studies</a>
+    {% endif %}
+    {% if blocks('footer_build') %}
+    <nav class="footer-col" aria-label="{{ f_build.title or 'What we build' }}">
+      <h4>{{ f_build.title or 'What we build' }}</h4>
+      {% for l in blocks('footer_build') %}<a href="{{ l.link_url }}">{{ l.title }}</a>
+      {% endfor %}
     </nav>
+    {% endif %}
     <div class="footer-col">
-      <h4>Contact</h4>
+      <h4>{{ f_contact.title or 'Contact' }}</h4>
       {% if setting('contact_email') %}<a href="mailto:{{ setting('contact_email') }}">{{ setting('contact_email') }}</a>{% endif %}
       {% if setting('phone') %}<a href="tel:{{ setting('phone') | replace(' ', '') }}">{{ setting('phone') }}</a>{% endif %}
       {% if setting('social_linkedin') %}<a href="{{ setting('social_linkedin') }}" rel="noopener">LinkedIn</a>{% endif %}
       {% if setting('social_github') %}<a href="{{ setting('social_github') }}" rel="noopener">GitHub</a>{% endif %}
-      <a class="btn btn-primary btn-footer" href="/contact">Book a call</a>
+      <a class="btn btn-primary btn-footer" href="{{ f_contact.link_url or '/contact' }}">{{ f_contact.link_label or 'Book a call' }}</a>
     </div>
   </div>
   <div class="wrap footer-bottom">
-    <span>© {{ current_year }} {{ setting('site_title', 'Edge Bourne Consulting') }}. All rights reserved.</span>
-    <span class="footer-bottom-right">Replies within one business day</span>
+    <span>© {{ current_year }} {{ setting('site_title', 'Edge Bourne Consulting') }}. {{ f_bottom.body or 'All rights reserved.' }}</span>
+    <span class="footer-bottom-right">{{ f_bottom.title or 'Replies within one business day' }}</span>
   </div>
 </footer>

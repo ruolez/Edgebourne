@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% set meta_title = 'Blog — ' + setting('site_title', 'Edge Bourne Consulting') %}
 {% set meta_description = 'Notes on custom software, integration and automation for growing companies.' %}
-{% set cta_title = 'Prefer to talk it through?' %}
-{% set cta_text = 'Most of these posts started as a question a client asked on a call.' %}
+{% set cta_key = 'blog' %}
 {% block content %}
+{% set head = block('page_heads', 'blog') %}
+{% set head_accent = head.extra.get('accent') if head else '' %}
 <section class="page-head">
   <div class="wrap">
-    <p class="eyebrow">BLOG</p>
-    <h1>Notes on running<br><span class="accent">better systems.</span></h1>
-    <p class="lead">Short, concrete pieces on integration, automation and the software small companies actually need.</p>
+    <p class="eyebrow">{{ head.subtitle or 'BLOG' }}</p>
+    <h1>{{ head.title or 'Notes on running' }}{% if head_accent or not head %}<br><span class="accent">{{ head_accent or 'better systems.' }}</span>{% endif %}</h1>
+    <p class="lead">{{ head.body or 'Short, concrete pieces on integration, automation and the software small companies actually need.' }}</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
   </div>
 </section>

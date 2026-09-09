@@ -1,0 +1,30 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}Sections & text{% endblock %}
+{% block heading %}Sections &amp; text{% endblock %}
+{% block content %}
+<section class="panel">
+  <p class="help">Every heading, eyebrow, lead paragraph and repeating list on the
+    public site. Clearing a field falls back to the wording built into the page,
+    so nothing here can leave a section blank.</p>
+</section>
+
+{% for page, groups in pages %}
+{% if groups %}
+<section class="panel">
+  <div class="panel-head"><h2>{{ page }}</h2></div>
+  <table class="table">
+    <thead><tr><th>Block</th><th>What it controls</th><th class="cell-num">Items</th></tr></thead>
+    <tbody>
+      {% for g in groups %}
+      <tr>
+        <td><a href="/admin/content/{{ g.key }}">{{ g.label }}</a></td>
+        <td class="dim">{{ g.desc }}</td>
+        <td class="cell-num dim">{{ counts.get(g.key, 0) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endfor %}
+{% endblock %}

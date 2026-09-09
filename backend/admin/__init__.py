@@ -16,7 +16,7 @@ def _guard():
 # This import block is what registers the routes on the blueprint. A module
 # missing from here has no routes at all, with no error anywhere -- just 404s.
 from . import (  # noqa: E402,F401
-    billing_settings, blog, customers, dashboard, email_settings, estimates,
-    faqs, invoices, leads, media, pages, payments, projects, recurring, services,
-    site, testimonials, work,
+    billing_settings, blog, content, customers, dashboard, email_settings,
+    estimates, faqs, invoices, leads, media, pages, payments, projects,
+    recurring, services, site, testimonials, work,
 )

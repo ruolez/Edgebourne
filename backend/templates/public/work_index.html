@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% set meta_title = 'Work — ' + setting('site_title', 'Edge Bourne Consulting') %}
 {% set meta_description = 'Case studies: custom software, integrations and automation built for real companies.' %}
-{% set cta_title = 'See a problem here that looks like yours?' %}
-{% set cta_text = 'Most of these started with one slow, manual job nobody wanted to own.' %}
+{% set cta_key = 'work' %}
 {% block content %}
+{% set head = block('page_heads', 'work') %}
+{% set head_accent = head.extra.get('accent') if head else '' %}
 <section class="page-head">
   <div class="wrap">
-    <p class="eyebrow">WORK</p>
-    <h1>Problems we've<br><span class="accent">already solved.</span></h1>
-    <p class="lead">Ten systems running in production. Clients are described by industry, not by name.</p>
+    <p class="eyebrow">{{ head.subtitle or 'WORK' }}</p>
+    <h1>{{ head.title or "Problems we've" }}{% if head_accent or not head %}<br><span class="accent">{{ head_accent or 'already solved.' }}</span>{% endif %}</h1>
+    <p class="lead">{{ head.body or 'Ten systems running in production. Clients are described by industry, not by name.' }}</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
   </div>
 </section>

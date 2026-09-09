@@ -80,10 +80,15 @@ def service_move(sid):
     return redirect(url_for("admin.services_list"))
 
 
-def move_row(table, row_id, direction):
-    """Swap a row with its neighbor in sort_order, then renumber 0..n."""
-    assert table in ("services", "case_studies", "pages", "testimonials", "faqs")
-    rows = db.query(f"SELECT id FROM {table} ORDER BY sort_order, id")
+def move_row(table, row_id, direction, where="", params=()):
+    """Swap a row with its neighbor in sort_order, then renumber 0..n.
+
+    `where` scopes the reorder to one slice of the table (content_blocks holds
+    every group's rows, so renumbering the whole table would shuffle the lot);
+    it is written by the caller and its %s placeholders come from `params`."""
+    assert table in ("services", "case_studies", "pages", "testimonials", "faqs",
+                     "content_blocks")
+    rows = db.query(f"SELECT id FROM {table} {where} ORDER BY sort_order, id", params)
     ids = [r["id"] for r in rows]
     if row_id not in ids:
         return

@@ -1,14 +1,16 @@
 {% extends "base.html" %}
 {% set meta_title = 'About — ' + setting('site_title', 'Edge Bourne Consulting') %}
 {% set meta_description = 'Who Edge Bourne Consulting is and how we work.' %}
-{% set cta_title = "Sound like the partner you're after?" %}
-{% set cta_text = 'The first call costs nothing and usually saves a few wrong turns.' %}
+{% set cta_key = 'about' %}
 {% block content %}
+{% set head = block('page_heads', 'about') %}
+{% set head_accent = head.extra.get('accent') if head else '' %}
+{% set h_bel = block('sections', 'about_beliefs') %}
 <section class="page-head">
   <div class="wrap">
-    <p class="eyebrow">ABOUT</p>
-    <h1>Small team.<br><span class="accent">Serious systems.</span></h1>
-    <p class="lead">One senior engineer on your problem, not a bench of juniors learning on it.</p>
+    <p class="eyebrow">{{ head.subtitle or 'ABOUT' }}</p>
+    <h1>{{ head.title or 'Small team.' }}{% if head_accent or not head %}<br><span class="accent">{{ head_accent or 'Serious systems.' }}</span>{% endif %}</h1>
+    <p class="lead">{{ head.body or 'One senior engineer on your problem, not a bench of juniors learning on it.' }}</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
   </div>
 </section>
@@ -21,45 +23,37 @@
 </section>
 {% endif %}
 
+{% if blocks('about_beliefs') %}
 <section class="section section-tint">
   <div class="wrap">
     <div class="section-head" data-reveal>
-      <p class="eyebrow">HOW WE WORK</p>
-      <h2>Four things that stay true</h2>
+      <p class="eyebrow">{{ h_bel.subtitle or 'HOW WE WORK' }}</p>
+      <h2>{{ h_bel.title or 'Four things that stay true' }}</h2>
     </div>
-    {% set beliefs = [
-      {'t': 'Watch first, build second', 'p': 'The best specification is an afternoon spent next to the person doing the job by hand.'},
-      {'t': 'Small pieces, in production', 'p': 'A system that ships in phases earns its budget back before the last phase is written.'},
-      {'t': 'Your server, your source', 'p': 'Everything runs in Docker on infrastructure you control, with the code in your repository.'},
-      {'t': 'Plain language', 'p': 'Weekly notes an owner can read. Jargon usually hides an unfinished decision.'}
-    ] %}
     <div class="cards" data-reveal>
-      {% for b in beliefs %}
+      {% for b in blocks('about_beliefs') %}
       <div class="card card-rule">
         <span class="card-index">{{ '%02d' % loop.index }}</span>
-        <h3>{{ b.t }}</h3>
-        <p>{{ b.p }}</p>
+        <h3>{{ b.title }}</h3>
+        <p>{{ b.body }}</p>
       </div>
       {% endfor %}
     </div>
   </div>
 </section>
+{% endif %}
 
+{% if blocks('about_stats') %}
 <section class="section stats-band section-dark">
   <div class="wrap">
-    {% set stats = [
-      {'value': '10',   'label': 'systems in production'},
-      {'value': '6',    'label': 'industries served'},
-      {'value': '486',  'label': 'commits on the largest build'},
-      {'value': '1 day','label': 'typical reply time'}
-    ] %}
     <div class="stats-grid" data-reveal>
-      {% for s in stats %}
-      <div class="stat"><span class="stat-value">{{ s.value }}</span><span class="stat-label">{{ s.label }}</span></div>
+      {% for s in blocks('about_stats') %}
+      <div class="stat"><span class="stat-value">{{ s.title }}</span><span class="stat-label">{{ s.subtitle }}</span></div>
       {% endfor %}
     </div>
   </div>
 </section>
+{% endif %}
 
 {% include "public/_cta.html" %}
 {% endblock %}

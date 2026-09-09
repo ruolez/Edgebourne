@@ -204,6 +204,10 @@ h1, h2, h3 { margin: 0; }
 .move-form button:disabled { opacity: 0.3; cursor: default; }
 .move-form button:not(:disabled):hover { background: var(--teal); color: #fff; }
 .cell-actions { text-align: right; width: 44px; }
+/* Sections & text: the item count column. */
+.cell-num { text-align: right; width: 64px; white-space: nowrap; }
+/* Help text under a bare .check, which carries its own bottom margin. */
+.field-help { margin: -8px 0 14px; }
 .btn-x {
   background: none;
   border: 0;

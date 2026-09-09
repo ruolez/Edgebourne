@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% set meta_title = 'Page not found — ' + setting('site_title', 'Edge Bourne Consulting') %}
 {% block content %}
+{% set head = block('page_heads', 'notfound') %}
 <section class="section notfound">
   <div class="wrap notfound-inner">
     <svg viewBox="0 0 190 190" class="notfound-seal"><use href="#seal"/></svg>
-    <p class="eyebrow">404</p>
-    <h1>This page doesn't exist.</h1>
-    <p class="lead">The link may be old, or the page was moved.</p>
+    <p class="eyebrow">{{ head.subtitle or '404' }}</p>
+    <h1>{{ head.title or "This page doesn't exist." }}</h1>
+    <p class="lead">{{ head.body or 'The link may be old, or the page was moved.' }}</p>
     <div class="btn-row">
       <a class="btn btn-primary" href="/">Back to home</a>
       <a class="btn btn-outline" href="/work">See the work</a>

@@ -1,0 +1,51 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}{{ grp.label }}{% endblock %}
+{% block heading %}{{ grp.label }}{% endblock %}
+{% block actions %}
+<a class="btn btn-ghost" href="/admin/content">All sections</a>
+{% if not grp.fixed %}<a class="btn btn-primary" href="/admin/content/{{ grp.key }}/new">+ New item</a>{% endif %}
+{% endblock %}
+{% block content %}
+<section class="panel">
+  <p class="help">{{ grp.desc }}{% if grp.help %} {{ grp.help }}{% endif %}</p>
+  {% if rows %}
+  <table class="table">
+    <thead>
+      <tr>
+        {% if not grp.fixed %}<th>Order</th>{% endif %}
+        <th>Item</th><th>Detail</th>
+        {% if not grp.fixed %}<th>Status</th><th></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        {% if not grp.fixed %}
+        <td class="cell-order">
+          <form method="post" action="/admin/content/{{ grp.key }}/{{ r.id }}/move" class="move-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button name="dir" value="up" {% if loop.first %}disabled{% endif %} title="Move up">↑</button>
+            <button name="dir" value="down" {% if loop.last %}disabled{% endif %} title="Move down">↓</button>
+          </form>
+        </td>
+        {% endif %}
+        <td><a href="/admin/content/{{ grp.key }}/{{ r.id }}">{{ row_label(grp, r) }}</a></td>
+        <td class="dim">{{ (grp.rows.get(r.block_key, ('', ''))[1] if grp.rows else '') or r.title or r.subtitle or r.body | truncate(90) }}</td>
+        {% if not grp.fixed %}
+        <td>{% if r.is_published %}<span class="pill pill-live">Live</span>{% else %}<span class="pill">Hidden</span>{% endif %}</td>
+        <td class="cell-actions">
+          <form method="post" action="/admin/content/{{ grp.key }}/{{ r.id }}/delete" class="js-confirm" data-confirm="Delete this item?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn-x" title="Delete">✕</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">Nothing here yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

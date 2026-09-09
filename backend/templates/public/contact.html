@@ -2,11 +2,15 @@
 {% set meta_title = 'Book a call — ' + setting('site_title', 'Edge Bourne Consulting') %}
 {% set meta_description = 'Tell us about your project — we reply within one business day.' %}
 {% block content %}
+{% set head = block('page_heads', 'contact') %}
+{% set head_accent = head.extra.get('accent') if head else '' %}
+{% set h_next = block('sections', 'contact_next') %}
+{% set h_form = block('sections', 'contact_form') %}
 <section class="page-head">
   <div class="wrap">
-    <p class="eyebrow">CONTACT</p>
-    <h1>Tell us what's slow.<br><span class="accent">We'll take it from there.</span></h1>
-    <p class="lead">One short conversation about what your team does by hand today. No pitch deck, no obligation.</p>
+    <p class="eyebrow">{{ head.subtitle or 'CONTACT' }}</p>
+    <h1>{{ head.title or "Tell us what's slow." }}{% if head_accent or not head %}<br><span class="accent">{{ head_accent or "We'll take it from there." }}</span>{% endif %}</h1>
+    <p class="lead">{{ head.body or 'One short conversation about what your team does by hand today. No pitch deck, no obligation.' }}</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
   </div>
 </section>
@@ -14,21 +18,17 @@
 <section class="section">
   <div class="wrap contact-grid">
     <div class="contact-info">
-      <h2>What happens next</h2>
+      <h2>{{ h_next.title or 'What happens next' }}</h2>
+      {% if blocks('contact_steps') %}
       <ol class="next-steps">
+        {% for n in blocks('contact_steps') %}
         <li>
-          <span class="next-num">01</span>
-          <span class="next-body"><strong>We reply within one business day.</strong> A real answer from the person who would do the work, not an auto-responder.</span>
+          <span class="next-num">{{ '%02d' % loop.index }}</span>
+          <span class="next-body"><strong>{{ n.title }}</strong> {{ n.body }}</span>
         </li>
-        <li>
-          <span class="next-num">02</span>
-          <span class="next-body"><strong>A 30-minute call.</strong> You walk us through the slow part. We ask about volumes, systems and who touches what.</span>
-        </li>
-        <li>
-          <span class="next-num">03</span>
-          <span class="next-body"><strong>A written summary and a price.</strong> What we would build first, what it costs, and an honest note if you do not need us.</span>
-        </li>
+        {% endfor %}
       </ol>
+      {% endif %}
 
       {% if setting('onboarding_fee') %}
       <div class="fee-note">
@@ -50,7 +50,7 @@
     </div>
 
     <form class="card contact-form" method="post" action="/contact">
-      <p class="eyebrow">SEND A MESSAGE</p>
+      <p class="eyebrow">{{ h_form.subtitle or 'SEND A MESSAGE' }}</p>
       <div class="hp" aria-hidden="true">
         <label>Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label>
       </div>
@@ -76,8 +76,8 @@
         <label for="message">What should we look at first? *</label>
         <textarea id="message" name="message" rows="6" required placeholder="The job your team does by hand, roughly how often, and which systems are involved."></textarea>
       </div>
-      <button class="btn btn-primary btn-lg btn-block" type="submit">Send message</button>
-      <p class="form-note">We use this only to reply to you. No list, no newsletter, no sharing.</p>
+      <button class="btn btn-primary btn-lg btn-block" type="submit">{{ h_form.link_label or 'Send message' }}</button>
+      <p class="form-note">{{ h_form.body or 'We use this only to reply to you. No list, no newsletter, no sharing.' }}</p>
     </form>
   </div>
 </section>

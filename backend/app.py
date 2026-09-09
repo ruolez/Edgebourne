@@ -91,6 +91,45 @@ def create_app():
         value = settings_all().get(key)
         return value if value not in (None, "") else default
 
+    def content_blocks():
+        """Every published block, indexed both ways, fetched once per request.
+
+        home.html alone calls blocks() seven times, so a query per call would
+        turn one page into a dozen round-trips."""
+        if "blocks_cache" not in g:
+            try:
+                rows = db.query(
+                    """SELECT * FROM content_blocks WHERE is_published
+                       ORDER BY group_key, sort_order, id"""
+                )
+            except Exception:
+                # Table missing on a partially-migrated box: templates fall
+                # back to the wording built into them.
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                rows = []
+            by_group, by_key = {}, {}
+            for r in rows:
+                by_group.setdefault(r["group_key"], []).append(r)
+                if r["block_key"]:
+                    by_key[(r["group_key"], r["block_key"])] = r
+            g.blocks_cache = (by_group, by_key)
+        return g.blocks_cache
+
+    def blocks(group_key):
+        return content_blocks()[0].get(group_key, [])
+
+    def block(group_key, block_key):
+        return content_blocks()[1].get((group_key, block_key))
+
+    def lines(text):
+        """Split an `items` field into its non-empty lines."""
+        if not text:
+            return []
+        return [ln.strip() for ln in str(text).splitlines() if ln.strip()]
+
     def nav_pages():
         try:
             return db.query(
@@ -105,11 +144,16 @@ def create_app():
     # without `with context` cannot see context processors, and the billing
     # macros need setting() for the tax label and company details.
     app.add_template_global(setting, "setting")
+    app.add_template_global(blocks, "blocks")
+    app.add_template_global(block, "block")
+    app.add_template_filter(lines, "lines")
 
     @app.context_processor
     def inject_globals():
         ctx = {
             "setting": setting,
+            "blocks": blocks,
+            "block": block,
             "nav_pages": nav_pages(),
             "csrf_token": auth.csrf_token,
             "static_url": static_url,
@@ -123,6 +167,17 @@ def create_app():
                 ctx["unread_leads"] = row["c"]
             except Exception:
                 ctx["unread_leads"] = 0
+            try:
+                # Unapproved quotes render nowhere on the public site, so the
+                # sidebar is the only place their existence is visible.
+                row = db.query(
+                    "SELECT COUNT(*) AS c FROM testimonials WHERE NOT is_approved",
+                    one=True,
+                )
+                ctx["unapproved_testimonials"] = row["c"]
+            except Exception:
+                db.rollback()
+                ctx["unapproved_testimonials"] = 0
             try:
                 row = db.query(
                     """SELECT
