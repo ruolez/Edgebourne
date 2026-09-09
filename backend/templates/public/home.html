@@ -124,15 +124,15 @@
   <div class="wrap">
     <div class="section-head ai-head" data-reveal>
       <p class="eyebrow">{{ h_ai.subtitle or 'OPTIMIZE WITH AI' }}</p>
-      <h2 id="ai-title">{{ h_ai.title or 'AI for the jobs that are too big to do by hand' }}</h2>
-      <p class="lead">{{ h_ai.body or "Anything a plain rule can handle, a rule keeps handling. The model only looks at what's left — and a person still approves whatever it changes." }}</p>
+      <h2 id="ai-title">{{ h_ai.title or 'The jobs that never reach the top of the list' }}</h2>
+      <p class="lead">{{ h_ai.body or "Nine hundred product pages with no descriptions. A drawer of scanned invoices. Three years of transactions to sort. Nobody has a spare month, so it never gets done — and it costs you every month it doesn't." }}</p>
     </div>
 
     {% if blocks('home_cascade') %}
     <figure class="ai-cascade" data-reveal>
       <figcaption class="ai-cascade-head">
-        <span class="side-title">{{ h_casc.title or 'What happens to one record' }}</span>
-        <p class="ai-cascade-sub">{{ h_casc.body or "The bar on each step shows how much is still left to sort out by the time a record gets there. This is an example — your data decides the real split." }}</p>
+        <span class="side-title">{{ h_casc.title or "Why it doesn't cost a fortune to run" }}</span>
+        <p class="ai-cascade-sub">{{ h_casc.body or "Most of your records never reach the AI at all. Cheaper steps handle them first, so you only pay for the hard ones — and there are fewer of those every month." }}</p>
       </figcaption>
       <ol class="ai-flow">
         {% for c in blocks('home_cascade') %}
@@ -161,7 +161,7 @@
 
     <div class="ai-close" data-reveal>
       <div class="ai-apps">
-        <h3 class="side-title">{{ h_apps.title or 'What it does today' }}</h3>
+        <h3 class="side-title">{{ h_apps.title or "What we've actually put it on" }}</h3>
         <ul class="cap-list ai-app-list">
           {% for a in blocks('home_ai_apps') %}
           <li><strong>{{ a.title }}</strong> {{ a.body }}</li>
@@ -169,7 +169,7 @@
         </ul>
       </div>
       <div class="ai-proof">
-        <h3 class="side-title">{{ h_proof.title or 'Already running for clients' }}</h3>
+        <h3 class="side-title">{{ h_proof.title or 'Two of them, running now' }}</h3>
         <div class="sector-cases">
           {% for r in blocks('home_ai_proof') %}
           <a class="sector-case" href="{{ r.link_url }}">
@@ -178,7 +178,7 @@
           </a>
           {% endfor %}
         </div>
-        <p class="ai-proof-note">{{ h_proof.body or 'If a rule solves your problem, we write the rule and charge you less.' }}</p>
+        <p class="ai-proof-note">{{ h_proof.body or "And if a rule would solve your problem, we'll write the rule and charge you less." }}</p>
         <div class="btn-row ai-btns">
           {% for b in blocks('home_ai_buttons') %}
           <a class="btn {{ 'btn-primary' if loop.first else 'btn-outline' }}" href="{{ b.link_url }}">{{ b.title }}</a>
