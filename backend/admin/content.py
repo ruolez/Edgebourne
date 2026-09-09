@@ -54,7 +54,10 @@ GROUPS = [
     {
         "key": "home_stats", "page": "Home", "label": "Stat band",
         "desc": "The four numbers in the dark band under the hero.",
-        "help": "Keep the number short — it is set in very large type.",
+        "help": "Keep the number short — it is set in very large type. "
+                "The About page has its own stat band: if you change a figure "
+                "that appears in both, change it there too, or the two pages "
+                "will contradict each other.",
         "fields": [f("title", "Number", help="e.g. 10, 100%, 1 day"),
                    f("subtitle", "Label", help="What the number counts.")],
     },
@@ -175,7 +178,8 @@ GROUPS = [
     },
     {
         "key": "about_stats", "page": "About", "label": "Stat band",
-        "desc": "The four numbers in the dark band at the foot of the page.",
+        "desc": "The four numbers in the dark band at the foot of the page. "
+                "Shares two figures with the homepage stat band — keep them in step.",
         "fields": [f("title", "Number"), f("subtitle", "Label")],
     },
     # ------------------------------------------------------------ contact
