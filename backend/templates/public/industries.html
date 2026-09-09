@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% set meta_title = 'Industries — ' + setting('site_title', 'Edge Bourne Consulting') %}
-{% set meta_description = 'Where Edge Bourne Consulting already knows the work: distribution and wholesale, multi-store retail and e-commerce, warehousing and 3PL, professional services, legal, finance and accounting.' %}
+{% set meta_description = 'Six industries we already know: distribution and wholesale, multi-store retail and e-commerce, warehousing and 3PL, professional services, legal, and finance and accounting.' %}
 {% set cta_key = 'industries' %}
 
 {% block content %}
@@ -12,7 +12,7 @@
   <div class="wrap">
     <p class="eyebrow">{{ head.subtitle or 'INDUSTRIES' }}</p>
     <h1>{{ head.title or 'We already know' }}{% if head_accent or not head %}<br><span class="accent">{{ head_accent or 'how your day runs.' }}</span>{% endif %}</h1>
-    <p class="lead">{{ head.body or 'Six industries where we have shipped systems that people use every shift. The vocabulary is different; the bottleneck rarely is.' }}</p>
+    <p class="lead">{{ head.body or "Six industries where we've built systems people use every shift. The words change from one to the next. The bottleneck usually doesn't." }}</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
     {% if blocks('industries_sectors') %}
     <nav class="jumpbar" aria-label="Jump to industry">

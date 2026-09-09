@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% set meta_title = 'About — ' + setting('site_title', 'Edge Bourne Consulting') %}
-{% set meta_description = 'Who Edge Bourne Consulting is and how we work.' %}
+{% set meta_description = 'Who we are, what we have built, and how we work.' %}
 {% set cta_key = 'about' %}
 {% block content %}
 {% set head = block('page_heads', 'about') %}
@@ -10,7 +10,7 @@
   <div class="wrap">
     <p class="eyebrow">{{ head.subtitle or 'ABOUT' }}</p>
     <h1>{{ head.title or 'Small team.' }}{% if head_accent or not head %}<br><span class="accent">{{ head_accent or 'Serious systems.' }}</span>{% endif %}</h1>
-    <p class="lead">{{ head.body or 'One senior engineer on your problem, not a bench of juniors learning on it.' }}</p>
+    <p class="lead">{{ head.body or 'One senior engineer on your problem, not a bench of juniors learning on your budget.' }}</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
   </div>
 </section>

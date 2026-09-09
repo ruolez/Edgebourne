@@ -21,7 +21,7 @@
       {% if cs.industry or cs.engagement %}
       <dl class="case-meta">
         {% if cs.industry %}<div><dt>Industry</dt><dd>{{ cs.industry }}</dd></div>{% endif %}
-        {% if cs.engagement %}<div><dt>Engagement</dt><dd>{{ cs.engagement }}</dd></div>{% endif %}
+        {% if cs.engagement %}<div><dt>Timeline</dt><dd>{{ cs.engagement }}</dd></div>{% endif %}
       </dl>
       {% endif %}
       {% if cs.tech_tags %}
@@ -72,7 +72,7 @@
       <aside class="case-side">
         {% if cs.stack %}
         <div class="side-block" data-reveal>
-          <h2 class="side-title">{{ h_stack.title or 'Stack' }}</h2>
+          <h2 class="side-title">{{ h_stack.title or 'Built with' }}</h2>
           <ul class="stack-list">
             {% for s in cs.stack %}<li>{{ s }}</li>{% endfor %}
           </ul>
@@ -80,7 +80,7 @@
         {% endif %}
         <div class="side-block side-cta" data-reveal>
           <h2 class="side-title">{{ h_side.title or 'Same problem?' }}</h2>
-          <p>{{ h_side.body or "Tell us what your team does by hand today. We'll tell you what it takes to remove it." }}</p>
+          <p>{{ h_side.body or "Tell us what your team still does by hand. We'll tell you what it would take to get rid of it." }}</p>
           <a class="btn btn-primary" href="{{ h_side.link_url or '/contact' }}">{{ h_side.link_label or 'Book a call' }}</a>
         </div>
       </aside>

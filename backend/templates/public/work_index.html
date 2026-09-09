@@ -9,7 +9,7 @@
   <div class="wrap">
     <p class="eyebrow">{{ head.subtitle or 'WORK' }}</p>
     <h1>{{ head.title or "Problems we've" }}{% if head_accent or not head %}<br><span class="accent">{{ head_accent or 'already solved.' }}</span>{% endif %}</h1>
-    <p class="lead">{{ head.body or 'Ten systems running in production. Clients are described by industry, not by name.' }}</p>
+    <p class="lead">{{ head.body or 'Ten of them, written up in full. We name the industry, never the client.' }}</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
   </div>
 </section>
@@ -31,7 +31,7 @@
       </div>
       <p class="filter-empty" id="filter-empty" hidden>No case studies in that industry yet.</p>
     {% else %}
-      <p class="empty">Case studies are on their way — in the meantime, <a href="/contact">ask us about past projects</a>.</p>
+      <p class="empty">Case studies are on their way. In the meantime, <a href="/contact">ask us about past projects</a>.</p>
     {% endif %}
   </div>
 </section>

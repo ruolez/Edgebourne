@@ -9,7 +9,7 @@
   <div class="wrap">
     <p class="eyebrow">{{ head.subtitle or 'BLOG' }}</p>
     <h1>{{ head.title or 'Notes on running' }}{% if head_accent or not head %}<br><span class="accent">{{ head_accent or 'better systems.' }}</span>{% endif %}</h1>
-    <p class="lead">{{ head.body or 'Short, concrete pieces on integration, automation and the software small companies actually need.' }}</p>
+    <p class="lead">{{ head.body or 'Short, practical posts about integration, automation and the software smaller companies actually need.' }}</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
   </div>
 </section>
@@ -44,7 +44,7 @@
       </div>
       {% endif %}
     {% else %}
-      <p class="empty">First posts are being written — check back soon.</p>
+      <p class="empty">The first posts are being written. Check back soon.</p>
     {% endif %}
   </div>
 </section>

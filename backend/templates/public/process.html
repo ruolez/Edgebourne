@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% set meta_title = 'Process — ' + setting('site_title', 'Edge Bourne Consulting') %}
-{% set meta_description = 'How an Edge Bourne Consulting project runs: map, prototype, build, deploy, support. Fixed price per phase, working software every cycle, code you keep.' %}
+{% set meta_description = 'How a project runs with us: map, prototype, build, deploy, support. A fixed price per phase, working software every week, and code you keep.' %}
 {% set cta_key = 'process' %}
 
 {% block content %}
@@ -12,7 +12,7 @@
   <div class="wrap">
     <p class="eyebrow">{{ head.subtitle or 'PROCESS' }}</p>
     <h1>{{ head.title or 'Five steps.' }}{% if head_accent or not head %}<br><span class="accent">{{ head_accent or 'No surprises.' }}</span>{% endif %}</h1>
-    <p class="lead">{{ head.body or 'Every engagement runs the same five steps. They exist so you always know what is happening, what you are getting next, and what it costs — and so you can stop after any one of them and still be left with something useful.' }}</p>
+    <p class="lead">{{ head.body or "Every project runs the same five steps. You always know what's happening now, what comes next and what it costs — and you can stop after any step and still keep something useful." }}</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
   </div>
 </section>
@@ -48,7 +48,7 @@
   <div class="wrap">
     <div class="section-head" data-reveal>
       <p class="eyebrow">{{ h_price.subtitle or 'PRICING & SHAPE' }}</p>
-      <h2>{{ h_price.title or 'What it costs, and how long it runs' }}</h2>
+      <h2>{{ h_price.title or 'What it costs and how long it takes' }}</h2>
     </div>
     <div class="cards" data-reveal>
       {% for r in blocks('process_pricing') %}

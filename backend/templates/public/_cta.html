@@ -9,13 +9,13 @@
       <div class="cta-copy">
         <p class="eyebrow">{{ cta_def.subtitle or 'NEXT STEP' }}</p>
         <h2>{{ cta_row.title or cta_title or cta_def.title or 'Ready to simplify how your company runs?' }}</h2>
-        <p class="lead">{{ cta_row.body or cta_text or cta_def.body or "Tell us what eats your team's time — we'll tell you what it takes to fix it." }}</p>
+        <p class="lead">{{ cta_row.body or cta_text or cta_def.body or "Tell us what's eating your team's time. We'll tell you what it takes to fix it." }}</p>
         <svg class="stream stream-cta" viewBox="0 0 350 30"><use href="#stream"/></svg>
       </div>
       <div class="cta-action">
         <a class="btn btn-primary btn-lg" href="/contact">{{ cta_button or cta_def.link_label or 'Book a call' }}</a>
         {% set reassure = cta_def['items'] | lines %}
-        <p class="cta-reassure">{% if reassure %}{% for r in reassure %}{{ r }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% else %}A 30-minute call. No deck, no obligation.<br>We reply within one business day.{% endif %}</p>
+        <p class="cta-reassure">{% if reassure %}{% for r in reassure %}{{ r }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% else %}A 30-minute call. No slide deck, no obligation.<br>We reply within one business day.{% endif %}</p>
       </div>
     </div>
   </div>

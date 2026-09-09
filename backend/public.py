@@ -163,7 +163,7 @@ def contact_post():
         returning=True,
     )
     mailer.notify_lead(dict(lead))
-    flash("Thanks — your message is in. We'll get back to you within one business day.", "success")
+    flash("Thanks, we've got it. We'll get back to you within one business day.", "success")
     return redirect(url_for("public.contact"))
 
 

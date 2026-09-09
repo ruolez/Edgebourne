@@ -50,7 +50,7 @@
   <div class="wrap">
     <div class="section-head" data-reveal>
       <p class="eyebrow">{{ h_srv.subtitle or 'WHAT WE DO' }}</p>
-      <h2>{{ h_srv.title or 'Systems that fit the way you work' }}</h2>
+      <h2>{{ h_srv.title or 'Software that fits how you already work' }}</h2>
     </div>
     <div class="cards" data-reveal>
       {% for s in services %}
@@ -124,15 +124,15 @@
   <div class="wrap">
     <div class="section-head ai-head" data-reveal>
       <p class="eyebrow">{{ h_ai.subtitle or 'OPTIMIZE WITH AI' }}</p>
-      <h2 id="ai-title">{{ h_ai.title or 'AI on the work that is too big to do by hand' }}</h2>
-      <p class="lead">{{ h_ai.body or 'Everything a rule can still do, a rule keeps doing. The model only sees what is left over — and a person still approves what it changes.' }}</p>
+      <h2 id="ai-title">{{ h_ai.title or 'AI for the jobs that are too big to do by hand' }}</h2>
+      <p class="lead">{{ h_ai.body or "Anything a plain rule can handle, a rule keeps handling. The model only looks at what's left — and a person still approves whatever it changes." }}</p>
     </div>
 
     {% if blocks('home_cascade') %}
     <figure class="ai-cascade" data-reveal>
       <figcaption class="ai-cascade-head">
         <span class="side-title">{{ h_casc.title or 'What happens to one record' }}</span>
-        <p class="ai-cascade-sub">{{ h_casc.body or 'The bar above each stage is what still needs handling when a record reaches it. Illustrative — the real split depends on your data.' }}</p>
+        <p class="ai-cascade-sub">{{ h_casc.body or "The bar on each step shows how much is still left to sort out by the time a record gets there. This is an example — your data decides the real split." }}</p>
       </figcaption>
       <ol class="ai-flow">
         {% for c in blocks('home_cascade') %}
@@ -169,7 +169,7 @@
         </ul>
       </div>
       <div class="ai-proof">
-        <h3 class="side-title">{{ h_proof.title or 'Already running in production' }}</h3>
+        <h3 class="side-title">{{ h_proof.title or 'Already running for clients' }}</h3>
         <div class="sector-cases">
           {% for r in blocks('home_ai_proof') %}
           <a class="sector-case" href="{{ r.link_url }}">

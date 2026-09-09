@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% set meta_title = 'Services — ' + setting('site_title', 'Edge Bourne Consulting') %}
-{% set meta_description = 'Custom web apps, mobile apps, systems integration and business automation for small and mid-size companies.' %}
+{% set meta_description = 'Custom web and mobile apps, systems integration and automation for small and mid-size companies.' %}
 {% set cta_key = 'services' %}
 {% block content %}
 {% set head = block('page_heads', 'services') %}
@@ -9,8 +9,8 @@
 <section class="page-head">
   <div class="wrap">
     <p class="eyebrow">{{ head.subtitle or 'SERVICES' }}</p>
-    <h1>{{ head.title or 'One partner for the systems' }}{% if head_accent or not head %}<br><span class="accent">{{ head_accent or 'your business runs on.' }}</span>{% endif %}</h1>
-    <p class="lead">{{ head.body or 'Four ways in. Most engagements use two of them before they are finished.' }}</p>
+    <h1>{{ head.title or 'One team for the systems' }}{% if head_accent or not head %}<br><span class="accent">{{ head_accent or 'your business runs on.' }}</span>{% endif %}</h1>
+    <p class="lead">{{ head.body or "Four ways to start. Most projects end up using two of them before they're done." }}</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
     {% if services %}
     <nav class="jumpbar" aria-label="Jump to service">
@@ -32,7 +32,7 @@
       <div class="prose service-prose">{{ s.body_html | safe }}</div>
     </article>
     {% else %}
-    <p class="empty">Services are being written — check back soon.</p>
+    <p class="empty">These are being written up. Check back soon.</p>
     {% endfor %}
   </div>
 </section>
@@ -41,7 +41,7 @@
 <section class="section section-dark">
   <div class="wrap">
     <div class="section-head" data-reveal>
-      <p class="eyebrow">{{ h_shape.subtitle or 'HOW ENGAGEMENTS ARE SHAPED' }}</p>
+      <p class="eyebrow">{{ h_shape.subtitle or 'HOW PROJECTS ARE SHAPED' }}</p>
       <h2>{{ h_shape.title or 'Three ways to start' }}</h2>
     </div>
     <div class="cards" data-reveal>

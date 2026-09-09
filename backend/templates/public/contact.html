@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% set meta_title = 'Book a call — ' + setting('site_title', 'Edge Bourne Consulting') %}
-{% set meta_description = 'Tell us about your project — we reply within one business day.' %}
+{% set meta_description = 'Tell us about your project. We reply within one business day.' %}
 {% block content %}
 {% set head = block('page_heads', 'contact') %}
 {% set head_accent = head.extra.get('accent') if head else '' %}
@@ -10,7 +10,7 @@
   <div class="wrap">
     <p class="eyebrow">{{ head.subtitle or 'CONTACT' }}</p>
     <h1>{{ head.title or "Tell us what's slow." }}{% if head_accent or not head %}<br><span class="accent">{{ head_accent or "We'll take it from there." }}</span>{% endif %}</h1>
-    <p class="lead">{{ head.body or 'One short conversation about what your team does by hand today. No pitch deck, no obligation.' }}</p>
+    <p class="lead">{{ head.body or 'One short conversation about what your team still does by hand. No slide deck, no pressure.' }}</p>
     <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
   </div>
 </section>
@@ -74,10 +74,10 @@
       </div>
       <div class="field">
         <label for="message">What should we look at first? *</label>
-        <textarea id="message" name="message" rows="6" required placeholder="The job your team does by hand, roughly how often, and which systems are involved."></textarea>
+        <textarea id="message" name="message" rows="6" required placeholder="The job your team still does by hand, roughly how often, and which systems are involved."></textarea>
       </div>
       <button class="btn btn-primary btn-lg btn-block" type="submit">{{ h_form.link_label or 'Send message' }}</button>
-      <p class="form-note">{{ h_form.body or 'We use this only to reply to you. No list, no newsletter, no sharing.' }}</p>
+      <p class="form-note">{{ h_form.body or "We'll only use this to write back to you. No mailing list, no newsletter, nothing shared with anyone." }}</p>
     </form>
   </div>
 </section>
