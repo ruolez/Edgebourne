@@ -15,6 +15,7 @@ services:
       - "${APP_PORT:-8090}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/edge-direct.conf:/etc/nginx/conf.d/00-edge.conf:ro
       - ./backend/static:/srv/static:ro
       - uploads:/srv/uploads:ro
     depends_on:

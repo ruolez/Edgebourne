@@ -1,0 +1,36 @@
+# Host-level vhost for the shared reverse proxy (github.com/ruolez/shared-proxy).
+# install.sh renders this to /etc/nginx/sites-available/edgebourne.conf, replacing
+# __DOMAIN__ (primary cert name), __SERVER_NAMES__ and __PORT__ — do not edit the
+# rendered file by hand. It only terminates TLS: rate limits, static files and the
+# rest of the app's routing stay in the container's own nginx.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __SERVER_NAMES__;
+
+    include snippets/shared-proxy-acme.conf;
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    # "listen … http2" rather than "http2 on": Ubuntu 24.04 ships nginx 1.24.
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name __SERVER_NAMES__;
+
+    ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+    include snippets/shared-proxy-tls.conf;
+
+    # Must not be smaller than the container's own limit or uploads fail here first.
+    client_max_body_size 15m;
+
+    location / {
+        proxy_pass http://127.0.0.1:__PORT__;
+        include snippets/shared-proxy-headers.conf;
+    }
+}

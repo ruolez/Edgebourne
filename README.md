@@ -205,8 +205,35 @@ The installer menu offers:
 5. **Remove** — deletes containers, volumes, and the app directory (with an optional final DB
    backup to `/root` and optional certificate deletion).
 
+6. **Migrate to shared proxy** — for a server that hosts more than one app. See below.
+
 Production TLS uses `docker-compose.prod.yml` + `nginx/nginx-ssl.conf` (rendered from
 `nginx/nginx-ssl.conf.template`), activated through `COMPOSE_FILE` in `/opt/edgebourne/.env`.
+
+### Sharing the server with other apps
+
+Standalone, the `edgebourne-nginx` container owns ports 80/443, so nothing else can serve a
+second domain on the same machine. **Migrate to shared proxy** hands those ports to a host-level
+nginx ([shared-proxy](https://github.com/ruolez/shared-proxy)) that terminates TLS for every app
+and forwards `https://<domain>` to this stack on `127.0.0.1:8090`:
+
+- installs the shared proxy if it is missing, backs up the database, keeps the old settings in
+  `.env.pre-proxy`;
+- writes `/etc/nginx/sites-available/edgebourne.conf` from `nginx/host-vhost.conf.template`
+  and has nginx validate it *before* anything is switched;
+- recreates only the nginx container (backend, scheduler and Postgres keep running) and starts
+  host nginx — a few seconds of downtime;
+- reuses the existing certificate and its renewal config unchanged, then proves it with a
+  `certbot renew --dry-run`;
+- **rolls everything back automatically** if the site is not healthy afterwards.
+
+Afterwards `.env` holds `PROXY_MODE=1`, `APP_PORT=8090` and
+`COMPOSE_FILE=docker-compose.yml:docker-compose.proxy.yml`; Update, Install SSL, Renew and Remove
+all act accordingly. The container's nginx keeps its job (rate limits, static files) and gets
+`nginx/edge-proxied.conf`, which restores real client IPs and the original scheme from the
+proxy's headers. A fresh Install on a server that already runs the shared proxy offers the same
+mode. To go back by hand: `systemctl disable --now nginx`, restore `.env.pre-proxy` as `.env`,
+`docker compose up -d`.
 
 ## Design source
 

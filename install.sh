@@ -10,6 +10,8 @@
 #   3) Install SSL   — set up (or redo) the certificate on an existing install
 #   4) Renew SSL     — run a certificate renewal check right now
 #   5) Remove        — cleanly remove the installation
+#   -) Migrate       — move a live install behind the shared host proxy, so other
+#                      apps can share ports 80/443 on this server
 #
 set -euo pipefail
 
@@ -19,6 +21,14 @@ BACKUP_DIR="/var/backups/edgebourne"
 WEBROOT="/var/www/certbot"
 RENEW_HOOK="/etc/letsencrypt/renewal-hooks/deploy/edgebourne-reload.sh"
 KEEP_BACKUPS=14
+
+# Shared host proxy (github.com/ruolez/shared-proxy): PROXY_MODE=1 in .env means a
+# host-level nginx owns 80/443 and this stack listens on 127.0.0.1:$APP_PORT only.
+SHARED_PROXY_URL="${SHARED_PROXY_URL:-https://raw.githubusercontent.com/ruolez/shared-proxy/main/install.sh}"
+PROXY_MARKER="/etc/nginx/snippets/shared-proxy-headers.conf"
+HOST_VHOST="/etc/nginx/sites-available/edgebourne.conf"
+HOST_VHOST_LINK="/etc/nginx/sites-enabled/edgebourne.conf"
+DEFAULT_PROXY_PORT=8090
 
 C_TEAL='\033[0;36m'; C_RED='\033[0;31m'; C_GRN='\033[0;32m'; C_YLW='\033[1;33m'; C_OFF='\033[0m'
 log()  { echo -e "${C_TEAL}[edgebourne]${C_OFF} $*"; }
@@ -128,13 +138,81 @@ open_firewall() {
   fi
 }
 
-wait_for_health() { # wait_for_health <url>
+check_health() { # check_health <url> -> 0/1
   local url="$1" i
   for i in $(seq 1 30); do
     if curl -fsk --max-time 3 "$url" >/dev/null 2>&1; then ok "Healthy: $url"; return 0; fi
     sleep 2
   done
-  die "App did not become healthy at $url — check: cd $APP_DIR && docker compose logs"
+  return 1
+}
+
+wait_for_health() { # wait_for_health <url>
+  check_health "$1" || die "App did not become healthy at $1 — check: cd $APP_DIR && docker compose logs"
+}
+
+# ---------------------------------------------------------------- shared proxy
+
+proxy_mode() { [ "$(env_get PROXY_MODE)" = "1" ]; }
+
+shared_proxy_present() { [ -f "$PROXY_MARKER" ]; }
+
+port_in_use() { ss -ltnH "sport = :$1" 2>/dev/null | grep -q .; }
+
+# 0 when 80 or 443 is taken by anything other than this app's own nginx container.
+ports_held_by_others() {
+  local port
+  for port in 80 443; do
+    port_in_use "$port" || continue
+    if docker ps --filter "publish=$port" --format '{{.Names}}' 2>/dev/null | grep -q '^edgebourne-nginx$'; then continue; fi
+    return 0
+  done
+  return 1
+}
+
+free_proxy_port() {
+  local port="$DEFAULT_PROXY_PORT"
+  while port_in_use "$port"; do port=$((port + 1)); done
+  echo "$port"
+}
+
+# Where the stack answers on this machine, whoever terminates TLS.
+local_url() {
+  if proxy_mode; then echo "http://127.0.0.1:$(env_get APP_PORT)"; else echo "http://localhost"; fi
+}
+
+reload_web() {
+  if proxy_mode; then systemctl reload nginx; else docker exec edgebourne-nginx nginx -s reload; fi
+}
+
+ensure_shared_proxy() {
+  shared_proxy_present && return 0
+  log "Installing the shared reverse proxy (host nginx)…"
+  local tmp; tmp="$(mktemp)"
+  curl -fsSL "$SHARED_PROXY_URL" -o "$tmp" \
+    || die "Could not download $SHARED_PROXY_URL — install the shared proxy by hand, then run this again."
+  bash "$tmp" install || die "Shared proxy installation failed."
+  rm -f "$tmp"
+  shared_proxy_present || die "Shared proxy installation did not complete."
+}
+
+# Write, enable and test the host vhost. A config nginx rejects is never left enabled:
+# it would not just break this site, it would stop host nginx from ever restarting.
+render_host_vhost() { # render_host_vhost <domain> <server-names> <port> -> 0/1
+  local out
+  if [ -f "$HOST_VHOST" ]; then cp "$HOST_VHOST" "$HOST_VHOST.bak"; fi
+  sed -e "s/__DOMAIN__/$1/g" -e "s/__SERVER_NAMES__/$2/g" -e "s/__PORT__/$3/g" \
+    "$APP_DIR/nginx/host-vhost.conf.template" > "$HOST_VHOST"
+  if [ ! -f /proc/net/if_inet6 ]; then sed -i '/\[::\]/d' "$HOST_VHOST"; fi
+  ln -sf "$HOST_VHOST" "$HOST_VHOST_LINK"
+  if out="$(nginx -t 2>&1)"; then rm -f "$HOST_VHOST.bak"; return 0; fi
+  warn "nginx rejected the new vhost:\n$out"
+  if [ -f "$HOST_VHOST.bak" ]; then
+    mv "$HOST_VHOST.bak" "$HOST_VHOST"
+  else
+    rm -f "$HOST_VHOST_LINK" "$HOST_VHOST"
+  fi
+  return 1
 }
 
 # ---------------------------------------------------------------- backup
@@ -157,9 +235,37 @@ prune_backups() {
 
 # ---------------------------------------------------------------- ssl setup
 
+issue_certificate() { # needs: SERVER_NAMES, CERT_ARGS, LE_EMAIL
+  log "Requesting Let's Encrypt certificate for: $SERVER_NAMES"
+  local email_args=(--register-unsafely-without-email)
+  [ -n "$LE_EMAIL" ] && email_args=(-m "$LE_EMAIL")
+  certbot certonly --webroot -w "$WEBROOT" "${CERT_ARGS[@]}" \
+    --non-interactive --agree-tos "${email_args[@]}" \
+    || die "Certificate issuance failed — verify DNS points at this server, then retry."
+}
+
+# Behind the shared proxy the challenge is answered by host nginx (its catch-all
+# server covers domains that have no vhost yet), so the stack never touches port 80.
+setup_ssl_proxy() { # needs: DOMAIN, SERVER_NAMES, CERT_ARGS, LE_EMAIL
+  systemctl is-active --quiet nginx || systemctl enable --now nginx >/dev/null 2>&1 \
+    || die "Host nginx is not running and could not be started — check: systemctl status nginx"
+  log "Starting the stack on 127.0.0.1:$(env_get APP_PORT)…"
+  compose up -d --build --remove-orphans
+  wait_for_health "$(local_url)/healthz"
+
+  issue_certificate
+
+  log "Publishing https://$DOMAIN through the shared proxy…"
+  render_host_vhost "$DOMAIN" "$SERVER_NAMES" "$(env_get APP_PORT)" || die "Could not enable the host vhost."
+  systemctl reload nginx
+  rm -f "$RENEW_HOOK"   # the shared proxy's own deploy hook reloads host nginx
+  wait_for_health "https://$DOMAIN/healthz"
+}
+
 setup_ssl() { # needs: DOMAIN, SERVER_NAMES, CERT_ARGS, LE_EMAIL
   mkdir -p "$WEBROOT"
   open_firewall
+  if proxy_mode; then setup_ssl_proxy; return; fi
 
   if [ -z "$(env_get COMPOSE_FILE)" ]; then
     set_env APP_PORT 80
@@ -170,12 +276,7 @@ setup_ssl() { # needs: DOMAIN, SERVER_NAMES, CERT_ARGS, LE_EMAIL
   fi
   wait_for_health "http://localhost/healthz"
 
-  log "Requesting Let's Encrypt certificate for: $SERVER_NAMES"
-  local email_args=(--register-unsafely-without-email)
-  [ -n "$LE_EMAIL" ] && email_args=(-m "$LE_EMAIL")
-  certbot certonly --webroot -w "$WEBROOT" "${CERT_ARGS[@]}" \
-    --non-interactive --agree-tos "${email_args[@]}" \
-    || die "Certificate issuance failed — verify DNS points at this server, then retry."
+  issue_certificate
 
   log "Switching to HTTPS…"
   render_ssl_conf "$DOMAIN" "$SERVER_NAMES"
@@ -209,7 +310,7 @@ cmd_install() {
   need_root
   local resume=0
   if [ -d "$APP_DIR/.git" ]; then
-    [ -n "$(env_get COMPOSE_FILE)" ] && die "Already installed at $APP_DIR — use the Update option instead."
+    [ -n "$(env_get COMPOSE_FILE)" ] && die "Already installed at $APP_DIR — use the Update option instead (or Install SSL if the certificate was never issued)."
     warn "Found an incomplete install (SSL was never issued) — resuming where it left off."
     resume=1
   fi
@@ -221,6 +322,17 @@ cmd_install() {
   else
     log "Cloning $REPO_URL → $APP_DIR"
     git clone -q "$REPO_URL" "$APP_DIR"
+  fi
+
+  local use_proxy=0
+  if proxy_mode; then
+    use_proxy=1
+  elif shared_proxy_present || ports_held_by_others; then
+    warn "Ports 80/443 on this server are shared with other apps."
+    confirm "Install EdgeBourne behind the shared reverse proxy?" \
+      || die "Ports 80/443 are not free — EdgeBourne cannot run standalone on this server."
+    ensure_shared_proxy
+    use_proxy=1
   fi
 
   prompt_domain
@@ -250,6 +362,11 @@ SCHEDULER_ENABLED=1
 SCHEDULER_TICK_SECONDS=60
 EOF
     chmod 600 "$APP_DIR/.env"
+  fi
+  if [ "$use_proxy" -eq 1 ] && ! proxy_mode; then
+    set_env APP_PORT "$(free_proxy_port)"
+    set_env PROXY_MODE 1
+    set_env COMPOSE_FILE "docker-compose.yml:docker-compose.proxy.yml"
   fi
 
   setup_ssl
@@ -289,7 +406,14 @@ cmd_update() {
   log "Cleaning up unused Docker images…"
   docker image prune -f >/dev/null
 
-  wait_for_health "http://localhost/healthz"
+  wait_for_health "$(local_url)/healthz"
+  if proxy_mode && [ -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]; then
+    if render_host_vhost "$domain" "${server_names:-$domain}" "$(env_get APP_PORT)"; then
+      systemctl reload nginx
+    else
+      warn "Host vhost left as it was — the site keeps serving with the previous one."
+    fi
+  fi
   [ -n "$domain" ] && wait_for_health "https://$domain/healthz"
   install_backup_timer
   ok "Update complete. Backup saved in $BACKUP_DIR (last $KEEP_BACKUPS kept)."
@@ -302,10 +426,109 @@ cmd_renew() {
   command -v certbot >/dev/null 2>&1 || die "certbot is not installed — run Install first."
   log "Running certificate renewal (renews when within 30 days of expiry)…"
   certbot renew
-  docker exec edgebourne-nginx nginx -s reload >/dev/null 2>&1 || true
+  reload_web >/dev/null 2>&1 || true
   echo
   certbot certificates
   ok "Renewal check complete. Automatic renewal stays active via certbot.timer."
+}
+
+# ---------------------------------------------------------------- migrate to shared proxy
+
+# The only moment the site is down: the container lets go of 80/443 and host nginx
+# takes them over, a few seconds apart.
+proxy_cutover() { # proxy_cutover <domain> <port> -> 0/1
+  compose up -d --no-deps --force-recreate nginx \
+    && check_health "http://127.0.0.1:$2/healthz" \
+    && { systemctl restart nginx || { sleep 3; systemctl restart nginx; }; } \
+    && check_health "https://$1/healthz" \
+    && { systemctl enable nginx >/dev/null 2>&1 || true; }
+}
+
+proxy_rollback() { # proxy_rollback <domain> <nginx-was-active 0/1>
+  warn "Cutover failed — putting the standalone setup back…"
+  rm -f "$HOST_VHOST_LINK"
+  if [ "$2" -eq 1 ]; then
+    systemctl reload nginx >/dev/null 2>&1 || true
+  else
+    # Disabled as well, or it would race Docker for port 80 at the next boot.
+    systemctl disable --now nginx >/dev/null 2>&1 || true
+  fi
+  cp "$APP_DIR/.env.pre-proxy" "$APP_DIR/.env"
+  compose up -d --no-deps --force-recreate nginx || true
+  if check_health "https://$1/healthz"; then
+    ok "Rolled back — the site is serving exactly as before."
+  else
+    warn "Rolled back, but the site is not answering yet — check: cd $APP_DIR && docker compose ps"
+  fi
+}
+
+cmd_migrate_proxy() {
+  need_root
+  [ -d "$APP_DIR/.git" ] || die "No installation found at $APP_DIR — run Install first."
+
+  local domain server_names port nginx_was_active=0
+  domain="$(env_get DOMAIN)"; server_names="$(env_get SERVER_NAMES)"
+  server_names="${server_names:-$domain}"
+  if [ -z "$domain" ] || [ ! -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]; then
+    die "Migration expects a working HTTPS install (DOMAIN in .env and its certificate) — run Install SSL first."
+  fi
+
+  if [ ! -f "$APP_DIR/docker-compose.proxy.yml" ]; then
+    log "This checkout predates shared-proxy support — running Update first…"
+    cmd_update
+    [ -f "$APP_DIR/docker-compose.proxy.yml" ] || die "The update did not bring shared-proxy support — is it pushed to origin/main?"
+  fi
+
+  ensure_shared_proxy
+
+  if proxy_mode; then
+    render_host_vhost "$domain" "$server_names" "$(env_get APP_PORT)" || die "Could not refresh the host vhost."
+    systemctl reload nginx
+    ok "Already behind the shared proxy — host vhost refreshed."
+    return
+  fi
+
+  port="$(free_proxy_port)"
+  echo
+  echo "   This moves ports 80/443 from the edgebourne-nginx container to host nginx, which"
+  echo "   then forwards https://$domain to the container on 127.0.0.1:$port."
+  echo "   The certificate and its renewal are reused as they are. Expect a few seconds of"
+  echo "   downtime; if the site is not healthy afterwards everything is rolled back."
+  echo
+  confirm "Migrate now?" || die "Aborted — nothing was changed."
+
+  backup_db
+  cp -p "$APP_DIR/.env" "$APP_DIR/.env.pre-proxy"
+
+  # Everything that can fail without downtime happens before the switch.
+  render_host_vhost "$domain" "$server_names" "$port" || die "Host vhost rejected — nothing was changed."
+  if systemctl is-active --quiet nginx; then nginx_was_active=1; fi
+
+  log "Switching over…"
+  set_env PROXY_MODE 1
+  set_env APP_PORT "$port"
+  set_env COMPOSE_FILE "docker-compose.yml:docker-compose.proxy.yml"
+  if ! proxy_cutover "$domain" "$port"; then
+    proxy_rollback "$domain" "$nginx_was_active"
+    die "Migration failed and was rolled back. Host nginx log: journalctl -u nginx -n 50"
+  fi
+
+  # The shared proxy ships its own deploy hook (reloads host nginx); the container
+  # no longer holds a certificate to reload.
+  rm -f "$RENEW_HOOK"
+  log "Checking that renewal still works (certbot dry run)…"
+  if certbot renew --cert-name "$domain" --dry-run >/dev/null 2>&1; then
+    ok "Renewal dry run passed."
+  else
+    warn "Renewal dry run failed — inspect with: certbot renew --cert-name $domain --dry-run"
+  fi
+
+  echo
+  ok "EdgeBourne now runs behind the shared proxy."
+  echo -e "   Site:     ${C_GRN}https://$domain${C_OFF}"
+  echo "   Upstream: 127.0.0.1:$port  (vhost: $HOST_VHOST)"
+  echo "   Previous settings kept in $APP_DIR/.env.pre-proxy"
+  echo "   Ports 80/443 are now shared — other apps can be installed behind the proxy."
 }
 
 # ---------------------------------------------------------------- remove
@@ -413,14 +636,21 @@ cmd_remove() {
     fi
   fi
 
+  # Read before the directory goes: other apps' certificates may live on this server
+  # too, so only ever offer to delete the one this install was issued.
+  local domain; domain="$(env_get DOMAIN)"
+
   log "Stopping and deleting containers + volumes…"
   compose down -v --remove-orphans || true
   rm -rf "$APP_DIR"
   rm -f "$RENEW_HOOK"
+  if [ -e "$HOST_VHOST_LINK" ] || [ -e "$HOST_VHOST" ]; then
+    rm -f "$HOST_VHOST_LINK" "$HOST_VHOST"
+    systemctl reload nginx >/dev/null 2>&1 || true
+  fi
 
-  local domain
-  domain="$(certbot certificates 2>/dev/null | awk '/Certificate Name/ {print $3}' | head -1 || true)"
-  if [ -n "$domain" ] && confirm "Also delete the Let's Encrypt certificate ($domain)?"; then
+  if [ -n "$domain" ] && [ -d "/etc/letsencrypt/live/$domain" ] \
+      && confirm "Also delete the Let's Encrypt certificate ($domain)?"; then
     certbot delete --cert-name "$domain" --non-interactive || true
   fi
   ok "EdgeBourne removed. (Docker itself and $BACKUP_DIR were left in place.)"
@@ -438,7 +668,8 @@ echo "   3) Install SSL only (app already installed)"
 echo "   4) Renew SSL certificate now"
 echo "   5) Stripe / webhook setup info"
 echo "   6) Remove installation"
-echo "   7) Exit"
+echo "   7) Migrate to shared proxy (share ports 80/443 with other apps)"
+echo "   8) Exit"
 echo
 ask "Choose an option" "1"
 case "$REPLY" in
@@ -448,5 +679,6 @@ case "$REPLY" in
   4) cmd_renew ;;
   5) cmd_stripe ;;
   6) cmd_remove ;;
+  7) cmd_migrate_proxy ;;
   *) echo "Bye." ;;
 esac
