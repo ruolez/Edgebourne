@@ -516,11 +516,12 @@ cmd_migrate_proxy() {
   # The shared proxy ships its own deploy hook (reloads host nginx); the container
   # no longer holds a certificate to reload.
   rm -f "$RENEW_HOOK"
-  log "Checking that renewal still works (certbot dry run)…"
-  if certbot renew --cert-name "$domain" --dry-run >/dev/null 2>&1; then
+  log "Checking that renewal still works (certbot dry run against Let's Encrypt staging; up to 3 min)…"
+  if timeout 180 certbot renew --cert-name "$domain" --dry-run < /dev/null 2>&1 | grep -E "simulat|Congratulations|error|Error|fail|Another instance" || true; \
+     [ "${PIPESTATUS[0]}" -eq 0 ]; then
     ok "Renewal dry run passed."
   else
-    warn "Renewal dry run failed — inspect with: certbot renew --cert-name $domain --dry-run"
+    warn "Renewal dry run did not pass (the site is up regardless) — check: certbot renew --cert-name $domain --dry-run"
   fi
 
   echo
