@@ -7,6 +7,7 @@
 # Options:
 #   1) Install       — Docker + app + Let's Encrypt SSL (auto-renewing)
 #   2) Update        — pull latest from GitHub, keep all data, apply migrations
+#                      (database and uploaded images are backed up first)
 #   3) Install SSL   — set up (or redo) the certificate on an existing install
 #   4) Renew SSL     — run a certificate renewal check right now
 #   5) Remove        — cleanly remove the installation
@@ -229,8 +230,24 @@ backup_db() { # backup_db [target-file]
   fi
 }
 
+# Uploaded images live only in the `uploads` volume: the homepage hero photo,
+# case-study galleries, blog images. They are not in git and not in pg_dump, so
+# they get their own archive next to every database backup.
+backup_uploads() { # backup_uploads [target-file]
+  local target="${1:-$BACKUP_DIR/edgebourne-uploads-$(date +%Y%m%d-%H%M%S).tar.gz}"
+  mkdir -p "$(dirname "$target")"
+  if docker ps --format '{{.Names}}' | grep -q '^edgebourne-backend$'; then
+    log "Backing up uploaded images → $target"
+    docker exec edgebourne-backend tar czf - -C /data/uploads . > "$target"
+    ok "Uploads backup complete ($(du -h "$target" | cut -f1))."
+  else
+    warn "Backend container not running — skipping uploads backup."
+  fi
+}
+
 prune_backups() {
   ls -1t "$BACKUP_DIR"/edgebourne-*.sql.gz 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
+  ls -1t "$BACKUP_DIR"/edgebourne-uploads-*.tar.gz 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
 }
 
 # ---------------------------------------------------------------- ssl setup
@@ -379,6 +396,7 @@ EOF
   echo -e "   SSL:    auto-renews via certbot.timer (deploy hook reloads nginx)"
   echo -e "   Update: re-run this script and choose Update"
   echo -e "   Stripe: re-run this script and choose Configure Stripe"
+  hero_image_hint
 }
 
 # ---------------------------------------------------------------- update
@@ -388,6 +406,7 @@ cmd_update() {
   [ -d "$APP_DIR/.git" ] || die "No installation found at $APP_DIR — run Install first."
 
   backup_db
+  backup_uploads
   prune_backups
 
   log "Pulling latest code from GitHub…"
@@ -416,7 +435,20 @@ cmd_update() {
   fi
   [ -n "$domain" ] && wait_for_health "https://$domain/healthz"
   install_backup_timer
-  ok "Update complete. Backup saved in $BACKUP_DIR (last $KEEP_BACKUPS kept)."
+  ok "Update complete. Backups saved in $BACKUP_DIR (last $KEEP_BACKUPS kept)."
+  hero_image_hint
+}
+
+# The hero shows a case-study screenshot until a photo is uploaded; say where.
+hero_image_hint() {
+  local has_photo
+  has_photo="$(docker exec edgebourne-postgres psql -U edgebourne -d edgebourne -tAc \
+    "SELECT value <> '' FROM settings WHERE key = 'hero_image'" 2>/dev/null || true)"
+  if [ "$has_photo" != "t" ]; then
+    echo
+    echo -e "   ${C_YLW}Homepage photo:${C_OFF} none uploaded yet. Admin → Site content → Homepage hero image"
+    echo    "   has an image-generator prompt to copy and an upload button."
+  fi
 }
 
 # ---------------------------------------------------------------- renew
@@ -498,6 +530,7 @@ cmd_migrate_proxy() {
   confirm "Migrate now?" || die "Aborted — nothing was changed."
 
   backup_db
+  backup_uploads
   cp -p "$APP_DIR/.env" "$APP_DIR/.env.pre-proxy"
 
   # Everything that can fail without downtime happens before the switch.
@@ -588,16 +621,33 @@ install_backup_timer() {
   # Financial records need a schedule, not just a backup on update. The backup
   # directory holds customer PII and Stripe ids, so it is not world-readable.
   mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR"
-  cat > /etc/systemd/system/edgebourne-backup.service <<EOF
+  # A script rather than an inline ExecStart: two archives and their pruning
+  # outgrew one line of systemd quoting.
+  cat > /usr/local/sbin/edgebourne-backup <<EOF
+#!/bin/sh
+# Written by the EdgeBourne installer. Nightly: database + uploaded images.
+set -e
+dir="$BACKUP_DIR"; keep=$KEEP_BACKUPS
+EOF
+  cat >> /usr/local/sbin/edgebourne-backup <<'EOF'
+ts="$(date +%Y%m%d-%H%M%S)"
+docker exec edgebourne-postgres pg_dump -U edgebourne edgebourne | gzip > "$dir/edgebourne-$ts.sql.gz"
+docker exec edgebourne-backend tar czf - -C /data/uploads . > "$dir/edgebourne-uploads-$ts.tar.gz"
+for pattern in 'edgebourne-*.sql.gz' 'edgebourne-uploads-*.tar.gz'; do
+  ls -1t "$dir"/$pattern 2>/dev/null | tail -n +$((keep + 1)) | xargs -r rm -f
+done
+EOF
+  chmod 700 /usr/local/sbin/edgebourne-backup
+  cat > /etc/systemd/system/edgebourne-backup.service <<'EOF'
 [Unit]
-Description=EdgeBourne nightly database backup
+Description=EdgeBourne nightly backup (database + uploaded images)
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c '/usr/bin/docker exec edgebourne-postgres pg_dump -U edgebourne edgebourne | gzip > $BACKUP_DIR/edgebourne-\$(date +%%Y%%m%%d-%%H%%M%%S).sql.gz; ls -1t $BACKUP_DIR/edgebourne-*.sql.gz | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f'
+ExecStart=/usr/local/sbin/edgebourne-backup
 EOF
   cat > /etc/systemd/system/edgebourne-backup.timer <<'EOF'
 [Unit]
-Description=Nightly EdgeBourne database backup
+Description=Nightly EdgeBourne backup
 [Timer]
 OnCalendar=*-*-* 03:20:00
 RandomizedDelaySec=20m
@@ -607,7 +657,7 @@ WantedBy=timers.target
 EOF
   systemctl daemon-reload
   systemctl enable --now edgebourne-backup.timer >/dev/null 2>&1 || true
-  ok "Nightly database backup enabled (03:20, keeping $KEEP_BACKUPS)."
+  ok "Nightly backup of database + uploaded images enabled (03:20, keeping $KEEP_BACKUPS)."
 }
 
 cmd_remove() {
@@ -629,11 +679,13 @@ cmd_remove() {
     ask 'Type DELETE INVOICES to confirm you have what you need'
     [ "$REPLY" = "DELETE INVOICES" ] || die "Aborted."
     backup_db "/root/edgebourne-final-$(date +%Y%m%d-%H%M%S).sql.gz"
+    backup_uploads "/root/edgebourne-final-uploads-$(date +%Y%m%d-%H%M%S).tar.gz"
   else
     ask 'Type REMOVE to confirm'
     [ "$REPLY" = "REMOVE" ] || die "Aborted."
-    if confirm "Save a final database backup to /root first?"; then
+    if confirm "Save a final backup (database + uploaded images) to /root first?"; then
       backup_db "/root/edgebourne-final-$(date +%Y%m%d-%H%M%S).sql.gz"
+      backup_uploads "/root/edgebourne-final-uploads-$(date +%Y%m%d-%H%M%S).tar.gz"
     fi
   fi
 
@@ -645,6 +697,10 @@ cmd_remove() {
   compose down -v --remove-orphans || true
   rm -rf "$APP_DIR"
   rm -f "$RENEW_HOOK"
+  systemctl disable --now edgebourne-backup.timer >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/edgebourne-backup.service /etc/systemd/system/edgebourne-backup.timer \
+    /usr/local/sbin/edgebourne-backup
+  systemctl daemon-reload >/dev/null 2>&1 || true
   if [ -e "$HOST_VHOST_LINK" ] || [ -e "$HOST_VHOST" ]; then
     rm -f "$HOST_VHOST_LINK" "$HOST_VHOST"
     systemctl reload nginx >/dev/null 2>&1 || true

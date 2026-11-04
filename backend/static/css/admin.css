@@ -802,3 +802,34 @@ h1, h2, h3 { margin: 0; }
 .approval .help { margin-top: 8px; }
 .approval.is-pending { background: rgba(217, 48, 37, 0.07); border: 1px solid rgba(217, 48, 37, 0.25); }
 .approval.is-approved { background: rgba(46, 125, 116, 0.09); border: 1px solid rgba(46, 125, 116, 0.28); }
+
+/* ---------- Site content: homepage hero image ---------- */
+.hero-admin { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 22px; margin: 14px 0 6px; }
+.hero-admin-preview { display: grid; grid-template-columns: 4fr 5fr; gap: 8px; align-items: start; }
+.hero-admin-preview img { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--card-border); }
+.hero-admin-empty {
+  grid-column: 1 / -1;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 5;
+  border-radius: 8px;
+  border: 1px dashed var(--card-border);
+  color: var(--muted);
+  font-size: 13px;
+}
+.hero-prompt { margin-top: 6px; }
+.hero-prompt summary { cursor: pointer; font-weight: 700; color: var(--teal); }
+.hero-prompt textarea {
+  width: 100%;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  background: var(--sand-2);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+@media (max-width: 700px) {
+  .hero-admin { grid-template-columns: 1fr; }
+}

@@ -35,7 +35,8 @@ Volumes: `pgdata` (database), `uploads` (admin-uploaded images, re-encoded to We
 ## Admin panel
 
 - **Dashboard** — lead counts, content stats, recent leads
-- **Site content** — homepage hero, About page, SEO defaults, contact email/phone/socials
+- **Site content** — homepage hero (text, photo, screenshot), About page, SEO defaults,
+  contact email/phone/socials
 - **Services / Work / Blog / Pages** — full CRUD with a markdown editor (toolbar + live preview),
   image uploads, drafts vs published, ordering (↑/↓), per-item SEO fields
 - **Pages** — custom pages served at `/<slug>`, optionally shown in the site nav
@@ -76,6 +77,26 @@ confirm the wording with the client before approving. This is deliberate: nothin
 named human goes live without a person deciding it should.
 
 **FAQs** (`faqs`) render as the homepage accordion, markdown rendered to HTML on save.
+
+### Homepage hero
+
+Copy on the left, the work on the right. The right side is always a real case-study screenshot
+(**Site content → Screenshot from**, linked to that case study) with that case study's first
+metric as the label on it, so the hero only states figures a case study backs up.
+
+Behind it sits a scene photo: an owner at the end of a calm day, dashboard all green, parcels
+labeled and waiting. The default ships in `backend/static/media/hero/` (generated with GPT Image
+2.5; the exact prompt is in the admin panel) and migration 017 points the `hero_image` setting at
+it, so a fresh install or an Update shows it with no upload. To change it, upload a new one in
+**Site content → Homepage hero image**. The upload is kept as a master in `uploads/hero/`, and
+`backend/hero_image.py` cuts every rendition from it: 4:5 for the desktop panel, 4:3 for phones
+and tablets, and a 1200x630 JPEG that becomes the homepage `og:image`, all compressed (WebP
+`method=6`). **Keep in frame** re-cuts from the master, the shipped one included, without a
+re-upload. Every cut gets new file names,
+because `/uploads/` is served with a one-year immutable cache. With no photo, the screenshot
+fills the panel on its own and the case-study cover is the share image.
+
+Tests: `docker compose exec -T backend python -m unittest discover -s tests`.
 
 Homepage stats, the process strip, industry tiles and the tech list are inline `{% set %}` lists
 at the top of `backend/templates/public/home.html` — they have no DB contract, so edit the
@@ -196,14 +217,22 @@ The installer menu offers:
    the domain (and verifies its DNS A record points at the server), issues a Let's Encrypt
    certificate (auto-renewing via `certbot.timer` with an nginx reload hook), and brings the
    site up on HTTPS.
-2. **Update from GitHub** — backs up PostgreSQL to `/var/backups/edgebourne` (last 14 kept),
+2. **Update from GitHub** — backs up PostgreSQL and the uploaded images (hero photo, gallery
+   and blog images, which live only in the `uploads` volume) to `/var/backups/edgebourne` as
+   `edgebourne-<ts>.sql.gz` + `edgebourne-uploads-<ts>.tar.gz` (last 14 of each kept),
    pulls the latest code, rebuilds, applies any new DB migrations automatically at startup,
    and prunes unused Docker images.
 3. **Install SSL only** — sets up (or redoes) the Let's Encrypt certificate on an existing
    installation, e.g. after fixing DNS or changing the domain.
 4. **Renew SSL now** — manual renewal check, in addition to the automatic timer.
-5. **Remove** — deletes containers, volumes, and the app directory (with an optional final DB
-   backup to `/root` and optional certificate deletion).
+5. **Remove** — deletes containers, volumes, the app directory and the nightly backup timer
+   (with an optional final database + uploads backup to `/root` and optional certificate
+   deletion).
+
+Install and Update also (re)write the nightly backup: `edgebourne-backup.timer` runs
+`/usr/local/sbin/edgebourne-backup` at 03:20, which archives the database and the uploads volume
+the same way. To restore the images: `docker exec -i edgebourne-backend tar xzf - -C /data/uploads
+< edgebourne-uploads-<ts>.tar.gz`.
 
 6. **Migrate to shared proxy** — for a server that hosts more than one app. See below.
 

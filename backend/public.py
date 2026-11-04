@@ -3,6 +3,7 @@ from flask import (
 )
 
 import db
+import hero_image
 import mailer
 
 bp = Blueprint("public", __name__)
@@ -39,6 +40,11 @@ def home():
         "SELECT * FROM testimonials WHERE is_approved ORDER BY sort_order, id"
     )
     faqs = db.query("SELECT * FROM faqs WHERE is_published ORDER BY sort_order, id")
+    hero_case = db.query(
+        "SELECT * FROM case_studies WHERE slug = %s AND is_published",
+        (db.get_setting("hero_case_slug", ""),),
+        one=True,
+    ) or next(iter(featured or work), None)
     return render_template(
         "public/home.html",
         services=services,
@@ -47,6 +53,8 @@ def home():
         featured=featured,
         testimonials=testimonials,
         faqs=faqs,
+        hero_photo=hero_image.load(db.get_setting("hero_image", "")),
+        hero_case=hero_case,
     )
 
 

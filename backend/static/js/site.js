@@ -1,7 +1,7 @@
 /* EdgeBourne — public site behaviours.
    Vanilla, no dependencies. Everything here is progressive enhancement:
    with JavaScript off the page still renders and every link still works.
-   1  mobile navigation
+   1  sticky header + mobile navigation
    2  scroll reveal
    3  work-index industry filter
    4  case-study gallery lightbox
@@ -22,6 +22,15 @@
     function setOpen(open) {
       links.classList.toggle('open', open);
       toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    var header = document.querySelector('.site-header');
+    if (header) {
+      var onScroll = function () {
+        header.classList.toggle('is-stuck', window.scrollY > 4);
+      };
+      onScroll();
+      window.addEventListener('scroll', onScroll, { passive: true });
     }
 
     toggle.addEventListener('click', function () {

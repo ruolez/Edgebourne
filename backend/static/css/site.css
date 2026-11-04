@@ -38,10 +38,11 @@
   --maxw: 1180px;
   --font-body: 'Mulish', -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --header-h: 86px;
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; scroll-padding-top: var(--header-h); }
 body {
   margin: 0;
   background: var(--bg);
@@ -58,7 +59,21 @@ a:hover { color: var(--ink); }
 .wrap-narrow { max-width: 760px; }
 
 /* ---------- header / nav ---------- */
-.site-header { background: var(--bg); }
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  background: rgba(247, 245, 240, 0.92);
+  -webkit-backdrop-filter: saturate(1.4) blur(10px);
+  backdrop-filter: saturate(1.4) blur(10px);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.site-header.is-stuck {
+  border-bottom-color: var(--card-border);
+  box-shadow: 0 8px 24px -20px rgba(28, 43, 51, 0.45);
+}
+.nav .btn-nav-mobile { display: none; }
 .nav {
   display: flex;
   align-items: center;
@@ -466,7 +481,9 @@ h1 .accent, h2 .accent { color: var(--teal); }
   .nav-links.open { display: flex; }
   .nav-links a { padding: 10px 0; font-size: 16px; }
   .btn-nav { margin-top: 8px; }
-  .site-header { position: relative; }
+  :root { --header-h: 78px; }
+  .nav { gap: 10px; }
+  .nav .btn-nav-mobile { display: inline-block; margin-left: auto; padding: 9px 14px; font-size: 13px; }
   .hero .wrap { padding-top: 48px; padding-bottom: 56px; }
   .section { padding: 56px 0; }
   .card, .contact-form, .service-row { padding: 24px; }
@@ -703,6 +720,126 @@ body.portal { background: var(--sand-2, #EDEAE3); }
 .hero-inner { position: relative; }
 .hero .wrap { padding-bottom: 56px; }
 .lead-hero { font-size: 19px; max-width: 600px; }
+
+/* Split hero: copy left, the work right. Without a case study to show it
+   stays the single text column it always was. */
+.hero-has-photo .hero-inner,
+.hero-has-shot .hero-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  grid-template-areas: "copy media" "proof media";
+  column-gap: 48px;
+  align-items: center;
+}
+.hero-has-photo .eyebrow-hero, .hero-has-shot .eyebrow-hero { letter-spacing: 3px; }
+.hero-copy { grid-area: copy; min-width: 0; }
+.hero-media { grid-area: media; position: relative; min-width: 0; }
+.hero-proof { grid-area: proof; align-self: start; }
+.hero-has-photo h1, .hero-has-shot h1 { max-width: 640px; }
+.hero-has-photo .hero-media { margin-bottom: 36px; width: 100%; max-width: 460px; justify-self: end; }
+
+/* Beside the 2px-bordered outline button, so it carries the border's height. */
+.process-band .btn-row .btn-primary { padding: 14px 24px; }
+
+.hero-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 16px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.hero-note svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px; color: var(--teal); }
+.hero .stream-hero { margin-top: 40px; }
+
+.hero-photo {
+  display: block;
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background: var(--sand);
+  box-shadow: 0 2px 4px rgba(28, 43, 51, 0.06), 0 34px 64px -30px rgba(28, 43, 51, 0.5);
+}
+.hero-photo img { display: block; width: 100%; height: auto; }
+.hero-shot img { height: auto; }
+
+.hero-shot {
+  position: relative;
+  text-decoration: none;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.hero-shot:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 1px 2px rgba(28, 43, 51, 0.05), 0 30px 56px -18px rgba(28, 43, 51, 0.36);
+}
+.hero-has-photo .hero-shot {
+  position: absolute;
+  left: -52px;
+  bottom: -36px;
+  width: 64%;
+  border-radius: 10px;
+}
+.hero-has-photo .hero-shot .frame-bar { height: 20px; padding: 0 8px; gap: 4px; }
+.hero-has-photo .hero-shot .frame-bar i { width: 6px; height: 6px; }
+.hero-has-photo .hero-shot .frame-url { display: none; }
+
+.hero-chip {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 28px);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(28, 43, 51, 0.82);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  border-radius: 999px;
+  padding: 7px 12px;
+  pointer-events: none;
+}
+.hero-chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--teal-light);
+  box-shadow: 0 0 0 3px rgba(79, 167, 156, 0.25);
+  flex-shrink: 0;
+}
+.hero-has-shot .hero-chip { top: auto; right: auto; bottom: -15px; left: 20px; }
+/* Bottom-right on the photo: the top-right of the shipped one holds the clock. */
+.hero-has-photo .hero-chip { top: auto; bottom: 14px; }
+@media (prefers-reduced-motion: reduce) {
+  .hero-shot { transition: none; }
+  .hero-shot:hover { transform: none; }
+}
+
+@media (max-width: 900px) {
+  .hero-has-photo .hero-inner,
+  .hero-has-shot .hero-inner {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "copy" "media" "proof";
+    row-gap: 36px;
+  }
+  .hero-media, .hero-has-photo .hero-media { max-width: 640px; justify-self: start; }
+  .hero-has-shot .hero-media { margin-top: 14px; }
+  .hero-has-photo .hero-shot { left: auto; right: 18px; bottom: -28px; width: 46%; }
+  .hero-proof.proof-strip { margin-top: 0; }
+  .hero .stream-hero { display: none; }
+}
+@media (max-width: 600px) {
+  .hero-has-photo .hero-shot { display: none; }
+  .hero-has-photo .hero-media { margin-bottom: 0; }
+  .hero-chip { top: 10px; right: 10px; font-size: 9.5px; letter-spacing: 0.9px; }
+  .hero-has-photo .hero-chip { top: auto; bottom: 10px; }
+  .hero-has-shot .hero-chip { bottom: -13px; left: 12px; }
+}
 
 .proof-strip {
   display: flex;
@@ -1088,7 +1225,7 @@ body.portal { background: var(--sand-2, #EDEAE3); }
 .jumpbar a:hover { color: var(--teal); border-color: rgba(46, 125, 116, 0.45); }
 .jump-num { color: var(--teal); }
 
-.sector { scroll-margin-top: 24px; }
+.sector { scroll-margin-top: calc(var(--header-h) + 24px); }
 .sector-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1492,7 +1629,7 @@ body.portal { background: var(--sand-2, #EDEAE3); }
   align-items: start;
 }
 .case-main { max-width: 720px; }
-.case-side { position: sticky; top: 28px; display: grid; gap: 18px; }
+.case-side { position: sticky; top: calc(var(--header-h) + 28px); display: grid; gap: 18px; }
 .side-block {
   background: #fff;
   border: 1px solid var(--card-border);
@@ -1867,7 +2004,7 @@ body.is-locked { overflow: hidden; }
 /* card internals are real headings/paragraphs — reset UA margins */
 .work-meta, .work-summary, .post-feature-excerpt { margin: 0; }
 .work-title { margin: 12px 0 8px; }
-.service-row { scroll-margin-top: 28px; }
+.service-row { scroll-margin-top: calc(var(--header-h) + 28px); }
 
 /* Grid children default to min-width:auto, so a wide <pre> or table inside the
    case body pushed the whole page sideways on narrow screens. */
@@ -2143,7 +2280,7 @@ body.is-locked { overflow: hidden; }
 .service-prose h3:first-child { margin-top: 0; }
 /* Bodies vary a lot in length; without this the meta column leaves a long void
    next to the longest service. */
-.service-meta { position: sticky; top: 28px; align-self: start; }
+.service-meta { position: sticky; top: calc(var(--header-h) + 28px); align-self: start; }
 @media (max-width: 860px) {
   .service-meta { position: static; }
 }

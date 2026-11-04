@@ -1,25 +1,68 @@
 {% extends "base.html" %}
+{% if hero_photo %}{% set og_image = hero_photo.og %}{% elif hero_case and hero_case.cover_image %}{% set og_image = hero_case.cover_image %}{% endif %}
 {% block content %}
 
-{# ---------- hero ---------- #}
-<section class="hero">
+{# ---------- hero ----------
+   Copy on the left, the work on the right: a real case-study screenshot, with
+   the uploaded scene photo behind it once Admin > Site content has one. The
+   chip is that case study's first metric, so the hero never states a figure
+   the case study does not back up. #}
+{% set hc = hero_case %}
+{% set hero_chip = hc.metrics[0] if hc and hc.metrics else None %}
+<section class="hero{% if hero_photo and hc %} hero-has-photo{% elif hc %} hero-has-shot{% endif %}">
   <div class="hero-bg" aria-hidden="true">
     <span class="hero-grid"></span>
     <span class="hero-glow"></span>
-    <svg class="hero-seal" viewBox="0 0 190 190"><use href="#seal"/></svg>
+    {% if not hc %}<svg class="hero-seal" viewBox="0 0 190 190"><use href="#seal"/></svg>{% endif %}
   </div>
   <div class="wrap hero-inner">
-    <p class="eyebrow eyebrow-hero"><strong>{{ setting('hero_eyebrow_strong', 'CUSTOM SOLUTIONS') }}</strong> · {{ setting('hero_eyebrow', 'APPS · INTEGRATION · AUTOMATION · AI') }}</p>
-    <h1>{{ setting('hero_title', 'Run the business.') }}<br><span class="accent">{{ setting('hero_title_accent', "We'll run the systems.") }}</span></h1>
-    <p class="lead lead-hero">{{ setting('hero_sub', 'Custom web and mobile apps, automation and integration for small and mid-size companies — built to fit the way you already work.') }}</p>
-    <div class="btn-row">
-      <a class="btn btn-primary btn-lg" href="{{ setting('hero_cta_primary_url', '/contact') }}">{{ setting('hero_cta_primary', 'Book a call') }}</a>
-      <a class="btn btn-outline btn-lg" href="{{ setting('hero_cta_secondary_url', '/work') }}">{{ setting('hero_cta_secondary', 'See our work') }}</a>
+    <div class="hero-copy">
+      <p class="eyebrow eyebrow-hero"><strong>{{ setting('hero_eyebrow_strong', 'CUSTOM SOLUTIONS') }}</strong> · {{ setting('hero_eyebrow', 'APPS · INTEGRATION · AUTOMATION · AI') }}</p>
+      <h1>{{ setting('hero_title', 'Run the business.') }}<br><span class="accent">{{ setting('hero_title_accent', "We'll run the systems.") }}</span></h1>
+      <p class="lead lead-hero">{{ setting('hero_sub', 'Custom web and mobile apps, automation and integration for small and mid-size companies — built to fit the way you already work.') }}</p>
+      <div class="btn-row">
+        <a class="btn btn-primary btn-lg" href="{{ setting('hero_cta_primary_url', '/contact') }}">{{ setting('hero_cta_primary', 'Book a call') }}</a>
+        <a class="btn btn-outline btn-lg" href="{{ setting('hero_cta_secondary_url', '/work') }}">{{ setting('hero_cta_secondary', 'See our work') }}</a>
+      </div>
+      {% if setting('hero_cta_note') %}
+      <p class="hero-note"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ setting('hero_cta_note') }}</p>
+      {% endif %}
+      <svg class="stream stream-hero" viewBox="0 0 350 30"><use href="#stream"/></svg>
     </div>
-    <svg class="stream stream-hero" viewBox="0 0 350 30"><use href="#stream"/></svg>
+
+    {% if hc %}
+    <div class="hero-media">
+      {% if hero_photo %}
+      {% set hp = hero_photo.portrait %}
+      {% set hl = hero_photo.landscape %}
+      <picture class="hero-photo">
+        <source media="(max-width: 900px)" type="image/webp"
+                srcset="{% for r in hl %}{{ r.src }} {{ r.w }}w{{ ', ' if not loop.last }}{% endfor %}"
+                sizes="(max-width: 700px) calc(100vw - 48px), 640px"
+                width="{{ hl[-1].w }}" height="{{ hl[-1].h }}">
+        <img src="{{ hp[1].src if hp | length > 1 else hp[0].src }}"
+             srcset="{% for r in hp %}{{ r.src }} {{ r.w }}w{{ ', ' if not loop.last }}{% endfor %}"
+             sizes="(min-width: 1180px) 456px, 40vw"
+             width="{{ hp[-1].w }}" height="{{ hp[-1].h }}"
+             alt="{{ setting('hero_image_alt') }}" fetchpriority="high" decoding="async">
+      </picture>
+      {% endif %}
+      <a class="frame hero-shot" href="/work/{{ hc.slug }}" aria-label="Read the case study: {{ hc.title }}">
+        <span class="frame-bar"><i></i><i></i><i></i><span class="frame-url">{{ hc.slug }}</span></span>
+        {% set shot = (hc.cover_thumb or hc.cover_image) if hero_photo else (hc.cover_image or hc.cover_thumb) %}
+        {% if shot %}
+        <img src="{{ shot }}" alt="" width="1600" height="1000"{% if not hero_photo %} fetchpriority="high"{% endif %} decoding="async">
+        {% else %}
+        <span class="frame-empty"></span>
+        {% endif %}
+      </a>
+      {% if hero_chip %}<span class="hero-chip">{{ hero_chip.value }} {{ hero_chip.label }}</span>{% endif %}
+    </div>
+    {% endif %}
+
     {% set proof = block('home_proof', 'proof')['items'] | lines %}
     {% if proof %}
-    <ul class="proof-strip">
+    <ul class="proof-strip hero-proof">
       {% for p in proof %}<li>{{ p }}</li>
       {% endfor %}
     </ul>
@@ -209,7 +252,10 @@
       </li>
       {% endfor %}
     </ol>
-    <div class="section-more"><a class="btn btn-outline-light" href="{{ h_proc.link_url or '/process' }}">{{ h_proc.link_label or 'See the full process' }}</a></div>
+    <div class="section-more btn-row">
+      <a class="btn btn-primary" href="{{ setting('hero_cta_primary_url', '/contact') }}">{{ setting('hero_cta_primary', 'Book a call') }}</a>
+      <a class="btn btn-outline-light" href="{{ h_proc.link_url or '/process' }}">{{ h_proc.link_label or 'See the full process' }}</a>
+    </div>
   </div>
 </section>
 {% endif %}
