@@ -63,7 +63,7 @@
   --font-body: 'Mulish', -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
   --font-hand: 'Caveat', 'Bradley Hand', cursive;
-  --header-h: 86px;
+  --header-h: 89px;
 }
 
 * { box-sizing: border-box; }
@@ -109,12 +109,24 @@ a:hover { color: var(--ink); }
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   text-decoration: none;
   color: var(--ink);
 }
-.brand-seal { width: 34px; height: 34px; flex-shrink: 0; }
-.wordmark { font-weight: 800; font-size: 20px; }
+.brand-seal { width: 44px; height: 44px; flex-shrink: 0; }
+.brand-lockup { display: flex; flex-direction: column; gap: 4px; }
+.brand-lockup .wordmark { line-height: 1; }
+.brand-tagline {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 10.5px;
+  line-height: 1;
+  letter-spacing: 3.2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-left: 1px;
+}
+.wordmark { font-weight: 800; font-size: 25px; letter-spacing: -0.3px; }
 .wordmark .accent { color: var(--teal); }
 .wordmark-light { color: #fff; }
 .nav-links {
@@ -491,7 +503,7 @@ h1 .accent, h2 .accent { color: var(--teal); }
   .nav-links {
     display: none;
     position: absolute;
-    top: 78px;
+    top: 82px;
     left: 0;
     right: 0;
     z-index: 50;
@@ -506,8 +518,12 @@ h1 .accent, h2 .accent { color: var(--teal); }
   .nav-links.open { display: flex; }
   .nav-links a { padding: 10px 0; font-size: 16px; }
   .btn-nav { margin-top: 8px; }
-  :root { --header-h: 78px; }
+  :root { --header-h: 82px; }
   .nav { gap: 10px; }
+  .nav .brand { gap: 11px; }
+  .nav .brand-seal { width: 36px; height: 36px; }
+  .nav .wordmark { font-size: 21px; }
+  .nav .brand-tagline { display: none; }
   .nav .btn-nav-mobile { display: inline-block; margin-left: auto; padding: 9px 14px; font-size: 13px; }
   .hero .wrap { padding-top: 48px; padding-bottom: 56px; }
   .section { padding: 56px 0; }
@@ -2109,7 +2125,7 @@ body.is-locked { overflow: hidden; }
 @media (max-width: 760px) {
   /* the mobile menu now carries six links plus the CTA */
   .nav-links {
-    max-height: calc(100vh - 78px);
+    max-height: calc(100vh - 82px);
     overflow-y: auto;
   }
   .nav-links a.is-active::after { display: none; }
@@ -3332,6 +3348,8 @@ h1 {
 
 /* ---- dark grounds: teal text switches to the light teal ---- */
 .wordmark-light .accent { color: var(--teal-light); }
+.site-footer .brand-seal { --seal-ring: var(--teal-light); }
+.site-footer .brand-tagline { color: #8FA0AA; }
 .card-dark .card-index { color: var(--ochre); }
 .footer-note { color: #9AAAB3; }
 .footer-bottom { color: #8E9DA6; }
