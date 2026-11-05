@@ -9,6 +9,13 @@
   src: url('/static/fonts/mulish-var.woff2') format('woff2');
 }
 @font-face {
+  font-family: 'Caveat';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/static/fonts/caveat-600.woff2') format('woff2');
+}
+@font-face {
   font-family: 'IBM Plex Mono';
   font-style: normal;
   font-weight: 400;
@@ -29,15 +36,26 @@
   --teal: #2E7D74;
   --teal-hover: #266a62;
   --teal-light: #4FA79C;
-  --muted: #6B7A84;
+  --muted: #55636C;
   --sand: #E6E2D9;
   --sand-2: #EDEAE3;
-  --card-border: rgba(28, 43, 51, 0.08);
+  /* Warm second accent. Teal is the brand; amber marks "done" and results.
+     --amber on slate and for buttons (ink text), --amber-deep for markers
+     on light grounds, --amber-ink for amber text on light grounds. */
+  --amber: #E3A33B;
+  --amber-hover: #F0B44C;
+  --amber-deep: #C98A1F;
+  --amber-ink: #9C6511;
+  --on-dark: rgba(247, 245, 240, 0.8);
+  --on-dark-muted: rgba(247, 245, 240, 0.6);
+  --card-border: rgba(28, 43, 51, 0.1);
+  --shadow-card: 0 1px 2px rgba(28, 43, 51, 0.05), 0 16px 36px -22px rgba(28, 43, 51, 0.3);
   --r-card: 16px;
   --r-btn: 8px;
   --maxw: 1180px;
   --font-body: 'Mulish', -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-hand: 'Caveat', 'Bradley Hand', cursive;
   --header-h: 86px;
 }
 
@@ -137,7 +155,7 @@ a:hover { color: var(--ink); }
   font-weight: 400;
   letter-spacing: 4px;
   text-transform: uppercase;
-  color: var(--teal);
+  color: var(--muted);
   margin: 0 0 6px;
 }
 .eyebrow strong { color: var(--ink); font-weight: 500; }
@@ -209,11 +227,11 @@ h1 .accent, h2 .accent { color: var(--teal); }
   font-size: clamp(26px, 3.5vw, 34px);
   letter-spacing: -0.5px;
   margin-top: 10px;
-  color: #45565f;
+  color: var(--ink);
 }
 .section-more { margin-top: 32px; }
 .section-dark { background: var(--ink); color: #D8DDE0; }
-.section-dark .eyebrow { color: var(--teal-light); }
+.section-dark .eyebrow { color: var(--on-dark-muted); }
 .section-dark h2 { color: #fff; }
 
 /* ---------- cards ---------- */
@@ -709,14 +727,6 @@ body.portal { background: var(--sand-2, #EDEAE3); }
   border-radius: 50%;
   background: radial-gradient(circle, rgba(79, 167, 156, 0.20) 0%, rgba(79, 167, 156, 0) 62%);
 }
-.hero-seal {
-  position: absolute;
-  right: -110px;
-  top: 34px;
-  width: 460px;
-  height: 460px;
-  opacity: 0.07;
-}
 .hero-inner { position: relative; }
 .hero .wrap { padding-bottom: 56px; }
 .lead-hero { font-size: 19px; max-width: 600px; }
@@ -724,18 +734,18 @@ body.portal { background: var(--sand-2, #EDEAE3); }
 /* Split hero: copy left, the work right. Without a case study to show it
    stays the single text column it always was. */
 .hero-has-photo .hero-inner,
-.hero-has-shot .hero-inner {
+.hero-sketch .hero-inner {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   grid-template-areas: "copy media" "proof media";
   column-gap: 48px;
   align-items: center;
 }
-.hero-has-photo .eyebrow-hero, .hero-has-shot .eyebrow-hero { letter-spacing: 3px; }
+.hero-has-photo .eyebrow-hero, .hero-sketch .eyebrow-hero { letter-spacing: 2.4px; }
 .hero-copy { grid-area: copy; min-width: 0; }
 .hero-media { grid-area: media; position: relative; min-width: 0; }
 .hero-proof { grid-area: proof; align-self: start; }
-.hero-has-photo h1, .hero-has-shot h1 { max-width: 640px; }
+.hero-has-photo h1, .hero-sketch h1 { max-width: 640px; }
 .hero-has-photo .hero-media { margin-bottom: 36px; width: 100%; max-width: 460px; justify-self: end; }
 
 /* Beside the 2px-bordered outline button, so it carries the border's height. */
@@ -812,7 +822,6 @@ body.portal { background: var(--sand-2, #EDEAE3); }
   box-shadow: 0 0 0 3px rgba(79, 167, 156, 0.25);
   flex-shrink: 0;
 }
-.hero-has-shot .hero-chip { top: auto; right: auto; bottom: -15px; left: 20px; }
 /* Bottom-right on the photo: the top-right of the shipped one holds the clock. */
 .hero-has-photo .hero-chip { top: auto; bottom: 14px; }
 @media (prefers-reduced-motion: reduce) {
@@ -822,13 +831,13 @@ body.portal { background: var(--sand-2, #EDEAE3); }
 
 @media (max-width: 900px) {
   .hero-has-photo .hero-inner,
-  .hero-has-shot .hero-inner {
+  .hero-sketch .hero-inner {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "copy" "media" "proof";
     row-gap: 36px;
   }
   .hero-media, .hero-has-photo .hero-media { max-width: 640px; justify-self: start; }
-  .hero-has-shot .hero-media { margin-top: 14px; }
+  .hero-sketch .hero-media { margin-top: 14px; }
   .hero-has-photo .hero-shot { left: auto; right: 18px; bottom: -28px; width: 46%; }
   .hero-proof.proof-strip { margin-top: 0; }
   .hero .stream-hero { display: none; }
@@ -838,7 +847,60 @@ body.portal { background: var(--sand-2, #EDEAE3); }
   .hero-has-photo .hero-media { margin-bottom: 0; }
   .hero-chip { top: 10px; right: 10px; font-size: 9.5px; letter-spacing: 0.9px; }
   .hero-has-photo .hero-chip { top: auto; bottom: 10px; }
-  .hero-has-shot .hero-chip { bottom: -13px; left: 12px; }
+}
+
+/* ---- the sketch (default hero media) ----
+   One scan runs through the app we build and lands as four finished notes.
+   Drawn in SVG on a slate panel; teal is the brand, amber marks "done".
+   The SMIL timeline plays once (site.js freezes it for reduced motion). */
+.hero-sketch .hero-media { width: 100%; max-width: 500px; justify-self: end; }
+.flow-hero { margin: 0; }
+.sketch-panel {
+  position: relative;
+  border-radius: 22px;
+  padding: 30px 24px 22px;
+  background:
+    radial-gradient(circle at 68% 30%, rgba(79, 167, 156, 0.24), transparent 58%),
+    linear-gradient(rgba(247, 245, 240, 0.035) 1px, transparent 1px) 0 0 / 28px 28px,
+    linear-gradient(90deg, rgba(247, 245, 240, 0.035) 1px, transparent 1px) 0 0 / 28px 28px,
+    var(--ink);
+  box-shadow: 0 2px 4px rgba(28, 43, 51, 0.1), 0 44px 80px -36px rgba(28, 43, 51, 0.65);
+}
+.flow { display: block; width: 100%; height: auto; overflow: visible; }
+.flow .pencil { fill: none; stroke: rgba(247, 245, 240, 0.16); stroke-width: 1.4; stroke-linecap: round; }
+.flow .pen { fill: none; stroke: var(--teal-light); stroke-width: 2.8; stroke-linecap: round; stroke-dasharray: 1 1; stroke-dashoffset: 1; }
+.flow .paper { fill: #FFFDF8; filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.28)); }
+.flow .n-lbl { font-family: var(--font-body); font-size: 13px; font-weight: 600; fill: var(--muted); }
+.flow .n-val { font-family: var(--font-body); font-size: 16px; font-weight: 800; fill: var(--ink); }
+.flow .tick { fill: none; stroke: var(--amber); stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1 1; stroke-dashoffset: 1; }
+.flow .ring { fill: none; stroke: var(--teal-light); stroke-width: 2; }
+.flow .app { fill: var(--teal); filter: drop-shadow(0 16px 24px rgba(0, 0, 0, 0.35)); }
+.flow .app-bar { fill: none; stroke: rgba(247, 245, 240, 0.3); stroke-width: 1.4; }
+.flow .app-dot { fill: none; stroke: rgba(247, 245, 240, 0.6); stroke-width: 1.4; }
+.flow .app-name { font-family: var(--font-body); font-size: 30px; font-weight: 800; fill: #fff; letter-spacing: -0.3px; }
+.flow .app-sub { font-family: var(--font-body); font-size: 15.5px; font-weight: 600; fill: rgba(247, 245, 240, 0.82); }
+.flow .hand text { font-family: var(--font-hand); font-size: 25px; font-weight: 600; fill: rgba(247, 245, 240, 0.86); }
+.flow .hand path { fill: none; stroke: rgba(247, 245, 240, 0.7); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.flow .hand-end text { fill: var(--amber); font-size: 29px; }
+.flow-hero figcaption { text-align: center; }
+.flow-caption {
+  display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 18px; font-size: 14px; font-weight: 700; color: var(--teal); text-decoration: none;
+}
+.flow-caption span {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 400; letter-spacing: 1.2px;
+  text-transform: uppercase; color: #fff; background: var(--ink); border-radius: 999px; padding: 6px 12px;
+}
+.flow-caption span::before {
+  content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%;
+  background: var(--amber); vertical-align: 1px;
+}
+.flow-caption:hover { text-decoration: underline; }
+@media (max-width: 900px) {
+  .hero-sketch .hero-media { justify-self: center; }
+}
+@media (max-width: 600px) {
+  .sketch-panel { padding: 22px 14px 16px; border-radius: 18px; }
 }
 
 .proof-strip {
@@ -1911,7 +1973,6 @@ body.is-locked { overflow: hidden; }
   .footer-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 760px) {
-  .hero-seal { display: none; }
   .hero-glow { width: 460px; height: 460px; right: -180px; }
   .hero .wrap { padding-bottom: 44px; }
   .lead-hero { font-size: 17px; }
@@ -2283,4 +2344,165 @@ body.is-locked { overflow: hidden; }
 .service-meta { position: sticky; top: calc(var(--header-h) + 28px); align-self: start; }
 @media (max-width: 860px) {
   .service-meta { position: static; }
+}
+
+/* =====================================================================
+   24. WARMTH & CONTRAST
+   The site read as one quiet colour at one strength: cream page, white
+   cards barely off it, grey headings, teal on every label and icon. This
+   layer gives each page a dark mass (the page head, the CTA, the case
+   metrics), separates cards from the page, and brings in amber as a second
+   accent for results and "done" marks. Teal stays the brand colour.
+   On dark grounds the primary button is amber with ink text.
+   ===================================================================== */
+
+/* ---- section labels: an amber rule before the eyebrow ---- */
+.section-head .eyebrow::before,
+.page-head .eyebrow::before,
+.cta-inner .eyebrow::before,
+.eyebrow-hero::before {
+  content: "";
+  display: inline-block;
+  width: 22px;
+  height: 2px;
+  margin: -3px 12px 0 0;
+  vertical-align: middle;
+  border-radius: 2px;
+  background: var(--amber);
+}
+
+/* ---- page heads: slate, with the grid and a teal glow ---- */
+.page-head {
+  position: relative;
+  color: var(--on-dark);
+  background:
+    radial-gradient(ellipse at 84% 12%, rgba(79, 167, 156, 0.26), transparent 52%),
+    radial-gradient(ellipse at 6% 110%, rgba(227, 163, 59, 0.10), transparent 46%),
+    linear-gradient(rgba(247, 245, 240, 0.035) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(90deg, rgba(247, 245, 240, 0.035) 1px, transparent 1px) 0 0 / 40px 40px,
+    var(--ink);
+}
+.page-head .wrap { padding-top: 76px; padding-bottom: 72px; }
+.page-head h1 { color: #fff; }
+.page-head h1 .accent { color: var(--teal-light); }
+.page-head .lead { color: var(--on-dark); }
+.page-head .eyebrow { color: var(--on-dark-muted); }
+.page-head .eyebrow strong { color: #fff; }
+.page-head .eyebrow a, .page-head .crumb { color: #fff; }
+.page-head .stream { color: var(--amber); }
+.page-head .tag { background: rgba(247, 245, 240, 0.09); color: #D8DDE0; border: 0; }
+.page-head .case-meta dt { color: var(--on-dark-muted); }
+.page-head .case-meta dd { color: #fff; }
+.page-head :focus-visible { outline-color: var(--teal-light); }
+.page-head .jumpbar a {
+  background: rgba(247, 245, 240, 0.06);
+  border-color: rgba(247, 245, 240, 0.16);
+  color: var(--on-dark);
+}
+.page-head .jumpbar a:hover { color: #fff; border-color: var(--amber); }
+.page-head .jump-num { color: var(--amber); }
+
+/* ---- cards lift off the page ---- */
+.card, .side-block, .tl-gets, .quote-card, .industry-tile, .work-card, .sector-case, .contact-form {
+  box-shadow: var(--shadow-card);
+}
+.card-dark { box-shadow: none; }
+.card-rule::before { background: var(--amber-deep); }
+.card-dark.card-rule::before { background: var(--amber); }
+
+/* ---- amber for "done": ticks, bullets, markers ---- */
+.hero-note svg { color: var(--amber-deep); }
+.proof-strip li::before { background: var(--amber-deep); }
+.tl-gets { border-left-color: var(--amber); }
+.tl-gets h3, .side-title { color: var(--muted); }
+.tl-gets li::before, .cap-list li::before { border-color: var(--amber-deep); }
+.sign-list li::before { background: var(--amber-deep); }
+.prose ul li::before { background: var(--amber-deep); }
+.case-lede-band .wrap::before { background: var(--amber); }
+.next-num { color: var(--amber-ink); font-weight: 500; }
+
+/* ---- numbers: ink on light, amber on slate ---- */
+.metric-value { color: var(--ink); }
+.stat:nth-child(even) .stat-value { color: var(--amber); }
+.case-metrics .metric-strip {
+  border: 0;
+  border-radius: var(--r-card);
+  padding: 30px 36px;
+  background:
+    radial-gradient(ellipse at 90% 0%, rgba(79, 167, 156, 0.24), transparent 55%),
+    var(--ink);
+  box-shadow: var(--shadow-card);
+}
+.case-metrics .metric-value { color: var(--amber); }
+.case-metrics .metric-label { color: var(--on-dark-muted); }
+
+/* ---- the closing call to action: a slate panel ---- */
+.cta-inner {
+  border: 0;
+  color: var(--on-dark);
+  background:
+    radial-gradient(ellipse at 92% 0%, rgba(79, 167, 156, 0.3), transparent 55%),
+    radial-gradient(ellipse at 0% 100%, rgba(227, 163, 59, 0.12), transparent 50%),
+    var(--ink);
+  box-shadow: 0 2px 4px rgba(28, 43, 51, 0.1), 0 40px 80px -40px rgba(28, 43, 51, 0.6);
+}
+.cta-inner::before { display: none; }
+.cta-inner h2 { color: #fff; }
+.cta-inner .lead { color: var(--on-dark); }
+.cta-inner .eyebrow { color: var(--on-dark-muted); }
+.cta-inner .stream { color: var(--amber); }
+.cta-reassure { color: var(--on-dark-muted); }
+
+/* ---- the onboarding fee: a small slate card, the price in amber ---- */
+.fee-note {
+  background: var(--ink);
+  border-left-color: var(--amber);
+  box-shadow: var(--shadow-card);
+}
+.fee-note .eyebrow { color: var(--on-dark-muted); }
+.fee-value { color: var(--amber); font-size: 34px; }
+.fee-sub { color: var(--on-dark); }
+
+/* ---- the primary button on slate is amber ---- */
+.section-dark .btn-primary,
+.cta-inner .btn-primary,
+.page-head .btn-primary,
+.footer-col a.btn-footer {
+  background: var(--amber);
+  color: var(--ink);
+}
+.section-dark .btn-primary:hover,
+.cta-inner .btn-primary:hover,
+.page-head .btn-primary:hover,
+.footer-col a.btn-footer:hover {
+  background: var(--amber-hover);
+  color: var(--ink);
+}
+.tech-band .eyebrow { color: var(--on-dark-muted); }
+.marquee-list li::after { color: var(--amber); }
+
+/* ---- page heads carry the monogram, large and faint, on the right ---- */
+.page-head { overflow: hidden; }
+.page-head::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: max(24px, calc((100vw - var(--maxw)) / 2 + 24px));
+  width: 330px;
+  height: 210px;
+  transform: translateY(-50%);
+  opacity: 0.07;
+  pointer-events: none;
+  background: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 358 228' fill='%23F7F5F0'%3E%3Crect x='194' width='36' height='228'/%3E%3Cpath d='M0 0H166L146 36H0Z'/%3E%3Cpath d='M0 96H150L130 132H0Z'/%3E%3Cpath d='M0 192H166L146 228H0Z'/%3E%3Cpath d='M254 0H296A52 57 0 0 1 296 114H254V96H292A20 30 0 0 0 292 36H254Z'/%3E%3Cpath d='M254 114H300A54 57 0 0 1 300 228H254V192H296A22 30 0 0 0 296 132H254Z'/%3E%3C/svg%3E");
+}
+.page-head .wrap { position: relative; z-index: 1; }
+@media (max-width: 1000px) { .page-head::after { display: none; } }
+
+/* ---- two slate blocks never touch: a light gap before the CTA panel ---- */
+.section-dark + .cta-band,
+.stats-band + .cta-band,
+.tech-band + .cta-band { padding-top: 72px; }
+@media (max-width: 600px) {
+  .case-metrics .metric-strip { padding: 24px 22px; gap: 20px 18px; }
+  .case-metrics .metric-strip li { flex: 1 1 120px; }
 }

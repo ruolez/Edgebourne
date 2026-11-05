@@ -396,7 +396,6 @@ EOF
   echo -e "   SSL:    auto-renews via certbot.timer (deploy hook reloads nginx)"
   echo -e "   Update: re-run this script and choose Update"
   echo -e "   Stripe: re-run this script and choose Configure Stripe"
-  hero_image_hint
 }
 
 # ---------------------------------------------------------------- update
@@ -436,19 +435,6 @@ cmd_update() {
   [ -n "$domain" ] && wait_for_health "https://$domain/healthz"
   install_backup_timer
   ok "Update complete. Backups saved in $BACKUP_DIR (last $KEEP_BACKUPS kept)."
-  hero_image_hint
-}
-
-# The hero shows a case-study screenshot until a photo is uploaded; say where.
-hero_image_hint() {
-  local has_photo
-  has_photo="$(docker exec edgebourne-postgres psql -U edgebourne -d edgebourne -tAc \
-    "SELECT value <> '' FROM settings WHERE key = 'hero_image'" 2>/dev/null || true)"
-  if [ "$has_photo" != "t" ]; then
-    echo
-    echo -e "   ${C_YLW}Homepage photo:${C_OFF} none uploaded yet. Admin → Site content → Homepage hero image"
-    echo    "   has an image-generator prompt to copy and an upload button."
-  fi
 }
 
 # ---------------------------------------------------------------- renew

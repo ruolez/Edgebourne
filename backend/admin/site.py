@@ -14,7 +14,7 @@ FIELDS = [
     "hero_title", "hero_title_accent", "hero_sub",
     "hero_cta_primary", "hero_cta_primary_url",
     "hero_cta_secondary", "hero_cta_secondary_url",
-    "hero_cta_note", "hero_image_alt", "hero_case_slug",
+    "hero_cta_note", "hero_sketch", "hero_image_alt", "hero_case_slug",
     "seo_default_title", "seo_default_description",
     "contact_email", "phone", "social_linkedin", "social_github",
     # Shown on /process and /contact. Blank hides the pricing figure entirely

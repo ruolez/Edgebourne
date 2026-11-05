@@ -13,6 +13,13 @@
     ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
     : false;
 
+  /* Hero flow diagram: hold the finished state instead of looping. */
+  if (reduceMotion) {
+    Array.prototype.forEach.call(document.querySelectorAll('svg.flow'), function (svg) {
+      if (svg.pauseAnimations) { svg.pauseAnimations(); svg.setCurrentTime(6); }
+    });
+  }
+
   /* ---------- 1. mobile navigation ---------- */
   (function nav() {
     var toggle = document.getElementById('nav-toggle');

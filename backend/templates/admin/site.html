@@ -30,79 +30,56 @@
   </section>
 
   <section class="panel">
-    <div class="panel-head"><h2>Homepage hero image</h2></div>
-    <p class="help">The right side of the hero shows a real case-study screenshot in front of this photo.
-      Replace the photo by uploading a new one; remove it and the screenshot fills the space on its own.</p>
-    <div class="hero-admin">
-      <div class="hero-admin-preview">
-        {% if hero %}
-        <img src="{{ hero.portrait[0].src }}" alt="Current hero photo, desktop crop" width="{{ hero.portrait[0].w }}" height="{{ hero.portrait[0].h }}">
-        <img src="{{ hero.landscape[0].src }}" alt="Current hero photo, phone crop" width="{{ hero.landscape[0].w }}" height="{{ hero.landscape[0].h }}">
-        {% else %}
-        <span class="hero-admin-empty">No photo yet</span>
-        {% endif %}
-      </div>
-      <div>
-        <div class="field">
-          <label for="f-hero_image_file">{{ 'Replace photo' if hero else 'Upload photo' }}</label>
-          <input type="file" id="f-hero_image_file" name="hero_image_file" accept="image/jpeg,image/png,image/webp">
-          <p class="help">JPEG, PNG or WebP, up to 10&nbsp;MB. Landscape 3:2, 1536&nbsp;px wide or more.
-            The site compresses it and cuts the desktop, phone and link-preview versions itself.</p>
-        </div>
-        <div class="field">
-          <label for="f-hero_image_focus">Keep in frame</label>
-          <select id="f-hero_image_focus" name="hero_image_focus">
-            {% set cur_focus = hero.focus if hero else 'center' %}
-            {% for key in focus_options %}
-            <option value="{{ key }}" {% if key == cur_focus %}selected{% endif %}>{{ {'left': 'Left side', 'center': 'Centre', 'right': 'Right side'}[key] }}</option>
-            {% endfor %}
-          </select>
-          <p class="help">The desktop crop is taller than the photo, so part of each side is cut off. Pick where the person or subject is.</p>
-        </div>
-        {{ text_input('hero_image_alt', 'Describe the photo (alt text)', v.hero_image_alt,
-           help='Read aloud by screen readers. Say what is in the picture, in one sentence.') }}
-        {% if hero %}{{ checkbox('hero_image_remove', 'Remove the photo (the screenshot stays)') }}{% endif %}
-      </div>
-    </div>
-
+    <div class="panel-head"><h2>Homepage hero sketch</h2></div>
+    <p class="help">The right side of the hero is a drawing of one order going through the app we build:
+      the scan at the top, then four notes ticked off underneath.</p>
+    {{ textarea('hero_sketch', 'The five notes', v.hero_sketch, rows=5,
+       help='One per line, written as "Label: result". Line 1 is the scan; lines 2 to 5 are what lands. Keep each result to about 20 characters so it fits the note. A missing line falls back to the original wording.') }}
     <div class="field">
-      <label for="f-hero_case_slug">Screenshot from</label>
+      <label for="f-hero_case_slug">Case study under the sketch</label>
       <select id="f-hero_case_slug" name="hero_case_slug">
         {% for c in cases %}
         <option value="{{ c.slug }}" {% if c.slug == v.hero_case_slug %}selected{% endif %}>{{ c.title }}</option>
         {% endfor %}
       </select>
-      <p class="help">The screenshot links to this case study, and its first metric becomes the label on the image.</p>
+      <p class="help">Its first metric becomes the label under the sketch, linking to the case study.</p>
     </div>
 
-    <details class="hero-prompt">
-      <summary>Want a new photo? The prompt that made the current one</summary>
-      <p class="help">Made with GPT Image 2.5 (Sunburst) in ChatGPT; Gemini works too. Ask for landscape 3:2 at the
-        largest size offered. Before uploading, check the hands look relaxed, the screen shows icons only (no fake
-        words), and the screen, printer, parcels and face are all still visible with the outer quarters covered.</p>
-      <textarea readonly rows="12">Editorial documentary photograph, landscape 3:2, of the back office of a small, successful wholesale and online-retail business at the end of a calm, well-run day. The feeling: everything is handled, nothing is waiting on anyone, the owner can finally breathe.
-
-COMPOSITION (important): imagine the frame split into four equal vertical strips. Everything that tells the story sits inside the MIDDLE TWO strips, tightly grouped around the owner. The outer left and right strips hold only soft, optional context: window light on the left, an open doorway on the right. The camera is close, across the corner of her desk, at seated eye level, so she fills a large part of the frame. The desk occupies only the bottom 15% of the frame.
-
-The owner: a woman in her late 40s with warm brown hair loosely pinned up and a light-blue linen shirt with rolled-up sleeves, centred slightly right of the frame's middle, head in the upper-middle of the frame. She leans back comfortably in her chair with a quiet, satisfied half-smile, gazing toward the left of the frame. Relaxed shoulders, unhurried, content. Not looking at the camera. Her closed laptop lies at the very bottom edge of the frame.
-
-Her hands and the mug (important): she cradles a muted teal ceramic mug gently and loosely, low against her chest, the way you hold a warm drink at the end of a long day. Graceful, slender, relaxed hands with smooth natural skin, no prominent veins, no bony knuckles, neat short natural nails, exactly five fingers on each hand. Right hand: index and middle finger lightly through the handle, thumb resting on top of the handle, the other fingers softly curled. Left hand: resting lightly against the side of the mug, fingers loosely together and gently curved, just warming her palm. No fist, no gripping, no squeezing, no tension in the fingers or wrists. The mug is tilted naturally and partly turned so the handle is visible and clearly attached.
-
-Directly behind her, grouped closely around her:
-- Just above and to the left of her head, on the wall behind her and fully visible above her left shoulder: a wall-mounted monitor showing a clean, calm operations dashboard in white, slate and teal: rows of green status dots with check marks, three teal progress rings each filled to complete with a check mark, and one smooth gently rising line chart. Only shapes, icons and check marks, with no words, no letters and no numbers.
-- On a low credenza just to her left, close to her shoulder: a compact black thermal label printer feeding out a white shipping label by itself.
-- Just behind her right shoulder: a tidy stack of brown cardboard parcels with white shipping labels attached, ready for pickup.
-- On the wall above the parcels: a simple round clock reading five minutes to five.
-
-Outer left strip: a tall window with warm sunlight and one small plant on the sill. Outer right strip: an open door with a white delivery van parked outside, softly out of focus. Behind everything: neat grey shelving with plain white bins, soft and quiet. Keep the scene uncluttered: one plant only, no extra decor.
-
-Light: warm, golden late-afternoon sunlight from the window on the left, soft rim light on her hair, shoulder and hands, gentle glow from the wall screen, long soft shadows. Calm, clean, orderly.
-
-Color grade: warm natural tones, gently desaturated. Creamy off-white highlights (#F7F5F0), deep slate blue-grey shadows (#1C2B33), and teal (#2E7D74) as the single accent color: the dashboard rings and check marks, and her mug. No other strong colors.
-
-Camera: full-frame, 50mm lens, f/2.2, shallow depth of field focused on her face and hands; the screen, printer and parcels slightly soft but clearly recognizable. Natural skin texture, flattering and true to life, real expression, like a magazine feature on a small business that runs itself.
-
-Avoid: readable text, words, letters, numbers on screens, gibberish text, logos, brand names, signage, watermark, red warning colors, error icons, messy desk, piles of paper, stress, frown, people looking at camera, posed smile, thumbs up, clenched fist, gripping the mug tightly, white knuckles, veiny hands, bony knuckles, rough wrinkled hands, claw-like fingers, fingers fused with the mug, missing mug handle, extra fingers, missing fingers, distorted hands, many plants, hanging plants, large empty foreground desk, wide empty room, small distant subject, hard hats, hi-vis vests, neon, blue sci-fi glow, holograms, robots, HDR, oversaturated colors, plastic skin, glossy stock-photo look.</textarea>
+    <details class="hero-photo-opt"{% if hero %} open{% endif %}>
+      <summary>Use a photo instead (optional)</summary>
+      <p class="help">A photo replaces the sketch, with the case study's screenshot in front of it.
+        Remove the photo and the sketch comes back.</p>
+      <div class="hero-admin">
+        <div class="hero-admin-preview">
+          {% if hero %}
+          <img src="{{ hero.portrait[0].src }}" alt="Current hero photo, desktop crop" width="{{ hero.portrait[0].w }}" height="{{ hero.portrait[0].h }}">
+          <img src="{{ hero.landscape[0].src }}" alt="Current hero photo, phone crop" width="{{ hero.landscape[0].w }}" height="{{ hero.landscape[0].h }}">
+          {% else %}
+          <span class="hero-admin-empty">No photo, the sketch is showing</span>
+          {% endif %}
+        </div>
+        <div>
+          <div class="field">
+            <label for="f-hero_image_file">{{ 'Replace photo' if hero else 'Upload photo' }}</label>
+            <input type="file" id="f-hero_image_file" name="hero_image_file" accept="image/jpeg,image/png,image/webp">
+            <p class="help">JPEG, PNG or WebP, up to 10&nbsp;MB. Landscape 3:2, 1536&nbsp;px wide or more.
+              The site compresses it and cuts the desktop, phone and link-preview versions itself.</p>
+          </div>
+          <div class="field">
+            <label for="f-hero_image_focus">Keep in frame</label>
+            <select id="f-hero_image_focus" name="hero_image_focus">
+              {% set cur_focus = hero.focus if hero else 'center' %}
+              {% for key in focus_options %}
+              <option value="{{ key }}" {% if key == cur_focus %}selected{% endif %}>{{ {'left': 'Left side', 'center': 'Centre', 'right': 'Right side'}[key] }}</option>
+              {% endfor %}
+            </select>
+            <p class="help">The desktop crop is taller than the photo, so part of each side is cut off. Pick where the subject is.</p>
+          </div>
+          {{ text_input('hero_image_alt', 'Describe the photo (alt text)', v.hero_image_alt,
+             help='Read aloud by screen readers. Say what is in the picture, in one sentence.') }}
+          {% if hero %}{{ checkbox('hero_image_remove', 'Remove the photo and show the sketch again') }}{% endif %}
+        </div>
+      </div>
     </details>
   </section>
 

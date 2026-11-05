@@ -3,17 +3,19 @@
 {% block content %}
 
 {# ---------- hero ----------
-   Copy on the left, the work on the right: a real case-study screenshot, with
-   the uploaded scene photo behind it once Admin > Site content has one. The
-   chip is that case study's first metric, so the hero never states a figure
-   the case study does not back up. #}
+   Copy on the left; on the right, a sketch of what we build: one scan runs
+   through the client's own app and lands as finished notes (wording in
+   Admin > Site content). An uploaded photo replaces the sketch, with a
+   case-study screenshot in front of it. The chip is the chosen case study's
+   first metric, so the hero never states a figure the case study does not
+   back up. #}
 {% set hc = hero_case %}
 {% set hero_chip = hc.metrics[0] if hc and hc.metrics else None %}
-<section class="hero{% if hero_photo and hc %} hero-has-photo{% elif hc %} hero-has-shot{% endif %}">
+{% set photo_mode = hero_photo and hc %}
+<section class="hero {{ 'hero-has-photo' if photo_mode else 'hero-sketch' }}">
   <div class="hero-bg" aria-hidden="true">
     <span class="hero-grid"></span>
     <span class="hero-glow"></span>
-    {% if not hc %}<svg class="hero-seal" viewBox="0 0 190 190"><use href="#seal"/></svg>{% endif %}
   </div>
   <div class="wrap hero-inner">
     <div class="hero-copy">
@@ -30,7 +32,11 @@
       <svg class="stream stream-hero" viewBox="0 0 350 30"><use href="#stream"/></svg>
     </div>
 
-    {% if hc %}
+    {% if not photo_mode %}
+    <div class="hero-media">
+      {% include "public/_hero_sketch.html" %}
+    </div>
+    {% else %}
     <div class="hero-media">
       {% if hero_photo %}
       {% set hp = hero_photo.portrait %}

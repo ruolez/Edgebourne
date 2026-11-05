@@ -35,7 +35,7 @@ Volumes: `pgdata` (database), `uploads` (admin-uploaded images, re-encoded to We
 ## Admin panel
 
 - **Dashboard** — lead counts, content stats, recent leads
-- **Site content** — homepage hero (text, photo, screenshot), About page, SEO defaults,
+- **Site content** — homepage hero (text, sketch notes, optional photo), About page, SEO defaults,
   contact email/phone/socials
 - **Services / Work / Blog / Pages** — full CRUD with a markdown editor (toolbar + live preview),
   image uploads, drafts vs published, ordering (↑/↓), per-item SEO fields
@@ -80,21 +80,34 @@ named human goes live without a person deciding it should.
 
 ### Homepage hero
 
-Copy on the left, the work on the right. The right side is always a real case-study screenshot
-(**Site content → Screenshot from**, linked to that case study) with that case study's first
-metric as the label on it, so the hero only states figures a case study backs up.
+Copy on the left; on the right, a drawn sketch of what we build
+(`templates/public/_hero_sketch.html`): one scan runs through "your own app" and lands as four
+ticked notes (stock, shipping, the customer's tracking, the books). It is inline SVG on a slate
+panel, plays once (SMIL, about five seconds) and stays finished; `site.js` freezes it on the
+finished state for visitors who prefer reduced motion. The five notes are editable in
+**Site content → Homepage hero sketch** as `Label: result` lines (setting `hero_sketch`). A
+missing or malformed line falls back to the original wording. Under the sketch, the chosen
+case study's first metric links to it, so the hero only states figures a case study backs up.
+The handwriting is Caveat (OFL), self-hosted as a 13 KB subset at one weight
+(`static/fonts/caveat-600.woff2`).
 
-Behind it sits a scene photo: an owner at the end of a calm day, dashboard all green, parcels
-labeled and waiting. The default ships in `backend/static/media/hero/` (generated with GPT Image
-2.5; the exact prompt is in the admin panel) and migration 017 points the `hero_image` setting at
-it, so a fresh install or an Update shows it with no upload. To change it, upload a new one in
-**Site content → Homepage hero image**. The upload is kept as a master in `uploads/hero/`, and
+A photo is optional (**Use a photo instead**). It replaces the sketch, with the case study's
+screenshot in front of it. The upload is kept as a master in `uploads/hero/`, and
 `backend/hero_image.py` cuts every rendition from it: 4:5 for the desktop panel, 4:3 for phones
 and tablets, and a 1200x630 JPEG that becomes the homepage `og:image`, all compressed (WebP
-`method=6`). **Keep in frame** re-cuts from the master, the shipped one included, without a
-re-upload. Every cut gets new file names,
-because `/uploads/` is served with a one-year immutable cache. With no photo, the screenshot
-fills the panel on its own and the case-study cover is the share image.
+`method=6`). **Keep in frame** re-cuts from the master without a re-upload. Every cut gets new
+file names, because `/uploads/` is served with a one-year immutable cache. Removing the photo
+brings the sketch back.
+
+### Colour
+
+Teal (`--teal`) is the brand colour: links, the main button, headline accents, the hero app.
+Amber (`--amber`) is the second accent and means a result or "done": ticks, list markers,
+stats and case-study metrics, the rule before section labels, and the primary button on slate
+grounds (amber with ink text). Use `--amber-deep` for markers on light grounds and
+`--amber-ink` for amber text on light grounds (4.5:1). Page heads, the closing call to action,
+the case-study metrics and the onboarding fee sit on slate so every page has one dark mass;
+they are styled in section 24 of `static/css/site.css`.
 
 Tests: `docker compose exec -T backend python -m unittest discover -s tests`.
 
