@@ -2897,23 +2897,24 @@ h1 {
 /* ---- stats band: big numbers on deep teal ---- */
 .stats-band { padding: 72px 0; }
 .stats-band .stat { border-left-color: rgba(255, 255, 255, 0.16); gap: 12px; }
+/* Below the hero h1 (62px) and section h2s (50px): proof, not the headline. */
 .stats-band .stat-value {
   font-family: var(--font-body);
   font-weight: 900;
-  font-size: clamp(46px, 6vw, 80px);
+  font-size: clamp(36px, 3.4vw, 48px);
   letter-spacing: -0.045em;
   font-variant-numeric: tabular-nums;
 }
-.stats-band .stat-label { color: var(--on-dark); letter-spacing: 0.16em; }
+.stats-band .stat-label { color: var(--on-dark); font-size: 12px; letter-spacing: 0.16em; }
 
-/* First screen on desktop: hero + the whole stats band fit a ~960px window.
+/* First screen on desktop: hero + the whole stats band fit a ~930px window.
    Shorter windows can't hold both, so the hero fills the screen and the band
    starts at the fold instead of being cut through its numbers. */
 @media (min-width: 901px) {
   .hero-sketch .wrap, .hero-has-photo .wrap { padding-top: 48px; padding-bottom: 48px; }
   .hero + .stats-band { padding: 48px 0; }
 }
-@media (min-width: 901px) and (max-height: 959px) {
+@media (min-width: 901px) and (max-height: 929px) {
   .hero-sketch, .hero-has-photo {
     display: grid;
     align-content: center;
