@@ -2906,6 +2906,22 @@ h1 {
 }
 .stats-band .stat-label { color: var(--on-dark); letter-spacing: 0.16em; }
 
+/* First screen on desktop: hero + the whole stats band fit a ~960px window.
+   Shorter windows can't hold both, so the hero fills the screen and the band
+   starts at the fold instead of being cut through its numbers. */
+@media (min-width: 901px) {
+  .hero-sketch .wrap, .hero-has-photo .wrap { padding-top: 48px; padding-bottom: 48px; }
+  .hero + .stats-band { padding: 48px 0; }
+}
+@media (min-width: 901px) and (max-height: 959px) {
+  .hero-sketch, .hero-has-photo {
+    display: grid;
+    align-content: center;
+    min-height: calc(100vh - var(--header-h));
+    min-height: calc(100svh - var(--header-h));
+  }
+}
+
 /* ---- what changes: before / now, then the proof ---- */
 .visually-hidden {
   position: absolute !important;
