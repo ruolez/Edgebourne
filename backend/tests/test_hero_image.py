@@ -142,5 +142,62 @@ class MasterAndCutTest(unittest.TestCase):
                 hero_image.save_master(_Upload(raw))
 
 
+class AvatarTest(unittest.TestCase):
+    """The founder photo: one upload, a square set for the hero, CTA and About."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        patcher = mock.patch.object(hero_image.config, "UPLOADS_DIR", self.tmp.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self.tmp.cleanup)
+
+    def _files(self):
+        return sorted(os.listdir(os.path.join(self.tmp.name, hero_image.SUBDIR)))
+
+    def test_avatar_cut_writes_square_renditions_never_upscaled(self):
+        cases = {
+            (1200, 1600): [96, 192, 400],
+            (900, 300): [96, 192, 300],
+        }
+        for size, widths in cases.items():
+            with self.subTest(size=size):
+                master, _ = hero_image.save_master(
+                    _Upload(_png(size)), min_short=hero_image.AVATAR_MIN_SIDE
+                )
+                info = hero_image.cut_avatar(master)
+                self.assertEqual([(r["w"], r["h"]) for r in info["sizes"]], [(w, w) for w in widths])
+                for r in info["sizes"]:
+                    with Image.open(os.path.join(self.tmp.name, r["src"][len("/uploads/"):])) as im:
+                        self.assertEqual(im.size, (r["w"], r["w"]))
+
+    def test_avatar_accepts_a_headshot_the_hero_would_refuse(self):
+        small = (hero_image.AVATAR_MIN_SIDE, hero_image.AVATAR_MIN_SIDE)
+        with self.assertRaises(ValueError):
+            hero_image.save_master(_Upload(_png(small)))
+        master, _ = hero_image.save_master(_Upload(_png(small)), min_short=hero_image.AVATAR_MIN_SIDE)
+        self.assertTrue(master.endswith("-master.webp"))
+
+    def test_avatar_below_its_minimum_is_refused(self):
+        too_small = hero_image.AVATAR_MIN_SIDE - 1
+        with self.assertRaises(ValueError):
+            hero_image.save_master(_Upload(_png((too_small, 800))), min_short=hero_image.AVATAR_MIN_SIDE)
+
+    def test_load_avatar_reads_only_a_stored_square_set(self):
+        for value in ["", None, "not json", '{"sizes": []}', '{"portrait": [{"src": "x"}]}']:
+            with self.subTest(value=value):
+                self.assertIsNone(hero_image.load_avatar(value))
+        info = {"master": "/uploads/hero/m.webp", "sizes": [{"src": "/uploads/hero/a-s-96.webp", "w": 96, "h": 96}]}
+        self.assertEqual(hero_image.load_avatar(json.dumps(info)), info)
+
+    def test_delete_avatar_removes_renditions_and_optionally_the_master(self):
+        master, _ = hero_image.save_master(_Upload(_png((800, 800))), min_short=hero_image.AVATAR_MIN_SIDE)
+        info = hero_image.cut_avatar(master)
+        hero_image.delete_cut(info)
+        self.assertEqual(self._files(), [os.path.basename(master)])
+        hero_image.delete_cut(info, keep_master=False)
+        self.assertEqual(self._files(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

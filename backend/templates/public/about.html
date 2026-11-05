@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "public/_founder.html" import avatar %}
 {% set meta_title = 'About — ' + setting('site_title', 'Edge Bourne Consulting') %}
 {% set meta_description = 'Who we are, what we have built, and how we work.' %}
 {% set cta_key = 'about' %}
@@ -18,6 +19,15 @@
 {% if setting('about_html') %}
 <section class="section">
   <div class="wrap wrap-narrow">
+    {% if setting('founder_name') %}
+    <div class="founder-card" data-reveal>
+      {{ avatar(96, 'founder-avatar') }}
+      <div>
+        <p class="founder-name">{{ setting('founder_name') }}</p>
+        {% if setting('founder_role') %}<p class="founder-role">{{ setting('founder_role') }}</p>{% endif %}
+      </div>
+    </div>
+    {% endif %}
     <div class="prose prose-lg" data-reveal>{{ setting('about_html') | safe }}</div>
   </div>
 </section>

@@ -1,99 +1,247 @@
-{# The hero sketch: one scan runs through the app we build and lands as four
-   finished notes. Slate panel, cream notes, the app in teal, amber for
-   "done". Plays once and stays finished (site.js freezes it for reduced
-   motion). The five notes are "Label: result" lines in the hero_sketch
-   setting (Admin > Site content); a missing or malformed line falls back. #}
-{% set sketch_defaults = [
-  'Your packer: Scans order 4127',
-  'Stock: Same on every store',
-  'Shipping: Best rate, printed',
-  'Your customer: Has their tracking',
-  'The books: Cost already posted',
+{# The hero reel: four short animated scenes on the slate panel, one idea each,
+   with story-style progress tabs underneath (site.js drives it).
+     1 Automate   emails, PDFs and sheets ride into your system (gears turning
+                  behind its window) and come out as finished, labelled work
+     2 Connect    your tools around the system you own, data pulsing between them
+     3 Save time  a race: by hand pushes one job down the lane while automated
+                  streams through dozens (site.js runs the "jobs done" tallies)
+     4 Grow       revenue climbs, costs fall, the margin between them fills in
+                  and waste drops away
+   No EdgeBourne mark inside the scenes: what they show is the client's own
+   system, not ours.
+   Continuous motion is SMIL (one pauseAnimations() stops all of it); each
+   scene's entrance runs from an animation with begin="indefinite", so with
+   reduced motion or no JavaScript every scene simply shows its finished state.
+   Tab names and the handwritten line under each scene come from the
+   hero_scenes setting (Admin > Site content), "Tab: caption" per line. #}
+{% set reel_defaults = [
+  ['Automate', 'the busywork runs itself'],
+  ['Connect', 'all your systems, talking'],
+  ['Save time', 'hours back, every week'],
+  ['Grow', 'less waste, better margins'],
 ] %}
-{% set sketch_given = setting('hero_sketch', '') | lines %}
-{% set rows = [] %}
-{% for i in range(5) %}
-  {% set raw = sketch_given[i] if sketch_given | length > i and ':' in sketch_given[i] else sketch_defaults[i] %}
-  {% set _ = rows.append(raw.split(':', 1) | map('trim') | list) %}
+{% set reel_given = setting('hero_scenes', '') | lines %}
+{% set reel = [] %}
+{% for i in range(4) %}
+  {% set raw = reel_given[i] if reel_given | length > i and ':' in reel_given[i] else reel_defaults[i] | join(': ') %}
+  {% set _ = reel.append(raw.split(':', 1) | map('trim') | list) %}
 {% endfor %}
-{% set notes = [
-  {'x': 20,  'y': 356, 'rot': 1.2,  'path': 'M240 278 C236 322 122 314 120 354', 't1': 0.3, 't2': 0.52},
-  {'x': 260, 'y': 356, 'rot': -1,   'path': 'M240 278 C244 322 358 314 360 354', 't1': 0.3, 't2': 0.52},
-  {'x': 20,  'y': 452, 'rot': -0.8, 'path': 'M240 278 C238 350 242 410 240 438 C238 466 236 486 222 486', 't1': 0.32, 't2': 0.6},
-  {'x': 260, 'y': 452, 'rot': 1,    'path': 'M240 278 C242 350 238 410 240 438 C242 466 244 486 258 486', 't1': 0.32, 't2': 0.6},
-] %}
-{% macro once(attr, values, kt) %}<animate attributeName="{{ attr }}" values="{{ values }}" keyTimes="{{ kt }}" begin="0.5s" dur="4.5s" fill="freeze"/>{% endmacro %}
-<figure class="flow-hero">
-  <div class="sketch-panel">
-  <svg class="flow" viewBox="0 0 480 590" role="img"
-       aria-label="Sketch: {{ rows[0][0] }}, {{ rows[0][1] | lower }}. The app we build for you passes it on: {% for r in rows[1:] %}{{ r[0] }}, {{ r[1] | lower }}{{ '; ' if not loop.last else '.' }}{% endfor %} Nobody retypes a thing.">
+{% macro enter(id, attr, values, dur='0.9s', delay='0s') -%}
+<animate attributeName="{{ attr }}" values="{{ values }}" dur="{{ dur }}" begin="{{ id }}.begin+{{ delay }}" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.22 0.61 0.36 1"/>
+{%- endmacro %}
+<figure class="reel" data-reel>
+  <div class="sketch-panel reel-panel">
+  <svg class="reel-art" viewBox="0 0 480 470" role="img"
+       aria-label="Animated illustration in four parts: {% for r in reel %}{{ r[0] }}, {{ r[1] }}{{ '; ' if not loop.last else '.' }}{% endfor %}">
     <defs>
-      <filter id="sketch-ink" x="-5%" y="-5%" width="110%" height="110%">
-        <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7"/>
-        <feDisplacementMap in="SourceGraphic" scale="1.8"/>
-      </filter>
+      <clipPath id="reel-window"><circle cx="240" cy="186" r="56"/></clipPath>
+      <clipPath id="reel-reveal"><rect x="40" y="30" width="410" height="340">{{ enter('go3', 'width', '0;410', '1.6s', '0.1s') }}</rect></clipPath>
+      <linearGradient id="reel-margin" x1="0" x2="1" y1="0" y2="0">
+        <stop offset="0" stop-color="#F2A83A" stop-opacity="0.05"/>
+        <stop offset="1" stop-color="#F2A83A" stop-opacity="0.55"/>
+      </linearGradient>
     </defs>
 
-    <g filter="url(#sketch-ink)">
-      <path class="pencil" d="M240 74 C238 95 242 112 240 128"/>
-      {% for n in notes %}<path class="pencil" d="{{ n.path }}"/>{% endfor %}
-      <path class="pen" d="M240 74 C238 95 242 112 240 128" pathLength="1">{{ once('stroke-dashoffset', '1;1;0;0', '0;.1;.24;1') }}</path>
-      {% for n in notes %}
-      <path class="pen" d="{{ n.path }}" pathLength="1">{{ once('stroke-dashoffset', '1;1;0;0', '0;%s;%s;1' % (n.t1, n.t2)) }}</path>
+    {# ======================= 1. automate ======================= #}
+    {% set jobs = [
+      ('mail', 'Order entered'), ('pdf', 'Invoice sent'), ('sheet', 'Report ready'),
+    ] %}
+    <g class="scene is-on" data-scene="0">
+      <animate id="go0" attributeName="visibility" values="visible" dur="0.01s" begin="indefinite"/>
+      {# the belt runs through the machine #}
+      <path class="belt" d="M18 336 H462"/>
+      <g class="belt-rollers">{% for x in range(36, 462, 44) %}<circle cx="{{ x }}" cy="347" r="7"/>{% endfor %}</g>
+      {% for kind, label in jobs %}
+      {% set d = '%.1fs' % (-loop.index0 * 2.2) %}
+      <g class="moving">
+        <animateMotion path="M0 0 H370" dur="6.6s" begin="{{ d }}" repeatCount="indefinite"/>
+        <g class="job-in" opacity="0">
+          <animate attributeName="opacity" values="0;1;1;0;0" keyTimes="0;.03;.29;.33;1" dur="6.6s" begin="{{ d }}" repeatCount="indefinite"/>
+          {% if kind == 'mail' %}
+          <rect x="6" y="306" width="40" height="28" rx="4"/><path d="M8 309 l18 13 18 -13"/>
+          {% elif kind == 'pdf' %}
+          <path d="M10 296 h22 l10 10 v28 h-32 Z"/><path d="M32 296 v10 h10"/><rect class="job-tag" x="4" y="314" width="26" height="13" rx="3"/><text x="17" y="324" text-anchor="middle">PDF</text>
+          {% else %}
+          <rect x="8" y="300" width="36" height="34" rx="4"/><path d="M8 311 h36 M8 322 h36 M20 300 v34 M32 300 v34"/>
+          {% endif %}
+        </g>
+        <g class="job-out" opacity="0">
+          <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;.83;.86;.98;1" dur="6.6s" begin="{{ d }}" repeatCount="indefinite"/>
+          <rect x="0" y="302" width="96" height="32" rx="7"/>
+          <circle cx="16" cy="318" r="8"/><path d="M12 318 l3 3 6 -6"/>
+          <text x="29" y="322">{{ label }}</text>
+        </g>
+      </g>
       {% endfor %}
+      {# the inbox: a messy pile, waiting #}
+      <g class="pile">
+        <text class="pile-lbl" x="84" y="128" text-anchor="middle">inbox</text>
+        <g transform="rotate(-9 70 236)"><rect x="44" y="206" width="48" height="60" rx="4"/><path d="M52 220 h30 M52 230 h24 M52 240 h28 M52 250 h16"/></g>
+        <g transform="rotate(7 104 214)"><rect x="80" y="186" width="50" height="38" rx="4"/><path d="M82 189 l23 17 23 -17"/></g>
+        <g transform="rotate(-3 92 186)"><rect x="66" y="150" width="46" height="44" rx="4"/><path d="M66 163 h46 M66 177 h46 M81 150 v44 M96 150 v44"/></g>
+        <g transform="rotate(12 120 256)"><rect x="98" y="232" width="40" height="50" rx="4"/><path d="M106 246 h24 M106 256 h18 M106 266 h22"/></g>
+        <circle class="pile-count" cx="134" cy="160" r="15"/>
+        <text class="pile-count-n" x="134" y="165" text-anchor="middle">27</text>
+      </g>
+      {# done: a neat stack, and the newest card keeps landing on it #}
+      <g class="stack">
+        <text class="pile-lbl" x="396" y="128" text-anchor="middle">done</text>
+        {% for i in range(3) %}
+        <g transform="translate(0 {{ i * -14 }})"><rect x="348" y="{{ 252 }}" width="96" height="30" rx="6"/><circle cx="364" cy="267" r="7"/><path d="M360.5 267 l2.5 2.5 5 -5.5"/></g>
+        {% endfor %}
+        <g class="stack-top" opacity="0">
+          <animateMotion path="M0 -40 L0 0" dur="2.2s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.25;1" calcMode="linear"/>
+          <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;.2;.85;1" dur="2.2s" repeatCount="indefinite"/>
+          <g transform="translate(0 -42)"><rect x="348" y="252" width="96" height="30" rx="6"/><circle cx="364" cy="267" r="7"/><path d="M360.5 267 l2.5 2.5 5 -5.5"/></g>
+        </g>
+      </g>
+      {# your system: a machine with its gears behind a window #}
+      <rect class="machine" x="170" y="100" width="140" height="258" rx="22"/>
+      <rect class="machine-slot" x="166" y="292" width="12" height="46" rx="4"/>
+      <rect class="machine-slot" x="302" y="292" width="12" height="46" rx="4"/>
+      <circle class="machine-window" cx="240" cy="186" r="56"/>
+      <g clip-path="url(#reel-window)">
+        <g transform="translate(224 198) scale(0.6)">
+          <path class="gear gear-big" fill-rule="evenodd" d="M70.0 0.0 L69.7 6.6 L83.0 13.1 L79.6 26.8 L64.8 26.4 L60.6 35.0 L57.1 40.5 L65.3 52.9 L55.6 63.0 L42.9 55.3 L35.0 60.6 L29.1 63.6 L30.1 78.4 L16.6 82.3 L9.5 69.4 L0.0 70.0 L-6.6 69.7 L-13.1 83.0 L-26.8 79.6 L-26.4 64.8 L-35.0 60.6 L-40.5 57.1 L-52.9 65.3 L-63.0 55.6 L-55.3 42.9 L-60.6 35.0 L-63.6 29.1 L-78.4 30.1 L-82.3 16.6 L-69.4 9.5 L-70.0 0.0 L-69.7 -6.6 L-83.0 -13.1 L-79.6 -26.8 L-64.8 -26.4 L-60.6 -35.0 L-57.1 -40.5 L-65.3 -52.9 L-55.6 -63.0 L-42.9 -55.3 L-35.0 -60.6 L-29.1 -63.6 L-30.1 -78.4 L-16.6 -82.3 L-9.5 -69.4 L-0.0 -70.0 L6.6 -69.7 L13.1 -83.0 L26.8 -79.6 L26.4 -64.8 L35.0 -60.6 L40.5 -57.1 L52.9 -65.3 L63.0 -55.6 L55.3 -42.9 L60.6 -35.0 L63.6 -29.1 L78.4 -30.1 L82.3 -16.6 L69.4 -9.5Z M30 0 A30 30 0 1 0 -30 0 A30 30 0 1 0 30 0Z"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="10s" repeatCount="indefinite"/></path>
+        </g>
+        <g transform="translate(282 146) scale(0.6)">
+          <path class="gear gear-mid" fill-rule="evenodd" d="M44.0 0.0 L43.6 6.2 L54.5 13.1 L49.5 26.2 L36.8 24.2 L31.1 31.1 L26.4 35.2 L29.3 47.7 L16.5 53.5 L8.9 43.1 L0.0 44.0 L-6.2 43.6 L-13.1 54.5 L-26.2 49.5 L-24.2 36.8 L-31.1 31.1 L-35.2 26.4 L-47.7 29.3 L-53.5 16.5 L-43.1 8.9 L-44.0 0.0 L-43.6 -6.2 L-54.5 -13.1 L-49.5 -26.2 L-36.8 -24.2 L-31.1 -31.1 L-26.4 -35.2 L-29.3 -47.7 L-16.5 -53.5 L-8.9 -43.1 L-0.0 -44.0 L6.2 -43.6 L13.1 -54.5 L26.2 -49.5 L24.2 -36.8 L31.1 -31.1 L35.2 -26.4 L47.7 -29.3 L53.5 -16.5 L43.1 -8.9Z M16 0 A16 16 0 1 0 -16 0 A16 16 0 1 0 16 0Z"><animateTransform attributeName="transform" type="rotate" from="11" to="-349" dur="6.67s" repeatCount="indefinite"/></path>
+        </g>
+        <g transform="translate(270 236) scale(0.6)">
+          <path class="gear gear-small" fill-rule="evenodd" d="M28.0 0.0 L27.5 5.2 L36.1 11.7 L30.3 23.0 L20.0 19.6 L14.0 24.2 L9.2 26.4 L7.9 37.2 L-4.8 37.7 L-7.0 27.1 L-14.0 24.2 L-18.3 21.2 L-28.2 25.4 L-35.0 14.7 L-27.0 7.5 L-28.0 0.0 L-27.5 -5.2 L-36.1 -11.7 L-30.3 -23.0 L-20.0 -19.6 L-14.0 -24.2 L-9.2 -26.4 L-7.9 -37.2 L4.8 -37.7 L7.0 -27.1 L14.0 -24.2 L18.3 -21.2 L28.2 -25.4 L35.0 -14.7 L27.0 -7.5Z M10 0 A10 10 0 1 0 -10 0 A10 10 0 1 0 10 0Z"><animateTransform attributeName="transform" type="rotate" from="20" to="-340" dur="5s" repeatCount="indefinite"/></path>
+        </g>
+      </g>
+      <circle class="machine-rim" cx="240" cy="186" r="56"/>
+      <text class="machine-plate" x="240" y="272" text-anchor="middle">YOUR SYSTEM</text>
+      {% for i in range(3) %}
+      <circle class="machine-light{{ ' machine-light-go' if i == 2 }}" cx="{{ 220 + i * 20 }}" cy="298" r="5" opacity=".3">
+        <animate attributeName="opacity" values=".3;1;.3" dur="1.2s" begin="{{ '%.1fs' % (i * 0.4) }}" repeatCount="indefinite"/>
+      </circle>
+      {% endfor %}
+      <text class="reel-cap" x="240" y="452" text-anchor="middle">{{ reel[0][1] }}</text>
     </g>
 
-    {# the packer #}
-    <g transform="rotate(-1.5 240 42)">
-      <rect class="paper" x="150" y="10" width="180" height="64" rx="6"/>
-      <text class="n-lbl" x="166" y="36">{{ rows[0][0] }}</text>
-      <text class="n-val" x="166" y="60" opacity=".35">{{ rows[0][1] }}{{ once('opacity', '.35;1;1', '0;.06;1') }}</text>
+    {# ======================= 2. connect ======================= #}
+    {% set hub = (240, 200) %}
+    {% set nodes = [
+      ('i-cart', 'Shop', 240, 54), ('i-box', 'Stock', 370, 126), ('i-book', 'Books', 370, 276),
+      ('i-truck', 'Shipping', 240, 346), ('i-user', 'Customers', 110, 276), ('i-mail', 'Email', 110, 126),
+    ] %}
+    <g class="scene" data-scene="1" aria-hidden="true">
+      <animate id="go1" attributeName="visibility" values="visible" dur="0.01s" begin="indefinite"/>
+      {% for icon, label, x, y in nodes %}
+      <path class="wire" d="M{{ x }} {{ y }} L{{ hub[0] }} {{ hub[1] }}" pathLength="1">{{ enter('go1', 'stroke-dashoffset', '1;0', '0.7s', '%.2fs' % (loop.index0 * 0.08)) }}</path>
+      {% endfor %}
+      {% for icon, label, x, y in nodes %}
+      {% set begin = '%.2fs' % (loop.index0 * 0.32) %}
+      <circle class="pulse {{ 'pulse-in' if loop.index is odd else 'pulse-out' }}" r="5" opacity="0">
+        <animateMotion path="{{ 'M%d %d L%d %d' % (x, y, hub[0], hub[1]) if loop.index is odd else 'M%d %d L%d %d' % (hub[0], hub[1], x, y) }}" dur="1.9s" begin="{{ begin }}" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;.15;.85;1" dur="1.9s" begin="{{ begin }}" repeatCount="indefinite"/>
+      </circle>
+      {% endfor %}
+      <circle class="hub-ring" cx="{{ hub[0] }}" cy="{{ hub[1] }}" r="60" opacity="0">
+        <animate attributeName="r" values="60;104" dur="2.4s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values=".55;0" dur="2.4s" repeatCount="indefinite"/>
+      </circle>
+      <circle class="hub" cx="{{ hub[0] }}" cy="{{ hub[1] }}" r="60"/>
+      <use class="hub-icon" href="#i-svc-custom-web-apps" x="{{ hub[0] - 21 }}" y="{{ hub[1] - 32 }}" width="42" height="42"/>
+      <text class="hub-lbl" x="{{ hub[0] }}" y="{{ hub[1] + 28 }}" text-anchor="middle">YOUR SYSTEM</text>
+      {% for icon, label, x, y in nodes %}
+      <g class="node">
+        {{ enter('go1', 'opacity', '0;1', '0.5s', '%.2fs' % (0.25 + loop.index0 * 0.08)) }}
+        <circle cx="{{ x }}" cy="{{ y }}" r="31"/>
+        <use href="#{{ icon }}" x="{{ x - 14 }}" y="{{ y - 14 }}" width="28" height="28"/>
+        <text class="node-lbl" x="{{ x }}" y="{{ y + 50 }}" text-anchor="middle">{{ label }}</text>
+      </g>
+      {% endfor %}
+      <text class="reel-cap" x="240" y="452" text-anchor="middle">{{ reel[1][1] }}</text>
     </g>
 
-    {# the app we build: the focal point #}
-    <rect class="ring" x="120" y="128" width="240" height="150" rx="12" opacity="0">
-      {{ once('opacity', '0;0;.7;0;0', '0;.24;.26;.46;1') }}
-      {{ once('stroke-width', '2;2;2;30;30', '0;.24;.26;.46;1') }}
-    </rect>
-    <g transform="rotate(0.8 240 203)">
-      <rect class="app" x="120" y="128" width="240" height="150" rx="12"/>
-      <path class="app-bar" d="M120 154 C190 153.4 290 154.6 360 154"/>
-      <circle class="app-dot" cx="137" cy="141" r="3.6"/><circle class="app-dot" cx="150" cy="141" r="3.6"/><circle class="app-dot" cx="163" cy="141" r="3.6"/>
-      <text class="app-name" x="240" y="214" text-anchor="middle">Your own app</text>
-      <text class="app-sub" x="240" y="243" text-anchor="middle">talks to all of it</text>
-    </g>
-    <use href="#seal" x="326" y="232" width="60" height="60" transform="rotate(-10 356 262)"/>
+    {# ======================= 3. save time: the race ======================= #}
+    <g class="scene" data-scene="2" aria-hidden="true">
+      <animate id="go2" attributeName="visibility" values="visible" dur="0.01s" begin="indefinite"/>
+      <text class="race-head" x="440" y="62" text-anchor="end">JOBS DONE</text>
 
-    {# what everyone gets #}
-    {% for n in notes %}
-    <g transform="rotate({{ n.rot }} {{ n.x + 100 }} {{ n.y + 34 }})">
-      <rect class="paper" x="{{ n.x }}" y="{{ n.y }}" width="200" height="68" rx="6"/>
-      <text class="n-lbl" x="{{ n.x + 16 }}" y="{{ n.y + 27 }}">{{ rows[loop.index][0] }}</text>
-      <text class="n-val" x="{{ n.x + 16 }}" y="{{ n.y + 52 }}" opacity=".35">{{ rows[loop.index][1] }}{{ once('opacity', '.35;.35;1;1', '0;%s;%s;1' % (n.t2, n.t2 + 0.04)) }}</text>
-      <path class="tick" d="M{{ n.x + 166 }} {{ n.y + 20 }} l6 7 l14 -17" pathLength="1">{{ once('stroke-dashoffset', '1;1;0;0', '0;%s;%s;1' % (n.t2, n.t2 + 0.07)) }}</path>
-    </g>
-    {% endfor %}
+      {# lane 1: by hand, one job crawling along #}
+      <use class="race-icon race-icon-slow" href="#i-user" x="40" y="80" width="22" height="22"/>
+      <text class="race-lbl" x="70" y="97">By hand</text>
+      <rect class="race-track" x="40" y="112" width="320" height="56" rx="14"/>
+      <g class="race-job race-job-slow" transform="translate(316 140)">
+        <animateMotion path="M-256 0 H0" dur="5.2s" begin="go2.begin" fill="freeze"/>
+        <rect x="-22" y="-16" width="44" height="32" rx="5"/>
+        <path d="M-14 -7 h20 M-14 0 h28 M-14 7 h14"/>
+      </g>
+      <g class="race-sweat" transform="translate(300 118)">
+        <path d="M0 0 q-5 8 0 11 q5 -3 0 -11 Z"><animate attributeName="opacity" values="0;1;0" dur="1.4s" repeatCount="indefinite"/></path>
+      </g>
+      <text class="race-count race-count-slow" x="410" y="153" text-anchor="middle" data-tally="0.2">1</text>
 
-    {# asides, in hand #}
-    <g class="hand" opacity="0">
-      {{ once('opacity', '0;0;1;1', '0;.08;.18;1') }}
-      <text x="346" y="34">one scan,</text>
-      <text x="354" y="60">that's it.</text>
-      <path d="M368 72 C360 86 346 84 338 72 M338 72 L339 81 M338 72 L346 75"/>
+      {# lane 2: automated, a stream of jobs #}
+      <use class="race-icon race-icon-fast" href="#i-svc-business-automation" x="40" y="214" width="22" height="22"/>
+      <text class="race-lbl race-lbl-fast" x="70" y="231">Automated</text>
+      <rect class="race-track race-track-fast" x="40" y="246" width="320" height="56" rx="14"/>
+      {% for i in range(4) %}
+      <g class="race-job race-job-fast" opacity="0">
+        <animateMotion path="M72 274 H322" dur="1.2s" begin="{{ '%.2fs' % (-i * 0.3) }}" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;.12;.86;1" dur="1.2s" begin="{{ '%.2fs' % (-i * 0.3) }}" repeatCount="indefinite"/>
+        <path class="race-streak" d="M-60 -6 H-26 M-50 6 H-26"/>
+        <rect x="-22" y="-16" width="44" height="32" rx="5"/>
+        <path class="race-tick" d="M-8 0 l5 5 10 -11"/>
+      </g>
+      {% endfor %}
+      {# the finish line both lanes run to #}
+      <path class="race-finish" d="M352 104 V310"/>
+      <path class="race-flag" d="M352 104 h22 l-6 7 6 7 h-22 Z"/>
+      <text class="race-count race-count-fast" x="410" y="287" text-anchor="middle" data-tally="6.4">34</text>
+
+      <text class="race-note" x="240" y="358" text-anchor="middle">same work, same checks, a fraction of the time</text>
+      <text class="reel-cap" x="240" y="452" text-anchor="middle">{{ reel[2][1] }}</text>
     </g>
-    <g class="hand" opacity="0">
-      {{ once('opacity', '0;0;1;1', '0;.26;.36;1') }}
-      <text x="4" y="102">we build this,</text>
-      <text x="14" y="128">you own it.</text>
-      <path d="M62 140 C68 164 90 180 114 178 M114 178 L105 174 M114 178 L107 184"/>
-    </g>
-    <g class="hand hand-end" opacity="0">
-      {{ once('opacity', '0;0;1;1', '0;.72;.86;1') }}
-      <text x="240" y="572" text-anchor="middle">…and nobody retypes a thing.</text>
+
+    {# ======================= 4. grow: the margin opens up ======================= #}
+    {% set rev = 'M60 262 C160 250 270 190 430 86' %}
+    {% set cost = 'M60 284 C160 290 270 304 430 322' %}
+    <g class="scene" data-scene="3" aria-hidden="true">
+      <animate id="go3" attributeName="visibility" values="visible" dur="0.01s" begin="indefinite"/>
+      {% for gy in [110, 180, 250, 320] %}<line class="grid" x1="56" y1="{{ gy }}" x2="440" y2="{{ gy }}"/>{% endfor %}
+      <line class="axis" x1="56" y1="350" x2="440" y2="350"/>
+      <g clip-path="url(#reel-reveal)">
+        <path class="margin-area" d="M60 262 C160 250 270 190 430 86 L430 322 C270 304 160 290 60 284 Z"/>
+        <path class="line-rev" d="{{ rev }}"/>
+        <path class="line-cost" d="{{ cost }}"/>
+      </g>
+      <text class="line-lbl" x="60" y="242">Revenue</text>
+      <text class="line-lbl line-lbl-cost" x="60" y="312">Costs</text>
+      {# waste dropping out under the cost line #}
+      {% for x, d in [(150, '0s'), (232, '-0.8s'), (314, '-1.6s')] %}
+      <g class="waste" opacity="0">
+        <animateMotion path="M{{ x }} 316 L{{ x + 6 }} 352" dur="2.4s" begin="{{ d }}" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0;.9;0" keyTimes="0;.25;1" dur="2.4s" begin="{{ d }}" repeatCount="indefinite"/>
+        <rect x="-9" y="-9" width="18" height="18" rx="4"/><path d="M-4 -4 L4 4 M4 -4 L-4 4"/>
+      </g>
+      {% endfor %}
+      {# the margin, measured where it is widest #}
+      <g class="margin-mark" opacity="1">
+        {{ enter('go3', 'opacity', '0;1', '0.4s', '1.5s') }}
+        <path d="M404 106 V300 M396 116 L404 104 L412 116 M396 290 L404 302 L412 290"/>
+        <text x="392" y="210" text-anchor="end">your margin</text>
+      </g>
+      <circle class="rider rider-rev" r="7" opacity="0">
+        <animateMotion path="{{ rev }}" dur="3s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;.1;.9;1" dur="3s" repeatCount="indefinite"/>
+      </circle>
+      <circle class="rider rider-cost" r="6" opacity="0">
+        <animateMotion path="{{ cost }}" dur="3s" begin="-1.5s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;.1;.9;1" dur="3s" begin="-1.5s" repeatCount="indefinite"/>
+      </circle>
+      <text class="reel-cap" x="240" y="452" text-anchor="middle">{{ reel[3][1] }}</text>
     </g>
   </svg>
+  <div class="reel-tabs" hidden>
+    {% for r in reel %}
+    <button type="button" class="reel-tab" aria-pressed="{{ 'true' if loop.first else 'false' }}"><span class="reel-bar" aria-hidden="true"><i></i></span><span class="reel-label">{{ r[0] }}</span></button>
+    {% endfor %}
   </div>
-  {% if hero_chip %}
-  <figcaption><a class="flow-caption" href="/work/{{ hc.slug }}"><span>{{ hero_chip.value }} {{ hero_chip.label }}</span> See how it works →</a></figcaption>
-  {% endif %}
+  </div>
+  <figcaption><a class="flow-caption" href="/work">See what we've built →</a></figcaption>
 </figure>

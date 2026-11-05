@@ -34,6 +34,12 @@ def x(name, label, type="text", help="", options=None):
 
 _LIST_HELP = "One per line. Blank lines are ignored."
 
+SECTOR_ICONS = [
+    ("", "None"), ("cart", "Cart"), ("truck", "Truck"), ("box", "Box"),
+    ("scale", "Scales"), ("briefcase", "Briefcase"), ("leaf", "Leaf"),
+    ("chart", "Chart"), ("gear", "Gear"),
+]
+
 # Fields shared by the three fixed lookup groups.
 _SECTION_FIELDS = [
     f("subtitle", "Eyebrow", help="The small mono label above the heading. Leave blank to hide it."),
@@ -47,7 +53,7 @@ GROUPS = [
     # ------------------------------------------------------------ home
     {
         "key": "home_proof", "page": "Home", "label": "Hero proof chips",
-        "desc": "The three short claims under the hero buttons.",
+        "desc": "The three short claims under the hero buttons. Shown only when no founder name is set (Site content), since the founder strip carries the proof.",
         "single": "proof",
         "fields": [f("items", "Chips", "textarea", _LIST_HELP)],
     },
@@ -110,7 +116,27 @@ GROUPS = [
         "desc": "The tile grid linking into the Industries page.",
         "key_label": "Anchor",
         "key_help": "The id of the section on /industries this tile jumps to.",
-        "fields": [f("title", "Industry name"), f("subtitle", "Note")],
+        "fields": [f("title", "Industry name"), f("subtitle", "Note"),
+                   x("icon", "Icon", "select", options=SECTOR_ICONS)],
+    },
+    {
+        "key": "home_before_after", "page": "Home", "label": "What changes strip",
+        "desc": "The three tiles under the stat band: one job, how it ran by hand, how it runs now, and one number.",
+        "help": "Take the number from the case study you link to, so the homepage never "
+                "states a figure the case study does not back up. The heading is under "
+                "Global > Section headings (home_before_after); the call to action under "
+                "the tiles is home_before_after_cta.",
+        "fields": [
+            x("job", "Job", help="Small label at the top, e.g. Shipping desk."),
+            x("icon", "Icon", "select", options=SECTOR_ICONS),
+            f("title", "Outcome headline", help="What is true now, in a few words."),
+            f("subtitle", "Before", "textarea", help="How it ran by hand. One sentence."),
+            f("body", "Now", "textarea", help="How it runs now. One sentence."),
+            x("value", "Number", help="Short, set large, e.g. 0, 5, 2."),
+            x("label", "What the number counts"),
+            f("link_url", "Case study link"),
+            f("link_label", "Link label"),
+        ],
     },
     {
         "key": "home_tech", "page": "Home", "label": "Technology marquee",
@@ -200,6 +226,8 @@ GROUPS = [
         "fields": _SECTION_FIELDS,
         "rows": {
             "home_services": ("Home · Services band", ""),
+            "home_before_after": ("Home · What changes strip", ""),
+            "home_before_after_cta": ("Home · What changes call to action", "The line, note and button under the three tiles."),
             "home_showcase": ("Home · Selected work", ""),
             "home_ai": ("Home · AI band", ""),
             "home_ai_cascade": ("Home · AI cascade", "Heading and note above the stage diagram."),

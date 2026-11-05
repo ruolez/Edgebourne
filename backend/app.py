@@ -8,6 +8,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import auth
 import config
 import db
+import hero_image
 import money
 import portal
 import public
@@ -91,6 +92,10 @@ def create_app():
         value = settings_all().get(key)
         return value if value not in (None, "") else default
 
+    def founder_photo():
+        """The founder's square photo set, or None (the templates show initials)."""
+        return hero_image.load_avatar(setting("founder_photo", ""))
+
     def content_blocks():
         """Every published block, indexed both ways, fetched once per request.
 
@@ -146,6 +151,7 @@ def create_app():
     app.add_template_global(setting, "setting")
     app.add_template_global(blocks, "blocks")
     app.add_template_global(block, "block")
+    app.add_template_global(founder_photo, "founder_photo")
     app.add_template_filter(lines, "lines")
 
     @app.context_processor

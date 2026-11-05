@@ -14,7 +14,7 @@
     </div>
     <div class="field-row">
       {{ text_input('hero_title', 'Headline line 1', v.hero_title) }}
-      {{ text_input('hero_title_accent', 'Headline line 2 (teal)', v.hero_title_accent) }}
+      {{ text_input('hero_title_accent', 'Headline line 2 (teal, highlighted)', v.hero_title_accent) }}
     </div>
     {{ textarea('hero_sub', 'Sub-copy', v.hero_sub, rows=3) }}
     <div class="field-row">
@@ -22,7 +22,7 @@
       {{ text_input('hero_cta_primary_url', 'Primary button URL', v.hero_cta_primary_url) }}
     </div>
     <div class="field-row">
-      {{ text_input('hero_cta_secondary', 'Secondary button label', v.hero_cta_secondary) }}
+      {{ text_input('hero_cta_secondary', 'Secondary button label', v.hero_cta_secondary, help='The low-commitment option, e.g. a written workflow review. Link it to /contact?topic=review to pre-select that on the form.') }}
       {{ text_input('hero_cta_secondary_url', 'Secondary button URL', v.hero_cta_secondary_url) }}
     </div>
     {{ text_input('hero_cta_note', 'Line under the buttons', v.hero_cta_note,
@@ -30,32 +30,66 @@
   </section>
 
   <section class="panel">
-    <div class="panel-head"><h2>Homepage hero sketch</h2></div>
-    <p class="help">The right side of the hero is a drawing of one order going through the app we build:
-      the scan at the top, then four notes ticked off underneath.</p>
-    {{ textarea('hero_sketch', 'The five notes', v.hero_sketch, rows=5,
-       help='One per line, written as "Label: result". Line 1 is the scan; lines 2 to 5 are what lands. Keep each result to about 20 characters so it fits the note. A missing line falls back to the original wording.') }}
+    <div class="panel-head"><h2>You, on the site</h2></div>
+    <p class="help">A real person next to the buttons is what makes a visitor trust a small firm.
+      The name and photo appear in the hero, in the closing call to action on every page, and on About.
+      Without a photo the site shows your initials.</p>
+    <div class="field-row">
+      {{ text_input('founder_name', 'Your name', v.founder_name, help='First name is enough. Leave blank to hide the person everywhere.') }}
+      {{ text_input('founder_role', 'Your role', v.founder_role) }}
+    </div>
+    {{ text_input('hero_trust_line', 'Line beside your photo in the hero', v.hero_trust_line,
+       help='One sentence of proof. If a testimonial is approved, its first sentence shows under it.') }}
+    {{ text_input('cta_signoff', 'Sign-off in the closing call to action', v.cta_signoff,
+       help='Written in the first person, e.g. "I read every message myself and reply within one business day."') }}
+    <div class="hero-admin">
+      <div class="hero-admin-preview">
+        {% if founder %}
+        <img src="{{ founder.sizes[-1].src }}" alt="Current founder photo" width="{{ founder.sizes[-1].w }}" height="{{ founder.sizes[-1].h }}" style="border-radius:50%;max-width:160px">
+        {% else %}
+        <span class="hero-admin-empty">No photo, initials are showing</span>
+        {% endif %}
+      </div>
+      <div>
+        <div class="field">
+          <label for="f-founder_photo_file">{{ 'Replace photo' if founder else 'Upload photo' }}</label>
+          <input type="file" id="f-founder_photo_file" name="founder_photo_file" accept="image/jpeg,image/png,image/webp">
+          <p class="help">A head-and-shoulders photo, JPEG, PNG or WebP, at least 300&nbsp;px on its short side.
+            It is cropped to a centred square and shown in a circle.</p>
+        </div>
+        {% if founder %}{{ checkbox('founder_photo_remove', 'Remove the photo and show initials') }}{% endif %}
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Homepage hero animation</h2></div>
+    <p class="help">The right side of the hero is a short animated reel in four parts: gears doing the
+      busywork, your systems connected to one hub, time coming back, and a growth chart. Each part has a
+      tab name and one handwritten line under the drawing.</p>
+    {{ textarea('hero_scenes', 'Tabs and captions', v.hero_scenes, rows=4,
+       help='Four lines, in order, written as "Tab: caption", e.g. "Automate: the busywork runs itself". Keep tabs to one or two words and captions to about 28 characters. A missing line falls back to the original wording.') }}
     <div class="field">
-      <label for="f-hero_case_slug">Case study under the sketch</label>
+      <label for="f-hero_case_slug">Featured case study</label>
       <select id="f-hero_case_slug" name="hero_case_slug">
         {% for c in cases %}
         <option value="{{ c.slug }}" {% if c.slug == v.hero_case_slug %}selected{% endif %}>{{ c.title }}</option>
         {% endfor %}
       </select>
-      <p class="help">Its first metric becomes the label under the sketch, linking to the case study.</p>
+      <p class="help">Its screenshot shows on the large Custom apps tile, and in front of the photo when a photo replaces the animation.</p>
     </div>
 
     <details class="hero-photo-opt"{% if hero %} open{% endif %}>
-      <summary>Use a photo instead (optional)</summary>
-      <p class="help">A photo replaces the sketch, with the case study's screenshot in front of it.
-        Remove the photo and the sketch comes back.</p>
+      <summary>Use a photo instead of the animation (optional)</summary>
+      <p class="help">A photo replaces the animation, with the case study's screenshot in front of it.
+        Remove the photo and the animation comes back.</p>
       <div class="hero-admin">
         <div class="hero-admin-preview">
           {% if hero %}
           <img src="{{ hero.portrait[0].src }}" alt="Current hero photo, desktop crop" width="{{ hero.portrait[0].w }}" height="{{ hero.portrait[0].h }}">
           <img src="{{ hero.landscape[0].src }}" alt="Current hero photo, phone crop" width="{{ hero.landscape[0].w }}" height="{{ hero.landscape[0].h }}">
           {% else %}
-          <span class="hero-admin-empty">No photo, the sketch is showing</span>
+          <span class="hero-admin-empty">No photo, the animation is showing</span>
           {% endif %}
         </div>
         <div>
@@ -77,7 +111,7 @@
           </div>
           {{ text_input('hero_image_alt', 'Describe the photo (alt text)', v.hero_image_alt,
              help='Read aloud by screen readers. Say what is in the picture, in one sentence.') }}
-          {% if hero %}{{ checkbox('hero_image_remove', 'Remove the photo and show the sketch again') }}{% endif %}
+          {% if hero %}{{ checkbox('hero_image_remove', 'Remove the photo and show the animation again') }}{% endif %}
         </div>
       </div>
     </details>

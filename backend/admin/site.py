@@ -14,7 +14,8 @@ FIELDS = [
     "hero_title", "hero_title_accent", "hero_sub",
     "hero_cta_primary", "hero_cta_primary_url",
     "hero_cta_secondary", "hero_cta_secondary_url",
-    "hero_cta_note", "hero_sketch", "hero_image_alt", "hero_case_slug",
+    "hero_cta_note", "hero_scenes", "hero_image_alt", "hero_case_slug",
+    "founder_name", "founder_role", "hero_trust_line", "cta_signoff",
     "seo_default_title", "seo_default_description",
     "contact_email", "phone", "social_linkedin", "social_github",
     # Shown on /process and /contact. Blank hides the pricing figure entirely
@@ -35,6 +36,7 @@ def site():
         v=values,
         cases=cases,
         hero=hero_image.load(db.get_setting("hero_image", "")),
+        founder=hero_image.load_avatar(db.get_setting("founder_photo", "")),
         focus_options=hero_image.FOCUS,
     )
 
@@ -47,6 +49,7 @@ def site_save():
     db.set_setting("about_md", about_md)
     db.set_setting("about_html", content.render_md(about_md))
     _save_hero_image()
+    _save_founder_photo()
     flash("Site content saved.", "success")
     return redirect(url_for("admin.site"))
 
@@ -85,3 +88,24 @@ def _save_hero_image():
             return
         hero_image.delete_cut(current)
         db.set_setting("hero_image", json.dumps(info))
+
+
+def _save_founder_photo():
+    """Upload or remove the founder photo. Without one the site shows initials."""
+    current = hero_image.load_avatar(db.get_setting("founder_photo", ""))
+    upload = request.files.get("founder_photo_file")
+
+    if request.form.get("founder_photo_remove"):
+        hero_image.delete_cut(current, keep_master=False)
+        db.set_setting("founder_photo", "")
+        return
+
+    if upload and upload.filename:
+        try:
+            master, _ = hero_image.save_master(upload, min_short=hero_image.AVATAR_MIN_SIDE)
+        except ValueError as e:
+            flash(f"Founder photo not changed: {e}", "error")
+            return
+        info = hero_image.cut_avatar(master)
+        hero_image.delete_cut(current, keep_master=False)
+        db.set_setting("founder_photo", json.dumps(info))

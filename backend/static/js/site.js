@@ -5,6 +5,8 @@
    2  scroll reveal
    3  work-index industry filter
    4  case-study gallery lightbox
+   5  numbers count up when they scroll in
+   6  hero reel: four animated scenes with story-style tabs
 */
 (function () {
   'use strict';
@@ -12,13 +14,6 @@
   var reduceMotion = window.matchMedia
     ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
     : false;
-
-  /* Hero flow diagram: hold the finished state instead of looping. */
-  if (reduceMotion) {
-    Array.prototype.forEach.call(document.querySelectorAll('svg.flow'), function (svg) {
-      if (svg.pauseAnimations) { svg.pauseAnimations(); svg.setCurrentTime(6); }
-    });
-  }
 
   /* ---------- 1. mobile navigation ---------- */
   (function nav() {
@@ -171,5 +166,127 @@
         close.focus();
       }
     });
+  })();
+  /* ---------- 5. count-up numbers ----------
+     "100+", "2 clicks", "100%": the leading integer counts up from zero, the
+     rest stays as written. Zero, decimals and words are left alone. The real
+     text is in the HTML, so nothing changes for readers without JS. */
+  (function countUp() {
+    var els = document.querySelectorAll('[data-count]');
+    if (reduceMotion || !els.length || !('IntersectionObserver' in window)) return;
+
+    function run(el) {
+      var m = /^(\D*)(\d{1,6})(?![.,]\d)(.*)$/.exec(el.textContent.trim());
+      if (!m || +m[2] < 2) return;
+      var to = +m[2], start = null, dur = Math.min(1400, 600 + to * 6);
+      el.style.minWidth = el.offsetWidth + 'px';
+      function frame(t) {
+        if (start === null) start = t;
+        var p = Math.min(1, (t - start) / dur);
+        var eased = 1 - Math.pow(1 - p, 3);
+        el.textContent = m[1] + Math.round(to * eased) + m[3];
+        if (p < 1) requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    }
+
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        io.unobserve(entry.target);
+        run(entry.target);
+      });
+    }, { threshold: 0.6 });
+    els.forEach(function (el) { io.observe(el); });
+  })();
+  /* ---------- 6. hero reel ----------
+     Four scenes in one SVG; one shows at a time. The active tab's bar fills
+     over --reel-dur and its animationend moves the reel on, so pausing is just
+     pausing that CSS animation (hover, focus, off screen, hidden tab). Showing
+     a scene restarts its entrance (begin="indefinite" SMIL, go0..go3).
+     Reduced motion: SMIL is paused, nothing advances on its own, the tabs
+     still switch scenes and every scene shows its finished state. */
+  (function heroReel() {
+    var reel = document.querySelector('[data-reel]');
+    if (!reel) return;
+    var svg = reel.querySelector('svg.reel-art');
+    var scenes = reel.querySelectorAll('.scene');
+    var tabs = reel.querySelectorAll('.reel-tab');
+    var bar = reel.querySelector('.reel-tabs');
+    if (!svg || scenes.length < 2 || tabs.length !== scenes.length) return;
+    var current = 0, hovered = false, focused = false, onScreen = true;
+    var tallyRun = 0;
+
+    /* [data-tally] counters count up from zero at their rate (per second)
+       while their scene shows; the HTML holds the finished figure. */
+    function runTallies(scene) {
+      var els = scene.querySelectorAll('[data-tally]');
+      if (!els.length || reduceMotion) return;
+      var run = ++tallyRun, start = null;
+      function tick(t) {
+        if (run !== tallyRun) return;
+        if (start === null) start = t;
+        var sec = (t - start) / 1000;
+        els.forEach(function (el) {
+          el.textContent = String(Math.floor(sec * parseFloat(el.getAttribute('data-tally'))));
+        });
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    }
+
+    if (bar) bar.hidden = false;
+    if (reduceMotion && svg.pauseAnimations) svg.pauseAnimations();
+
+    function show(i) {
+      current = i;
+      scenes.forEach(function (sc, k) {
+        var on = k === i;
+        sc.classList.toggle('is-on', on);
+        if (on) sc.removeAttribute('aria-hidden'); else sc.setAttribute('aria-hidden', 'true');
+      });
+      tabs.forEach(function (t, k) {
+        t.setAttribute('aria-pressed', k === i ? 'true' : 'false');
+        t.classList.toggle('is-done', k < i);
+        // restart the fill: drop the animation for a frame, then let it run again
+        var fill = t.querySelector('.reel-bar i');
+        if (fill && k === i) { fill.style.animation = 'none'; void fill.offsetWidth; fill.style.animation = ''; }
+      });
+      tallyRun++;
+      runTallies(scenes[i]);
+      if (!reduceMotion) {
+        var go = svg.getElementById ? svg.getElementById('go' + i) : null;
+        if (go && go.beginElement) { try { go.beginElement(); } catch (e) {} }
+      }
+    }
+
+    function sync() {
+      var running = !reduceMotion && onScreen && !document.hidden;
+      reel.classList.toggle('is-playing', !reduceMotion);
+      reel.classList.toggle('is-paused', !running || hovered || focused);
+      if (reduceMotion || !svg.pauseAnimations) return;
+      if (running) svg.unpauseAnimations(); else svg.pauseAnimations();
+    }
+
+    tabs.forEach(function (t, k) {
+      t.addEventListener('click', function () { show(k); });
+      var fill = t.querySelector('.reel-bar i');
+      if (fill) fill.addEventListener('animationend', function () {
+        if (k === current) show((current + 1) % scenes.length);
+      });
+    });
+    reel.addEventListener('mouseenter', function () { hovered = true; sync(); });
+    reel.addEventListener('mouseleave', function () { hovered = false; sync(); });
+    reel.addEventListener('focusin', function () { focused = true; sync(); });
+    reel.addEventListener('focusout', function () { focused = false; sync(); });
+    document.addEventListener('visibilitychange', sync);
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (entries) {
+        onScreen = entries[0].isIntersecting;
+        sync();
+      }).observe(reel);
+    }
+    show(0);
+    sync();
   })();
 })();

@@ -1,12 +1,12 @@
 {% extends "base.html" %}
+{% from "public/_founder.html" import avatar %}
 {% if hero_photo %}{% set og_image = hero_photo.og %}{% elif hero_case and hero_case.cover_image %}{% set og_image = hero_case.cover_image %}{% endif %}
 {% block content %}
 
 {# ---------- hero ----------
-   Copy on the left; on the right, a sketch of what we build: one scan runs
-   through the client's own app and lands as finished notes (wording in
-   Admin > Site content). An uploaded photo replaces the sketch, with a
-   case-study screenshot in front of it. The chip is the chosen case study's
+   Copy on the left; on the right, an animated reel of what we do: automate,
+   connect, save time, grow (tabs and captions in Admin > Site content). An
+   uploaded photo replaces the reel, with a case-study screenshot in front of it. The chip is the chosen case study's
    first metric, so the hero never states a figure the case study does not
    back up. #}
 {% set hc = hero_case %}
@@ -20,16 +20,26 @@
   <div class="wrap hero-inner">
     <div class="hero-copy">
       <p class="eyebrow eyebrow-hero"><strong>{{ setting('hero_eyebrow_strong', 'CUSTOM SOLUTIONS') }}</strong> · {{ setting('hero_eyebrow', 'APPS · INTEGRATION · AUTOMATION · AI') }}</p>
-      <h1>{{ setting('hero_title', 'Run the business.') }}<br><span class="accent">{{ setting('hero_title_accent', "We'll run the systems.") }}</span></h1>
+      <h1>{{ setting('hero_title', 'Run the business.') }}<br><span class="accent marker">{{ setting('hero_title_accent', "We'll run the systems.") }}</span></h1>
       <p class="lead lead-hero">{{ setting('hero_sub', 'Custom web and mobile apps, automation and integration for small and mid-size companies — built to fit the way you already work.') }}</p>
       <div class="btn-row">
-        <a class="btn btn-primary btn-lg" href="{{ setting('hero_cta_primary_url', '/contact') }}">{{ setting('hero_cta_primary', 'Book a call') }}</a>
-        <a class="btn btn-outline btn-lg" href="{{ setting('hero_cta_secondary_url', '/work') }}">{{ setting('hero_cta_secondary', 'See our work') }}</a>
+        <a class="btn btn-primary btn-lg btn-go" href="{{ setting('hero_cta_primary_url', '/contact') }}">{{ setting('hero_cta_primary', 'Book my free 30-min call') }}<svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+        <a class="btn btn-outline btn-lg" href="{{ setting('hero_cta_secondary_url', '/contact?topic=review') }}">{{ setting('hero_cta_secondary', 'Get a free workflow review') }}</a>
       </div>
       {% if setting('hero_cta_note') %}
       <p class="hero-note"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ setting('hero_cta_note') }}</p>
       {% endif %}
-      <svg class="stream stream-hero" viewBox="0 0 350 30"><use href="#stream"/></svg>
+      {% if setting('founder_name') %}
+      {% set tq = testimonials[0] if testimonials else None %}
+      <div class="hero-trust">
+        {{ avatar(52, 'hero-avatar') }}
+        <div class="hero-trust-copy">
+          <p class="hero-trust-who"><strong>{{ setting('founder_name') }}</strong>{% if setting('founder_role') %} · {{ setting('founder_role') }}{% endif %}</p>
+          <p class="hero-trust-line">{{ setting('hero_trust_line', 'Over 100 systems running in warehouses, stores and law firms.') }}</p>
+          {% if tq %}<p class="hero-trust-quote">&ldquo;{{ tq.quote.split('. ')[0].rstrip('.') }}.&rdquo; <span>{{ tq.author_role }}</span></p>{% endif %}
+        </div>
+      </div>
+      {% endif %}
     </div>
 
     {% if not photo_mode %}
@@ -67,7 +77,8 @@
     {% endif %}
 
     {% set proof = block('home_proof', 'proof')['items'] | lines %}
-    {% if proof %}
+    {# The founder strip carries the proof when a founder is set; the chips stand in without one. #}
+    {% if proof and not setting('founder_name') %}
     <ul class="proof-strip hero-proof">
       {% for p in proof %}<li>{{ p }}</li>
       {% endfor %}
@@ -78,16 +89,65 @@
 
 {# ---------- stats band ---------- #}
 {% if blocks('home_stats') %}
-<section class="section stats-band section-dark">
+<section class="section stats-band section-dark section-deep">
   <div class="wrap">
     <div class="stats-grid" data-reveal>
       {% for s in blocks('home_stats') %}
       <div class="stat" style="--i:{{ loop.index0 }}">
-        <span class="stat-value">{{ s.title }}</span>
+        <span class="stat-value" data-count>{{ s.title }}</span>
         <span class="stat-label">{{ s.subtitle }}</span>
       </div>
       {% endfor %}
     </div>
+  </div>
+</section>
+{% endif %}
+
+{# ---------- what changes ----------
+   One job per tile: the outcome, how it ran by hand, how it runs now, and one
+   figure taken from the case study the tile links to. #}
+{% if blocks('home_before_after') %}
+{% set h_ba = block('sections', 'home_before_after') %}
+{% set h_bac = block('sections', 'home_before_after_cta') %}
+<section class="section section-tint ba-band">
+  <div class="wrap">
+    <div class="section-head ba-head" data-reveal>
+      <p class="eyebrow">{{ h_ba.subtitle or 'WHAT CHANGES' }}</p>
+      <h2>{{ h_ba.title or "Your team stops doing the computer's job" }}</h2>
+      {% if h_ba and h_ba.body %}<p class="lead">{{ h_ba.body }}</p>{% endif %}
+    </div>
+    <div class="ba-grid" data-reveal>
+      {% for b in blocks('home_before_after') %}
+      <article class="ba-card" style="--i:{{ loop.index0 }}">
+        <div class="ba-top">
+          {% if b.extra.job %}
+          <p class="ba-job">{% if b.extra.icon %}<span class="icon-chip icon-chip-sm" aria-hidden="true"><svg><use href="#i-{{ b.extra.icon }}"/></svg></span>{% endif %}{{ b.extra.job }}</p>
+          {% endif %}
+          <h3 class="ba-title">{{ b.title }}</h3>
+          <ul class="ba-compare">
+            <li class="ba-was"><span class="ba-mark" aria-hidden="true"><svg><use href="#i-x"/></svg></span><span><span class="visually-hidden">Before: </span>{{ b.subtitle }}</span></li>
+            {% if b.body %}<li class="ba-now"><span class="ba-mark" aria-hidden="true"><svg><use href="#i-check"/></svg></span><span><span class="visually-hidden">Now: </span>{{ b.body }}</span></li>{% endif %}
+          </ul>
+        </div>
+        {% if b.extra.value %}
+        <a class="ba-proof" href="{{ b.link_url or '/work' }}">
+          <span class="ba-value" data-count>{{ b.extra.value }}</span>
+          <span class="ba-label">{{ b.extra.label }}</span>
+          <span class="ba-go">{{ b.link_label or 'Read the case study' }} <span aria-hidden="true">→</span></span>
+        </a>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% if h_bac %}
+    <div class="ba-cta" data-reveal>
+      <div>
+        <p class="ba-cta-title">{{ h_bac.title }}</p>
+        {% if h_bac.body %}<p class="ba-cta-body">{{ h_bac.body }}</p>{% endif %}
+      </div>
+      {% if h_bac.link_label %}<a class="btn btn-primary btn-lg btn-go" href="{{ h_bac.link_url or '/contact?topic=review' }}">{{ h_bac.link_label }}<svg aria-hidden="true"><use href="#i-arrow"/></svg></a>{% endif %}
+    </div>
+    {% endif %}
   </div>
 </section>
 {% endif %}
@@ -101,11 +161,15 @@
       <p class="eyebrow">{{ h_srv.subtitle or 'WHAT WE DO' }}</p>
       <h2>{{ h_srv.title or 'Software that fits how you already work' }}</h2>
     </div>
-    <div class="cards" data-reveal>
+    <div class="bento" data-reveal>
       {% for s in services %}
-      <a class="card card-link card-service" href="/services#{{ s.slug }}" style="--i:{{ loop.index0 }}">
+      <a class="card card-link card-service{{ ' bento-lead' if loop.first }}" href="/services#{{ s.slug }}" style="--i:{{ loop.index0 }}">
+        <span class="icon-chip{{ ' icon-chip-alt' if loop.index is even }}" aria-hidden="true"><svg><use href="#i-svc-{{ s.slug }}"/></svg></span>
         <h3>{{ s.title }}</h3>
         <p>{{ s.summary }}</p>
+        {% if loop.first and hc and (hc.cover_thumb or hc.cover_image) %}
+        <span class="bento-shot" aria-hidden="true"><img src="{{ hc.cover_thumb or hc.cover_image }}" alt="" loading="lazy" decoding="async" width="800" height="500"></span>
+        {% endif %}
         <span class="card-go" aria-hidden="true">→</span>
       </a>
       {% endfor %}
@@ -159,7 +223,89 @@
       </div>
     </article>
     {% endfor %}
-    <div class="section-more"><a class="btn btn-outline" href="{{ h_show.link_url or '/work' }}">{{ h_show.link_label or 'See all ten case studies' }}</a></div>
+    <div class="showcase-cta" data-reveal>
+      <p><strong>Recognise one of these?</strong> Tell us how yours runs today and we'll tell you what it would take.</p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href="{{ setting('hero_cta_primary_url', '/contact') }}">{{ setting('hero_cta_primary', 'Book my free 30-min call') }}</a>
+        <a class="btn btn-outline" href="{{ h_show.link_url or '/work' }}">{{ h_show.link_label or 'See all ten case studies' }}</a>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{# ---------- testimonials ---------- #}
+{% if testimonials %}
+{% set h_quo = block('sections', 'home_testimonials') %}
+<section class="section quotes-band">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <p class="eyebrow">{{ h_quo.subtitle or 'IN THEIR WORDS' }}</p>
+      <h2>{{ h_quo.title or "What it's like to work with us" }}</h2>
+    </div>
+    <div class="quote-grid" data-reveal>
+      {% for t in testimonials[:3] %}
+      <figure class="quote-card{{ ' quote-card-feature' if loop.first }}">
+        <span class="quote-mark" aria-hidden="true">&ldquo;</span>
+        <blockquote>{{ t.quote }}</blockquote>
+        <figcaption>
+          <span class="quote-avatar" aria-hidden="true">{{ t.author_role[:1] | upper }}</span>
+          <span class="quote-role">{{ t.author_role }}</span>
+          {% if t.industry %}<span class="quote-industry">{{ t.industry }}</span>{% endif %}
+        </figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{# ---------- process strip ----------
+   Step names must match /process exactly -- a visitor clicking through should
+   not meet a second, differently-named process. #}
+{% if blocks('home_process_steps') %}
+{% set h_proc = block('sections', 'home_process') %}
+<section class="section section-dark process-band">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <p class="eyebrow">{{ h_proc.subtitle or 'HOW IT GOES' }}</p>
+      <h2>{{ h_proc.title or 'Five steps, no surprises' }}</h2>
+    </div>
+    <ol class="process-strip" data-reveal>
+      {% for s in blocks('home_process_steps') %}
+      <li class="process-step" style="--i:{{ loop.index0 }}">
+        <span class="process-num">{{ '%02d' % loop.index }}</span>
+        <h3>{{ s.title }}</h3>
+        <p>{{ s.body }}</p>
+      </li>
+      {% endfor %}
+    </ol>
+    <div class="section-more btn-row">
+      <a class="btn btn-primary" href="{{ setting('hero_cta_primary_url', '/contact') }}">{{ setting('hero_cta_primary', 'Book a call') }}</a>
+      <a class="btn btn-outline-light" href="{{ h_proc.link_url or '/process' }}">{{ h_proc.link_label or 'See the full process' }}</a>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{# ---------- industries ---------- #}
+{% if blocks('home_sectors') %}
+{% set h_ind = block('sections', 'home_industries') %}
+<section class="section">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <p class="eyebrow">{{ h_ind.subtitle or 'WHO WE BUILD FOR' }}</p>
+      <h2>{{ h_ind.title or 'Industries we already know' }}</h2>
+    </div>
+    <div class="industry-grid" data-reveal>
+      {% for s in blocks('home_sectors') %}
+      <a class="industry-tile" href="/industries#{{ s.block_key }}">
+        {% if s.extra.icon %}<span class="icon-chip icon-chip-sm{{ ' icon-chip-alt' if loop.index is even }}" aria-hidden="true"><svg><use href="#i-{{ s.extra.icon }}"/></svg></span>{% endif %}
+        <span class="industry-name">{{ s.title }}</span>
+        <span class="industry-note">{{ s.subtitle }}</span>
+      </a>
+      {% endfor %}
+    </div>
   </div>
 </section>
 {% endif %}
@@ -169,7 +315,7 @@
 {% set h_casc = block('sections', 'home_ai_cascade') %}
 {% set h_apps = block('sections', 'home_ai_apps') %}
 {% set h_proof = block('sections', 'home_ai_proof') %}
-<section class="section ai-band" id="ai" aria-labelledby="ai-title">
+<section class="section section-dark section-deep ai-band" id="ai" aria-labelledby="ai-title">
   <div class="wrap">
     <div class="section-head ai-head" data-reveal>
       <p class="eyebrow">{{ h_ai.subtitle or 'OPTIMIZE WITH AI' }}</p>
@@ -230,87 +376,13 @@
         <p class="ai-proof-note">{{ h_proof.body or "And if a rule would solve your problem, we'll write the rule and charge you less." }}</p>
         <div class="btn-row ai-btns">
           {% for b in blocks('home_ai_buttons') %}
-          <a class="btn {{ 'btn-primary' if loop.first else 'btn-outline' }}" href="{{ b.link_url }}">{{ b.title }}</a>
+          <a class="btn {{ 'btn-primary' if loop.first else 'btn-outline-light' }}" href="{{ b.link_url }}">{{ b.title }}</a>
           {% endfor %}
         </div>
       </div>
     </div>
   </div>
 </section>
-
-{# ---------- process strip ----------
-   Step names must match /process exactly -- a visitor clicking through should
-   not meet a second, differently-named process. #}
-{% if blocks('home_process_steps') %}
-{% set h_proc = block('sections', 'home_process') %}
-<section class="section section-dark process-band">
-  <div class="wrap">
-    <div class="section-head" data-reveal>
-      <p class="eyebrow">{{ h_proc.subtitle or 'HOW IT GOES' }}</p>
-      <h2>{{ h_proc.title or 'Five steps, no surprises' }}</h2>
-    </div>
-    <ol class="process-strip" data-reveal>
-      {% for s in blocks('home_process_steps') %}
-      <li class="process-step">
-        <span class="process-num">{{ '%02d' % loop.index }}</span>
-        <h3>{{ s.title }}</h3>
-        <p>{{ s.body }}</p>
-      </li>
-      {% endfor %}
-    </ol>
-    <div class="section-more btn-row">
-      <a class="btn btn-primary" href="{{ setting('hero_cta_primary_url', '/contact') }}">{{ setting('hero_cta_primary', 'Book a call') }}</a>
-      <a class="btn btn-outline-light" href="{{ h_proc.link_url or '/process' }}">{{ h_proc.link_label or 'See the full process' }}</a>
-    </div>
-  </div>
-</section>
-{% endif %}
-
-{# ---------- industries ---------- #}
-{% if blocks('home_sectors') %}
-{% set h_ind = block('sections', 'home_industries') %}
-<section class="section">
-  <div class="wrap">
-    <div class="section-head" data-reveal>
-      <p class="eyebrow">{{ h_ind.subtitle or 'WHO WE BUILD FOR' }}</p>
-      <h2>{{ h_ind.title or 'Industries we already know' }}</h2>
-    </div>
-    <div class="industry-grid" data-reveal>
-      {% for s in blocks('home_sectors') %}
-      <a class="industry-tile" href="/industries#{{ s.block_key }}">
-        <span class="industry-name">{{ s.title }}</span>
-        <span class="industry-note">{{ s.subtitle }}</span>
-      </a>
-      {% endfor %}
-    </div>
-  </div>
-</section>
-{% endif %}
-
-{# ---------- testimonials + tech ---------- #}
-{% if testimonials %}
-{% set h_quo = block('sections', 'home_testimonials') %}
-<section class="section section-tint">
-  <div class="wrap">
-    <div class="section-head" data-reveal>
-      <p class="eyebrow">{{ h_quo.subtitle or 'IN THEIR WORDS' }}</p>
-      <h2>{{ h_quo.title or "What it's like to work with us" }}</h2>
-    </div>
-    <div class="quote-grid" data-reveal>
-      {% for t in testimonials[:3] %}
-      <figure class="quote-card">
-        <span class="quote-mark" aria-hidden="true">&ldquo;</span>
-        <blockquote>{{ t.quote }}</blockquote>
-        <figcaption>
-          <span class="quote-role">{{ t.author_role }}</span>
-          {% if t.industry %}<span class="quote-industry">{{ t.industry }}</span>{% endif %}
-        </figcaption>
-      </figure>
-      {% endfor %}
-    </div>
-  </div>
-</section>
-{% endif %}
 
 {% set tech = block('home_tech', 'tech') %}
 {% set techs = tech['items'] | lines %}
@@ -319,7 +391,7 @@
   <div class="wrap tech-head">
     <p class="eyebrow">{{ tech.subtitle or 'BUILT WITH' }}</p>
   </div>
-  <div class="marquee" aria-label="Technologies we build with">
+  <div class="marquee" aria-label="Technologies we build with" tabindex="0">
     <div class="marquee-track">
       {% for i in range(2) %}
       <ul class="marquee-list" {% if i %}aria-hidden="true"{% endif %}>

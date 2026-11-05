@@ -1,0 +1,13 @@
+{# The founder's round avatar: the uploaded photo, or their initial on teal.
+   `px` is the rendered size; srcset picks the sharpest file for it. #}
+{% macro avatar(px=48, cls='') %}
+{%- set name = setting('founder_name') -%}
+{%- set photo = founder_photo() -%}
+{%- if photo -%}
+<img class="avatar {{ cls }}" src="{{ photo.sizes[0].src }}"
+     srcset="{% for r in photo.sizes %}{{ r.src }} {{ r.w }}w{{ ', ' if not loop.last }}{% endfor %}"
+     sizes="{{ px }}px" width="{{ px }}" height="{{ px }}" alt="{{ name }}" loading="lazy" decoding="async">
+{%- else -%}
+<span class="avatar avatar-initial {{ cls }}" style="--px:{{ px }}px" aria-hidden="true">{{ (name or 'E')[:1] | upper }}</span>
+{%- endif -%}
+{% endmacro %}

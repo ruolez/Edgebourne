@@ -29,6 +29,8 @@ LANDSCAPE = (4, 3)
 OG_SIZE = (1200, 630)
 PORTRAIT_WIDTHS = (640, 1040, 1560)
 LANDSCAPE_WIDTHS = (800, 1200)
+AVATAR_WIDTHS = (96, 192, 400)
+AVATAR_MIN_SIDE = 300
 WEBP_QUALITY = 80
 FOCUS = {"left": 0.25, "center": 0.5, "right": 0.75}
 
@@ -89,7 +91,18 @@ def _master_path(url):
     return _disk(url)
 
 
-def save_master(file_storage):
+def load_avatar(value):
+    """The stored founder photo as a dict, or None when none is set."""
+    if not value:
+        return None
+    try:
+        info = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    return info if isinstance(info, dict) and info.get("sizes") else None
+
+
+def save_master(file_storage, min_short=MIN_SHORT_SIDE):
     """Validate an upload and keep a re-encoded master. Returns (url, warning)."""
     raw = file_storage.read()
     if not raw:
@@ -104,16 +117,16 @@ def save_master(file_storage):
         raise ValueError("That isn't a JPEG, PNG or WebP image.")
     img = ImageOps.exif_transpose(img).convert("RGB")
     short = min(img.size)
-    if short < MIN_SHORT_SIDE:
+    if short < min_short:
         raise ValueError(
             f"That image is {img.width} x {img.height} px. The short side needs to be "
-            f"at least {MIN_SHORT_SIDE} px; {SOFT_SHORT_SIDE} px or more looks best."
+            f"at least {min_short} px."
         )
     img.thumbnail((MASTER_MAX_SIDE, MASTER_MAX_SIDE))
     name = f"{uuid.uuid4().hex}-master.webp"
     img.save(os.path.join(_dir(), name), "WEBP", quality=90, method=6)
     warning = None
-    if short < SOFT_SHORT_SIDE:
+    if min_short == MIN_SHORT_SIDE and short < SOFT_SHORT_SIDE:
         warning = (
             f"Saved, but the image is only {short} px on its short side, so it may look "
             f"soft on high-resolution screens. {SOFT_SHORT_SIDE} px or more is better."
@@ -159,11 +172,28 @@ def cut(master_url, focus="center"):
     }
 
 
+def cut_avatar(master_url):
+    """A centred square set from the master: the founder photo, shown as a
+    small round avatar in the hero and the CTA and larger on About."""
+    img = Image.open(_master_path(master_url))
+    img.load()
+    crop = img.crop(crop_box(img.width, img.height, 1, 1))
+    cut_id = uuid.uuid4().hex[:12]
+    sizes = []
+    for w in rendition_widths(crop.width, AVATAR_WIDTHS):
+        name = f"{cut_id}-s-{w}.webp"
+        crop.resize((w, w), Image.LANCZOS).save(
+            os.path.join(_dir(), name), "WEBP", quality=WEBP_QUALITY, method=6
+        )
+        sizes.append({"src": _url(name), "w": w, "h": w})
+    return {"master": master_url, "sizes": sizes}
+
+
 def delete_cut(info, keep_master=True):
     """Best-effort removal of a cut's files (and, optionally, its master)."""
     if not info:
         return
-    urls = [r["src"] for r in info.get("portrait", []) + info.get("landscape", [])]
+    urls = [r["src"] for r in info.get("portrait", []) + info.get("landscape", []) + info.get("sizes", [])]
     urls.append(info.get("og", ""))
     if not keep_master:
         urls.append(info.get("master", ""))

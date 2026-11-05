@@ -1,6 +1,7 @@
 {# Shared closing call to action. A page picks its wording with
    {% set cta_key = 'process' %}; anything it does not override falls back to
    the 'default' row of the page_cta group, then to the wording below. #}
+{% from "public/_founder.html" import avatar %}
 {% set cta_def = block('page_cta', 'default') %}
 {% set cta_row = block('page_cta', cta_key) if cta_key else None %}
 <section class="section cta-band">
@@ -13,9 +14,15 @@
         <svg class="stream stream-cta" viewBox="0 0 350 30"><use href="#stream"/></svg>
       </div>
       <div class="cta-action">
-        <a class="btn btn-primary btn-lg" href="/contact">{{ cta_button or cta_def.link_label or 'Book a call' }}</a>
+        <a class="btn btn-primary btn-lg btn-go" href="/contact">{{ cta_button or cta_def.link_label or 'Book a call' }}<svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
         {% set reassure = cta_def['items'] | lines %}
         <p class="cta-reassure">{% if reassure %}{% for r in reassure %}{{ r }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% else %}A 30-minute call. No slide deck, no obligation.<br>We reply within one business day.{% endif %}</p>
+        {% if setting('founder_name') %}
+        <div class="cta-signoff">
+          {{ avatar(44) }}
+          <p>{{ setting('cta_signoff', 'I read every message myself and reply within one business day.') }}<span>{{ setting('founder_name') }}{% if setting('founder_role') %}, {{ setting('founder_role') }}{% endif %}</span></p>
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>

@@ -157,6 +157,8 @@ def contact_post():
     if not name or not email or not message:
         flash("Please fill in your name, email and message.", "error")
         return redirect(url_for("public.contact"))
+    if request.form.get("topic") == "review":
+        message = f"[Free workflow review]\n\n{message}"
     lead = db.execute(
         """INSERT INTO leads (name, email, company, phone, message, source_page)
            VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
