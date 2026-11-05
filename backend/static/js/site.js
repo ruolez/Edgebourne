@@ -69,13 +69,14 @@
           io.unobserve(entry.target);
         });
       },
-      { rootMargin: '0px 0px -8% 0px', threshold: 0.08 }
+      { threshold: 0 }
     );
     items.forEach(function (el) {
-      // Anything already on screen at load appears immediately, no fade-in
-      // flash for the hero-adjacent blocks.
+      // Anything on screen at load, even a sliver at the fold, appears now,
+      // and the rest on its first visible pixel: a block peeking in at the
+      // bottom must never sit blank (the dark stats band did) until a scroll.
       var box = el.getBoundingClientRect();
-      if (box.top < window.innerHeight * 0.9) el.classList.add('is-in');
+      if (box.top < window.innerHeight) el.classList.add('is-in');
       else io.observe(el);
     });
   })();
@@ -190,13 +191,15 @@
       requestAnimationFrame(frame);
     }
 
+    // Start on the first visible pixel: a number already showing its final
+    // value must not snap back to zero when it scrolls further in.
     var io = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
         if (!entry.isIntersecting) return;
         io.unobserve(entry.target);
         run(entry.target);
       });
-    }, { threshold: 0.6 });
+    }, { threshold: 0 });
     els.forEach(function (el) { io.observe(el); });
   })();
   /* ---------- 6. hero reel ----------
