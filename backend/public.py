@@ -1,8 +1,10 @@
 from flask import (
     Blueprint, Response, abort, flash, redirect, render_template, request, url_for,
+    session,
 )
 
 import db
+import meta_capi
 import hero_image
 import mailer
 
@@ -142,6 +144,11 @@ def blog_post(slug):
     return render_template("public/blog_post.html", post=row)
 
 
+@bp.get("/privacy")
+def privacy():
+    return render_template("public/privacy.html")
+
+
 @bp.get("/contact")
 def contact():
     return render_template("public/contact.html")
@@ -158,7 +165,7 @@ def contact_post():
         flash("Please fill in your name, email and message.", "error")
         return redirect(url_for("public.contact"))
     if request.form.get("topic") == "review":
-        message = f"[Free workflow review]\n\n{message}"
+        message = f"[Free AI workflow review]\n\n{message}"
     lead = db.execute(
         """INSERT INTO leads (name, email, company, phone, message, source_page)
            VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
@@ -173,6 +180,9 @@ def contact_post():
         returning=True,
     )
     mailer.notify_lead(dict(lead))
+    event_id = f"lead-{lead['id']}"
+    session["meta_lead_event_id"] = event_id
+    meta_capi.send_lead(event_id, email, request)
     flash("Thanks, we've got it. We'll get back to you within one business day.", "success")
     return redirect(url_for("public.contact"))
 

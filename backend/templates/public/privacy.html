@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% set meta_title = 'Privacy policy — ' + setting('site_title', 'Edge Bourne Consulting') %}
+{% set meta_description = 'What Edge Bourne Consulting collects when you contact us or respond to an ad, how it is used, and how to reach us about it.' %}
+{% block content %}
+<section class="page-head">
+  <div class="wrap">
+    <h1>Privacy policy</h1>
+    <svg class="stream" viewBox="0 0 350 30"><use href="#stream"/></svg>
+  </div>
+</section>
+<section class="section">
+  <div class="wrap wrap-narrow">
+    <div class="prose prose-lg">
+      <p>Last updated 6 November 2026. This policy covers edgebourne.com and the lead forms we run on Facebook and Instagram.</p>
+
+      <h2>What we collect</h2>
+      <p><strong>Contact and lead forms.</strong> When you fill in the contact form on this site or a form attached to one of our ads, we receive what you enter: your name, email address, and, if you give it, your phone number, company and message.</p>
+      <p><strong>Site usage.</strong> Our web server keeps standard access logs (IP address, browser type, pages requested, time of request). We use the Meta Pixel and Meta's Conversions API to measure whether our ads lead to enquiries. Meta may set cookies in your browser and receives a hashed version of your email address when you submit a form, so that it can match the enquiry to an ad. Meta's own use of that data is described in the <a href="https://www.facebook.com/privacy/policy/" rel="noopener">Meta Privacy Policy</a>.</p>
+
+      <h2>How we use it</h2>
+      <ul>
+        <li>To reply to your enquiry and, if you ask for one, to prepare your free AI workflow review.</li>
+        <li>To keep a record of our conversation if we go on to work together.</li>
+        <li>To understand which of our ads and pages lead to enquiries.</li>
+      </ul>
+      <p>We do not sell your personal information and we do not share it with third parties for their own marketing.</p>
+
+      <h2>Who else handles it</h2>
+      <p>Our website is hosted on servers we operate. Email notifications about new enquiries are sent through our email provider. Ad measurement data goes to Meta Platforms, Inc. as described above. Each of these providers processes data only to provide its service to us.</p>
+
+      <h2>How long we keep it</h2>
+      <p>Enquiries are kept for as long as we need them to respond to you and, if we work together, for the length of that relationship plus the period required for our business records. You can ask us to delete your enquiry at any time.</p>
+
+      <h2>Your choices</h2>
+      <ul>
+        <li>You can ask what personal information we hold about you, ask us to correct it, or ask us to delete it. Email us and we will respond within 30 days.</li>
+        <li>California residents have these rights under the California Consumer Privacy Act. We do not sell or share personal information for cross-context behavioural advertising as those terms are defined there.</li>
+        <li>You can limit ad tracking in your Facebook and Instagram settings and block cookies in your browser; the site works without them.</li>
+      </ul>
+
+      <h2>Contact</h2>
+      <p>Edge Bourne Consulting, Southern California.{% if setting('contact_email') %} Email <a href="mailto:{{ setting('contact_email') }}">{{ setting('contact_email') }}</a>{% else %} Use the <a href="/contact">contact page</a>{% endif %} for any question about this policy.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -43,3 +43,7 @@ def site_base_url(fallback=""):
     except Exception:
         pass
     return fallback.rstrip("/")
+
+# Meta (Facebook) pixel + Conversions API. Both optional; the site works without them.
+META_PIXEL_ID = os.environ.get("META_PIXEL_ID", "")
+META_CAPI_TOKEN = os.environ.get("META_CAPI_TOKEN", "")
