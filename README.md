@@ -32,6 +32,11 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 Volumes: `pgdata` (database), `uploads` (admin-uploaded images, re-encoded to WebP).
 
+**Ads console** (`ads/`, `ads-backend` service): private Meta ads dashboard at `ads.<domain>`
+(lead inbox with email alerts, ad performance). Own database `ebads` on the same Postgres,
+served by the same nginx behind the shared proxy. Details: `ads/README.md`. Locally:
+http://ads.localhost:8090.
+
 ## Admin panel
 
 - **Dashboard** — lead counts, content stats, recent leads

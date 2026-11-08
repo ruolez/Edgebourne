@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in | Edge Bourne Ads</title>
+  <link rel="icon" href="/img/favicon.svg">
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main class="login-page">
+    <section class="login-side">
+      <a class="brand" href="/"><img src="/img/favicon.svg" alt=""><span>Edge Bourne Ads</span></a>
+      <div>
+        <h1>Every lead, while it's still warm.</h1>
+        <p>New intro-call requests land here the moment someone fills in the form, with who they are and which ad brought them.</p>
+      </div>
+      <p>Edge Bourne Consulting</p>
+    </section>
+    <form class="login-form" id="login" novalidate>
+      <h2>Sign in</h2>
+      <div class="field"><label for="email">Email</label><input class="input" id="email" name="email" type="email" autocomplete="username" required></div>
+      <div class="field"><label for="password">Password</label><input class="input" id="password" name="password" type="password" autocomplete="current-password" required></div>
+      <label class="check"><input type="checkbox" name="remember" checked> Keep me signed in on this device</label>
+      <button class="btn btn-primary" type="submit">Sign in</button>
+      <p class="muted small flush">Forgot your password? Ask your admin to reset it from the Team page.</p>
+    </form>
+  </main>
+  <script type="module" src="/js/login.js"></script>
+</body>
+</html>

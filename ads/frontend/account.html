@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your account | Edge Bourne Ads</title>
+  <link rel="icon" href="/img/favicon.svg">
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail"></aside>
+    <main class="main">
+      <header class="page-head"><h1>Your account</h1></header>
+      <div class="content stack narrow">
+        <p class="note warn" id="first-note" hidden>Set your own password before you start. The one you signed in with was temporary.</p>
+        <section class="panel">
+          <div class="panel-head"><h2>Password</h2></div>
+          <form class="panel-body stack" id="pw-form" novalidate>
+            <div class="field"><label for="current">Current password</label><input class="input" id="current" name="current" type="password" autocomplete="current-password"></div>
+            <div class="field"><label for="new">New password</label><input class="input" id="new" name="new" type="password" autocomplete="new-password"><span class="hint">At least 10 characters.</span></div>
+            <div><button class="btn btn-primary" type="submit">Change password</button></div>
+          </form>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Appearance</h2></div>
+          <div class="panel-body row">
+            <div class="segmented" role="group" aria-label="Theme" id="theme-choice">
+              <button type="button" data-theme-choice="system">Match my device</button>
+              <button type="button" data-theme-choice="light">Light</button>
+              <button type="button" data-theme-choice="dark">Dark</button>
+            </div>
+            <span class="spacer"></span>
+            <button class="btn" type="button" id="account-signout">Sign out</button>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Lead alerts</h2></div>
+          <div class="panel-body stack">
+            <label class="check"><input type="checkbox" id="notify"> Email me when a new lead arrives in my campaigns</label>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="/js/account.js"></script>
+</body>
+</html>

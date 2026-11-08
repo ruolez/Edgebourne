@@ -1,6 +1,19 @@
 # Dev overlay: live code reload + postgres exposed on host port 5480.
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Ads console: http://ads.localhost:8090
 services:
+  nginx:
+    volumes:
+      - ./ads/nginx/ads.conf:/etc/nginx/conf.d/zz-ads.conf:ro
+      - ./ads/frontend:/srv/ads:ro
+
+  ads-backend:
+    volumes:
+      - ./ads/backend:/app
+    environment:
+      - GUNICORN_RELOAD=1
+      - APP_BASE_URL=http://ads.localhost:${APP_PORT:-8090}
+
   backend:
     volumes:
       - ./backend:/app

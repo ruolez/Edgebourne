@@ -8,3 +8,7 @@ services:
       - "127.0.0.1:${APP_PORT:-8090}:80"
     volumes:
       - ./nginx/edge-proxied.conf:/etc/nginx/conf.d/00-edge.conf:ro
+      # Ads console at ads.<domain> (the host vhost carries that name once its DNS
+      # record exists and the certificate covers it; install.sh Update does both).
+      - ./ads/nginx/ads.conf:/etc/nginx/conf.d/zz-ads.conf:ro
+      - ./ads/frontend:/srv/ads:ro

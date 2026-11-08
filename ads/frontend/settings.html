@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings | Edge Bourne Ads</title>
+  <link rel="icon" href="/img/favicon.svg">
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail"></aside>
+    <main class="main">
+      <header class="page-head"><h1>Settings</h1></header>
+      <div class="content stack medium">
+        <section class="panel">
+          <div class="panel-head"><h2>Meta connection</h2><p id="meta-state"></p></div>
+          <form class="panel-body stack" id="meta-form" novalidate>
+            <div class="grid-2">
+              <div class="field"><label for="meta_app_id">App ID</label><input class="input" id="meta_app_id" name="meta_app_id" inputmode="numeric"></div>
+              <div class="field"><label for="meta_app_secret">App secret</label><input class="input" id="meta_app_secret" name="meta_app_secret" type="password" autocomplete="off"><span class="hint" data-hint="meta_app_secret"></span></div>
+            </div>
+            <div class="field"><label for="meta_system_token">System User token</label><input class="input" id="meta_system_token" name="meta_system_token" type="password" autocomplete="off"><span class="hint" data-hint="meta_system_token"></span></div>
+            <div class="grid-2">
+              <div class="field"><label for="meta_page_id">Facebook Page ID</label><input class="input" id="meta_page_id" name="meta_page_id" inputmode="numeric"></div>
+              <div class="field"><label for="meta_ad_account_id">Ad account ID</label><input class="input" id="meta_ad_account_id" name="meta_ad_account_id" inputmode="numeric"><span class="hint">Digits only, without act_.</span></div>
+            </div>
+            <div class="grid-2">
+              <div class="field"><label for="meta_verify_token">Webhook verify token</label><input class="input" id="meta_verify_token" name="meta_verify_token" type="password" autocomplete="off"><span class="hint" data-hint="meta_verify_token"></span></div>
+              <div class="field"><label for="meta_graph_version">Graph API version</label><input class="input" id="meta_graph_version" name="meta_graph_version"><span class="hint" id="graph-default"></span></div>
+            </div>
+            <div class="note" id="webhook-note"></div>
+            <div class="row">
+              <button class="btn btn-primary" type="submit">Save</button>
+              <button class="btn" type="button" id="meta-test">Test connection</button>
+              <button class="btn" type="button" id="meta-connect">Start receiving leads</button>
+              <button class="btn" type="button" id="meta-sync">Sync campaigns and recent leads</button>
+            </div>
+            <div id="meta-result"></div>
+          </form>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Email</h2><p>Sends the new-lead alerts.</p></div>
+          <form class="panel-body stack" id="smtp-form" novalidate>
+            <div class="grid-2">
+              <div class="field"><label for="smtp_host">SMTP server</label><input class="input" id="smtp_host" name="smtp_host" placeholder="mail.edgebourne.com"></div>
+              <div class="grid-2 tight">
+                <div class="field"><label for="smtp_port">Port</label><input class="input" id="smtp_port" name="smtp_port" inputmode="numeric" placeholder="587"></div>
+                <div class="field"><label for="smtp_security">Security</label><select class="input" id="smtp_security" name="smtp_security"><option value="starttls">STARTTLS</option><option value="ssl">SSL/TLS</option><option value="none">None</option></select></div>
+              </div>
+            </div>
+            <div class="grid-2">
+              <div class="field"><label for="smtp_username">Username</label><input class="input" id="smtp_username" name="smtp_username" autocomplete="off"></div>
+              <div class="field"><label for="smtp_password">Password</label><input class="input" id="smtp_password" name="smtp_password" type="password" autocomplete="off"><span class="hint" data-hint="smtp_password"></span></div>
+            </div>
+            <div class="grid-2">
+              <div class="field"><label for="smtp_from_email">Send from</label><input class="input" id="smtp_from_email" name="smtp_from_email" type="email" placeholder="ads@edgebourne.com"></div>
+              <div class="field"><label for="smtp_from_name">Sender name</label><input class="input" id="smtp_from_name" name="smtp_from_name" placeholder="Edge Bourne Ads"></div>
+            </div>
+            <div class="row"><button class="btn btn-primary" type="submit">Save</button><button class="btn" type="button" id="smtp-test">Send me a test email</button></div>
+          </form>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Activity</h2><p>Every change made here, by anyone.</p></div>
+          <div class="panel-body scroll-x"><table class="table" id="activity"></table></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="/js/settings.js"></script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Leads | Edge Bourne Ads</title>
+  <link rel="icon" href="/img/favicon.svg">
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail"></aside>
+    <main class="main">
+      <header class="page-head">
+        <h1>Leads</h1>
+        <span class="spacer"></span>
+        <label class="check small"><input type="checkbox" id="mine"> Only mine</label>
+      </header>
+      <div class="leads-bar">
+        <div class="segmented" id="filters" role="group" aria-label="Show leads"></div>
+        <div class="search">
+          <span id="search-icon"></span>
+          <label class="sr-only" for="q">Search leads</label>
+          <input class="input" id="q" type="search" placeholder="Search leads">
+        </div>
+      </div>
+      <div class="leads-layout" id="layout">
+        <section class="panel lead-list" aria-label="Lead list"><ol id="list"></ol></section>
+        <section class="lead-detail-wrap"><div class="panel lead-detail" id="detail" aria-live="polite"></div></section>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="/js/leads.js"></script>
+</body>
+</html>

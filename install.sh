@@ -248,6 +248,77 @@ backup_uploads() { # backup_uploads [target-file]
 prune_backups() {
   ls -1t "$BACKUP_DIR"/edgebourne-*.sql.gz 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
   ls -1t "$BACKUP_DIR"/edgebourne-uploads-*.tar.gz 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
+  ls -1t "$BACKUP_DIR"/ads-console-*.sql.gz 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
+}
+
+# ---------------------------------------------------------------- ads console
+
+# The ads console (ads/) shares this stack: its own container (edgebourne-ads-backend)
+# and database (ebads) on the same Postgres, served at ads.<domain> by the container
+# nginx. It is published only behind the shared proxy, once ads.<domain> resolves here.
+ADS_NEW_PW=""
+ADS_ADDED=0
+
+ads_db_exists() {
+  docker ps --format '{{.Names}}' | grep -q '^edgebourne-postgres$' && \
+    [ "$(docker exec edgebourne-postgres psql -U edgebourne -d postgres -tAc \
+      "SELECT 1 FROM pg_database WHERE datname = 'ebads'" 2>/dev/null)" = "1" ]
+}
+
+backup_ads_db() { # backup_ads_db [target-file]
+  local target="${1:-$BACKUP_DIR/ads-console-$(date +%Y%m%d-%H%M%S).sql.gz}"
+  ads_db_exists || return 0
+  mkdir -p "$(dirname "$target")"
+  log "Backing up the ads console database → $target"
+  docker exec edgebourne-postgres pg_dump -U edgebourne ebads | gzip > "$target"
+  ok "Ads console backup complete ($(du -h "$target" | cut -f1))."
+}
+
+# Only creates the first admin, who must set a new password on first sign-in.
+# Meta and SMTP keys are never in .env: they are entered in the console's Settings.
+ads_prepare_env() {
+  [ -n "$(env_get ADS_ADMIN_INITIAL_PASSWORD)" ] && return 0
+  ADS_NEW_PW="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 16)"
+  set_env ADS_ADMIN_INITIAL_PASSWORD "$ADS_NEW_PW"
+}
+
+# Adds ads.<domain> to the certificate and SERVER_NAMES once its DNS record points
+# here. Never fatal: the main site keeps serving whatever happens.
+ads_enable_domain() { # needs: domain, server_names (updated in place); sets ADS_ADDED
+  local ads="ads.$domain" args=() n
+  ADS_ADDED=0
+  proxy_mode || return 0
+  case " $server_names " in *" $ads "*) return 0 ;; esac
+  [ -f "/etc/letsencrypt/live/$domain/fullchain.pem" ] || return 0
+  if ! check_dns "$ads" "$(public_ip)"; then
+    warn "Ads console: add a DNS A record for $ads pointing at this server, then run Update again."
+    return 0
+  fi
+  for n in $server_names $ads; do args+=(-d "$n"); done
+  log "Adding $ads to the certificate…"
+  if certbot certonly --webroot -w "$WEBROOT" --cert-name "$domain" --expand "${args[@]}" \
+      --non-interactive --agree-tos --register-unsafely-without-email; then
+    server_names="$server_names $ads"
+    set_env SERVER_NAMES "$server_names"
+    ADS_ADDED=1
+    ok "Certificate now covers $ads."
+  else
+    warn "Could not add $ads to the certificate — the main site is unaffected. Run Update again later."
+  fi
+}
+
+ads_summary() { # ads_summary <domain>
+  local ads="ads.$1"
+  proxy_mode || { warn "Ads console: served only behind the shared proxy (menu option 7)."; return 0; }
+  case " $(env_get SERVER_NAMES) " in
+    *" $ads "*)
+      check_health "https://$ads/api/health" || warn "Ads console did not answer — check: docker logs edgebourne-ads-backend"
+      echo -e "   Ads console: ${C_GRN}https://$ads${C_OFF}" ;;
+    *) echo -e "   Ads console: waiting for the DNS record for $ads (then run Update)" ;;
+  esac
+  if [ -n "$ADS_NEW_PW" ]; then
+    echo -e "   First sign-in: $(env_get ADS_ADMIN_EMAIL | grep . || echo eugene@edgebourne.com)  password: $ADS_NEW_PW  (you set your own right after)"
+  fi
 }
 
 # ---------------------------------------------------------------- ssl setup
@@ -386,7 +457,14 @@ EOF
     set_env COMPOSE_FILE "docker-compose.yml:docker-compose.proxy.yml"
   fi
 
+  ads_prepare_env
   setup_ssl
+  local domain="$DOMAIN" server_names="$SERVER_NAMES"
+  ads_enable_domain
+  if [ "$ADS_ADDED" -eq 1 ]; then
+    render_host_vhost "$domain" "$server_names" "$(env_get APP_PORT)" && systemctl reload nginx \
+      || warn "Host vhost left as it was — the site keeps serving with the previous one."
+  fi
   install_backup_timer
 
   echo
@@ -396,6 +474,7 @@ EOF
   echo -e "   SSL:    auto-renews via certbot.timer (deploy hook reloads nginx)"
   echo -e "   Update: re-run this script and choose Update"
   echo -e "   Stripe: re-run this script and choose Configure Stripe"
+  ads_summary "$DOMAIN"
 }
 
 # ---------------------------------------------------------------- update
@@ -406,6 +485,7 @@ cmd_update() {
 
   backup_db
   backup_uploads
+  backup_ads_db
   prune_backups
 
   log "Pulling latest code from GitHub…"
@@ -418,6 +498,7 @@ cmd_update() {
     render_ssl_conf "$domain" "${server_names:-$domain}"
   fi
 
+  ads_prepare_env
   log "Rebuilding and restarting (DB migrations run automatically at startup)…"
   compose up -d --build --remove-orphans
 
@@ -425,8 +506,10 @@ cmd_update() {
   docker image prune -f >/dev/null
 
   wait_for_health "$(local_url)/healthz"
+  server_names="${server_names:-$domain}"
+  if [ -n "$domain" ]; then ads_enable_domain; fi
   if proxy_mode && [ -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]; then
-    if render_host_vhost "$domain" "${server_names:-$domain}" "$(env_get APP_PORT)"; then
+    if render_host_vhost "$domain" "$server_names" "$(env_get APP_PORT)"; then
       systemctl reload nginx
     else
       warn "Host vhost left as it was — the site keeps serving with the previous one."
@@ -435,6 +518,7 @@ cmd_update() {
   [ -n "$domain" ] && wait_for_health "https://$domain/healthz"
   install_backup_timer
   ok "Update complete. Backups saved in $BACKUP_DIR (last $KEEP_BACKUPS kept)."
+  if [ -n "$domain" ]; then ads_summary "$domain"; fi
 }
 
 # ---------------------------------------------------------------- renew
@@ -619,14 +703,17 @@ EOF
 ts="$(date +%Y%m%d-%H%M%S)"
 docker exec edgebourne-postgres pg_dump -U edgebourne edgebourne | gzip > "$dir/edgebourne-$ts.sql.gz"
 docker exec edgebourne-backend tar czf - -C /data/uploads . > "$dir/edgebourne-uploads-$ts.tar.gz"
-for pattern in 'edgebourne-*.sql.gz' 'edgebourne-uploads-*.tar.gz'; do
+if [ "$(docker exec edgebourne-postgres psql -U edgebourne -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'ebads'")" = "1" ]; then
+  docker exec edgebourne-postgres pg_dump -U edgebourne ebads | gzip > "$dir/ads-console-$ts.sql.gz"
+fi
+for pattern in 'edgebourne-*.sql.gz' 'edgebourne-uploads-*.tar.gz' 'ads-console-*.sql.gz'; do
   ls -1t "$dir"/$pattern 2>/dev/null | tail -n +$((keep + 1)) | xargs -r rm -f
 done
 EOF
   chmod 700 /usr/local/sbin/edgebourne-backup
   cat > /etc/systemd/system/edgebourne-backup.service <<'EOF'
 [Unit]
-Description=EdgeBourne nightly backup (database + uploaded images)
+Description=EdgeBourne nightly backup (databases + uploaded images)
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/edgebourne-backup
@@ -666,12 +753,14 @@ cmd_remove() {
     [ "$REPLY" = "DELETE INVOICES" ] || die "Aborted."
     backup_db "/root/edgebourne-final-$(date +%Y%m%d-%H%M%S).sql.gz"
     backup_uploads "/root/edgebourne-final-uploads-$(date +%Y%m%d-%H%M%S).tar.gz"
+    backup_ads_db "/root/ads-console-final-$(date +%Y%m%d-%H%M%S).sql.gz"
   else
     ask 'Type REMOVE to confirm'
     [ "$REPLY" = "REMOVE" ] || die "Aborted."
     if confirm "Save a final backup (database + uploaded images) to /root first?"; then
       backup_db "/root/edgebourne-final-$(date +%Y%m%d-%H%M%S).sql.gz"
       backup_uploads "/root/edgebourne-final-uploads-$(date +%Y%m%d-%H%M%S).tar.gz"
+    backup_ads_db "/root/ads-console-final-$(date +%Y%m%d-%H%M%S).sql.gz"
     fi
   fi
 

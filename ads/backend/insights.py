@@ -1,0 +1,96 @@
+"""Pull ads, daily per-ad results and the account spending cap from Meta."""
+import json
+from datetime import date, timedelta
+
+import db
+import meta_client
+import settings_store
+
+INSIGHT_FIELDS = "ad_id,ad_name,adset_id,campaign_id,spend,impressions,reach,inline_link_clicks,actions"
+# Instant-form leads appear under these action types; take the first that is present.
+LEAD_ACTIONS = ("onsite_conversion.lead_grouped", "lead", "leadgen_grouped")
+
+
+def lead_count(actions):
+    by_type = {a.get("action_type"): a.get("value") for a in actions or []}
+    for key in LEAD_ACTIONS:
+        if by_type.get(key) not in (None, ""):
+            return int(float(by_type[key]))
+    return 0
+
+
+def to_cents(value):
+    return int(round(float(value or 0) * 100))
+
+
+def sync_ads():
+    account = settings_store.get("meta_ad_account_id")
+    n = 0
+    for ad in meta_client.paged(
+        f"act_{account}/ads",
+        fields="id,name,campaign_id,adset_id,status,effective_status,ad_review_feedback,creative{thumbnail_url}",
+        limit=100,
+    ):
+        db.execute(
+            """INSERT INTO ads (id, name, campaign_id, adset_id, status, effective_status,
+                                thumbnail_url, review_feedback, synced_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s, now())
+               ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, campaign_id = EXCLUDED.campaign_id,
+                   adset_id = EXCLUDED.adset_id, status = EXCLUDED.status,
+                   effective_status = EXCLUDED.effective_status, thumbnail_url = EXCLUDED.thumbnail_url,
+                   review_feedback = EXCLUDED.review_feedback, synced_at = now()""",
+            (ad["id"], ad["name"], ad.get("campaign_id"), ad.get("adset_id"), ad.get("status"),
+             ad.get("effective_status"), (ad.get("creative") or {}).get("thumbnail_url"),
+             json.dumps(ad.get("ad_review_feedback")) if ad.get("ad_review_feedback") else None),
+        )
+        n += 1
+    return n
+
+
+def sync_daily(days=30):
+    account = settings_store.get("meta_ad_account_id")
+    until = date.today()
+    since = until - timedelta(days=days - 1)
+    rows = 0
+    for r in meta_client.paged(
+        f"act_{account}/insights",
+        level="ad", time_increment=1, fields=INSIGHT_FIELDS, limit=500,
+        time_range=json.dumps({"since": since.isoformat(), "until": until.isoformat()}),
+    ):
+        db.execute(
+            """INSERT INTO ad_daily (day, ad_id, campaign_id, adset_id, ad_name, spend_cents, impressions,
+                                     reach, link_clicks, leads, synced_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+               ON CONFLICT (day, ad_id) DO UPDATE SET spend_cents = EXCLUDED.spend_cents,
+                   impressions = EXCLUDED.impressions, reach = EXCLUDED.reach,
+                   link_clicks = EXCLUDED.link_clicks, leads = EXCLUDED.leads,
+                   ad_name = EXCLUDED.ad_name, synced_at = now()""",
+            (r["date_start"], r["ad_id"], r.get("campaign_id"), r.get("adset_id"), r.get("ad_name"),
+             to_cents(r.get("spend")), int(r.get("impressions") or 0), int(r.get("reach") or 0),
+             int(r.get("inline_link_clicks") or 0), lead_count(r.get("actions"))),
+        )
+        rows += 1
+    return rows
+
+
+def sync_account():
+    account = settings_store.get("meta_ad_account_id")
+    a = meta_client.get(f"act_{account}",
+                        fields="name,currency,timezone_name,spend_cap,amount_spent,account_status")
+    settings_store.set("account_snapshot", json.dumps({
+        "name": a.get("name"),
+        "currency": a.get("currency"),
+        "timezone": a.get("timezone_name"),
+        # Meta reports both in the account currency's minor units, as strings.
+        "spend_cap_cents": int(a["spend_cap"]) if a.get("spend_cap") not in (None, "", "0") else None,
+        "amount_spent_cents": int(a.get("amount_spent") or 0),
+        "account_status": a.get("account_status"),
+    }))
+
+
+def sync_all(days=30):
+    import sync
+    out = {"campaigns": sync.sync_campaigns(), "ads": sync_ads(), "daily_rows": sync_daily(days)}
+    sync_account()
+    settings_store.set("last_performance_sync", __import__("datetime").datetime.utcnow().isoformat() + "Z")
+    return out

@@ -64,6 +64,35 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  # Ads console (ads.<domain>): Meta lead inbox, lead alerts and ad performance.
+  # Its own Flask app and database (ebads, created on first start) on the same
+  # Postgres. nginx routes ads.* to it only behind the shared proxy (see
+  # docker-compose.proxy.yml). Meta and SMTP keys are entered in its Settings page.
+  ads-backend:
+    build: ./ads/backend
+    container_name: edgebourne-ads-backend
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=ebads
+      - POSTGRES_USER=edgebourne
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_BOOTSTRAP_DB=edgebourne
+      - BASE_SECRET_KEY=${SECRET_KEY}
+      - DOMAIN=${DOMAIN:-}
+      - APP_BASE_URL=${ADS_BASE_URL:-}
+      - ADMIN_EMAIL=${ADS_ADMIN_EMAIL:-eugene@edgebourne.com}
+      - ADMIN_INITIAL_PASSWORD=${ADS_ADMIN_INITIAL_PASSWORD:-}
+      - GUNICORN_WORKERS=1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+
   postgres:
     image: postgres:16-alpine
     container_name: edgebourne-postgres
