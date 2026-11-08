@@ -501,6 +501,10 @@ cmd_update() {
   ads_prepare_env
   log "Rebuilding and restarting (DB migrations run automatically at startup)…"
   compose up -d --build --remove-orphans
+  # nginx resolves "backend" once at startup. Recreated containers can come back on
+  # different addresses (another one may take the old one), so nginx always restarts
+  # last, after the backends, or it keeps proxying to a stale IP.
+  compose up -d --no-deps --force-recreate nginx
 
   log "Cleaning up unused Docker images…"
   docker image prune -f >/dev/null
