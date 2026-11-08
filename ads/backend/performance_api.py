@@ -37,11 +37,8 @@ def cap_snapshot():
             "currency": snap.get("currency"), "timezone": snap.get("timezone")}
 
 
-@bp.get("")
-@login_required
-def overview():
-    user = current_user()
-    days = RANGES.get(request.args.get("range", "7"), 7)
+def overview_data(user, days):
+    """Everything the Performance page shows; also the AI desk's snapshot."""
     today = date.today()
     # Complete days only: today is partial and conversions report late.
     end = today - timedelta(days=1)
@@ -108,15 +105,24 @@ def overview():
                            "text": "The account spending limit is almost used up. Ads pause when it's reached."
                            if used < 1 else "The account spending limit is reached, so every ad is paused."})
 
-    return jsonify({
+    last, prev = (series[-1], series[-2]) if len(series) >= 2 else (None, None)
+    return {
         "range": {"start": start.isoformat(), "end": end.isoformat(), "days": days},
+        "yesterday": last and {"day": last["day"], "spend_cents": last["spend_cents"], "leads": last["leads"],
+                               "prev_spend_cents": prev["spend_cents"], "prev_leads": prev["leads"]},
         "totals": {**{k: int(v) for k, v in totals.items()}, "qualified": qualified_total},
         "series": series,
         "ads": per_ad,
         "cap": cap,
         "alerts": alerts,
         "last_sync": settings_store.get("last_performance_sync"),
-    })
+    }
+
+
+@bp.get("")
+@login_required
+def overview():
+    return jsonify(overview_data(current_user(), RANGES.get(request.args.get("range", "7"), 7)))
 
 
 @bp.post("/sync")

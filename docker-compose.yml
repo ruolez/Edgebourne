@@ -84,6 +84,8 @@ services:
       - ADMIN_EMAIL=${ADS_ADMIN_EMAIL:-eugene@edgebourne.com}
       - ADMIN_INITIAL_PASSWORD=${ADS_ADMIN_INITIAL_PASSWORD:-}
       - GUNICORN_WORKERS=1
+      # The Mac bridge holds one thread in a 25 s long poll.
+      - GUNICORN_THREADS=8
     depends_on:
       postgres:
         condition: service_healthy

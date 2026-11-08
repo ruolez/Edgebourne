@@ -74,6 +74,13 @@ function columnChart({ el, series, key, color, format, axisFormat, title, intege
   });
 }
 
+function yesterdayLine(y) {
+  if (!y) return "";
+  const m = (v) => money(v, { exact: true });
+  const vs = (now, before, fmt) => (now === before ? "same as the day before" : `${now > before ? "up" : "down"} from ${fmt(before)}`);
+  return `<span class="sub">Yesterday: ${m(y.spend_cents)} spent (${vs(y.spend_cents, y.prev_spend_cents, m)}), ${count(y.leads)} lead${y.leads === 1 ? "" : "s"} (${vs(y.leads, y.prev_leads, count)})</span>`;
+}
+
 function render(data) {
   const t = data.totals;
   const cpl = t.leads ? t.spend_cents / t.leads : null;
@@ -101,7 +108,7 @@ function render(data) {
   }
 
   const figures = `<section class="panel figures" aria-label="Totals for the period">
-    <div class="figure hero"><span class="label">Cost per lead</span><span class="value">${cpl ? money(cpl, { exact: true }) : "—"}</span><span class="sub">${count(t.leads)} lead${t.leads === 1 ? "" : "s"} from ${money(t.spend_cents)}</span></div>
+    <div class="figure hero"><span class="label">Cost per lead</span><span class="value">${cpl ? money(cpl, { exact: true }) : "—"}</span><span class="sub">${count(t.leads)} lead${t.leads === 1 ? "" : "s"} from ${money(t.spend_cents)}</span>${yesterdayLine(data.yesterday)}</div>
     <div class="figure"><span class="label">Spent</span><span class="value">${money(t.spend_cents)}</span></div>
     <div class="figure"><span class="label">Leads</span><span class="value">${count(t.leads)}</span></div>
     <div class="figure"><span class="label">Qualified or won</span><span class="value">${count(t.qualified)}</span><span class="sub">from the leads inbox</span></div>

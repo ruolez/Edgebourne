@@ -43,9 +43,9 @@ results. The Mac pulls, so nothing on the Mac is exposed to the internet.
 
 | Phase | What ships | Depends on |
 |---|---|---|
-| 1. Foundation + leads | Docker/nginx/Postgres/migrations, login, installer (shared-proxy mode), Meta webhook, lead fetch, email alert, Leads inbox (status: new / contacted / qualified / won / lost, notes, call/email links), manual "sync leads" backfill | Meta app (guide A–F), DNS, SMTP |
-| 2. Performance | Hourly sync; overview (spend vs $150 cap, leads, cost per lead, today vs yesterday), per-ad and per-day tables/charts, delivery + review status, alerts (rejected ad, zero delivery, cap near) | Phase 1 |
-| 3. AI desk | "Ask Claude" box with directions; task queue; `/ads-desk` skill on the Mac; reports (weekly review, research) rendered in the dashboard; proposals as structured cards | Phase 1 |
+| 1. Foundation + leads (built 2026-11-08) | Docker/nginx/Postgres/migrations, login, installer (shared-proxy mode), Meta webhook, lead fetch, email alert, Leads inbox (status: new / contacted / qualified / won / lost, notes, call/email links), manual "sync leads" backfill | Meta app (guide A–F), DNS, SMTP |
+| 2. Performance (built 2026-11-08) | Hourly sync; overview (spend vs $150 cap, leads, cost per lead, today vs yesterday), per-ad and per-day tables/charts, delivery + review status, alerts (rejected ad, zero delivery, cap near) | Phase 1 |
+| 3. AI desk (built 2026-11-08) | "Ask Claude" box with directions; task queue; `/ads-desk` skill on the Mac; reports (weekly review, research) rendered in the dashboard; proposals as structured cards | Phase 1 |
 | 4. Controls | Approve/decline proposals; pause/resume ad, budget change with guardrails; execution via Graph API (system user token); change log | Phases 2–3 |
 | 5. Research + live improvement | Competitor research runs (Ads Library via MCP), creative improvement runs with Eugene's directions (Claude renders new variants locally, uploads drafts, proposal to publish), experiments tracker | Phase 4 |
 

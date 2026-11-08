@@ -22,14 +22,16 @@ def create_app(run_migrations=True):
         db.run_migrations()
 
     import auth
+    import desk_api
     import leads_api
     import performance_api
     import settings_api
     import team_api
     import webhooks
 
-    for module in (auth, leads_api, performance_api, settings_api, team_api, webhooks):
+    for module in (auth, desk_api, leads_api, performance_api, settings_api, team_api, webhooks):
         app.register_blueprint(module.bp)
+    app.register_blueprint(desk_api.agent_bp)
     app.teardown_appcontext(db.close_db)
 
     @app.after_request

@@ -48,6 +48,26 @@ Screenshots (light/dark, desktop/phone, fails on console errors): `node ads/qa/s
 - nginx resolves `ads-backend` per request, so the main site still starts when this service
   is down.
 
+## AI desk (phase 3)
+
+The **Desk** page (admins) is where Eugene gives Claude directions: a question, a results
+review, competitor research or new ad ideas. Claude runs on Eugene's Mac, not on the server:
+
+- `ads/bridge/` is the Mac side. `install.sh` installs the `/ads-desk` skill and the `desk`
+  helper into `~/.claude/skills/ads-desk`, keeps the Mac key (created on the Desk page) and an
+  optional long-lived Claude token (`claude setup-token`) in the login Keychain, and starts
+  `bridge.py` as a LaunchAgent (`com.edgebourne.ads-desk`, logs in `~/Library/Logs/ads-desk`).
+- The bridge long-polls `GET /api/agent/wait` (no AI cost while idle) and, per request, runs
+  `claude -p "/ads-desk run <id>" --permission-mode dontAsk --allowedTools <read-only list>` in
+  the meta-ads workspace. The run can read Meta (MCP read tools), the skill library and the
+  web, and talk to the Desk through `desk`; budget, status, publish and delete tools are not
+  allowed. Changes come back as proposals (`desk_proposals`), applied in phase 4 only after
+  approval.
+- `/ads-desk` in Claude Code works the queue by hand (when the Mac bridge is off).
+- Agent API (`desk_api.agent_bp`, bearer key, stored hashed): `wait`, `tasks/<id>`, `queue`,
+  `tasks/<id>/status|report|proposals`, `snapshot` (performance + inbox lead quality, no
+  contact details), `history`. A task the Mac stops reporting on for 30 minutes is marked failed.
+
 ## Design
 
 Tokens at the top of `frontend/css/app.css` (light and dark). The lead clock (time a new lead

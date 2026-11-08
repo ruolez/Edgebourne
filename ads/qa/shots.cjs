@@ -26,7 +26,7 @@ const BASE = process.env.BASE || 'http://ads.localhost:8090';
         await page.waitForSelector('#stages');
         await page.screenshot({ path: `${OUT}/lead-detail-${tag}-${scheme}.png`, fullPage: true });
       }
-      for (const p of ['performance', 'team', 'settings', 'account']) {
+      for (const p of ['desk', 'performance', 'team', 'settings', 'account']) {
         await page.goto(`${BASE}/${p}.html`);
         await page.waitForTimeout(600);
         await page.screenshot({ path: `${OUT}/${p}-${tag}-${scheme}.png`, fullPage: true });

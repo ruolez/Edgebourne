@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Desk | Edge Bourne Ads</title>
+  <link rel="icon" href="/img/favicon.svg">
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail"></aside>
+    <main class="main">
+      <header class="page-head">
+        <h1>Desk</h1>
+        <span class="mac-status" id="mac-status" role="status"></span>
+      </header>
+      <div class="content stack desk">
+        <section class="panel composer" aria-labelledby="ask-title">
+          <form class="panel-body stack" id="ask-form" novalidate>
+            <h2 class="sr-only" id="ask-title">Ask Claude</h2>
+            <div class="segmented kinds" id="kinds" role="radiogroup" aria-label="What kind of help">
+              <button type="button" role="radio" data-kind="question">Question</button>
+              <button type="button" role="radio" data-kind="review">Review results</button>
+              <button type="button" role="radio" data-kind="research">Research competitors</button>
+              <button type="button" role="radio" data-kind="creative">New ad ideas</button>
+            </div>
+            <div class="field">
+              <label for="prompt" class="sr-only">Your direction for Claude</label>
+              <textarea class="input" id="prompt" name="prompt" rows="3" maxlength="4000"></textarea>
+            </div>
+            <div class="row composer-foot">
+              <div class="field inline-field">
+                <label for="campaign">Campaign</label>
+                <select class="input" id="campaign" name="campaign_id"><option value="">All campaigns</option></select>
+              </div>
+              <span class="spacer"></span>
+              <button class="btn btn-claude" type="submit">Send to Claude</button>
+            </div>
+            <p class="muted small flush" id="ask-hint"></p>
+          </form>
+        </section>
+
+        <div class="stack" id="tasks" aria-live="polite"></div>
+
+        <details class="panel mac-panel" id="mac-panel">
+          <summary class="panel-body"><b>Your Mac</b> <span class="muted" id="mac-summary"></span></summary>
+          <div class="panel-body stack" id="mac-body"></div>
+        </details>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="/js/desk.js"></script>
+</body>
+</html>

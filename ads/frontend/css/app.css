@@ -447,3 +447,74 @@ details.table-view summary { cursor: pointer; color: var(--ink-2); font-weight: 
 
 .table .num { text-align: right; }
 .table.middle td { vertical-align: middle; }
+
+/* ---------- Desk (violet = Claude) ---------- */
+.facts > div { display: contents; }
+.btn-claude { background: var(--violet); border-color: var(--violet); color: #fff; }
+.btn-claude:hover { opacity: .92; }
+.btn-small { padding: 5px 10px; font-size: 14px; }
+.pill.claude { background: var(--violet-soft); color: var(--violet); }
+.pill.claude::before { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .pill.claude::before { animation: none; } }
+
+.mac-status { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; color: var(--ink-2); }
+.mac-status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
+.mac-status.on { color: var(--violet); }
+.mac-status.on::before { background: var(--violet); box-shadow: 0 0 0 3px var(--violet-soft); }
+
+.desk { max-width: 920px; }
+.composer { border-color: color-mix(in srgb, var(--violet) 35%, var(--line)); box-shadow: inset 4px 0 0 var(--violet); }
+.composer .panel-body { padding-top: 18px; }
+.composer textarea { min-height: 96px; resize: vertical; font-size: 16px; line-height: 1.5; }
+.composer textarea:focus { border-color: var(--violet); box-shadow: 0 0 0 3px color-mix(in srgb, var(--violet) 22%, transparent); }
+.kinds button[aria-pressed="true"] { background: var(--violet); color: #fff; }
+.composer-foot { align-items: flex-end; }
+.inline-field { flex-direction: row; align-items: center; gap: 10px; }
+.inline-field .input { min-width: 220px; }
+
+.task .task-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.task .prompt { margin: 0; font-size: 16px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; }
+.task.done .prompt, .task.cancelled .prompt { color: var(--ink-2); }
+.task .summary { margin: 0; padding: 10px 14px; border-left: 3px solid var(--violet); background: var(--violet-soft); border-radius: 0 var(--radius-s) var(--radius-s) 0; font-weight: 600; }
+.progress { margin: 0; display: flex; align-items: center; gap: 8px; color: var(--violet); font-size: 14px; font-weight: 600; }
+.progress .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--violet); animation: pulse 1.4s ease-in-out infinite; }
+
+.report { border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface-2); }
+.report > summary { cursor: pointer; padding: 10px 14px; font-weight: 700; }
+.report[open] > summary { border-bottom: 1px solid var(--line); }
+.md { padding: 6px 18px 14px; background: var(--surface); border-radius: 0 0 var(--radius-s) var(--radius-s); font-size: 15px; line-height: 1.6; max-width: 76ch; overflow-wrap: anywhere; }
+.md h2, .md h3, .md h4 { font-family: var(--font-display); letter-spacing: -.01em; margin: 18px 0 6px; line-height: 1.25; }
+.md h2 { font-size: 20px; } .md h3 { font-size: 17px; } .md h4 { font-size: 15px; }
+.md p, .md ul, .md ol, .md blockquote, .md pre { margin: 8px 0; }
+.md ul, .md ol { padding-left: 22px; }
+.md li + li { margin-top: 3px; }
+.md code { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+.md pre { background: var(--surface-2); padding: 10px 12px; border-radius: var(--radius-s); overflow-x: auto; }
+.md pre code { background: none; padding: 0; }
+.md blockquote { border-left: 3px solid var(--line-strong); padding-left: 12px; color: var(--ink-2); }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
+.md a { color: var(--focus); }
+.md .table { font-size: 14px; margin: 8px 0; }
+.md .table td, .md .table th { padding: 7px 10px; }
+
+.proposal { border: 1px solid color-mix(in srgb, var(--violet) 30%, var(--line)); border-radius: var(--radius-s); padding: 12px 14px; background: var(--surface); }
+.proposal header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.proposal .tag { text-transform: capitalize; font-size: 12px; font-weight: 800; letter-spacing: .02em; color: var(--violet); background: var(--violet-soft); padding: 2px 8px; border-radius: 99px; }
+.proposal .facts { grid-template-columns: 90px 1fr; font-size: 14px; }
+
+.mac-panel > summary { cursor: pointer; }
+.cmd { margin: 0; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 10px 12px; overflow-x: auto; }
+.cmd code, .key { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.key-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.key { background: var(--surface); padding: 6px 8px; border-radius: 4px; overflow-wrap: anywhere; flex: 1; min-width: 0; }
+.claude-note { background: var(--violet-soft); color: var(--ink); }
+@media (max-width: 720px) {
+  .composer-foot { flex-direction: column; align-items: stretch; }
+  .inline-field { flex-direction: column; align-items: stretch; gap: 6px; }
+  .inline-field .input { min-width: 0; }
+  .proposal .facts { grid-template-columns: 1fr; }
+}
+.md .scroll-x { overflow-x: auto; }
+.md .table { width: max-content; min-width: 100%; }
+.md .table td, .md .table th { overflow-wrap: normal; max-width: 280px; }
