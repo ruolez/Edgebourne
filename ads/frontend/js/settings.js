@@ -41,6 +41,14 @@ async function load() {
   s = await api("/api/settings");
   fill($("meta-form"), s.meta);
   fill($("smtp-form"), s.smtp);
+  const use = s.smtp_in_use || { source: "none" };
+  const note = $("smtp-source");
+  note.hidden = false;
+  note.textContent = use.source === "website"
+    ? `Using the website's email settings: ${use.host}, sending from ${use.from_email}. Nothing to fill in here. Change them in the website admin under Email, or enter a different mailbox below to send ad alerts from it instead.`
+    : use.source === "own"
+      ? `Using the mailbox below (${use.host}). Clear the SMTP server and save to go back to the website's email settings.`
+      : "Email isn't set up yet. Set it up once in the website admin under Email and it's used here too, or enter a mailbox below.";
   renderMeta();
   const rows = await api("/api/settings/activity");
   $("activity").innerHTML = rows.length ? `<thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${rows.map((r) =>
@@ -80,7 +88,7 @@ if (me) {
   await load();
   $("meta-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); toast("Meta settings saved"); load(); }); });
   $("smtp-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/smtp", { method: "PUT", body: values(e.target) }); toast("Email settings saved"); load(); }); });
-  $("smtp-test").addEventListener("click", (e) => run(e.currentTarget, async () => { const r = await api("/api/settings/smtp/test", { method: "POST" }); toast(`Test email sent to ${r.sent_to}`); }));
+  $("smtp-test").addEventListener("click", (e) => run(e.currentTarget, async () => { const r = await api("/api/settings/smtp/test", { method: "POST" }); toast(`Test email sent to ${r.sent_to}${r.source === "website" ? " using the website's mailbox" : ""}`); }));
   $("meta-test").addEventListener("click", (e) => run(e.currentTarget, async () => {
     const r = await api("/api/settings/meta/test", { method: "POST" });
     $("meta-result").innerHTML = `<p class="note ok">Connected as <b>${esc(r.system_user)}</b>. Page: ${esc(r.page)}${r.page_token ? "" : " (can't act for it)"}. Ad account: ${esc(r.ad_account)} (${esc(r.currency)}).</p>`;

@@ -126,6 +126,7 @@ Check from Terminal: `meta auth status`.
 
 ## Email (for lead alerts)
 
-Your mail server is `mail.edgebourne.com` on the VPS. In **Settings → Email** enter the SMTP
-server, port (587 with STARTTLS, or 465 with SSL/TLS), the mailbox username and password,
-and the "send from" address. **Send me a test email** checks it end to end.
+Nothing to set up if the website already sends email (website admin → **Email**): the ads
+console uses those settings automatically, and Settings → Email shows which mailbox it uses.
+**Send me a test email** checks it end to end. Enter a mailbox there only if ad alerts should
+come from a different address.

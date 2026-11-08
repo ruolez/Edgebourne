@@ -28,6 +28,11 @@ POSTGRES = {
 # dashboard connects here first and creates its own database if it is missing.
 POSTGRES_BOOTSTRAP_DB = os.environ.get("POSTGRES_BOOTSTRAP_DB", "")
 
+# The website's database and key: when the console's own Email settings are empty,
+# lead alerts go out through the website's mailbox (site_mail.py).
+SITE_POSTGRES_DB = os.environ.get("SITE_POSTGRES_DB", "")
+SITE_SECRET_KEY = os.environ.get("BASE_SECRET_KEY", "")
+
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "eugene@edgebourne.com")
 ADMIN_NAME = os.environ.get("ADMIN_NAME", "Eugene")
 # Only used to create the first admin (who must change it on first sign-in).

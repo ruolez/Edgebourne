@@ -4,13 +4,14 @@ from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 
 import settings_store
+import site_mail
 
 
 class MailError(Exception):
     pass
 
 
-def smtp_settings():
+def own_settings():
     return {
         "host": settings_store.get("smtp_host") or "",
         "port": int(settings_store.get("smtp_port") or 587),
@@ -18,8 +19,21 @@ def smtp_settings():
         "username": settings_store.get("smtp_username") or "",
         "password": settings_store.get("smtp_password") or "",
         "from_email": settings_store.get("smtp_from_email") or "",
-        "from_name": settings_store.get("smtp_from_name") or "Edge Bourne Ads",
     }
+
+
+def smtp_settings():
+    """The console's own mailbox when its SMTP server is filled in, otherwise the
+    website's (Admin → Email). "source" says which: own | website | none."""
+    s = own_settings()
+    source = "own" if s["host"] else "none"
+    if not s["host"]:
+        site = site_mail.settings()
+        if site:
+            s, source = site, "website"
+    s["from_name"] = settings_store.get("smtp_from_name") or "Edge Bourne Ads"
+    s["source"] = source
+    return s
 
 
 def configured():
@@ -30,7 +44,7 @@ def configured():
 def send(to, subject, text, html=None):
     s = smtp_settings()
     if not (s["host"] and s["from_email"]):
-        raise MailError("Email isn't set up yet. Add the SMTP server in Settings → Email.")
+        raise MailError("Email isn't set up yet. Set it up in the website admin (Email) or in Settings → Email here.")
     recipients = [to] if isinstance(to, str) else list(to)
     msg = EmailMessage()
     msg["Subject"] = subject

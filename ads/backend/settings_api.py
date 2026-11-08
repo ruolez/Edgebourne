@@ -31,6 +31,13 @@ def _section(fields):
     return out
 
 
+def _smtp_in_use():
+    s = mailer.smtp_settings()
+    if s["source"] == "none":
+        return {"source": "none"}
+    return {"source": s["source"], "host": s["host"], "from_email": s["from_email"]}
+
+
 @bp.get("")
 @admin_required
 def get_settings():
@@ -39,6 +46,7 @@ def get_settings():
     return jsonify({
         "meta": _section(META_FIELDS),
         "smtp": _section(SMTP_FIELDS),
+        "smtp_in_use": _smtp_in_use(),
         "webhook_url": f"{config.APP_BASE_URL}/webhooks/meta",
         "graph_version_default": config.GRAPH_VERSION_DEFAULT,
         "pending_webhooks": pending["n"],
@@ -90,7 +98,7 @@ def test_smtp():
                     "Email works. New-lead alerts will arrive like this one.")
     except mailer.MailError as exc:
         return api_error(str(exc), 400)
-    return jsonify({"ok": True, "sent_to": me["email"]})
+    return jsonify({"ok": True, "sent_to": me["email"], "source": mailer.smtp_settings()["source"]})
 
 
 @bp.post("/meta/test")
