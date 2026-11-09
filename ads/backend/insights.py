@@ -92,7 +92,9 @@ def sync_ads():
         n += 1
     # Ads deleted in Ads Manager stop appearing in the listing; keep their history, hide them.
     if seen:
-        db.execute("UPDATE ads SET effective_status = 'DELETED', status = 'DELETED' WHERE NOT (id = ANY(%s))", (seen,))
+        # Meta's list leaves archived ads out; keep them archived rather than calling them deleted.
+        db.execute("UPDATE ads SET effective_status = 'DELETED', status = 'DELETED' "
+                   "WHERE NOT (id = ANY(%s)) AND COALESCE(status, '') <> 'ARCHIVED'", (seen,))
     return n
 
 

@@ -26,6 +26,8 @@ function changeLine(c) {
   if (c.action === "status") what = `${c.new_value === "ACTIVE" ? "Turned on" : "Turned off"} the ${LEVEL[c.level]}`;
   else if (c.action === "budget") what = `Changed the ${LEVEL[c.level]} budget ${money(Number(c.old_value), { exact: true })} → ${money(Number(c.new_value), { exact: true })} a day`;
   else if (c.action === "duplicate") what = `Duplicated as “${c.new_value}”`;
+  else if (c.action === "archive") what = "Archived the ad";
+  else if (c.action === "delete") what = "Deleted the ad";
   else what = `Created “${c.new_value || ""}”`;
   return `<li><span>${esc(what)}${c.ok ? "" : ` <b class="bad-text">(Meta refused: ${esc(c.error || "")})</b>`}</span><small>${esc(when(c.created_at))}${c.user_name ? ` · ${esc(c.user_name)}` : ""}${c.proposal_id ? " · Claude's proposal" : ""}</small></li>`;
 }
@@ -51,7 +53,9 @@ function renderHead() {
     ${["ACTIVE", "PAUSED"].includes(ad.status) ? `<span class="switch-label">${ad.status === "ACTIVE" ? "On" : "Off"}</span>${switchHtml(ad.status === "ACTIVE", `data-toggle="ad:${ad.id}" data-name="${esc(ad.name)}"`, "Ad on or off")}` : ""}
     <button class="btn" type="button" id="dup">${icon("copy")}<span>Duplicate</span></button>
     <a class="btn" href="/new-ad.html?from=${encodeURIComponent(ad.id)}">${icon("plus")}<span>New ad from this</span></a>
-    <button class="btn btn-claude" type="button" data-goto="polish">${icon("spark")}<span>Polish</span></button>`;
+    <button class="btn btn-claude" type="button" data-goto="polish">${icon("spark")}<span>Polish</span></button>
+    ${me.role === "admin" && !["ACTIVE", "ARCHIVED", "DELETED"].includes(ad.status) ? '<button class="btn" type="button" id="archive">Archive</button>' : ""}
+    ${me.role === "admin" && !["ACTIVE", "DELETED"].includes(ad.status) ? '<button class="btn btn-danger-text" type="button" id="delete">Delete</button>' : ""}`;
   const tabs = TABS.filter(([id]) => id !== "video" || ad.object_type === "VIDEO");
   $("ad-tabs").innerHTML = tabs.map(([id, l]) => `<button type="button" role="tab" data-tab="${id}" aria-selected="${id === tab}">${esc(l)}${id === "comments" && data.comment_total ? ` <span class="n">${data.comment_total}</span>` : ""}</button>`).join("");
 }
@@ -391,6 +395,37 @@ if (me) {
     if (f) { format = f.dataset.format; try { localStorage.setItem("ebads-preview", format); } catch (err) {} loadPreview(); return; }
     const sw = e.target.closest("[data-toggle]");
     if (sw) { toggleEntity(sw, load); return; }
+    if (e.target.closest("#archive")) {
+      const ad = data.ad;
+      const yes = await confirmDialog({
+        title: `Archive “${ad.name}”?`,
+        body: "<p>It disappears from the Ads page (\"Show archived\" brings it back into view) and from Meta's main list. Its numbers stay.</p><p>Meta can't switch an archived ad back on. You can still delete it later. To run it again, duplicate it.</p>",
+        confirm: "Archive",
+      });
+      if (!yes) return;
+      try {
+        await api(`/api/ads/ad/${encodeURIComponent(ad.id)}/archive`, { method: "POST" });
+        toast("Archived");
+        load();
+      } catch (err) { toast(err.message, "bad"); }
+      return;
+    }
+    if (e.target.closest("#delete")) {
+      const ad = data.ad;
+      const name = await confirmDialog({
+        title: `Delete “${ad.name}”?`,
+        body: "<p>Deletes it in Meta. <b>This can't be undone.</b> Its past spend and leads stay in your reports.</p>",
+        confirm: "Delete for good", danger: true,
+        field: { label: "Type the ad's name to confirm", value: "", validate: (v) => (v.trim() === ad.name.trim() ? null : "The name doesn't match") },
+      });
+      if (name === false) return;
+      try {
+        await api(`/api/ads/ad/${encodeURIComponent(ad.id)}/delete`, { method: "POST", body: { name } });
+        toast(`Deleted “${ad.name}”`);
+        location.href = "/ads.html";
+      } catch (err) { toast(err.message, "bad"); }
+      return;
+    }
     if (e.target.closest("#dup")) {
       const ad = data.ad;
       const name = await confirmDialog({

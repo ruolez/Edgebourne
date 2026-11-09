@@ -102,5 +102,39 @@ class SummarizeTargetingTests(unittest.TestCase):
         self.assertEqual([sync.cents(v) for v in ("2000", "0", None, "")], [2000, None, None, None])
 
 
+class RemovalProblemTest(unittest.TestCase):
+    OFF = {"name": "TEST e - N3 image upload", "status": "PAUSED", "effective_status": "PAUSED"}
+    ADMIN, TEAMMATE = {"role": "admin"}, {"role": "member"}
+
+    def test_admin_may_archive_an_ad_that_is_off(self):
+        self.assertIsNone(ads_api.removal_problem(self.ADMIN, self.OFF, "archive", None))
+
+    def test_delete_needs_the_exact_name_typed(self):
+        cases = [(self.OFF["name"], None), ("  " + self.OFF["name"] + " ", None),
+                 ("TEST e", "Type the ad's name exactly to delete it"), (None, "Type the ad's name exactly to delete it")]
+        for typed, expected in cases:
+            self.assertEqual(ads_api.removal_problem(self.ADMIN, self.OFF, "delete", typed), expected, typed)
+
+    def test_refused_cases(self):
+        on = {**self.OFF, "status": "ACTIVE", "effective_status": "ACTIVE"}
+        archived = {**self.OFF, "status": "ARCHIVED", "effective_status": "ARCHIVED"}
+        deleted = {**self.OFF, "status": "DELETED", "effective_status": "DELETED"}
+        cases = [
+            (self.TEAMMATE, self.OFF, "archive", "Only an admin can archive or delete ads"),
+            (self.ADMIN, on, "archive", "Switch the ad off first"),
+            (self.ADMIN, on, "delete", "Switch the ad off first"),
+            (self.ADMIN, archived, "archive", "It's already archived"),
+            (self.ADMIN, deleted, "delete", "It's already deleted"),
+            (self.ADMIN, deleted, "archive", "It's already deleted"),
+            (self.ADMIN, self.OFF, "rename", "Unknown action"),
+        ]
+        for user, row, action, expected in cases:
+            self.assertEqual(ads_api.removal_problem(user, row, action, row["name"]), expected, (action, row["status"]))
+
+    def test_an_archived_ad_can_still_be_deleted(self):
+        archived = {**self.OFF, "status": "ARCHIVED", "effective_status": "ARCHIVED"}
+        self.assertIsNone(ads_api.removal_problem(self.ADMIN, archived, "delete", archived["name"]))
+
+
 if __name__ == "__main__":
     unittest.main()

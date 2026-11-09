@@ -123,6 +123,39 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
     check(`Refresh is on ${p}`, await page.isVisible('.page-head [data-refresh]'));
   }
 
+  // Archive and delete: only for an ad that is off; delete needs the name typed.
+  const seen = errors.length;
+  const on = await page.evaluate(() => fetch('/api/ads/ad/120252672229400312/archive', { method: 'POST' }).then((r) => r.status));
+  await page.waitForTimeout(300);
+  errors.splice(seen); // the refused request above logs an expected 400
+  const n2Status = await page.evaluate(() => fetch('/api/ads/ad/120252672229400312').then((r) => r.json()).then((d) => d.ad.status));
+  check('archive is refused for an ad that is on', n2Status !== 'ACTIVE' || on === 400, `${n2Status} → ${on}`);
+  const dup = await page.evaluate(() => fetch('/api/ads/ad/120252672229400312/duplicate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'QA archive me' }) }).then((r) => r.json()));
+  await page.goto(`${BASE}/ad.html?id=${dup.id}`);
+  await page.click('#archive');
+  await page.waitForSelector('dialog.confirm');
+  await page.screenshot({ path: `${OUT}/flow-archive-confirm.png` });
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => /Archived/.test(document.querySelector('#ad-status')?.textContent || ''));
+  check('Archive marks the ad archived and hides the Archive button', !(await page.isVisible('#archive')), await page.textContent('#ad-status'));
+  await page.goto(BASE + '/ads.html', { waitUntil: 'networkidle' });
+  const listed = async () => page.evaluate((id) => !!document.querySelector(`[href*="${id}"]`), dup.id);
+  check('an archived ad is hidden on the Ads page', !(await listed()));
+  await page.click('#archived');
+  await page.waitForFunction(() => /Hide archived/.test(document.querySelector('#archived')?.textContent || ''));
+  check('Show archived brings it back into view', await listed());
+  await page.goto(`${BASE}/ad.html?id=${dup.id}`);
+  await page.click('#delete');
+  await page.waitForSelector('dialog.confirm #cd-input');
+  await page.fill('#cd-input', 'QA archive');
+  await page.click('dialog.confirm #cd-ok');
+  check('delete refuses a name that does not match', await page.isVisible('#cd-err'), await page.textContent('#cd-err'));
+  await page.fill('#cd-input', 'QA archive me');
+  await page.screenshot({ path: `${OUT}/flow-delete-confirm.png` });
+  await Promise.all([page.waitForURL('**/ads.html'), page.click('dialog.confirm #cd-ok')]);
+  const gone = await page.evaluate((id) => fetch(`/api/ads/ad/${id}`).then((r) => r.json()).then((d) => d.ad.status), dup.id);
+  check('Delete with the typed name deletes it and returns to Ads', gone === 'DELETED', gone);
+
   // Lead stages to Meta: a real-looking lead moved to Qualified sends Lead, Contacted and Qualified once each.
   const leadId = Number(require('child_process').execSync(`docker exec edgebourne-ads-backend python -c "
 import db

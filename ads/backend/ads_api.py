@@ -131,6 +131,27 @@ def find_entity(entity_id):
     return None, None
 
 
+REMOVALS = {"archive": "ARCHIVED", "delete": "DELETED"}
+
+
+def removal_problem(user, row, action, typed_name):
+    """Archive and delete are admin-only, only for ads that are off, and delete needs the
+    name typed. Meta lets an archived ad go on to deleted, never back."""
+    if action not in REMOVALS:
+        return "Unknown action"
+    if user.get("role") != "admin":
+        return "Only an admin can archive or delete ads"
+    if row["status"] == "DELETED":
+        return "It's already deleted"
+    if row["status"] == REMOVALS[action]:
+        return "It's already archived"
+    if row["status"] == "ACTIVE":
+        return "Switch the ad off first"
+    if action == "delete" and (typed_name or "").strip() != row["name"].strip():
+        return "Type the ad's name exactly to delete it"
+    return None
+
+
 def can_touch(user, campaign_id):
     ids = visible_campaign_ids(user)
     return ids is None or campaign_id in ids
@@ -225,9 +246,12 @@ def tree():
     aw, ap = _scope(user, "campaign_id")
     campaigns = db.query(f"SELECT * FROM campaigns WHERE {cw} ORDER BY effective_status = 'ACTIVE' DESC, name", cp)
     adsets = db.query(f"SELECT * FROM adsets WHERE {aw} ORDER BY name", ap)
+    hidden = ("DELETED",) if request.args.get("archived") == "1" else ("DELETED", "ARCHIVED")
     ads = db.query(f"""SELECT id, name, campaign_id, adset_id, status, effective_status, image_url, thumbnail_url,
                               title, object_type, review_feedback, issues, created_time
-                       FROM ads WHERE {aw} AND COALESCE(effective_status, '') <> 'DELETED' ORDER BY name""", ap)
+                       FROM ads WHERE {aw} AND NOT (COALESCE(effective_status, '') = ANY(%s)) ORDER BY name""",
+                   ap + [list(hidden)])
+    archived = db.query(f"SELECT COUNT(*) AS n FROM ads WHERE {aw} AND effective_status = 'ARCHIVED'", ap, one=True)["n"]
     metrics = _metrics(aw, ap, start, end)
     lifetime = {r["ad_id"]: int(r["impressions"]) for r in db.query(
         f"SELECT ad_id, SUM(impressions) AS impressions FROM ad_daily WHERE {aw} GROUP BY ad_id", ap)}
@@ -258,7 +282,8 @@ def tree():
         c["pending_proposals"] = pending.get(c["id"], 0)
         c["can_control"] = can_touch(user, c["id"])
     return jsonify({"range": {"start": start.isoformat(), "end": end.isoformat(), "days": days},
-                    "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync")})
+                    "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync"),
+                    "archived": archived})
 
 
 @bp.get("/ads/ad/<ad_id>")
@@ -348,6 +373,37 @@ def set_status(level, entity_id):
     if error:
         return api_error(f"Meta refused: {error}", 400)
     return jsonify(entity(level, entity_id))
+
+
+@bp.post("/ads/ad/<ad_id>/archive")
+@login_required
+def archive_ad(ad_id):
+    return _remove(ad_id, "archive")
+
+
+@bp.post("/ads/ad/<ad_id>/delete")
+@login_required
+def delete_ad(ad_id):
+    return _remove(ad_id, "delete")
+
+
+def _remove(ad_id, action):
+    row, err = _target("ad", ad_id)
+    if err:
+        return err
+    user = current_user()
+    problem = removal_problem(user, row, action, (request.get_json(silent=True) or {}).get("name"))
+    if problem:
+        return api_error(problem, 400, field="name" if "name" in problem else None)
+    status = REMOVALS[action]
+    try:
+        meta_client.post(ad_id, status=status)
+    except meta_client.MetaError as exc:
+        record(user, "ad", row, action, row["status"], status, False, str(exc))
+        return api_error(f"Meta refused: {exc}", 400)
+    db.execute("UPDATE ads SET status = %s, effective_status = %s WHERE id = %s", (status, status, ad_id))
+    record(user, "ad", row, action, row["status"], status, True)
+    return jsonify(entity("ad", ad_id))
 
 
 @bp.post("/ads/<level>/<entity_id>/budget")

@@ -5,6 +5,7 @@ import { count, dayLabel, money, pct, per, plural, statusOf } from "./format.js"
 
 const $ = (id) => document.getElementById(id);
 let range = "7";
+let showArchived = false;
 try { range = localStorage.getItem("ebads-range") || "7"; } catch (e) {}
 let data;
 const prefs = (() => { try { return JSON.parse(localStorage.getItem("ebads-adsview") || "{}"); } catch (e) { return {}; } })();
@@ -132,6 +133,7 @@ function toolbar() {
       return `<button type="button" data-filter="${k}" aria-pressed="${k === filter}">${esc(l)} <span class="n">${n}</span></button>`;
     }).join("")}</div>
     <span class="spacer"></span>
+    ${data.archived ? `<button type="button" class="btn btn-quiet btn-small" id="archived" aria-pressed="${showArchived}">${showArchived ? "Hide" : "Show"} archived <span class="n">${data.archived}</span></button>` : ""}
     <label class="sort"><span class="muted small">Sort</span><select class="input" id="sort">${Object.entries(SORTS).map(([k, [l]]) => `<option value="${k}" ${k === sortBy ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
     <div class="segmented icon-seg" id="view" role="group" aria-label="View">
       <button type="button" data-view="cards" aria-pressed="${view === "cards"}" title="Cards">${icon("grid")}<span class="sr-only">Cards</span></button>
@@ -184,7 +186,7 @@ function render() {
 
 async function load() {
   document.querySelectorAll("#range button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.range === range)));
-  try { data = await api(`/api/ads?range=${range}`); render(); loadEstimates(); } catch (err) { toast(err.message, "bad"); }
+  try { data = await api(`/api/ads?range=${range}${showArchived ? "&archived=1" : ""}`); render(); loadEstimates(); } catch (err) { toast(err.message, "bad"); }
 }
 
 function loadEstimates() {
@@ -210,6 +212,7 @@ if (me) {
     if (e.target.id === "sort") { sortBy = e.target.value; savePrefs(); render(); loadEstimates(); }
   });
   $("ads").addEventListener("click", (e) => {
+    if (e.target.closest("#archived")) { showArchived = !showArchived; load(); return; }
     const fb = e.target.closest("[data-filter]");
     if (fb) { filter = fb.dataset.filter; savePrefs(); render(); loadEstimates(); return; }
     const vb = e.target.closest("[data-view]");
