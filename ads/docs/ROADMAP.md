@@ -115,11 +115,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **[Eugene]** = needs hi
 ### Open issues (Eugene, 2026-11-09: fix a few of these before going forward)
 Found while proving Phase 0 and building 1.1. Pick with Eugene; tick here when fixed.
 - [ ] I1 **[Eugene]** Comments tab (0.3 h): the token lacks `pages_read_user_content`. Regenerate the system user token with it and paste it in Settings → Meta; then recheck h.
-- [ ] I2 Ad page has no loading state: Meta previews take 2–8 s and the box stays blank (a fresh ad still IN_PROCESS shows an empty white preview).
-- [ ] I3 Test leads are hidden from the Leads inbox with no way to see them (API has `tests=1`); add a toggle.
+- [x] I2 (fixed: placeholder stays until Meta's frame has loaded, "open in a new tab" after 12 s, note on ads still in review; same loader on the Claude page) Ad page has no loading state: Meta previews take 2–8 s and the box stays blank (a fresh ad still IN_PROCESS shows an empty white preview).
+- [x] I3 (fixed: "Show test leads" checkbox, rows marked Test) Test leads are hidden from the Leads inbox with no way to see them (API has `tests=1`); add a toggle.
 - [ ] I4 A render proposal carries one video, so N1 · v2's 9:16 upload (2015174525716803) isn't used. Needs placement asset customization (4:5 for feeds, 9:16 for Stories/Reels) in the creative builder.
-- [ ] I5 Lead page "Meta has …" line (1.1) shows "on its way" right after a stage click and only updates when the lead is reopened; re-fetch a few seconds after the change.
-- [ ] I6 Stage events queue while the 1.1 switch is off and show as "waiting"; decide: queue only when on, or keep (Meta takes 7 days back, older ones are skipped).
+- [x] I5 (fixed: the line re-checks itself at 3, 6, 9, 12 s while anything is pending) Lead page "Meta has …" line (1.1) shows "on its way" right after a stage click and only updates when the lead is reopened; re-fetch a few seconds after the change.
+- [x] I6 (decided: keep queueing, Meta takes 7 days back; Settings now says "N saved, sent once you turn this on" instead of "waiting") Stage events queue while the 1.1 switch is off and show as "waiting"; decide: queue only when on, or keep (Meta takes 7 days back, older ones are skipped).
 - [ ] I7 Creative files: local `creatives/2026-11-07-new5/out/N1-9x16*` still carry the banned "Free workflow review" wording (polish #2 report). Not in any live ad; rebuild or delete before reuse.
 - [ ] I8 **[Eugene]** Money: the $150 manual account cap ($35.31 used on 2026-11-09) stops all ads around Nov 15. Raise it or let it stop, his call.
 - [x] I10 Archive and delete ads from the console (Eugene asked for both, 2026-11-09): ad page buttons, admin only, only when the ad is off; delete needs the ad's name typed; archived ads hide on the Ads page behind "Show archived"; every one lands in meta_changes. Meta: archived → only deleted, never back on; both keep their numbers. Sync no longer turns an archived ad into "deleted" when Meta's list leaves it out.
@@ -520,3 +520,4 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-09 · I10 archive + delete built (unit tests + QA flow: refuse when on, archive hides, Show archived, wrong name refused, delete) · Eugene swapped N1 → N1 · v2 himself (v2 ACTIVE, N1 PAUSED, logged) · next: push + Update, then Eugene picks the next issues
 - 2026-11-09 · I11 Claude page rebuilt (Impeccable shape → build; decisions/by ad/all runs; Meta previews of proposed ads; dev copy of the real Desk in `dev/seed_desk.py`); unit tests OK, QA 41 PASS · next: Eugene pushes + Update, check a live preview
 - 2026-11-09 · I12 automatic refresh (Settings interval, worker pull, pages catch up by themselves); 85 unit tests, QA 45 PASS · next: Eugene runs Update and tests
+- 2026-11-09 · I2, I3, I5, I6 fixed (preview loader shared by ad page and Claude page, test-leads toggle, lead's Meta line follows itself, CRM wording while off); 85 unit tests, QA 48 PASS · next: Eugene pushes + Update; open: I1/I8 (Eugene), I4, I7, I9, I11 live check, then 1.2 (alert channel)

@@ -10,7 +10,7 @@ const STAGES = [
 ];
 const FILTERS = [{ id: "open", label: "Open" }, ...STAGES, { id: "all", label: "All" }];
 
-const state = { loaded: false, me: null, filter: "open", q: "", leads: [], counts: {}, selected: null, seen: new Set() };
+const state = { loaded: false, me: null, filter: "open", q: "", tests: false, leads: [], counts: {}, selected: null, seen: new Set() };
 const $ = (id) => document.getElementById(id);
 
 // Fresh = under an hour, late = over a day. Only new leads are "waiting".
@@ -41,7 +41,7 @@ function rowHtml(lead) {
     <span class="who">
       <b>${esc(lead.full_name || "No name given")}</b>
       <span>${esc(lead.business_type || "Business not given")}</span>
-      <small>${isNew ? "" : `<span class="pill ${lead.status}">${esc(STAGES.find((s) => s.id === lead.status).label)}</span> `}${esc(lead.ad_name || "")}${lead.owner_name ? `, ${esc(lead.owner_name)}` : ""}</small>
+      <small>${lead.is_test ? '<span class="pill">Test</span> ' : ""}${isNew ? "" : `<span class="pill ${lead.status}">${esc(STAGES.find((s) => s.id === lead.status).label)}</span> `}${esc(lead.ad_name || "")}${lead.owner_name ? `, ${esc(lead.owner_name)}` : ""}</small>
     </span>
   </button></li>`;
 }
@@ -63,6 +63,7 @@ async function load({ quiet = false } = {}) {
   const params = new URLSearchParams();
   if (state.filter !== "all") params.set("status", state.filter);
   if (state.q) params.set("q", state.q);
+  if (state.tests) params.set("tests", "1");
   try {
     const data = await api("/api/leads?" + params);
     state.leads = data.leads;
@@ -190,10 +191,28 @@ function renderDetail(lead) {
   });
 }
 
+// Stage events go to Meta from the background worker within seconds; refresh just that line.
+let stagesTimer;
+function followMetaStages(id, tries = 0) {
+  clearTimeout(stagesTimer);
+  if (tries >= 4) return;
+  stagesTimer = setTimeout(async () => {
+    if (state.selected !== id) return;
+    try {
+      const lead = await api(`/api/leads/${id}`);
+      const line = $("meta-stages");
+      if (state.selected !== id || !line) return;
+      line.outerHTML = metaStages(lead) || "";
+      if ((lead.meta_stages || []).some((r) => r.status === "pending")) followMetaStages(id, tries + 1);
+    } catch (e) { /* the line stays as it was */ }
+  }, 3000 * (tries + 1));
+}
+
 async function patch(id, body) {
   try {
     const lead = await api(`/api/leads/${id}`, { method: "PATCH", body });
     renderDetail(lead);
+    if ((lead.meta_stages || []).some((r) => r.status === "pending")) followMetaStages(id);
     if (body.status) toast(`Moved to ${STAGES.find((s) => s.id === body.status).label}`);
     load({ quiet: true });
   } catch (err) { toast(err.message, "bad"); }
@@ -213,6 +232,7 @@ async function main() {
     state.filter = b.dataset.f;
     load();
   });
+  $("tests").addEventListener("change", (e) => { state.tests = e.target.checked; load(); });
   let t;
   $("q").addEventListener("input", (e) => {
     clearTimeout(t);

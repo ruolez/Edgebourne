@@ -652,7 +652,7 @@ dialog.confirm .affix .input:focus { box-shadow: none; }
 .preview-panel { position: sticky; top: 16px; }
 .format-scroll { overflow-x: auto; margin: 0 -4px; padding: 0 4px 2px; }
 .format-scroll .segmented { flex-wrap: nowrap; width: max-content; }
-.preview-frame { display: flex; justify-content: center; min-height: 300px; background: var(--surface-2); border-radius: var(--radius-s); padding: 14px 8px; }
+.preview-frame { position: relative; display: flex; justify-content: center; min-height: 300px; background: var(--surface-2); border-radius: var(--radius-s); padding: 14px 8px; }
 .preview-frame iframe { border: 0; max-width: 100%; background: #fff; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
 .preview-wait { align-self: center; }
 .facts dd.pre { white-space: pre-wrap; }
@@ -1000,7 +1000,7 @@ dialog.confirm .affix .input:focus { box-shadow: none; }
 
 .decision { display: grid; gap: 0; background: var(--surface); border-radius: var(--radius-m); box-shadow: var(--lift); overflow: hidden; scroll-margin-top: 24px; }
 .decision.with-preview { grid-template-columns: 360px minmax(0, 1fr); }
-.decision-preview { background: var(--surface-2); display: flex; justify-content: center; align-items: flex-start; padding: 16px 12px; min-height: 420px; border-right: 1px solid var(--line); }
+.decision-preview { position: relative; background: var(--surface-2); display: flex; justify-content: center; align-items: flex-start; padding: 16px 12px; min-height: 420px; border-right: 1px solid var(--line); }
 .decision-preview iframe { border: 0; width: 100%; max-width: 336px; background: #fff; border-radius: 8px; box-shadow: 0 1px 2px rgba(28, 43, 51, .08), 0 4px 14px -6px rgba(28, 43, 51, .18); }
 .preview-skeleton { width: 100%; max-width: 336px; display: grid; gap: 10px; }
 .preview-skeleton span { display: block; height: 14px; border-radius: 6px; background: color-mix(in srgb, var(--ink) 8%, transparent); animation: shimmer 1.4s ease-in-out infinite; }
@@ -1058,3 +1058,9 @@ dialog.confirm .affix .input:focus { box-shadow: none; }
   .changes { grid-template-columns: 1fr; gap: 2px; }
   .changes dd { margin-bottom: 8px; }
 }
+
+/* A Meta preview frame stays out of sight until it has loaded; the skeleton holds its place. */
+iframe.preview-loading { position: absolute; width: 1px !important; height: 1px !important; opacity: 0; pointer-events: none; }
+.preview-review { margin: 0 0 10px; }
+.leads-bar .check { align-items: center; font-weight: 500; color: var(--ink-2); }
+.leads-bar .check input { margin-top: 0; }

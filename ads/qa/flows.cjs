@@ -62,6 +62,8 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   await page.waitForSelector('#formats button');
   await page.click('#formats button[data-format="INSTAGRAM_STORY"]');
   await page.waitForSelector('#preview-frame iframe');
+  await page.waitForSelector('#preview-frame iframe:not(.preview-loading)', { timeout: 15000 });
+  check('the preview placeholder stays until Meta\'s frame has loaded', (await page.locator('#preview-frame .preview-skeleton').count()) === 0);
   check('preview loads an iframe for Instagram Stories', /INSTAGRAM_STORY/.test(await page.getAttribute('#preview-frame iframe', 'src')));
   await page.click('#dup');
   await page.waitForSelector('dialog.confirm #cd-input');
@@ -171,18 +173,22 @@ print(r['id'])"`).toString().trim());
   await page.goto(`${BASE}/leads.html#lead=${leadId}`);
   await page.waitForSelector('[data-stage="qualified"]');
   await page.click('[data-stage="qualified"]');
-  let stages = '';
-  for (let i = 0; i < 20 && !/Qualified: sent/.test(stages); i++) {
-    await page.waitForTimeout(1000);
-    const lead = await page.evaluate((id) => fetch(`/api/leads/${id}`).then((r) => r.json()), leadId);
-    stages = (lead.meta_stages || []).map((r) => `${r.stage}:${r.status}`).join(' ');
-    if (/qualified:sent/.test(stages)) break;
-  }
+  await page.waitForFunction(() => /Meta has New, Contacted, Qualified/.test(document.querySelector('#meta-stages')?.textContent || ''), null, { timeout: 20000 }).catch(() => {});
+  const stages = await page.evaluate((id) => fetch(`/api/leads/${id}`).then((r) => r.json()).then((l) => (l.meta_stages || []).map((r) => `${r.stage}:${r.status}`).join(' ')), leadId);
   check('a stage change sends Lead, Contacted and Qualified to Meta', stages === 'new:sent contacted:sent qualified:sent', stages);
-  await page.reload();
-  await page.waitForSelector('#meta-stages');
-  check('the lead page says what Meta got', /Meta has New, Contacted, Qualified/.test(await page.textContent('#meta-stages')), await page.textContent('#meta-stages'));
+  check('the lead page says what Meta got without reopening the lead', /Meta has New, Contacted, Qualified/.test(await page.textContent('#meta-stages')), await page.textContent('#meta-stages'));
   await page.screenshot({ path: `${OUT}/flow-crm-lead.png` });
+  // Test leads stay out of the inbox unless asked for.
+  require('child_process').execSync(`docker exec edgebourne-ads-backend python -c "
+import db
+db.execute(\\"DELETE FROM leads WHERE meta_lead_id = 'qa-test-lead'\\")
+db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test) VALUES ('qa-test-lead', now(), 'QA Test Lead', true)\\")"`);
+  await page.goto(BASE + '/leads.html');
+  await page.waitForSelector('#list .lead-row');
+  check('test leads are hidden from the inbox', !/QA Test Lead/.test(await page.textContent('#list')));
+  await page.check('#tests');
+  await page.waitForFunction(() => /QA Test Lead/.test(document.querySelector('#list')?.textContent || ''));
+  check('Show test leads lists them, marked Test', /Test/.test(await page.textContent('#list .lead-row:has-text("QA Test Lead")')));
   await page.goto(BASE + '/settings.html');
   await page.waitForSelector('#crm-state .pill');
   await page.uncheck('#crm_send_enabled');

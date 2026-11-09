@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, icon, onRefresh, shortWait, switchHtml, toast, when } from "./ui.js";
+import { boot, confirmDialog, esc, icon, onRefresh, previewSkeleton, shortWait, showPreviewFrame, switchHtml, toast, when } from "./ui.js";
 import { CTA_LABELS, count, money, pct, per, statusOf } from "./format.js";
 import { barList, columnChart } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
@@ -74,19 +74,10 @@ async function loadPreview() {
   const box = $("preview-frame");
   if (!box) return;
   document.querySelectorAll("#formats button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.format === format)));
-  box.innerHTML = '<p class="muted preview-wait">Loading Meta\'s preview…</p>';
+  box.innerHTML = previewSkeleton();
   try {
     const p = await api(`/api/ads/ad/${encodeURIComponent(adId)}/preview?format=${format}`);
-    const frame = document.createElement("iframe");
-    frame.src = p.src;
-    frame.title = "Ad preview from Meta";
-    frame.loading = "lazy";
-    frame.referrerPolicy = "no-referrer";
-    frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-popups");
-    frame.style.width = `${Math.min(p.width || 360, 400)}px`;
-    frame.style.height = `${p.height || 640}px`;
-    box.innerHTML = "";
-    box.appendChild(frame);
+    showPreviewFrame(box, p, { title: "Ad preview from Meta", width: Math.min(p.width || 360, 400), height: p.height || 640 });
     $("preview-open").href = p.src;
     $("preview-open").hidden = false;
   } catch (err) {
@@ -111,6 +102,7 @@ function renderOverview() {
         <div class="panel-head"><h2>Preview</h2><p>As Meta renders it</p></div>
         <div class="panel-body stack tight">
           <div class="format-scroll"><div class="segmented" id="formats" role="group" aria-label="Placement">${data.formats.map((f) => `<button type="button" data-format="${f.id}">${esc(f.label)}</button>`).join("")}</div></div>
+          ${["IN_PROCESS", "PENDING_REVIEW"].includes(data.ad.effective_status) ? '<p class="note preview-review">Meta is still reviewing this ad, so its preview can stay blank until the review is done (usually within a day).</p>' : ""}
           <div class="preview-frame" id="preview-frame"></div>
           <a class="small" id="preview-open" target="_blank" rel="noopener noreferrer" hidden>Open this preview in a new tab</a>
         </div>

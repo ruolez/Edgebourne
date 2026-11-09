@@ -364,3 +364,31 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
 // An on/off switch. data-* attributes say what it controls.
 export const switchHtml = (on, attrs, label) =>
   `<button type="button" class="switch" role="switch" aria-checked="${on ? "true" : "false"}" aria-label="${esc(label)}" ${attrs}><span></span></button>`;
+
+// Meta's previews take a few seconds and the iframe is blank white until then: keep the
+// skeleton up until the frame has loaded, and offer a new tab if Meta is slow.
+const SKELETON = (text) => `<div class="preview-skeleton" role="status"><span></span><span></span><span></span><p>${text}</p></div>`;
+export const previewSkeleton = () => SKELETON("Loading Meta's preview…");
+
+export function showPreviewFrame(box, p, { title, width, height }) {
+  const frame = document.createElement("iframe");
+  frame.title = title;
+  frame.referrerPolicy = "no-referrer";
+  frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-popups");
+  if (width) frame.style.width = `${width}px`;
+  frame.style.height = `${height}px`;
+  frame.className = "preview-loading";
+  const slow = setTimeout(() => {
+    const note = box.querySelector(".preview-skeleton p");
+    if (note) note.innerHTML = `Meta is slow to answer. <a href="${p.src}" target="_blank" rel="noopener noreferrer">Open the preview in a new tab</a>`;
+  }, 12000);
+  frame.addEventListener("load", () => {
+    clearTimeout(slow);
+    frame.classList.remove("preview-loading");
+    box.querySelector(".preview-skeleton")?.remove();
+  }, { once: true });
+  box.innerHTML = previewSkeleton();
+  box.append(frame);
+  frame.src = p.src;
+  return frame;
+}

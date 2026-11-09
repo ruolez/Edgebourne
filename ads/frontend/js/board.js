@@ -2,7 +2,7 @@
 // Data comes from /api/desk: tasks (with proposals carrying about_ad, state, result_ad),
 // ads (by id) and families (an ad plus every ad made from it).
 import { api } from "./api.js";
-import { esc, icon, when } from "./ui.js";
+import { esc, icon, showPreviewFrame, when } from "./ui.js";
 import { statusOf } from "./format.js";
 import { renderMarkdown } from "./markdown.js";
 import { KIND_LABELS, scoreClass, taskCard } from "./tasks.js";
@@ -222,13 +222,7 @@ async function fillPreview(box) {
   try {
     let p = previewCache.get(id);
     if (!p) { p = await api(`/api/proposals/${id}/preview?format=MOBILE_FEED_STANDARD`); previewCache.set(id, p); }
-    const frame = document.createElement("iframe");
-    frame.src = p.src;
-    frame.title = "New ad preview from Meta";
-    frame.referrerPolicy = "no-referrer";
-    frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-popups");
-    frame.style.height = `${p.height || 560}px`;
-    box.replaceChildren(frame);
+    showPreviewFrame(box, p, { title: "New ad preview from Meta", height: p.height || 560 });
   } catch (err) {
     box.innerHTML = `<p class="preview-error">${esc(err.message)}</p>`;
   }

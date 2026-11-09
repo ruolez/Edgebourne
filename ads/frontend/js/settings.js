@@ -44,7 +44,7 @@ function renderCrm() {
   $("crm_send_enabled").checked = on;
   $("crm-state").innerHTML = !on ? '<span class="pill">Off</span>'
     : c.failed ? `<span class="pill warn">${c.failed} didn't reach Meta</span>` : '<span class="pill ok">On</span>';
-  const parts = [`${c.sent} sent`, c.pending && `${c.pending} waiting`, c.failed && `${c.failed} failed`, c.skipped && `${c.skipped} skipped`].filter(Boolean);
+  const parts = [`${c.sent} sent`, c.pending && (on ? `${c.pending} waiting` : `${c.pending} saved, sent once you turn this on (Meta takes them up to 7 days back)`), c.failed && `${c.failed} failed`, c.skipped && `${c.skipped} skipped`].filter(Boolean);
   $("crm-result").innerHTML = c.sent || c.pending || c.failed || c.skipped
     ? `<p class="note${c.failed ? " warn" : ""}">${parts.join(", ")}.${c.last_error ? ` Last error: ${esc(c.last_error)}` : ""}</p>` : "";
 }
