@@ -26,6 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 desk = importlib.machinery.SourceFileLoader("desk", os.path.join(HERE, "desk")).load_module()
 
 RUN_LIMIT_SECONDS = 25 * 60
+RENDER_LIMIT_SECONDS = 50 * 60
 KEEPALIVE_SECONDS = 60
 LOG_DIR = os.path.expanduser("~/Library/Logs/ads-desk")
 
@@ -45,12 +46,26 @@ READ_TOOLS = [
 ]
 
 
-def allowed_tools(skill_dir, workdir):
+def allowed_tools(skill_dir, workdir, kind="question"):
+    """Read-only by default. Permission paths: `//abs/path` is absolute, a bare path is
+    relative to the working directory (`/path` would mean relative to a settings file)."""
+    def files(rel):
+        return [f"Edit({rel}/**)", f"Edit(/{workdir}/{rel}/**)"]
     tools = ["Read", "Glob", "Grep", "ToolSearch", "Skill", "WebSearch", "WebFetch",
-             f"Bash({skill_dir}/desk:*)", "Bash(~/.claude/skills/ads-desk/desk:*)",
-             f"Edit({workdir}/reports/desk/**)"]
+             f"Bash({skill_dir}/desk:*)", "Bash(~/.claude/skills/ads-desk/desk:*)"]
+    # JSON for scorecards and proposals is written to files here and passed with --file
+    # (heredocs with JSON get refused by the permission checker).
+    tools += files("reports/desk")
     for name in READ_TOOLS:
         tools += [f"mcp__meta-ads__{name}", f"mcp__claude_ai_Meta_Ads__{name}"]
+    if kind in ("polish", "render"):
+        # Polish looks at video frames and contact sheets; render rebuilds the creative.
+        tools += ["Bash(ffmpeg:*)", "Bash(ffprobe:*)", "Bash(mkdir:*)", "Bash(ls:*)"]
+    if kind == "render":
+        # "Make a new version": the ad-creative-render pipeline (Node + headless Chrome +
+        # ffmpeg) inside the workspace's creatives folder. Still no Meta write tools: the
+        # result goes back through `desk upload` and a proposal Eugene approves.
+        tools += files("creatives") + ["Bash(node:*)", "Bash(cp:*)", "Bash(sips:*)", "Bash(shasum:*)", "Bash(cd:*)"]
     return tools
 
 
@@ -85,10 +100,11 @@ def run_task(cfg, token, task):
     os.makedirs(LOG_DIR, exist_ok=True)
     out_path = os.path.join(LOG_DIR, f"task-{task_id}.log")
     skill_dir = os.path.expanduser("~/.claude/skills/ads-desk")
+    render = task.get("kind") == "render"
     cmd = [cfg["claude"], "-p", f"/ads-desk run {task_id}",
            "--permission-mode", "dontAsk",
-           "--allowedTools", ",".join(allowed_tools(skill_dir, cfg["workdir"])),
-           "--max-turns", "80"]
+           "--allowedTools", ",".join(allowed_tools(skill_dir, cfg["workdir"], task.get("kind"))),
+           "--max-turns", "200" if render else "80"]
     env = dict(os.environ)
     claude_token = claude_oauth_token()
     if claude_token:
@@ -106,13 +122,13 @@ def run_task(cfg, token, task):
 
     threading.Thread(target=keepalive, daemon=True).start()
     try:
-        proc.wait(timeout=RUN_LIMIT_SECONDS)
+        proc.wait(timeout=RENDER_LIMIT_SECONDS if render else RUN_LIMIT_SECONDS)
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGTERM)
         time.sleep(5)
         if proc.poll() is None:
             os.killpg(proc.pid, signal.SIGKILL)
-        log(f"task {task_id}: stopped after {RUN_LIMIT_SECONDS // 60} minutes")
+        log(f"task {task_id}: stopped after the time limit")
     finally:
         stop.set()
 

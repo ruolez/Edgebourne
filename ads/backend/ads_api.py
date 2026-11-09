@@ -56,6 +56,9 @@ def parse_dollars(text):
 def proposal_action(p, entity):
     """What approving a proposal does on Meta: ("status", "PAUSED"), ("budget", cents)
     or None when it isn't something the dashboard can apply by itself."""
+    payload = p.get("payload") or {}
+    if p["kind"] == "creative" and payload.get("template_ad_id") and payload.get("body") and payload.get("title"):
+        return ("create", payload)
     if not entity or not p.get("entity_id"):
         return None
     if p["kind"] == "status":
@@ -199,14 +202,15 @@ def _metrics(where, params, start, end):
     rows = db.query(
         f"""SELECT ad_id, COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
                    COALESCE(SUM(reach),0) AS reach, COALESCE(SUM(link_clicks),0) AS link_clicks,
-                   COALESCE(SUM(leads),0) AS leads
+                   COALESCE(SUM(leads),0) AS leads, COALESCE(SUM(video_3s),0) AS video_3s,
+                   COALESCE(SUM(thruplays),0) AS thruplays
             FROM ad_daily WHERE day BETWEEN %s AND %s AND {where} GROUP BY ad_id""",
         [start, end] + params)
     return {r["ad_id"]: {k: int(v) for k, v in r.items() if k != "ad_id"} for r in rows}
 
 
 def _sum(items):
-    keys = ("spend_cents", "impressions", "reach", "link_clicks", "leads", "qualified")
+    keys = ("spend_cents", "impressions", "reach", "link_clicks", "leads", "qualified", "video_3s", "thruplays")
     return {k: sum(i["m"].get(k, 0) for i in items) for k in keys}
 
 
@@ -223,17 +227,25 @@ def tree():
     adsets = db.query(f"SELECT * FROM adsets WHERE {aw} ORDER BY name", ap)
     ads = db.query(f"""SELECT id, name, campaign_id, adset_id, status, effective_status, image_url, thumbnail_url,
                               title, object_type, review_feedback, issues, created_time
-                       FROM ads WHERE {aw} ORDER BY name""", ap)
+                       FROM ads WHERE {aw} AND COALESCE(effective_status, '') <> 'DELETED' ORDER BY name""", ap)
     metrics = _metrics(aw, ap, start, end)
     lifetime = {r["ad_id"]: int(r["impressions"]) for r in db.query(
         f"SELECT ad_id, SUM(impressions) AS impressions FROM ad_daily WHERE {aw} GROUP BY ad_id", ap)}
     quality = {r["ad_id"]: int(r["n"]) for r in db.query(
         f"""SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND status IN ('qualified','won')
             AND created_time::date BETWEEN %s AND %s AND {aw} GROUP BY ad_id""", [start, end] + ap)}
-    pending = {r["entity_id"]: int(r["n"]) for r in db.query(
-        "SELECT entity_id, COUNT(*) AS n FROM desk_proposals WHERE status = 'pending' AND entity_id IS NOT NULL GROUP BY 1")}
+    pending = {r["eid"]: int(r["n"]) for r in db.query(
+        """SELECT COALESCE(entity_id, payload->>'template_ad_id') AS eid, COUNT(*) AS n FROM desk_proposals
+           WHERE status = 'pending' AND COALESCE(entity_id, payload->>'template_ad_id') IS NOT NULL GROUP BY 1""")}
+    daily = {}
+    for r in db.query(f"""SELECT ad_id, day, spend_cents, leads FROM ad_daily
+                          WHERE day BETWEEN %s AND %s AND {aw} ORDER BY day""", [start, end] + ap):
+        daily.setdefault(r["ad_id"], {})[r["day"].isoformat()] = (int(r["spend_cents"]), int(r["leads"]))
+    days_list = [(start + timedelta(days=i)).isoformat() for i in range(days)]
     for ad in ads:
         ad["m"] = {**metrics.get(ad["id"], {}), "qualified": quality.get(ad["id"], 0)}
+        d = daily.get(ad["id"], {})
+        ad["spark"] = [{"day": k, "spend_cents": d.get(k, (0, 0))[0], "leads": d.get(k, (0, 0))[1]} for k in days_list]
         ad["lifetime_impressions"] = lifetime.get(ad["id"], 0)
         ad["pending_proposals"] = pending.get(ad["id"], 0)
     for s in adsets:
@@ -277,8 +289,9 @@ def ad_detail(ad_id):
     leads = db.query("""SELECT id, full_name, business_type, status, created_time, is_test FROM leads
                         WHERE ad_id = %s ORDER BY created_time DESC LIMIT 50""", (ad_id,))
     proposals = db.query("""SELECT p.*, t.prompt FROM desk_proposals p JOIN desk_tasks t ON t.id = p.task_id
-                            WHERE p.entity_id IN (%s, %s, %s) ORDER BY p.id DESC LIMIT 20""",
-                         (ad_id, ad["adset_id"], ad["campaign_id"]))
+                            WHERE p.entity_id IN (%s, %s, %s) OR p.payload->>'template_ad_id' = %s
+                            ORDER BY p.id DESC LIMIT 20""",
+                         (ad_id, ad["adset_id"], ad["campaign_id"], ad_id))
     changes = db.query("""SELECT m.*, u.name AS user_name FROM meta_changes m LEFT JOIN users u ON u.id = m.user_id
                           WHERE m.entity_id IN (%s, %s, %s) ORDER BY m.id DESC LIMIT 30""",
                        (ad_id, ad["adset_id"], ad["campaign_id"]))
@@ -433,13 +446,7 @@ def _upload_video(path, size, name):
     return video_id
 
 
-@bp.post("/media/upload")
-@login_required
-def upload():
-    user = current_user()
-    if not _may_create(user):
-        return api_error("No campaigns are assigned to you", 403)
-    f = request.files.get("file")
+def upload_file(f, actor=None):
     if not f or not f.filename:
         return api_error("Choose a file", 400)
     kind = "image" if f.mimetype in IMAGE_TYPES else "video" if f.mimetype in VIDEO_TYPES else None
@@ -452,7 +459,7 @@ def upload():
             f.save(out)
         size = os.path.getsize(path)
         if size > (MAX_IMAGE if kind == "image" else MAX_VIDEO):
-            return api_error(f"That file is too big (images up to 30 MB, videos up to 250 MB)", 400)
+            return api_error("That file is too big (images up to 30 MB, videos up to 250 MB)", 400)
         if kind == "image":
             with open(path, "rb") as fh:
                 out = meta_client.post(f"act_{_account()}/adimages", files={"filename": (name, fh, f.mimetype)}, timeout=120)
@@ -468,8 +475,16 @@ def upload():
         except OSError:
             pass
     log_activity("meta.media_uploaded", subject=result.get("hash") or result.get("video_id"),
-                 details={"kind": kind, "name": name})
+                 details={"kind": kind, "name": name}, actor=actor)
     return jsonify(result), 201
+
+
+@bp.post("/media/upload")
+@login_required
+def upload():
+    if not _may_create(current_user()):
+        return api_error("No campaigns are assigned to you", 403)
+    return upload_file(request.files.get("file"))
 
 
 def _video_state(video_id):
@@ -499,46 +514,64 @@ def new_options():
                           JOIN campaigns c ON c.id = s.campaign_id WHERE {aw} ORDER BY c.name, s.name""", ap)
     tw, tp = _scope(user, "campaign_id")
     templates = db.query(f"""SELECT id, name, adset_id, title, body, cta_type, image_url, object_type
-                             FROM ads WHERE {tw} ORDER BY created_time DESC NULLS LAST""", tp)
+                             FROM ads WHERE {tw} AND COALESCE(effective_status, '') <> 'DELETED'
+                             ORDER BY created_time DESC NULLS LAST""", tp)
     return jsonify({"adsets": adsets, "templates": templates, "cta_types": CTA_TYPES})
 
 
-@bp.post("/ads/new")
-@login_required
-def create_ad():
-    user = current_user()
-    data = request.get_json(silent=True) or {}
-    adset = db.query("SELECT id, name, campaign_id FROM adsets WHERE id = %s", (data.get("adset_id"),), one=True)
-    template = db.query("SELECT id, name, creative_id, campaign_id FROM ads WHERE id = %s",
+def template_media(spec):
+    """The image or video an existing ad's story spec uses, in build_story_spec's shape."""
+    if spec.get("video_data"):
+        v = spec["video_data"]
+        return {"kind": "video", "video_id": v.get("video_id"), "thumbnail_url": v.get("image_url")}
+    if spec.get("link_data"):
+        return {"kind": "image", "hash": spec["link_data"].get("image_hash")}
+    return None
+
+
+def create_ad_from(user, data, proposal_id=None):
+    """Create an ad (always switched off) from an existing ad's setup with new media and
+    words. Returns (ad_id, None) or (None, (message, http_status))."""
+    adset_id = data.get("adset_id")
+    template = db.query("SELECT id, name, adset_id, creative_id, campaign_id FROM ads WHERE id = %s",
                         (data.get("template_ad_id"),), one=True)
+    if template and not adset_id:
+        adset_id = template["adset_id"]
+    adset = db.query("SELECT id, name, campaign_id FROM adsets WHERE id = %s", (adset_id,), one=True)
     if not adset or not template:
-        return api_error("Pick the ad set and the ad to start from", 400)
+        return None, ("Pick the ad set and the ad to start from", 400)
     if not can_touch(user, adset["campaign_id"]) or not can_touch(user, template["campaign_id"]):
-        return api_error("This campaign isn't assigned to you", 403)
+        return None, ("This campaign isn't assigned to you", 403)
     name = (data.get("name") or "").strip()[:200]
     body = (data.get("body") or "").strip()
     title = (data.get("title") or "").strip()[:255]
-    media = data.get("media") or {}
+    media = dict(data.get("media") or {})
     cta = data.get("cta_type") or None
     if not name or not body or not title:
-        return api_error("Give the ad a name, primary text and a headline", 400)
-    if media.get("kind") not in ("image", "video") or not (media.get("hash") or media.get("video_id")):
-        return api_error("Choose an image or video", 400)
+        return None, ("Give the ad a name, primary text and a headline", 400)
+    if media.get("kind") not in ("image", "video", "same") or (media["kind"] != "same" and not (media.get("hash") or media.get("video_id"))):
+        return None, ("Choose an image or video", 400)
     if cta and cta not in CTA_TYPES:
-        return api_error("Unknown button", 400)
+        return None, ("Unknown button", 400)
+    row = {"id": template["id"], "name": name, "campaign_id": adset["campaign_id"]}
     try:
-        if media["kind"] == "video":
-            state = _video_state(media["video_id"])
-            if not state["ready"]:
-                return api_error("Meta is still processing that video. Try again in a minute.", 409)
-            media["thumbnail_url"] = state["thumbnail_url"]
         try:
             tpl = meta_client.get(template["creative_id"], fields="object_story_spec,degrees_of_freedom_spec")
         except meta_client.MetaError:
             tpl = meta_client.get(template["creative_id"], fields="object_story_spec")
-        if not tpl.get("object_story_spec"):
-            return api_error("That ad can't be used as a starting point (it has no single image or video). Pick another.", 400)
-        spec = build_story_spec(tpl.get("object_story_spec") or {}, media, body, title, cta)
+        story = tpl.get("object_story_spec")
+        if not story:
+            return None, ("That ad can't be used as a starting point (it has no single image or video). Pick another.", 400)
+        if media["kind"] == "same":
+            media = template_media(story)
+            if not media:
+                return None, ("Couldn't find the starting ad's image or video", 400)
+        elif media["kind"] == "video":
+            state = _video_state(media["video_id"])
+            if not state["ready"]:
+                return None, ("Meta is still processing that video. Try again in a minute.", 409)
+            media["thumbnail_url"] = state["thumbnail_url"]
+        spec = build_story_spec(story, media, body, title, cta)
         payload = {"name": f"{name} creative", "object_story_spec": json.dumps(spec)}
         if tpl.get("degrees_of_freedom_spec"):
             payload["degrees_of_freedom_spec"] = json.dumps(tpl["degrees_of_freedom_spec"])
@@ -547,15 +580,23 @@ def create_ad():
             "name": name, "adset_id": adset["id"], "status": "PAUSED",
             "creative": json.dumps({"creative_id": creative["id"]})})
     except meta_client.MetaError as exc:
-        record(user, "ad", {"id": template["id"], "name": name, "campaign_id": adset["campaign_id"]},
-               "create", None, name, False, str(exc))
-        return api_error(f"Meta refused: {exc}", 400)
-    record(user, "ad", {"id": ad["id"], "name": name, "campaign_id": adset["campaign_id"]}, "create", None, name, True)
+        record(user, "ad", row, "create", None, name, False, str(exc), proposal_id)
+        return None, (f"Meta refused: {exc}", 400)
+    record(user, "ad", {**row, "id": ad["id"]}, "create", None, name, True, proposal_id=proposal_id)
     try:
         insights.sync_structure()
     except meta_client.MetaError:
         pass
-    return jsonify({"id": ad["id"]}), 201
+    return ad["id"], None
+
+
+@bp.post("/ads/new")
+@login_required
+def create_ad():
+    ad_id, err = create_ad_from(current_user(), request.get_json(silent=True) or {})
+    if err:
+        return api_error(*err)
+    return jsonify({"id": ad_id}), 201
 
 
 # ---------------------------------------------------------------- proposals
@@ -571,7 +612,8 @@ def decide(proposal_id, decision):
         return api_error("Proposal not found", 404)
     if p["status"] != "pending":
         return api_error("This proposal was already decided", 409)
-    level, row = find_entity(p["entity_id"]) if p.get("entity_id") else (None, None)
+    tid = p.get("entity_id") or (p.get("payload") or {}).get("template_ad_id")
+    level, row = find_entity(tid) if tid else (None, None)
     if row and not can_touch(user, row["campaign_id"]):
         return api_error("This campaign isn't assigned to you", 403)
     if not row and user["role"] != "admin":
@@ -591,12 +633,31 @@ def decide(proposal_id, decision):
         return jsonify({"status": "approved", "applied": False,
                         "note": "Recorded. This one isn't a simple on/off or budget change, so nothing was changed on Meta."})
     kind, value = action
-    error = (apply_status(user, level, row, value, proposal_id) if kind == "status"
-             else apply_budget(user, level, row, value, proposal_id))
+    new_id = None
+    if kind == "create":
+        new_id, err = create_ad_from(user, value, proposal_id)
+        error = err[0] if err else None
+    elif kind == "status":
+        error = apply_status(user, level, row, value, proposal_id)
+    else:
+        error = apply_budget(user, level, row, value, proposal_id)
     close("failed" if error else "applied")
     if error:
         return api_error(f"Approved, but Meta refused the change: {error}", 400)
-    return jsonify({"status": "applied", "applied": True})
+    return jsonify({"status": "applied", "applied": True, "ad_id": new_id})
+
+
+@bp.get("/proposals/<int:proposal_id>")
+@login_required
+def get_proposal(proposal_id):
+    p = db.query("SELECT * FROM desk_proposals WHERE id = %s", (proposal_id,), one=True)
+    if not p:
+        return api_error("Proposal not found", 404)
+    tid = (p.get("payload") or {}).get("template_ad_id") or p.get("entity_id")
+    level, row = find_entity(tid) if tid else (None, None)
+    if row and not can_touch(current_user(), row["campaign_id"]):
+        return api_error("Proposal not found", 404)
+    return jsonify(p)
 
 
 @bp.post("/ads/sync")

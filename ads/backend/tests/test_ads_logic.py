@@ -42,6 +42,23 @@ class ProposalActionTests(unittest.TestCase):
         self.assertIsNone(ads_api.proposal_action(self.prop(), None))
 
 
+class CreativeProposalTests(unittest.TestCase):
+    def test_creative_payload_becomes_a_create_action(self):
+        payload = {"template_ad_id": "a1", "title": "T", "body": "B", "media": {"kind": "same"}}
+        self.assertEqual(ads_api.proposal_action({"kind": "creative", "payload": payload, "entity_id": None}, None),
+                         ("create", payload))
+
+    def test_creative_without_payload_is_not_applied(self):
+        self.assertIsNone(ads_api.proposal_action({"kind": "creative", "payload": None, "entity_id": "a1"}, AD))
+
+
+class TemplateMediaTests(unittest.TestCase):
+    def test_reads_video_and_image_from_a_story_spec(self):
+        image_spec = {"link_data": {"image_hash": "h9"}}
+        self.assertEqual((ads_api.template_media(VIDEO_TEMPLATE), ads_api.template_media(image_spec), ads_api.template_media({})),
+                         ({"kind": "video", "video_id": "old", "thumbnail_url": "old.jpg"}, {"kind": "image", "hash": "h9"}, None))
+
+
 class BuildStorySpecTests(unittest.TestCase):
     def test_video_keeps_page_identity_and_lead_form(self):
         spec = ads_api.build_story_spec(VIDEO_TEMPLATE, {"kind": "video", "video_id": "v2", "thumbnail_url": "t.jpg"},

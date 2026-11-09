@@ -22,24 +22,24 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
 
   // 1. Turn N2 off from the Ads page, through the confirm dialog.
   await page.goto(BASE + '/ads.html');
-  const n2 = page.locator('[data-toggle="ad:120252672231040312"]');
+  const n2 = page.locator('[data-toggle="ad:120252672229400312"]');
   await n2.waitFor();
   const before = await n2.getAttribute('aria-checked');
   await n2.click();
   await page.waitForSelector('dialog.confirm');
   await page.screenshot({ path: `${OUT}/flow-1-confirm-off.png` });
   await page.click('dialog.confirm #cd-ok');
-  await page.waitForFunction(() => document.querySelector('[data-toggle="ad:120252672231040312"]')?.getAttribute('aria-checked') === 'false');
+  await page.waitForFunction(() => document.querySelector('[data-toggle="ad:120252672229400312"]')?.getAttribute('aria-checked') === 'false');
   check('switch turns an ad off after confirming', before === 'true');
   // Cancel leaves it alone.
-  await page.locator('[data-toggle="ad:120252672231040312"]').click();
+  await page.locator('[data-toggle="ad:120252672229400312"]').click();
   await page.click('dialog.confirm #cd-cancel');
   await page.waitForTimeout(400);
-  check('cancel changes nothing', (await page.locator('[data-toggle="ad:120252672231040312"]').getAttribute('aria-checked')) === 'false');
+  check('cancel changes nothing', (await page.locator('[data-toggle="ad:120252672229400312"]').getAttribute('aria-checked')) === 'false');
   // Back on.
-  await page.locator('[data-toggle="ad:120252672231040312"]').click();
+  await page.locator('[data-toggle="ad:120252672229400312"]').click();
   await page.click('dialog.confirm #cd-ok');
-  await page.waitForFunction(() => document.querySelector('[data-toggle="ad:120252672231040312"]')?.getAttribute('aria-checked') === 'true');
+  await page.waitForFunction(() => document.querySelector('[data-toggle="ad:120252672229400312"]')?.getAttribute('aria-checked') === 'true');
   check('switch turns it back on', true);
 
   // 2. Budget: validation, +20% warning, then a real change.
@@ -58,7 +58,7 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   check('campaign budget changes to $26/day', true);
 
   // 3. Ad page: format switch, duplicate.
-  await page.goto(BASE + '/ad.html?id=120252672233040312');
+  await page.goto(BASE + '/ad.html?id=120252672232030312');
   await page.waitForSelector('#formats button');
   await page.click('#formats button[data-format="INSTAGRAM_STORY"]');
   await page.waitForSelector('#preview-frame iframe');
@@ -75,7 +75,7 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   if (IMG) {
     await page.goto(BASE + '/new-ad.html');
     await page.waitForSelector('#template option', { state: 'attached' });
-    await page.selectOption('#template', '120252672230040312');
+    await page.selectOption('#template', '120252672229040312');
     await page.setInputFiles('#file', IMG);
     await page.waitForSelector('#chosen:not([hidden]) .ok-text');
     await page.fill('#name', 'N7 - Flow test image ad');
@@ -85,6 +85,30 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
     await page.waitForSelector('#ad-status .pill');
     check('new image ad is created and opens off', (await page.textContent('#ad-status')).includes('Off'), await page.textContent('#ad-name'));
   }
+
+  // 4b. Polish: start a run from the ad page, then turn Claude's new-headline proposal into an ad.
+  await page.goto(BASE + '/ad.html?id=120252672230740312#tab=polish');
+  await page.reload();
+  await page.waitForSelector('#polish-form');
+  await page.click('[data-preset="quick"]');
+  check('quick preset picks 4 passes', (await page.textContent('#run-polish')).includes('Run 4 passes'));
+  await page.click('#run-polish');
+  await page.waitForSelector('#runs .task.queued');
+  check('polish run is queued for the Mac', true);
+  await page.screenshot({ path: `${OUT}/flow-polish.png`, fullPage: true });
+  // Don't leave a real run for a connected Mac to pick up.
+  await page.locator('#runs .task.queued [data-cancel]').first().click();
+  await page.waitForSelector('#runs .task.cancelled');
+  check('a queued polish run can be cancelled', true);
+  const create = page.locator('.proposal.variant [data-approve]').first();
+  if (await create.count()) {
+    await create.click();
+    await page.waitForSelector('dialog.confirm');
+    await Promise.all([page.waitForURL('**created=1**'), page.click('dialog.confirm #cd-ok')]);
+    await page.waitForSelector('#ad-status .pill');
+    check('approving a new-copy proposal creates that ad, switched off',
+      (await page.textContent('#ad-name')).includes('·') && (await page.textContent('#ad-status')).includes('Off'), await page.textContent('#ad-name'));
+  } else results.push('SKIP new-headline proposal — none pending');
 
   // 5. Approve Claude's on/off proposal from the Desk; decline the budget one.
   await page.goto(BASE + '/desk.html');
@@ -110,8 +134,8 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   await page.screenshot({ path: `${OUT}/flow-6-desk.png`, fullPage: true });
 
   await page.goto(BASE + '/ads.html');
-  await page.waitForSelector('[data-toggle="ad:120252672230040312"]');
-  check('N1 shows off on the Ads page after the approval', (await page.getAttribute('[data-toggle="ad:120252672230040312"]', 'aria-checked')) === 'false');
+  await page.waitForSelector('[data-toggle="ad:120252672229040312"]');
+  check('N1 shows off on the Ads page after the approval', (await page.getAttribute('[data-toggle="ad:120252672229040312"]', 'aria-checked')) === 'false');
   await page.goto(BASE + '/home.html');
   await page.waitForSelector('.changes');
   check('Home lists the changes', (await page.textContent('.changes')).includes('Turned off ad'));

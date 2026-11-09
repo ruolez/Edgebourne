@@ -45,13 +45,14 @@ def cta():
     return {"type": "BOOK_TRAVEL", "value": {"lead_gen_form_id": FORM}}
 
 
+REAL_AD_IDS = ["120252672229040312", "120252672229400312", "120252672230740312", "120252672232030312", "120252672233160312"]
 for i, (name, (title, body)) in enumerate(TEXTS.items()):
-    vid, cid, aid = str(next(ids)), str(next(ids)), f"12025267223{i}040312"
+    vid, cid, aid = str(next(ids)), str(next(ids)), REAL_AD_IDS[i]
     pic = f"/dev-media/N{i + 1}.jpg"
     VIDEOS[vid] = {"id": vid, "title": f"{name}.mp4", "picture": pic, "length": 9.0, "status": {"video_status": "ready"},
                    "created_time": f"{TODAY.isoformat()}T13:2{i}:00-0800"}
     CREATIVES[cid] = {"id": cid, "object_type": "VIDEO", "title": title, "body": body, "call_to_action_type": "BOOK_TRAVEL",
-                      "video_id": vid, "thumbnail_url": pic,
+                      "video_id": vid, "thumbnail_url": pic, "effective_object_story_id": f"{PAGE}_12209837790354{i}159",
                       "object_story_spec": {"page_id": PAGE, "video_data": {"video_id": vid, "image_url": pic, "message": body,
                                                                            "title": title, "call_to_action": cta()}},
                       "degrees_of_freedom_spec": {"creative_features_spec": {"standard_enhancements": {"enroll_status": "OPT_OUT"}}}}
@@ -80,7 +81,7 @@ def ad_view(ad):
     cr = CREATIVES[ad["creative_id"]]
     return {**{k: v for k, v in ad.items() if k != "creative_id"}, "effective_status": effective(ad),
             "creative": {k: cr.get(k) for k in ("id", "object_type", "title", "body", "call_to_action_type",
-                                                  "video_id", "image_url", "thumbnail_url") if cr.get(k)}}
+                                                  "video_id", "image_url", "thumbnail_url", "effective_object_story_id") if cr.get(k)}}
 
 
 def insights_rows(level):
@@ -94,15 +95,47 @@ def insights_rows(level):
             spend = round(rng.uniform(2.5, 5.5), 2)
             imps = int(spend * rng.uniform(70, 110))
             leads = rng.choice([0, 0, 0, 1, 1, 2])
+            v3 = int(imps * rng.uniform(.22, .38))
+            thru = int(v3 * rng.uniform(.25, .45))
+            acts = [{"action_type": "video_view", "value": str(v3)}]
+            if leads:
+                acts.append({"action_type": "onsite_conversion.lead_grouped", "value": str(leads)})
+            va = lambda n: [{"action_type": "video_view", "value": str(n)}]
             rows.append({"date_start": day, "date_stop": day, "ad_id": ad["id"], "ad_name": ad["name"],
                          "adset_id": ad["adset_id"], "campaign_id": ad["campaign_id"], "spend": str(spend),
                          "impressions": str(imps), "reach": str(int(imps * .8)), "inline_link_clicks": str(int(imps * .012)),
-                         "actions": [{"action_type": "onsite_conversion.lead_grouped", "value": str(leads)}] if leads else []})
+                         "clicks": str(int(imps * .03)), "actions": acts,
+                         "video_thruplay_watched_actions": va(thru), "video_p25_watched_actions": va(int(v3 * .7)),
+                         "video_p50_watched_actions": va(int(v3 * .45)), "video_p75_watched_actions": va(int(v3 * .3)),
+                         "video_p100_watched_actions": va(int(v3 * .2))})
     if level == "campaign":
         today = [r for r in rows if r["date_start"] == TODAY.isoformat()]
         return [{"campaign_id": CAMPAIGN["id"], "spend": str(round(sum(float(r["spend"]) for r in today) * .6, 2)),
                  "actions": [{"action_type": "onsite_conversion.lead_grouped", "value": "1"}]}]
     return rows
+
+
+BREAKDOWN_VALUES = {
+    "age": [{"age": a} for a in ("25-34", "35-44", "45-54", "55-64", "65+")],
+    "gender": [{"gender": g} for g in ("male", "female", "unknown")],
+    "publisher_platform,platform_position": [{"publisher_platform": p, "platform_position": q} for p, q in (
+        ("facebook", "feed"), ("instagram", "stream"), ("instagram", "reels"), ("facebook", "facebook_reels"),
+        ("instagram", "story"), ("facebook", "marketplace"), ("audience_network", "classic"))],
+    "impression_device": [{"impression_device": d} for d in ("iphone", "android_smartphone", "desktop", "ipad")],
+    "region": [{"region": r} for r in ("California", "Nevada", "Arizona")],
+    "hourly_stats_aggregated_by_audience_time_zone": [{"hourly_stats_aggregated_by_audience_time_zone": f"{h:02d}:00:00 - {h:02d}:59:59"} for h in range(6, 23)],
+}
+
+
+def breakdown_rows(by):
+    rng = random.Random(len(by))
+    out = []
+    for i, v in enumerate(BREAKDOWN_VALUES.get(by, [])):
+        w = rng.uniform(.3, 1.6) / (1 + i * .35)
+        out.append({**v, "spend": str(round(40 * w, 2)), "impressions": str(int(3600 * w)), "reach": str(int(2900 * w)),
+                    "inline_link_clicks": str(int(40 * w)),
+                    "actions": [{"action_type": "onsite_conversion.lead_grouped", "value": str(int(6 * w))}]})
+    return out
 
 
 @app.route("/v24.0/<path:path>", methods=["GET", "POST"])
@@ -122,8 +155,32 @@ def graph(path):
             return jsonify({"data": [ADSET]})
         if parts == [act, "ads"]:
             return jsonify({"data": [ad_view(x) for x in ADS.values()]})
-        if parts == [act, "insights"]:
-            return jsonify({"data": insights_rows(a.get("level"))})
+        if len(parts) == 2 and parts[1] == "insights":
+            if a.get("breakdowns"):
+                return jsonify({"data": breakdown_rows(a["breakdowns"])})
+            if parts[0] == act:
+                return jsonify({"data": insights_rows(a.get("level"))})
+            return jsonify({"data": [{"quality_ranking": "AVERAGE", "engagement_rate_ranking": "ABOVE_AVERAGE",
+                                      "conversion_rate_ranking": "BELOW_AVERAGE_35", "frequency": "1.42", "cpm": "13.80",
+                                      "ctr": "2.9", "video_avg_time_watched_actions": [{"action_type": "video_view", "value": "4"}]}]})
+        if parts == [act, "activities"]:
+            return jsonify({"data": [
+                {"event_time": TODAY.isoformat() + "T21:36:00+0000", "event_type": "ad_review_approved",
+                 "translated_event_type": "Ad approved", "actor_name": "Meta", "object_name": "N5 - Quote to invoice", "object_type": "AD"},
+                {"event_time": TODAY.isoformat() + "T21:27:00+0000", "event_type": "update_campaign_budget",
+                 "translated_event_type": "Campaign budget updated", "actor_name": "Eugene", "object_name": CAMPAIGN["name"],
+                 "object_type": "CAMPAIGN", "extra_data": json.dumps({"old_value": {"new_value": 2000, "currency": "USD"}, "new_value": 2400})}]})
+        if len(parts) == 2 and parts[1] == "delivery_estimate":
+            return jsonify({"data": [{"estimate_mau_lower_bound": 1_400_000, "estimate_mau_upper_bound": 1_650_000,
+                                      "estimate_dau": [{"min_reach": 900, "max_reach": 2600}], "estimate_ready": True}]})
+        if len(parts) == 2 and parts[1] == "comments":
+            return jsonify({"data": [
+                {"id": "c1", "message": "How much does something like this cost?", "created_time": TODAY.isoformat() + "T18:02:00+0000",
+                 "from": {"name": "Daniel K."}, "like_count": 1, "comment_count": 0},
+                {"id": "c2", "message": "We still do invoices in Excel lol", "created_time": TODAY.isoformat() + "T16:40:00+0000",
+                 "from": {"name": "Maria L."}, "like_count": 3, "comment_count": 1}], "summary": {"total_count": 2}})
+        if parts == [PAGE]:
+            return jsonify({"id": PAGE, "name": "Edge Bourne Consulting", "access_token": "fake-page-token"})
         if parts == [act, "adimages"]:
             return jsonify({"data": list(IMAGES.values())})
         if parts == [act, "advideos"]:

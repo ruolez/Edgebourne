@@ -13,6 +13,8 @@ command line. Installed to ~/.claude/skills/ads-desk/desk by install.sh.
   desk progress <id> <text>              status line shown live on the Desk page
   desk report <id> --title T [--file F]  report body from F or stdin (Markdown)
   desk propose <id> [--file F]           proposals JSON from F or stdin
+  desk scorecard <id> [--file F]         polish results JSON from F or stdin
+  desk upload <path>                     image/video into the ad account's media library (prints hash / video_id)
   desk done <id> --summary S             finish
   desk fail <id> --error E               give up, with the reason
 """
@@ -26,8 +28,9 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSION = "1.0"
-CONFIG = os.path.expanduser("~/.config/ads-desk/config.json")
+VERSION = "1.1"
+# ADS_DESK_CONFIG points a test run at another dashboard (e.g. the local dev stack).
+CONFIG = os.environ.get("ADS_DESK_CONFIG") or os.path.expanduser("~/.config/ads-desk/config.json")
 SERVICE = "ads-desk"
 
 
@@ -77,6 +80,33 @@ def call(method, path, body=None, timeout=40, cfg=None, token=None):
         raise DeskError(exc.code, msg or f"HTTP {exc.code}") from None
 
 
+def upload(cfg, token, path):
+    """Multipart POST of one file to /api/agent/media/upload."""
+    import mimetypes
+    import uuid
+    ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    if path.lower().endswith(".mov"):
+        ctype = "video/quicktime"
+    boundary = uuid.uuid4().hex
+    with open(path, "rb") as fh:
+        data = fh.read()
+    head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{os.path.basename(path)}\"\r\n"
+            f"Content-Type: {ctype}\r\n\r\n").encode()
+    body = head + data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(cfg["base_url"].rstrip("/") + "/api/agent/media/upload", data=body, method="POST", headers={
+        "Authorization": f"Bearer {token}", "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "X-Bridge-Host": socket.gethostname().split(".")[0], "X-Bridge-Version": VERSION, "User-Agent": f"ads-desk/{VERSION}"})
+    try:
+        with urllib.request.urlopen(req, timeout=900) as res:
+            return json.loads(res.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            msg = json.loads(exc.read()).get("error")
+        except Exception:
+            msg = None
+        raise DeskError(exc.code, msg or f"HTTP {exc.code}") from None
+
+
 def read_body(path):
     if path:
         with open(path) as fh:
@@ -107,6 +137,8 @@ def main(argv=None):
     sp = sub.add_parser("progress"); sp.add_argument("id", type=int); sp.add_argument("text", nargs="+")
     sp = sub.add_parser("report"); sp.add_argument("id", type=int); sp.add_argument("--title", required=True); sp.add_argument("--file")
     sp = sub.add_parser("propose"); sp.add_argument("id", type=int); sp.add_argument("--file")
+    sp = sub.add_parser("scorecard"); sp.add_argument("id", type=int); sp.add_argument("--file")
+    sp = sub.add_parser("upload"); sp.add_argument("path")
     sp = sub.add_parser("done"); sp.add_argument("id", type=int); sp.add_argument("--summary", required=True)
     sp = sub.add_parser("fail"); sp.add_argument("id", type=int); sp.add_argument("--error", required=True)
     a = p.parse_args(argv)
@@ -140,6 +172,14 @@ def main(argv=None):
             raw = json.loads(read_body(a.file))
             items = raw["proposals"] if isinstance(raw, dict) else raw
             print(json.dumps(go("POST", f"/api/agent/tasks/{a.id}/proposals", {"proposals": items})[1]))
+        elif a.cmd == "scorecard":
+            raw = json.loads(read_body(a.file))
+            body = raw if isinstance(raw, dict) else {"passes": raw}
+            print(json.dumps(go("POST", f"/api/agent/tasks/{a.id}/scorecard", body)[1]))
+        elif a.cmd == "upload":
+            if not os.path.isfile(a.path):
+                sys.exit(f"No file at {a.path}")
+            print(json.dumps(upload(cfg, token, a.path)))
         elif a.cmd == "done":
             go("POST", f"/api/agent/tasks/{a.id}/status", {"status": "done", "summary": a.summary})
             print("done")

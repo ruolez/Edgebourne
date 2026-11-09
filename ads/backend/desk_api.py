@@ -9,6 +9,7 @@ The Mac only ever pulls. Nothing here can spend money: proposals are recorded
 for a person to approve (phase 4).
 """
 import hashlib
+import json
 import hmac
 import secrets
 import time
@@ -36,7 +37,7 @@ WAIT_MAX = 25
 
 TASK_COLS = """t.id, t.kind, t.prompt, t.campaign_id, c.name AS campaign_name, t.status, t.progress,
                t.summary, t.error, t.created_at, t.claimed_at, t.finished_at, t.updated_at,
-               u.name AS created_by_name"""
+               u.name AS created_by_name, t.options, t.scorecard"""
 TASK_FROM = "desk_tasks t LEFT JOIN campaigns c ON c.id = t.campaign_id LEFT JOIN users u ON u.id = t.created_by"
 
 
@@ -134,12 +135,12 @@ def cancel_task(task_id):
 @bp.post("/tasks/<int:task_id>/again")
 @admin_required
 def ask_again(task_id):
-    old = db.query("SELECT kind, prompt, campaign_id FROM desk_tasks WHERE id = %s", (task_id,), one=True)
+    old = db.query("SELECT kind, prompt, campaign_id, options FROM desk_tasks WHERE id = %s", (task_id,), one=True)
     if not old:
         return api_error("Task not found", 404)
     task = db.execute(
-        "INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by) VALUES (%s, %s, %s, %s) RETURNING id",
-        (old["kind"], old["prompt"], old["campaign_id"], current_user()["id"]), returning=True,
+        "INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (old["kind"], old["prompt"], old["campaign_id"], current_user()["id"], json.dumps(old["options"] or {})), returning=True,
     )
     log_activity("desk.task_created", subject=str(task["id"]), details={"kind": old["kind"], "again_of": task_id})
     return jsonify(tasks_with_results("t.id = %s", [task["id"]], 1)[0]), 201
@@ -298,7 +299,31 @@ def clean_proposal(p):
     for key in ("entity_type", "entity_id", "entity_name", "field", "current_value", "proposed_value",
                 "rationale", "expected", "rollback"):
         out[key] = text(key)
+    out["payload"] = clean_payload(p.get("payload")) if kind == "creative" else None
     return out
+
+
+def clean_payload(raw):
+    """A new ad Claude suggests: the ad it starts from, the words, and the media
+    ('same' = keep the starting ad's image or video)."""
+    if not isinstance(raw, dict):
+        return None
+    def text(key, n):
+        v = raw.get(key)
+        return str(v).strip()[:n] if v not in (None, "") else None
+    media = raw.get("media") if isinstance(raw.get("media"), dict) else {"kind": "same"}
+    kind = media.get("kind") if media.get("kind") in ("same", "image", "video") else "same"
+    clean_media = {"kind": kind}
+    if kind == "image" and media.get("hash"):
+        clean_media["hash"] = str(media["hash"])[:64]
+    elif kind == "video" and media.get("video_id"):
+        clean_media["video_id"] = str(media["video_id"])[:32]
+    elif kind != "same":
+        clean_media = {"kind": "same"}
+    out = {"template_ad_id": text("template_ad_id", 32), "adset_id": text("adset_id", 32),
+           "name": text("name", 200), "title": text("title", 255), "body": text("body", 5000),
+           "cta_type": text("cta_type", 32), "media": clean_media, "preview_url": text("preview_url", 1000)}
+    return out if out["template_ad_id"] and out["title"] and out["body"] else None
 
 
 @agent_bp.post("/tasks/<int:task_id>/proposals")
@@ -313,8 +338,9 @@ def add_proposals(task_id):
         return api_error("This task isn't open any more", 409)
     cols = list(items[0].keys())
     for p in items:
+        values = [json.dumps(p[c]) if c == "payload" and p[c] is not None else p[c] for c in cols]
         db.execute(f"INSERT INTO desk_proposals (task_id, {', '.join(cols)}) VALUES (%s, {', '.join(['%s'] * len(cols))})",
-                   [task_id] + [p[c] for c in cols])
+                   [task_id] + values)
     db.execute("UPDATE desk_tasks SET updated_at = now() WHERE id = %s", (task_id,))
     return jsonify({"added": len(items)}), 201
 
@@ -357,3 +383,41 @@ def history():
     for t in rows:
         t["reports"] = [{"title": r["title"], "created_at": r["created_at"]} for r in t["reports"]]
     return jsonify(rows)
+
+
+@agent_bp.post("/tasks/<int:task_id>/scorecard")
+@agent_required
+def add_scorecard(task_id):
+    """A polish run's results: one row per pass with a 1-5 score, findings and fixes."""
+    data = request.get_json(silent=True) or {}
+    rows = data.get("passes") if isinstance(data.get("passes"), list) else []
+    clean = []
+    for r in rows[:20]:
+        if not isinstance(r, dict) or not r.get("id"):
+            continue
+        try:
+            score = max(1, min(5, int(r.get("score"))))
+        except (TypeError, ValueError):
+            score = None
+        clean.append({"id": str(r["id"])[:40], "label": str(r.get("label") or r["id"])[:80], "score": score,
+                      "verdict": str(r.get("verdict") or "")[:300],
+                      "findings": [str(x)[:500] for x in (r.get("findings") or [])][:8],
+                      "fixes": [str(x)[:500] for x in (r.get("fixes") or [])][:8]})
+    if not clean:
+        return api_error("A scorecard needs at least one pass with an id", 400)
+    if not _open_task(task_id):
+        return api_error("This task isn't open any more", 409)
+    scores = [r["score"] for r in clean if r["score"]]
+    card = {"passes": clean, "overall": round(sum(scores) / len(scores), 1) if scores else None,
+            "headline": str(data.get("headline") or "")[:300]}
+    db.execute("UPDATE desk_tasks SET scorecard = %s, updated_at = now() WHERE id = %s", (json.dumps(card), task_id))
+    return jsonify({"ok": True, "overall": card["overall"]})
+
+
+@agent_bp.post("/media/upload")
+@agent_required
+def agent_upload():
+    """A rendered image or video from a 'Make a new version' run, into the ad account's
+    media library (nothing is shown to anyone until an ad using it is approved and turned on)."""
+    import ads_api
+    return ads_api.upload_file(request.files.get("file"), actor="claude")

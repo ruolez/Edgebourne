@@ -26,6 +26,21 @@ function fillFromTemplate() {
   ["body", "title"].forEach((id) => $(id).dispatchEvent(new Event("input")));
 }
 
+function useSame() {
+  const t = options.templates.find((x) => x.id === $("template").value);
+  media = { kind: "same", name: `Same as “${t ? t.name : "the starting ad"}”`, url: t && t.image_url, ready: true };
+  showChosen();
+}
+
+function pickTab(name) {
+  document.querySelectorAll("#media-tabs button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.tab === name)));
+  $("tab-upload").hidden = name !== "upload";
+  $("tab-library").hidden = name !== "library";
+  $("tab-same").hidden = name !== "same";
+  if (name === "library") loadLibrary();
+  if (name === "same") useSame();
+}
+
 function showChosen() {
   const el = $("chosen");
   if (!media) { el.hidden = true; return; }
@@ -130,12 +145,24 @@ if (me) {
 
     $("media-tabs").addEventListener("click", (e) => {
       const b = e.target.closest("[data-tab]");
-      if (!b) return;
-      document.querySelectorAll("#media-tabs button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-      $("tab-upload").hidden = b.dataset.tab !== "upload";
-      $("tab-library").hidden = b.dataset.tab !== "library";
-      if (b.dataset.tab === "library") loadLibrary();
+      if (b) pickTab(b.dataset.tab);
     });
+    $("template").addEventListener("change", () => { if (media && media.kind === "same") useSame(); });
+    const q = new URLSearchParams(location.search);
+    if (q.get("from")) pickTab("same");
+    if (q.get("proposal")) {
+      try {
+        const p = await api(`/api/proposals/${encodeURIComponent(q.get("proposal"))}`);
+        const pl = p.payload || {};
+        if (pl.template_ad_id && options.templates.some((t) => t.id === pl.template_ad_id)) $("template").value = pl.template_ad_id;
+        if (pl.adset_id) $("adset").value = pl.adset_id;
+        ["body", "title", "name"].forEach((k) => { if (pl[k]) { $(k).value = pl[k]; $(k).dataset.fromTemplate = "0"; $(k).dispatchEvent(new Event("input")); } });
+        if (pl.cta_type) $("cta").value = pl.cta_type;
+        if (!pl.media || pl.media.kind === "same") pickTab("same");
+        else { media = { ...pl.media, name: `Claude's new ${pl.media.kind}`, ready: pl.media.kind === "image" }; showChosen(); pollVideo(); }
+        toast("Filled in from Claude's proposal. Edit anything, then create.");
+      } catch (err) { toast(err.message, "bad"); }
+    }
     $("file").addEventListener("change", (e) => { if (e.target.files[0]) upload(e.target.files[0]); e.target.value = ""; });
     const drop = $("drop");
     ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
@@ -159,7 +186,7 @@ if (me) {
         const r = await api("/api/ads/new", { method: "POST", body: {
           adset_id: $("adset").value, template_ad_id: $("template").value, name,
           body: $("body").value, title: $("title").value, cta_type: $("cta").value,
-          media: { kind: media.kind, hash: media.hash, video_id: media.video_id },
+          media: media.kind === "same" ? { kind: "same" } : { kind: media.kind, hash: media.hash, video_id: media.video_id },
         } });
         location.href = `/ad.html?id=${encodeURIComponent(r.id)}&created=1`;
       } catch (err) { toast(err.message, "bad"); btn.disabled = false; btn.textContent = "Create ad (off)"; }

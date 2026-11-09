@@ -52,3 +52,14 @@ export function columnChart({ el, series, key, color, format, axisFormat, title,
     hit.addEventListener("mouseleave", () => { tip.hidden = true; });
   });
 }
+
+// Horizontal bars for a breakdown: one measure, sorted, labels left, values right.
+export function barList(el, items, { key, format, max = null, extra = null }) {
+  const top = max ?? Math.max(...items.map((i) => i[key]), 0);
+  el.innerHTML = items.length ? `<ul class="bars">${items.map((i) => `
+    <li><span class="bar-label">${esc(i.label)}</span>
+      <span class="bar-track"><i data-w="${top ? (i[key] / top) * 100 : 0}"></i></span>
+      <span class="bar-value">${esc(format(i[key]))}</span>${extra ? `<span class="bar-extra">${extra(i)}</span>` : ""}</li>`).join("")}</ul>`
+    : '<p class="muted flush">No data for this period.</p>';
+  el.querySelectorAll(".bar-track i[data-w]").forEach((b) => { b.style.width = `${b.dataset.w}%`; });
+}

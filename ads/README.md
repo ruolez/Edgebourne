@@ -55,10 +55,27 @@ Screenshots (light/dark, desktop/phone, fails on console errors): `node ads/qa/s
 | Home | Needs attention (Meta-stopped ads, ads on but never shown, leads waiting > 1 h, Claude's pending proposals, spending limit, Mac offline), today's spend so far (live, cached 5 min), yesterday, last 7 days, newest leads, Claude, recent changes |
 | Leads | Inbox with the lead clock, stages, owner, notes |
 | Ads | Campaign → ad set → ad cards with media, results for 7/14/30 complete days, on/off switches, budget editing |
-| Ad (`ad.html?id=`) | Meta's real previews per placement (`/{ad}/previews`, iframe from facebook.com), words, results and charts, where it runs, Claude's proposals, its leads, change history, duplicate |
+| Ad (`ad.html?id=`) | Tabs. **Overview**: Meta's real previews per placement (`/{ad}/previews`, iframe from facebook.com), results, words, where it runs (with Meta's audience-size estimate), pending proposals, leads. **Polish**: the preset audit passes and "Make a new version". **Audience**: spend and leads by placement, age, gender, device, region, hour. **Video**: watch funnel, hook and hold rate, Meta's quality / engagement / conversion rankings, frequency, CPM. **Comments** on the ad's post. **History**: dashboard changes and decided proposals |
 | New ad | Copies an existing ad's story spec (Page, Instagram identity, lead-form button), new image or video (upload or library) and words; created **off** |
 | Performance | Totals, charts, per-ad table |
 | Desk / Research | Directions for Claude; research adds Ad Library search links |
+
+Polish (`backend/polish.py`): eleven preset passes (hook, headline, primary text, call to
+action, message & intent, visual design, AI signal, placements, motion & sound, policy,
+performance), each with the exact checks that took N1–N5 from first draft to approved, plus
+presets (full, words only, design only, quick). A run is a Desk task of kind `polish` whose
+`options` carry the pass definitions; Claude posts a scorecard (`desk scorecard`: 1–5 per
+pass with findings and fixes) and copy variants as `creative` proposals with a payload
+(starting ad + words + `media: same`). Approving one creates that ad, switched off.
+"Make a new version" is kind `render`: the bridge allows the render pipeline (node, ffmpeg,
+edits under `creatives/`) for that kind only; Claude uploads the result with `desk upload`
+and proposes it as a new ad.
+
+On-demand Meta reads (`backend/insights_api.py`, cached in `meta_cache`): breakdowns,
+diagnostics (rankings), comments (Page token), delivery estimates, account activity.
+The hourly sync also stores video funnel numbers per day (`video_3s`, `thruplays`,
+`video_p25..p100`, `clicks_all`) and each ad's post id; ads that disappear from Meta are
+marked `DELETED` and hidden.
 
 Controls: admins everywhere, teammates on their assigned campaigns. Every write to Meta goes
 through `ads_api.py` and lands in `meta_changes` (who, what, old → new, result) plus the

@@ -47,7 +47,7 @@ results. The Mac pulls, so nothing on the Mac is exposed to the internet.
 | 2. Performance (built 2026-11-08) | Hourly sync; overview (spend vs $150 cap, leads, cost per lead, today vs yesterday), per-ad and per-day tables/charts, delivery + review status, alerts (rejected ad, zero delivery, cap near) | Phase 1 |
 | 3. AI desk (built 2026-11-08) | "Ask Claude" box with directions; task queue; `/ads-desk` skill on the Mac; reports (weekly review, research) rendered in the dashboard; proposals as structured cards | Phase 1 |
 | 4. Controls (built 2026-11-08, with Home, Ads, ad previews, new ads, uploads) | Approve/decline proposals; pause/resume ad, budget change with guardrails; execution via Graph API (system user token); change log | Phases 2–3 |
-| 5. Research + live improvement | Competitor research runs (Ads Library via MCP), creative improvement runs with Eugene's directions (Claude renders new variants locally, uploads drafts, proposal to publish), experiments tracker | Phase 4 |
+| 5. Research + live improvement (built 2026-11-08: Research page, polish passes, copy variants as one-click new ads, "Make a new version" render runs) | Competitor research runs (Ads Library via MCP), creative improvement runs with Eugene's directions (Claude renders new variants locally, uploads drafts, proposal to publish), experiments tracker | Phase 4 |
 
 ## Stack (same conventions as EasyShip / iSpend)
 

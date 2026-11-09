@@ -27,10 +27,12 @@ const BASE = process.env.BASE || 'http://ads.localhost:8090';
         await page.waitForSelector('#stages');
         await page.screenshot({ path: `${OUT}/lead-detail-${tag}-${scheme}.png`, fullPage: true });
       }
-      for (const p of ['home', 'ads', 'ad.html?id=120252672232040312', 'new-ad', 'research', 'desk', 'performance', 'team', 'settings', 'account']) {
+      for (const p of ['home', 'ads', 'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=polish', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video', 'ad.html?id=120252672230740312#tab=comments', 'new-ad', 'research', 'desk', 'performance', 'team', 'settings', 'account']) {
         await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
+        if (p.includes('#')) await page.reload();
         await page.waitForTimeout(600);
-        await page.screenshot({ path: `${OUT}/${p.split('.')[0]}-${tag}-${scheme}.png`, fullPage: true });
+        await page.waitForTimeout(p.includes('#tab') ? 900 : 0);
+        await page.screenshot({ path: `${OUT}/${p.split('.')[0]}${(p.match(/tab=(\w+)/) || ['', ''])[1] ? '-' + p.match(/tab=(\w+)/)[1] : ''}-${tag}-${scheme}.png`, fullPage: true });
       }
       await ctx.close();
     }
