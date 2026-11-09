@@ -41,6 +41,13 @@
           </form>
         </section>
         <section class="panel">
+          <div class="panel-head"><h2>Automatic refresh</h2><p id="auto-state"></p></div>
+          <form class="panel-body stack" id="auto-form" novalidate>
+            <div class="field"><label for="auto-minutes">Get the latest from Meta</label><select class="input" id="auto-minutes" name="minutes"></select><span class="hint">Ads, results, today's spend and any missed leads. Open pages update themselves; the Refresh button still works any time.</span></div>
+            <div class="row"><button class="btn btn-primary" type="submit">Save</button></div>
+          </form>
+        </section>
+        <section class="panel">
           <div class="panel-head"><h2>Lead stages to Meta</h2><p id="crm-state"></p></div>
           <form class="panel-body stack" id="crm-form" novalidate>
             <p class="muted">When you move a lead to Contacted, Qualified, Won or Lost, Meta hears about it. Over time it learns which people become clients and finds more like them. Test leads are never sent.</p>

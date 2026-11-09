@@ -100,6 +100,8 @@ const themeLabel = (t) => ({ system: "Theme: auto", light: "Theme: light", dark:
 // Every page gets the Refresh control; a page hands its reload to onRefresh(fn).
 let refreshHandler = null;
 let updatedAt = null;
+let shownAt = null; // the updated_at the page's data was last loaded at
+let autoMinutes = null;
 let clockSkew = 0;
 export function onRefresh(fn) { refreshHandler = fn; }
 
@@ -117,7 +119,28 @@ export function ago(ts, now = Date.now() / 1000) {
 function paintUpdated() {
   const text = updatedAt ? `Updated ${ago(updatedAt, Date.now() / 1000 + clockSkew)}` : "Not refreshed yet";
   document.querySelectorAll("[data-updated]").forEach((el) => { el.textContent = text; });
-  document.querySelectorAll("[data-refresh]").forEach((b) => b.setAttribute("aria-label", `Refresh. ${text}`));
+  const auto = autoMinutes ? ` Updates by itself every ${autoMinutes === 60 ? "hour" : `${autoMinutes} min`}.` : "";
+  document.querySelectorAll("[data-refresh]").forEach((b) => {
+    b.setAttribute("aria-label", `Refresh. ${text}.${auto}`);
+    b.title = `Get the latest from Meta.${auto}`;
+  });
+}
+
+// Typing, a dialog or an open menu: reloading now would throw the person's work away.
+function editing() {
+  const a = document.activeElement;
+  return Boolean((a && a.matches("input, textarea, select, [contenteditable]")) || document.querySelector("dialog[open]"));
+}
+
+// The server pulls from Meta by itself; when it has newer data, this page reloads its own.
+async function catchUp() {
+  if (document.hidden) return;
+  await frameStatus();
+  if (!updatedAt || (shownAt && updatedAt <= shownAt) || editing()) return;
+  const first = shownAt === null;
+  shownAt = updatedAt;
+  if (first || !refreshHandler) return;
+  try { await refreshHandler(); } catch (e) { /* the next manual refresh shows the error */ }
 }
 
 async function doRefresh() {
@@ -130,6 +153,7 @@ async function doRefresh() {
     if (r.ran) toast(r.new_leads ? `Up to date. ${r.new_leads} new lead${r.new_leads === 1 ? "" : "s"} found.` : "Up to date with Meta");
     else if (r.busy) toast("Already refreshing, one moment");
     if (refreshHandler) await refreshHandler(); else location.reload();
+    shownAt = updatedAt;
     frameStatus();
   } catch (err) {
     toast(err.message, "bad");
@@ -143,6 +167,7 @@ async function frameStatus() {
   try {
     const st = await api("/api/refresh");
     updatedAt = st.updated_at;
+    autoMinutes = st.auto_minutes || null;
     clockSkew = st.server_now ? st.server_now - Date.now() / 1000 : 0;
     setNewCount(st.new_leads || 0);
     document.querySelectorAll("[data-claude-count]").forEach((el) => { el.hidden = !st.proposals; el.textContent = st.proposals || ""; });
@@ -268,8 +293,10 @@ export async function boot({ page, admin = false }) {
     location.href = "/login.html";
   }));
 
-  frameStatus();
+  catchUp();
   setInterval(paintUpdated, 30000);
+  setInterval(catchUp, 60000);
+  document.addEventListener("visibilitychange", catchUp);
   return me;
 }
 

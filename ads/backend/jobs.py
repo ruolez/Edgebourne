@@ -1,5 +1,6 @@
 """One background thread per gunicorn worker: processes webhook deliveries as
-soon as they arrive and syncs campaigns every hour. A Postgres advisory lock
+soon as they arrive, pulls the latest from Meta every few minutes (Settings, Automatic
+refresh) and syncs a full week every hour. A Postgres advisory lock
 keeps two workers from doing the same job at once."""
 import logging
 import threading
@@ -29,8 +30,11 @@ def _loop():
     import crm_events
     import insights
     import leads
+    import refresh_api
+    import settings_store
 
     last_sync = 0.0
+    last_auto_try = None
     while True:
         _event.wait(timeout=30)
         _event.clear()
@@ -43,6 +47,16 @@ def _loop():
                     crm_events.process_pending()
                 except Exception:
                     log.exception("sending lead stages to Meta failed")
+                now = time.time()
+                if settings_store.get("meta_system_token") and refresh_api.auto_due(
+                        settings_store.get("last_refresh_at"), last_auto_try, now,
+                        refresh_api.auto_minutes(settings_store.get("auto_refresh_minutes"))):
+                    try:
+                        refresh_api.pull_latest(conn)
+                        last_auto_try = None
+                    except Exception as exc:
+                        last_auto_try = now
+                        log.info("automatic refresh skipped: %s", exc)
                 if time.time() - last_sync > SYNC_EVERY:
                     last_sync = time.time()
                     try:

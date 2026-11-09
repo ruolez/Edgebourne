@@ -29,3 +29,33 @@ class LastUpdatedTests(unittest.TestCase):
             [refresh_api.last_updated(None, None), refresh_api.last_updated("1794250000", sync),
              refresh_api.last_updated("1794240000", sync), refresh_api.last_updated("junk", sync)],
             [None, 1794250000.0, 1794247200.0, 1794247200.0])
+
+
+class AutoMinutesTests(unittest.TestCase):
+    def test_keeps_an_allowed_choice_and_falls_back_to_the_default(self):
+        default = refresh_api.DEFAULT_AUTO_MINUTES
+        self.assertEqual(
+            [refresh_api.auto_minutes(m) for m in ("5", "30", 60, None, "", "7", "junk", "-15")],
+            [5, 30, 60, default, default, default, default, default])
+
+
+class AutoDueTests(unittest.TestCase):
+    NOW = 1_000_000.0
+
+    def test_due_once_the_interval_has_passed_since_the_last_pull(self):
+        now, every = self.NOW, 15
+        self.assertEqual(
+            [refresh_api.auto_due(None, None, now, every),
+             refresh_api.auto_due(str(now - 15 * 60), None, now, every),
+             refresh_api.auto_due(str(now - 15 * 60 + 1), None, now, every)],
+            [True, True, False])
+
+    def test_a_failed_try_waits_before_the_next_one(self):
+        now, every = self.NOW, 15
+        gap = refresh_api.AUTO_RETRY_SECONDS
+        self.assertEqual(
+            [refresh_api.auto_due(None, now - gap + 1, now, every), refresh_api.auto_due(None, now - gap, now, every)],
+            [False, True])
+
+    def test_a_pull_stamped_in_the_future_does_not_stop_automatic_refresh(self):
+        self.assertTrue(refresh_api.auto_due(str(self.NOW + 3600), None, self.NOW, 15))

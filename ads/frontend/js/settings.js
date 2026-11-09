@@ -49,6 +49,14 @@ function renderCrm() {
     ? `<p class="note${c.failed ? " warn" : ""}">${parts.join(", ")}.${c.last_error ? ` Last error: ${esc(c.last_error)}` : ""}</p>` : "";
 }
 
+const every = (m) => (m === 60 ? "Every hour" : `Every ${m} minutes`);
+
+function renderAuto() {
+  $("auto-minutes").innerHTML = s.auto_refresh_choices.map((m) => `<option value="${m}">${every(m)}</option>`).join("");
+  $("auto-minutes").value = String(s.auto_refresh_minutes);
+  $("auto-state").innerHTML = `<span class="pill ok">${esc(every(s.auto_refresh_minutes))}</span>`;
+}
+
 async function load() {
   s = await api("/api/settings");
   fill($("meta-form"), s.meta);
@@ -63,6 +71,7 @@ async function load() {
       : "Email isn't set up yet. Set it up once in the website admin under Email and it's used here too, or enter a mailbox below.";
   renderMeta();
   renderCrm();
+  renderAuto();
   const rows = await api("/api/settings/activity");
   $("activity").innerHTML = rows.length ? `<thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${rows.map((r) =>
     `<tr><td class="muted">${when(r.at)}</td><td>${esc(r.who || ({ meta: "Meta", claude: "Claude", system: "System" }[r.actor] || r.actor))}</td><td>${esc(describe(r))}${r.subject && !r.action.startsWith("lead.") ? ` <span class="muted">${esc(r.subject)}</span>` : ""}</td></tr>`).join("")}</tbody>`
@@ -96,6 +105,7 @@ const ACTIONS = {
   "team.updated": "Changed a teammate's access",
   "team.password_reset": "Reset a teammate's password",
   "settings.crm_test": "Sent a test lead stage to Meta",
+  "settings.refresh": "Changed how often the latest comes from Meta",
   "crm.failed": "A lead stage didn't reach Meta",
   "lead.received": "New lead arrived",
   "lead.status": "Moved a lead",
@@ -109,6 +119,10 @@ if (me) {
   await load();
   $("meta-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); toast("Meta settings saved"); load(); }); });
   $("smtp-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/smtp", { method: "PUT", body: values(e.target) }); toast("Email settings saved"); load(); }); });
+  $("auto-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
+    s = await api("/api/settings/refresh", { method: "PUT", body: { minutes: Number($("auto-minutes").value) } });
+    toast(`The latest now comes from Meta ${every(s.auto_refresh_minutes).toLowerCase()}`); renderAuto();
+  }); });
   $("crm-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     s = await api("/api/settings/meta", { method: "PUT", body: { meta_dataset_id: $("meta_dataset_id").value, crm_send_enabled: $("crm_send_enabled").checked ? "1" : "" } });
     toast($("crm_send_enabled").checked ? "Lead stages now go to Meta" : "Lead stages are no longer sent"); load();

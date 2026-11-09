@@ -190,6 +190,34 @@ print(r['id'])"`).toString().trim());
   await page.waitForFunction(() => document.querySelector('#crm-state')?.textContent === 'Off');
   check('Settings turns lead stages off again', true);
 
+  // Automatic refresh: the interval is set in Settings; open pages reload when the server has newer data.
+  await page.selectOption('#auto-minutes', '5');
+  await page.click('#auto-form button[type=submit]');
+  await page.waitForFunction(() => document.querySelector('#auto-state')?.textContent === 'Every 5 minutes');
+  check('Settings sets the automatic refresh interval', true);
+  await page.goto(BASE + '/ads.html', { waitUntil: 'networkidle' });
+  check('the Refresh button says how often it updates by itself', /every 5 min/.test(await page.getAttribute('.page-head [data-refresh]', 'title')));
+  const stampPull = () => require('child_process').execSync(`docker exec edgebourne-ads-backend sh -c "cd /app && python -c \\"import settings_store,time;settings_store.set('last_refresh_at',str(time.time()))\\""`);
+  let adsLoads = 0;
+  const countAds = (r) => { if (/\/api\/ads\?range=/.test(r.url())) adsLoads++; };
+  page.on('request', countAds);
+  await page.evaluate(() => { const i = document.createElement('input'); i.id = 'qa-typing'; document.querySelector('.page-head').append(i); i.focus(); });
+  stampPull();
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await page.waitForTimeout(1500);
+  check('a page being typed in is not reloaded under the person', adsLoads === 0, `${adsLoads} loads`);
+  await page.evaluate(() => document.getElementById('qa-typing').remove());
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await page.waitForFunction(() => /just now/.test(document.querySelector('[data-updated]')?.textContent || ''));
+  await page.waitForTimeout(800);
+  check('an open page reloads its data after an automatic pull', adsLoads === 1, `${adsLoads} loads`);
+  page.off('request', countAds);
+  await page.goto(BASE + '/settings.html');
+  await page.waitForSelector('#auto-state .pill');
+  await page.selectOption('#auto-minutes', '15');
+  await page.click('#auto-form button[type=submit]');
+  await page.waitForFunction(() => document.querySelector('#auto-state')?.textContent === 'Every 15 minutes');
+
   // 5. Claude page: decisions first, then each ad's story, then every run (dev copy of the real Desk).
   require('child_process').execSync('docker cp dev/seed_desk.py edgebourne-ads-backend:/tmp/seed_desk.py && docker exec edgebourne-ads-backend sh -c "cd /app && python /tmp/seed_desk.py"', { cwd: __dirname + '/..' });
   await page.goto(BASE + '/desk.html', { waitUntil: 'networkidle' });

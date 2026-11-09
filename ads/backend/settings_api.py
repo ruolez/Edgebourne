@@ -10,6 +10,7 @@ import settings_store
 import insights
 import sync
 import jobs
+import refresh_api
 from auth import admin_required, current_user
 from util import api_error, log_activity
 
@@ -56,6 +57,8 @@ def get_settings():
         "last_campaign_sync": settings_store.get("last_campaign_sync"),
         "page_subscribed": settings_store.get("meta_page_subscribed") == "1",
         "crm": crm_events.summary(),
+        "auto_refresh_minutes": refresh_api.auto_minutes(settings_store.get("auto_refresh_minutes")),
+        "auto_refresh_choices": list(refresh_api.AUTO_CHOICES),
     })
 
 
@@ -78,6 +81,22 @@ def _save(fields, data):
 def save_meta():
     changed = _save(META_FIELDS, request.get_json(silent=True) or {})
     log_activity("settings.meta", details={"changed": changed})
+    return get_settings()
+
+
+@bp.put("/refresh")
+@admin_required
+def save_refresh():
+    raw = (request.get_json(silent=True) or {}).get("minutes")
+    try:
+        minutes = int(raw)
+    except (TypeError, ValueError):
+        minutes = None
+    if minutes not in refresh_api.AUTO_CHOICES:
+        return api_error("Pick one of the listed intervals", 400, field="minutes")
+    settings_store.set("auto_refresh_minutes", str(minutes))
+    log_activity("settings.refresh", details={"minutes": minutes})
+    jobs.wake()
     return get_settings()
 
 

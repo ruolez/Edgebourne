@@ -2,6 +2,8 @@
 
 One quick pass: ads and statuses, the last few days of results, today's spend and any form
 leads the webhook missed. Throttled so repeated taps (or several people) don't hammer Meta.
+The background worker runs the same pass by itself every few minutes (Settings, Automatic
+refresh); open pages notice the newer data and reload it.
 """
 import logging
 import time
@@ -25,6 +27,9 @@ MIN_GAP_SECONDS = 60
 DAYS = 3
 LEAD_DAYS = 7
 LOCK_KEY = 7_204_311
+AUTO_CHOICES = (5, 10, 15, 30, 60)
+DEFAULT_AUTO_MINUTES = 15
+AUTO_RETRY_SECONDS = 300
 
 
 def refresh_due(last, now):
@@ -33,6 +38,45 @@ def refresh_due(last, now):
     except (TypeError, ValueError):
         return True
     return 0 <= now - last and now - last >= MIN_GAP_SECONDS
+
+
+def auto_minutes(value):
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_AUTO_MINUTES
+    return minutes if minutes in AUTO_CHOICES else DEFAULT_AUTO_MINUTES
+
+
+def auto_due(last_pull, last_try, now, minutes):
+    """Whether the worker should pull now: the interval has passed since the last pull (by
+    anyone), and a failed automatic try is at least AUTO_RETRY_SECONDS old."""
+    if last_try is not None and now - last_try < AUTO_RETRY_SECONDS:
+        return False
+    try:
+        last_pull = float(last_pull)
+    except (TypeError, ValueError):
+        return True
+    return now < last_pull or now - last_pull >= minutes * 60
+
+
+def pull_latest(conn):
+    """The quick pass. Returns None when another pass holds the lock; MetaError propagates."""
+    if not jobs._locked(conn, LOCK_KEY):
+        return None
+    try:
+        result = insights.sync_all(days=DAYS)
+        settings_store.set("today_snapshot", None)
+        new_leads = 0
+        try:
+            new_leads = leads.backfill(days=LEAD_DAYS)
+        except meta_client.MetaError as exc:
+            log.warning("refresh: lead catch-up failed: %s", exc)
+        settings_store.set("last_refresh_at", str(time.time()))
+        return {"ads": result.get("ads"), "new_leads": new_leads}
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(%s)", (LOCK_KEY,))
 
 
 def last_updated(refresh_at, sync_iso):
@@ -52,7 +96,8 @@ def last_updated(refresh_at, sync_iso):
 
 def _status():
     return {"updated_at": last_updated(settings_store.get("last_refresh_at"), settings_store.get("last_performance_sync")),
-            "server_now": time.time()}
+            "server_now": time.time(),
+            "auto_minutes": auto_minutes(settings_store.get("auto_refresh_minutes"))}
 
 
 @bp.get("")
@@ -79,23 +124,12 @@ def refresh():
     now = time.time()
     if not refresh_due(settings_store.get("last_refresh_at"), now):
         return jsonify({**_status(), "ran": False})
-    conn = db.get_db()
-    if not jobs._locked(conn, LOCK_KEY):
-        return jsonify({**_status(), "ran": False, "busy": True})
     try:
-        result = insights.sync_all(days=DAYS)
-        settings_store.set("today_snapshot", None)
-        new_leads = 0
-        try:
-            new_leads = leads.backfill(days=LEAD_DAYS)
-        except meta_client.MetaError as exc:
-            log.warning("refresh: lead catch-up failed: %s", exc)
-        settings_store.set("last_refresh_at", str(time.time()))
+        pulled = pull_latest(db.get_db())
     except meta_client.MetaError as exc:
         return api_error(f"Meta didn't answer: {exc}", 502)
-    finally:
-        with conn.cursor() as cur:
-            cur.execute("SELECT pg_advisory_unlock(%s)", (LOCK_KEY,))
+    if pulled is None:
+        return jsonify({**_status(), "ran": False, "busy": True})
     user = current_user()
-    log_activity("refresh", details={"ads": result.get("ads"), "new_leads": new_leads, "by": user["id"]})
-    return jsonify({**_status(), "ran": True, "new_leads": new_leads})
+    log_activity("refresh", details={**pulled, "by": user["id"]})
+    return jsonify({**_status(), "ran": True, "new_leads": pulled["new_leads"]})
