@@ -17,7 +17,8 @@ the end of every working session.
 2. Check the state: `cd ~/Desktop/Dev/edgebourne && git log --oneline -10 && git status`.
    Compare with the **Progress log** (section 6). If git has commits the log doesn't mention,
    add them to the log before doing anything else.
-3. Find the first unticked step in **Status** (section 2). Steps marked **[Eugene]** need him.
+3. Check **Open issues** in Status first: Eugene asked (2026-11-09) to fix some of them before
+   new phases. Then find the first unticked step in **Status** (section 2). Steps marked **[Eugene]** need him.
    If the next step is blocked on him, say exactly what he has to do, then move on to the
    next step that isn't blocked.
 4. Before building a step: if it has an **Open decision**, ask Eugene (one AskUserQuestion
@@ -111,6 +112,18 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **[Eugene]** = needs hi
 - [~] 0.3 Real-Meta verification pass (12/13 pass; h needs Eugene's token with `pages_read_user_content`) (checklist in section 3, Phase 0), fixing what breaks.
 - [x] 0.4 First real "Make a new version" render run, watched end to end (task 3 rendered + uploaded in 9 min; proposal 5 approved → ad 120252690325970312 "N1 · v2", PAUSED).
 
+### Open issues (Eugene, 2026-11-09: fix a few of these before going forward)
+Found while proving Phase 0 and building 1.1. Pick with Eugene; tick here when fixed.
+- [ ] I1 **[Eugene]** Comments tab (0.3 h): the token lacks `pages_read_user_content`. Regenerate the system user token with it and paste it in Settings → Meta; then recheck h.
+- [ ] I2 Ad page has no loading state: Meta previews take 2–8 s and the box stays blank (a fresh ad still IN_PROCESS shows an empty white preview).
+- [ ] I3 Test leads are hidden from the Leads inbox with no way to see them (API has `tests=1`); add a toggle.
+- [ ] I4 A render proposal carries one video, so N1 · v2's 9:16 upload (2015174525716803) isn't used. Needs placement asset customization (4:5 for feeds, 9:16 for Stories/Reels) in the creative builder.
+- [ ] I5 Lead page "Meta has …" line (1.1) shows "on its way" right after a stage click and only updates when the lead is reopened; re-fetch a few seconds after the change.
+- [ ] I6 Stage events queue while the 1.1 switch is off and show as "waiting"; decide: queue only when on, or keep (Meta takes 7 days back, older ones are skipped).
+- [ ] I7 Creative files: local `creatives/2026-11-07-new5/out/N1-9x16*` still carry the banned "Free workflow review" wording (polish #2 report). Not in any live ad; rebuild or delete before reuse.
+- [ ] I8 **[Eugene]** Money: the $150 manual account cap ($35.31 used on 2026-11-09) stops all ads around Nov 15. Raise it or let it stop, his call.
+- [ ] I9 Paused ads keep piling up (4 test ads from 0.3 + N1 · v2, never deleted). Consider a "Tests" filter or a naming rule so the Ads page stays readable.
+
 ### Phase 1: Close the loop with Meta
 - [~] 1.1 Lead stages sent to Meta (Conversions API for CRM) (built and tested locally; Eugene: META-APP-SETUP part H, then a live test event)
 - [ ] 1.2 Instant alert to Eugene's phone for every new lead (channel = open decision)
@@ -175,7 +188,7 @@ Each step lists: goal · how · files · tests · done when · open decisions. M
 | g | Breakdowns, rankings, video funnel | Audience and Video tabs fill once there is delivery | ✅ age/gender/region/placement/hour, rankings ("not enough data yet"), funnel p25–p100 |
 | h | Comments | Comments tab lists post comments (needs Page token) | ❌ Meta (#10): needs `pages_read_user_content`. **[Eugene]** regenerate the system user token with it (META-APP-SETUP part C/E) and paste it in Settings → Meta |
 | i | Meta change history | Performance → "What changed on Meta" lists the 2026-11-08 publish | ✅ 33 events incl. Pending Review → Active, delivery starts, "Account billed" |
-| j | Audience estimate | Ads page shows the ad set estimate | ❌→fixed: Meta retired `estimate_dau` (#12); field dropped. Recheck after Update |
+| j | Audience estimate | Ads page shows the ad set estimate | ✅ after a fix: Meta retired `estimate_dau` (#12), field dropped; live 2026-11-09: 10.4M–12.3M people |
 | k | Polish run | Polish → Quick check on N1; scorecard + proposals arrive | ✅ task 2, 4 min, score 3.5/5, 3 copy proposals + 1 new-version request |
 | l | Approve a copy version | Creates an ad, off; leave it off | ✅ proposal 1 → 120252689507540312 "N1 - One simple system · headline Run it all", PAUSED |
 | m | Lead webhook | Meta Lead Ads Testing Tool → lead in inbox + email | ✅ delivered (Success), lead #4 stored as test lead 11:06:25, email 5 s later. Test leads are hidden from the inbox (no toggle). Meta's webhook "Test" sample (lead 444444444444) retried forever → fixed: give up on code 100 or after 24 h |
@@ -189,6 +202,13 @@ Follow-ups found in 0.3 (small): show test leads behind a toggle on Leads; a loa
 2. Watch `~/Library/Logs/ads-desk/task-<id>.log`. Expect 10–40 minutes.
 3. Check that the result arrives as a proposal with the uploaded media, and that approving it creates an ad that is off.
 4. Fix what breaks: permissions in `bridge.py` `allowed_tools()` for kind `render`; SKILL.md render playbook.
+
+Result 2026-11-09 ✅: "Make it now" on N1 (proposal 4 from polish #2) → task 3 ran headless in 9 min →
+`creatives/2026-11-09-desk-task3/` (offer bar from frame 0 bottom right, solution line at 3.2 s, bold
+"Tap below ↓", "Updates drafted") → uploaded video 4:5 1030340833422294, video 9:16 2015174525716803,
+stills f55f0c04…, 25b7a5b3… → proposal 5 → approved → ad 120252690325970312 "N1 - One simple
+system · v2", PAUSED, $0. Broke and fixed: the run couldn't append to `reports/log.md` (now allowed,
+bridge 1.3); `cp` in a chain was refused (playbook now says one command at a time; it used node).
 
 ### Phase 1: Close the loop with Meta
 
@@ -493,3 +513,4 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-09 · a61b65b pushed to main · waiting on Eugene: Update + his own test pass; then 0.4 render run
 - 2026-11-09 · 0.3 j passes live (estimate 10.4M–12.3M) · 0.4: render task 3 on N1 (from polish #2) ran headless in 9 min, uploaded 2 videos + 2 stills, proposal 5 "N1 · v2"; fixes: render runs may append to `reports/log.md`, playbook says how to copy files (`cp` in a chain was refused), bridge 1.3 installed · 1.1 built: `crm_events.py` + migration 006, queue on new lead and stage change, worker sends with backoff (24 h give-up, invalid lead → failed at once), Settings panel (dataset, switch, test event), lead page line, Home warning, part H guide; 64 unit tests, QA 24 PASS
 - 2026-11-09 · 347e58c pushed · proposal 5 approved → N1 · v2 120252690325970312 PAUSED, $0 (now 5 test/new ads paused; never delete) · follow-up: a render proposal carries one video, so the 9:16 upload (2015174525716803) isn't attached (needs placement asset customization) · next: Eugene runs Update + part H test event (1.1), then 1.2 needs his alert-channel choice
+- 2026-11-09 · progress marked: 0.3 12/13 (h waits on the token), 0.4 done, 1.1 built and pushed (live test waits on Update + part H) · new **Open issues** list I1–I9 in section 2 · next: Eugene picks which issues to fix first, before 1.1 live test / 1.2
