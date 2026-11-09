@@ -212,11 +212,11 @@ textarea.input { min-height: 84px; resize: vertical; }
 
 .segmented {
   display: inline-flex; background: var(--surface); box-shadow: var(--lift);
-  border-radius: 12px; padding: 4px; gap: 2px; flex-wrap: wrap;
+  border-radius: 12px; padding: 4px; gap: 2px; flex-wrap: wrap; align-items: center;
 }
 .segmented button {
   border: 0; background: none; min-height: 36px; padding: 0 12px; border-radius: 8px; font-weight: 700;
-  color: var(--ink-2); cursor: pointer; display: inline-flex; gap: 6px; align-items: baseline;
+  color: var(--ink-2); cursor: pointer; display: inline-flex; gap: 6px; align-items: center; justify-content: center; line-height: 1.2;
 }
 .segmented button:hover { color: var(--ink); }
 .segmented button[aria-pressed="true"] { background: var(--seal-soft); color: var(--seal); }

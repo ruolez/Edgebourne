@@ -10,7 +10,7 @@ const STAGES = [
 ];
 const FILTERS = [{ id: "open", label: "Open" }, ...STAGES, { id: "all", label: "All" }];
 
-const state = { loaded: false, me: null, filter: "open", q: "", mine: false, leads: [], counts: {}, selected: null, seen: new Set() };
+const state = { loaded: false, me: null, filter: "open", q: "", leads: [], counts: {}, selected: null, seen: new Set() };
 const $ = (id) => document.getElementById(id);
 
 // Fresh = under an hour, late = over a day. Only new leads are "waiting".
@@ -49,7 +49,7 @@ function rowHtml(lead) {
 function renderList() {
   const list = $("list");
   if (!state.leads.length) {
-    const filtered = state.filter !== "open" || state.q || state.mine;
+    const filtered = state.filter !== "open" || state.q;
     list.innerHTML = `<li class="empty">${filtered
       ? "<h3>Nothing matches</h3><p>Try another stage or clear the search.</p>"
       : `<h3>No leads yet</h3><p>When someone asks for a free intro call, they show up here within a minute${state.me.role === "admin" ? " and you get an email" : ""}.</p>${state.me.role === "admin" ? '<a class="btn" href="/settings.html">Check the Meta connection</a>' : ""}`}</li>`;
@@ -63,7 +63,6 @@ async function load({ quiet = false } = {}) {
   const params = new URLSearchParams();
   if (state.filter !== "all") params.set("status", state.filter);
   if (state.q) params.set("q", state.q);
-  if (state.mine) params.set("mine", "1");
   try {
     const data = await api("/api/leads?" + params);
     state.leads = data.leads;
@@ -204,7 +203,6 @@ async function main() {
     clearTimeout(t);
     t = setTimeout(() => { state.q = e.target.value.trim(); load(); }, 250);
   });
-  $("mine").addEventListener("change", (e) => { state.mine = e.target.checked; load(); });
   $("list").addEventListener("click", (e) => {
     const row = e.target.closest(".lead-row");
     if (row) select(Number(row.dataset.id));

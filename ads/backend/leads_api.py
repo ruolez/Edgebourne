@@ -41,9 +41,6 @@ def list_leads():
         params.append(status)
     elif status == "open":
         clauses.append("l.status IN ('new', 'contacted', 'qualified')")
-    if request.args.get("mine") == "1":
-        clauses.append("l.owner_id = %s")
-        params.append(user["id"])
     if request.args.get("tests") != "1":
         clauses.append("NOT l.is_test")
     q = (request.args.get("q") or "").strip()
