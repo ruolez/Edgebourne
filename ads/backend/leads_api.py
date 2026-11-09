@@ -4,6 +4,7 @@ import crm_events
 import db
 import jobs
 import mailer
+import reminders
 import replies
 from auth import current_user, login_required, visible_campaign_ids
 from util import api_error, log_activity
@@ -61,7 +62,8 @@ def list_leads():
         f"SELECT l.status, COUNT(*) AS n FROM leads l WHERE {where} AND NOT l.is_test GROUP BY l.status",
         _scope(user)[1],
     )
-    return jsonify({"leads": rows, "counts": {r["status"]: r["n"] for r in counts}})
+    return jsonify({"leads": rows, "counts": {r["status"]: r["n"] for r in counts},
+                    "response": reminders.stats(*_scope(user))})
 
 
 @bp.get("/<int:lead_id>")

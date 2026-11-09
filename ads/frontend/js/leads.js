@@ -31,6 +31,19 @@ function renderFilters() {
   setNewCount(c.new || 0);
 }
 
+const minutesText = (m) => (m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.round(m / 6) / 10} h`.replace(".0 h", " h") : `${Math.round(m / 1440)} days`);
+
+// How fast leads hear back, last 30 days. Half of the contacted leads heard back within the median.
+function renderResponse(r) {
+  const el = $("response");
+  if (!r || !r.leads) { el.hidden = true; return; }
+  const parts = [r.median_minutes === null ? "Nobody has been contacted yet" : `half heard back within ${minutesText(r.median_minutes)}`,
+    `${r.within_5} of ${r.leads} within 5 min`];
+  if (r.untouched) parts.push(`${r.untouched} not contacted`);
+  el.textContent = `Last 30 days: ${parts.join(" · ")}`;
+  el.hidden = false;
+}
+
 function rowHtml(lead) {
   const isNew = lead.status === "new";
   const clock = isNew
@@ -68,6 +81,7 @@ async function load({ quiet = false } = {}) {
     const data = await api("/api/leads?" + params);
     state.leads = data.leads;
     state.counts = data.counts;
+    renderResponse(data.response);
     if (!state.loaded) { data.leads.forEach((l) => state.seen.add(l.id)); state.loaded = true; }
     renderFilters();
     renderList();

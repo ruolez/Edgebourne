@@ -55,6 +55,11 @@ def _loop():
                 except Exception:
                     log.exception("sending lead replies failed")
                 try:
+                    import reminders
+                    reminders.run()
+                except Exception:
+                    log.exception("lead reminders failed")
+                try:
                     notify.process_pending()
                 except Exception:
                     log.exception("sending alerts failed")

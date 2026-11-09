@@ -329,6 +329,27 @@ requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'X-Hub-
   await page.waitForFunction(() => document.querySelector('#rp-state')?.textContent === 'By hand');
   await page.screenshot({ path: `${OUT}/flow-settings-replies.png`, fullPage: true });
 
+  // Reminders: a lead nobody touched for 5 minutes, and one waiting an hour, reach Telegram once each.
+  const tgBefore = tgSent().length;
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "
+import db
+db.execute(\\"DELETE FROM leads WHERE full_name LIKE 'Reminder QA%%'\\")
+for name, mins in (('Reminder QA Five', 7), ('Reminder QA Hour', 61)):
+    db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, phone, campaign_id, campaign_name) VALUES (%s, now() - make_interval(mins => %s), %s, '+15550002222', '120252638288040312', 'Edge Bourne - Free intro call - Leads')\\", ('qa-' + name, mins, name))"`);
+  let reminded = [];
+  for (let i = 0; i < 40 && reminded.length < 2; i++) {
+    await page.waitForTimeout(1000);
+    reminded = tgSent().slice(tgBefore).filter((m) => /Reminder QA/.test(m.text)).map((m) => m.text.split('\n')[0]);
+  }
+  check('a lead nobody called for 5 min reminds its people on Telegram', reminded.some((t) => /Nobody has called Reminder QA Five yet/.test(t)), reminded.join(' | '));
+  check('a lead waiting an hour reminds the admins too', reminded.some((t) => /Reminder QA Hour has waited 1 h/.test(t)), reminded.join(' | '));
+  await page.waitForTimeout(31000);
+  const remindCount = tgSent().slice(tgBefore).filter((m) => /Reminder QA/.test(m.text)).length;
+  check("each reminder goes out once, and a late lead only the hour one", remindCount === 2, `${remindCount} reminder messages`);
+  await page.goto(BASE + '/leads.html');
+  await page.waitForSelector('#response:not([hidden])');
+  check('Leads shows how fast leads hear back', /Last 30 days: half heard back within .* of \d+ within 5 min/.test(await page.textContent('#response')), await page.textContent('#response'));
+
   // 5. Claude page: decisions first, then each ad's story, then every run (dev copy of the real Desk).
   require('child_process').execSync('docker cp dev/seed_desk.py edgebourne-ads-backend:/tmp/seed_desk.py && docker exec edgebourne-ads-backend sh -c "cd /app && python /tmp/seed_desk.py"', { cwd: __dirname + '/..' });
   await page.goto(BASE + '/desk.html', { waitUntil: 'networkidle' });

@@ -46,6 +46,7 @@ APP_BASE_URL = (os.environ.get("APP_BASE_URL")
 GRAPH_VERSION_DEFAULT = os.environ.get("META_GRAPH_VERSION", "v24.0")
 # Local development only: point the Graph client at ads/dev/fake_meta.py.
 META_GRAPH_BASE = os.environ.get("META_GRAPH_BASE", "").rstrip("/")
+ACCOUNT_TZ = os.environ.get("ACCOUNT_TZ", "America/Los_Angeles")  # the ad account's time zone
 TELEGRAM_API_BASE = os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
 
 # Defaults for the Edge Bourne account; editable in Settings.

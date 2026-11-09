@@ -28,6 +28,15 @@ if (me) {
       toast(notify.checked ? "You'll get an email for each new lead" : "Lead emails turned off");
     } catch (err) { toast(err.message, "bad"); }
   });
+  const remind = document.getElementById("remind");
+  remind.checked = me.notify_reminders;
+  remind.addEventListener("change", async () => {
+    try {
+      await api("/api/auth/me", { method: "PATCH", body: { notify_reminders: remind.checked } });
+      toast(remind.checked ? "You'll be reminded about leads nobody has contacted" : "Reminders turned off");
+    } catch (err) { toast(err.message, "bad"); }
+  });
+
   // Telegram: connect once, then new leads and reminders arrive on the phone.
   const tg = document.getElementById("tg");
   let tgPoll;
