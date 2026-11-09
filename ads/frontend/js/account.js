@@ -37,6 +37,16 @@ if (me) {
     } catch (err) { toast(err.message, "bad"); }
   });
 
+  const alertsOn = document.getElementById("alerts-on");
+  document.getElementById("alerts-row").hidden = me.role !== "admin";
+  alertsOn.checked = me.notify_alerts;
+  alertsOn.addEventListener("change", async () => {
+    try {
+      await api("/api/auth/me", { method: "PATCH", body: { notify_alerts: alertsOn.checked } });
+      toast(alertsOn.checked ? "You'll hear about problems with the ads" : "Ad alerts turned off");
+    } catch (err) { toast(err.message, "bad"); }
+  });
+
   // Telegram: connect once, then new leads and reminders arrive on the phone.
   const tg = document.getElementById("tg");
   let tgPoll;

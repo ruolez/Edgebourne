@@ -1,3 +1,4 @@
+import json
 from flask import Blueprint, jsonify, request, session
 
 import config
@@ -9,6 +10,7 @@ import meta_client
 import settings_store
 import insights
 import sync
+import alerts
 import jobs
 import notify
 import telegram
@@ -67,6 +69,7 @@ def get_settings():
                     "auto": replies.auto_enabled(), "auto_template_id": int(settings_store.get("reply_auto_template_id") or 0) or None,
                     "auto_sender": (replies.auto_sender() or {}).get("name"), "placeholders": list(replies.PLACEHOLDERS),
                     **replies.summary()},
+        "alerts": {"rules": alerts.saved_rules(), "recent": alerts.recent(15)},
         "auto_refresh_minutes": refresh_api.auto_minutes(settings_store.get("auto_refresh_minutes")),
         "auto_refresh_choices": list(refresh_api.AUTO_CHOICES),
     })
@@ -210,6 +213,16 @@ def preview_template():
     sample = {"full_name": "Maria Lopez", "business_type": "Wholesale bakery, 14 staff", "phone": "(555) 123-4567"}
     v = replies.values(sample, current_user(), data.get("booking_link") if "booking_link" in data else replies.booking_link())
     return jsonify({"subject": replies.fill(data.get("subject"), v), "body": replies.fill(data.get("body"), v)})
+
+
+@bp.put("/alerts")
+@admin_required
+def save_alerts():
+    data = request.get_json(silent=True) or {}
+    rules = alerts.rules_with(data.get("rules") or {})
+    settings_store.set("alert_rules", json.dumps(rules))
+    log_activity("settings.alerts", details={"off": [k for k, v in rules.items() if not v["on"]]})
+    return get_settings()
 
 
 @bp.put("/smtp")

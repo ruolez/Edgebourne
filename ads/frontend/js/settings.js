@@ -106,6 +106,36 @@ function editTemplate(id) {
 
 function closeTemplate() { editing = null; $("tpl-form").hidden = true; $("tpl-add").hidden = false; }
 
+// Alerts: one row per rule, a switch and its numbers.
+const RULE_UI = [
+  ["ad_rejected", "An ad is rejected or has issues", []],
+  ["no_delivery", "An ad is on but nobody has seen it", [["hours", "after", "hours"]]],
+  ["fatigue", "An ad looks tired", [["frequency", "seen more than", "times a week,"], ["ctr_drop", "clicks down", "%,"], ["cpm_rise", "cost per 1,000 views up", "%"]]],
+  ["day_overspend", "One day's spend is high (shown on Today only)", [["times", "more than", "× the daily budget"]]],
+  ["week_overspend", "The week's spend is high", [["times", "more than", "× the daily budget in 7 days"]]],
+  ["spend_cap", "The account spending limit is nearly used", [["percent", "at", "%"]]],
+  ["cpl_high", "Leads cost too much", [["target_cents", "target $", "per lead,"], ["times", "alert above", "× the target"]]],
+  ["no_leads", "No leads while the ads spend", [["days", "for", "days in a row"]]],
+  ["tracking", "Leads Meta counted aren't reaching the inbox", []],
+  ["stale_data", "Meta stops answering", [["hours", "for", "hours"]]],
+];
+
+function renderAlerts() {
+  const rules = s.alerts.rules;
+  $("al-rules").innerHTML = RULE_UI.map(([id, label, fields]) => {
+    const r = rules[id];
+    const inputs = fields.map(([k, before, after]) => {
+      const v = k === "target_cents" ? (r[k] ? r[k] / 100 : "") : r[k];
+      return `<label class="al-num">${esc(before)} <input class="input" type="number" min="0" step="any" inputmode="decimal" data-rule="${id}" data-key="${k}" value="${esc(String(v ?? ""))}" ${k === "target_cents" ? 'placeholder="not set"' : ""}> ${esc(after)}</label>`;
+    }).join(" ");
+    const hint = id === "cpl_high" && !r.target_cents ? '<small class="muted">Off until you set a target. Your brief\'s $60 is per qualified lead; this one counts every form lead.</small>' : "";
+    return `<li><label class="check"><input type="checkbox" data-rule="${id}" data-key="on" ${r.on ? "checked" : ""}> ${esc(label)}</label>${inputs ? `<div class="al-fields">${inputs}</div>` : ""}${hint}</li>`;
+  }).join("");
+  const recent = s.alerts.recent;
+  $("al-recent").innerHTML = recent.length ? `<h3 class="section-title">Recent alerts</h3><ul class="history">${recent.map((a) =>
+    `<li>${when(a.created_at)}: ${esc(a.title)}${a.resolved_at ? ` <span class="muted">(cleared ${when(a.resolved_at)})</span>` : ""}</li>`).join("")}</ul>` : '<p class="muted small">No alerts yet.</p>';
+}
+
 const every = (m) => (m === 60 ? "Every hour" : `Every ${m} minutes`);
 
 function renderAuto() {
@@ -130,6 +160,7 @@ async function load() {
   renderCrm();
   renderAuto();
   renderTelegram();
+  renderAlerts();
   if (editing === null) renderReplies();
   const rows = await api("/api/settings/activity");
   $("activity").innerHTML = rows.length ? `<thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${rows.map((r) =>
@@ -167,6 +198,7 @@ const ACTIONS = {
   "settings.telegram": "Changed the Telegram bot",
   "settings.replies": "Changed the lead reply settings",
   "settings.reply_template": "Changed a lead reply template",
+  "settings.alerts": "Changed the alerts",
   "settings.refresh": "Changed how often the latest comes from Meta",
   "crm.failed": "A lead stage didn't reach Meta",
   "lead.received": "New lead arrived",
@@ -246,6 +278,16 @@ if (me) {
     s = await api(`/api/settings/replies/templates/${editing}`, { method: "DELETE" });
     toast("Template deleted"); closeTemplate(); renderReplies();
   }));
+  $("al-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
+    const rules = {};
+    $("al-rules").querySelectorAll("[data-rule]").forEach((el) => {
+      const r = (rules[el.dataset.rule] ||= {});
+      if (el.type === "checkbox") r.on = el.checked;
+      else r[el.dataset.key] = el.dataset.key === "target_cents" ? (el.value === "" ? null : Math.round(Number(el.value) * 100)) : el.value;
+    });
+    s = await api("/api/settings/alerts", { method: "PUT", body: { rules } });
+    toast("Alerts saved"); renderAlerts();
+  }); });
   $("auto-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     s = await api("/api/settings/refresh", { method: "PUT", body: { minutes: Number($("auto-minutes").value) } });
     toast(`The latest now comes from Meta ${every(s.auto_refresh_minutes).toLowerCase()}`); renderAuto();

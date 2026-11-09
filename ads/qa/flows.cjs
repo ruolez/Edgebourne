@@ -388,6 +388,41 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   await page.screenshot({ path: `${OUT}/flow-schedules.png`, fullPage: true });
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,json;db.execute('UPDATE desk_schedules SET enabled=FALSE, next_run_at=NULL, skipped=0, last_task_id=NULL, rule=%s WHERE id = 1', (json.dumps({'every': 'day', 'at': '08:30'}),))"`);
 
+  // Alerts: rules in Settings; a rejected ad raises one alert (Telegram + Today), not twice, and it clears by itself.
+  await page.goto(BASE + '/settings.html');
+  await page.waitForSelector('#al-rules li');
+  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 10);
+  await page.fill('[data-rule="no_leads"][data-key="days"]', '4');
+  await page.fill('[data-rule="cpl_high"][data-key="target_cents"]', '15');
+  await page.click('#al-form button[type=submit]');
+  await page.waitForTimeout(500);
+  await page.reload();
+  await page.waitForSelector('#al-rules li');
+  check('alert thresholds are saved', (await page.inputValue('[data-rule="no_leads"][data-key="days"]')) === '4' && (await page.inputValue('[data-rule="cpl_high"][data-key="target_cents"]')) === '15');
+  await page.fill('[data-rule="no_leads"][data-key="days"]', '3');
+  await page.fill('[data-rule="cpl_high"][data-key="target_cents"]', '');
+  await page.click('#al-form button[type=submit]');
+  await page.waitForTimeout(500);
+  const tgBeforeAlert = tgSent().length;
+  const runAlerts = () => sh(`docker exec -w /app edgebourne-ads-backend python -c "import alerts;print(alerts.run())"`);
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"DELETE FROM alerts WHERE entity_id = 'qa-rejected'\\");db.execute(\\"INSERT INTO ads (id, name, campaign_id, status, effective_status, created_time) VALUES ('qa-rejected', 'QA rejected ad', '120252638288040312', 'ACTIVE', 'DISAPPROVED', now()) ON CONFLICT (id) DO UPDATE SET effective_status = 'DISAPPROVED'\\")"`);
+  runAlerts();
+  let alertMsg = null;
+  for (let i = 0; i < 40 && !alertMsg; i++) { await page.waitForTimeout(1000); alertMsg = tgSent().slice(tgBeforeAlert).find((m) => /QA rejected ad/.test(m.text)); }
+  check('a rejected ad raises an alert on Telegram', Boolean(alertMsg), alertMsg ? alertMsg.text.split('\n')[0] : 'none');
+  await page.goto(BASE + '/home.html');
+  await page.waitForSelector('.attention');
+  check('the alert shows on Today', /Meta stopped “QA rejected ad”/.test(await page.textContent('.attention')));
+  runAlerts();
+  await page.waitForTimeout(32000);
+  check('the same alert is not sent twice', tgSent().slice(tgBeforeAlert).filter((m) => /QA rejected ad/.test(m.text)).length === 1);
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"DELETE FROM ads WHERE id = 'qa-rejected'\\")"`);
+  runAlerts();
+  await page.reload();
+  await page.waitForSelector('main');
+  await page.waitForTimeout(800);
+  check('it clears from Today once the ad is fixed', !/QA rejected ad/.test(await page.textContent('main')));
+
   // 5. Claude page: decisions first, then each ad's story, then every run (dev copy of the real Desk).
   require('child_process').execSync('docker cp dev/seed_desk.py edgebourne-ads-backend:/tmp/seed_desk.py && docker exec edgebourne-ads-backend sh -c "cd /app && python /tmp/seed_desk.py"', { cwd: __dirname + '/..' });
   await page.goto(BASE + '/desk.html', { waitUntil: 'networkidle' });

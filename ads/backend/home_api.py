@@ -37,18 +37,12 @@ def today_by_campaign():
 
 def attention(user, scope_ids):
     items = []
-    in_scope = (lambda cid: True) if scope_ids is None else (lambda cid: cid in scope_ids)
-    for ad in db.query("SELECT id, name, campaign_id, effective_status FROM ads "
-                       "WHERE effective_status IN ('DISAPPROVED','WITH_ISSUES','PENDING_BILLING_INFO')"):
-        if in_scope(ad["campaign_id"]):
-            items.append({"level": "bad", "text": f"Meta stopped “{ad['name']}” ({ad['effective_status'].replace('_', ' ').lower()}).",
-                          "href": f"/ad.html?id={ad['id']}", "action": "Open the ad"})
-    for ad in db.query("""SELECT a.id, a.name, a.campaign_id FROM ads a
-                          WHERE a.effective_status = 'ACTIVE' AND a.created_time < now() - interval '36 hours'
-                            AND NOT EXISTS (SELECT 1 FROM ad_daily d WHERE d.ad_id = a.id AND d.impressions > 0)"""):
-        if in_scope(ad["campaign_id"]):
-            items.append({"level": "warn", "text": f"“{ad['name']}” is on but hasn't been shown to anyone yet.",
-                          "href": f"/ad.html?id={ad['id']}", "action": "Open the ad"})
+    import alerts
+    for a in alerts.open_alerts(scope_ids):
+        if a["campaign_id"] is None and user["role"] != "admin":
+            continue
+        items.append({"level": a["level"], "text": a["title"] + (f". {a['lines'][0]}" if a["lines"] else ""),
+                      "href": a["href"] or "/home.html", "action": "Open"})
     lw = "TRUE" if scope_ids is None else "campaign_id = ANY(%s)"
     lp = [] if scope_ids is None else [scope_ids]
     waiting = db.query(f"SELECT COUNT(*) AS n FROM leads WHERE status = 'new' AND NOT is_test "
@@ -64,11 +58,6 @@ def attention(user, scope_ids):
     if user["role"] == "admin":
         if not settings_store.get("meta_system_token"):
             items.append({"level": "bad", "text": "Meta isn't connected yet.", "href": "/settings.html", "action": "Open Settings"})
-        cap = cap_snapshot()
-        if cap and cap["limit_cents"] and cap["spent_cents"] / cap["limit_cents"] >= 0.8:
-            items.append({"level": "bad" if cap["spent_cents"] >= cap["limit_cents"] else "warn",
-                          "text": "The account spending limit is almost used up; ads pause when it's reached.",
-                          "href": "/performance.html", "action": "See spending"})
         failed = db.query("SELECT COUNT(*) AS n FROM crm_events WHERE status = 'failed' "
                           "AND created_at > now() - interval '14 days'", one=True)["n"]
         if failed:

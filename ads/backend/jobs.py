@@ -36,6 +36,8 @@ def _loop():
 
     last_sync = 0.0
     last_auto_try = None
+    last_alerts = 0.0
+    ALERTS_EVERY = 900
     while True:
         _event.wait(timeout=30)
         _event.clear()
@@ -73,11 +75,12 @@ def _loop():
                 except Exception:
                     log.exception("sending lead stages to Meta failed")
                 now = time.time()
+                pulled = False
                 if settings_store.get("meta_system_token") and refresh_api.auto_due(
                         settings_store.get("last_refresh_at"), last_auto_try, now,
                         refresh_api.auto_minutes(settings_store.get("auto_refresh_minutes"))):
                     try:
-                        refresh_api.pull_latest(conn)
+                        pulled = refresh_api.pull_latest(conn) is not None
                         last_auto_try = None
                     except Exception as exc:
                         last_auto_try = now
@@ -86,8 +89,16 @@ def _loop():
                     last_sync = time.time()
                     try:
                         insights.sync_all(days=7)
+                        pulled = True
                     except Exception as exc:  # Meta not configured yet, network, …
                         log.info("meta sync skipped: %s", exc)
+                if pulled or time.time() - last_alerts > ALERTS_EVERY:
+                    last_alerts = time.time()
+                    try:
+                        import alerts
+                        alerts.run()
+                    except Exception:
+                        log.exception("alert rules failed")
         except Exception:
             log.exception("worker pass failed")
         finally:

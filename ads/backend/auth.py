@@ -18,7 +18,7 @@ def current_user():
     if not uid:
         return None
     user = db.query(
-        "SELECT id, email, name, role, must_change_password, notify_new_leads, notify_reminders FROM users "
+        "SELECT id, email, name, role, must_change_password, notify_new_leads, notify_reminders, notify_alerts FROM users "
         "WHERE id = %s AND is_active",
         (uid,), one=True,
     )
@@ -58,7 +58,7 @@ def visible_campaign_ids(user):
 
 def _public(user):
     return {k: user[k] for k in ("id", "email", "name", "role", "must_change_password",
-                                 "notify_new_leads", "notify_reminders")}
+                                 "notify_new_leads", "notify_reminders", "notify_alerts")}
 
 
 @bp.post("/login")
@@ -115,6 +115,8 @@ def update_me():
     if "notify_new_leads" in data:
         db.execute("UPDATE users SET notify_new_leads = %s WHERE id = %s",
                    (bool(data["notify_new_leads"]), user["id"]))
+    if "notify_alerts" in data:
+        db.execute("UPDATE users SET notify_alerts = %s WHERE id = %s", (bool(data["notify_alerts"]), user["id"]))
     if "notify_reminders" in data:
         db.execute("UPDATE users SET notify_reminders = %s WHERE id = %s",
                    (bool(data["notify_reminders"]), user["id"]))

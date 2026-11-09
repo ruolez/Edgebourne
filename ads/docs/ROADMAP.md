@@ -135,7 +135,7 @@ Found while proving Phase 0 and building 1.1. Pick with Eugene; tick here when f
 
 ### Phase 2: Works without being asked
 - [~] 2.1 Desk schedules. Built: `schedules.py` + migration 010 (4 presets, all off: Daily health 8:30, Optimizer review every 3 days 9:00, Monday summary 8:00, Monthly audit the 1st 9:00, America/Los_Angeles, DST-safe), the worker files an ordinary Desk task (same read-only bridge tools; skipped, not piled, while the previous run still waits), Claude page → Schedules tab (switch, change time, Run it now), every finished Desk run messages its people (admins for scheduled ones) with the summary; skill playbook "Scheduled runs" (installed). Eugene: switch on the ones he wants
-- [ ] 2.2 Alerts engine (rules checked after every sync, sent to the 1.2 channel)
+- [~] 2.2 Alerts engine. Built: `alerts.py` (pure `evaluate(snapshot, rules, today)`, 10 rules: rejected ad, no delivery after 24 h, fatigue (7-day frequency > 3 with clicks -20% and cost per 1,000 +20% vs the ad's first week; frequency from summed daily reach, a low estimate), day spend > 1.75× budget (Today only), week > 7×, spending limit ≥ 80%, cost per lead > 1.3× target (off until Eugene sets a per-lead target), no leads 3 days while spending, Meta leads not reaching the inbox, Meta silent > 3 h), migration 011 (`alerts`, `users.notify_alerts`), once per thing per day, clears by itself, admins by Telegram/email, Today → Needs attention reads the table, Settings → Alerts thresholds + recent list, Your account switch. Token expiry: system user tokens don't expire, so 'Meta silent' covers a revoked token
 - [ ] 2.3 Spend pacing and month-end forecast
 
 ### Phase 3: Experiments
@@ -525,3 +525,4 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-09 · 1.3 lead replies built (manual composer, templates, optional automatic reply); fixed: opening leads.html#lead=X could show the newest lead instead (load race); dev mail catcher on fake-meta:1025; QA 61 PASS · next: 1.4 reminders
 - 2026-11-09 · 1.4 reminders + response line built; Phase 1 code complete (1.1–1.4 wait on Eugene's live steps: part H test event, Telegram bot + link, reply wording/booking link); 100 unit tests, QA 65 PASS · next: Phase 2 (2.1 Desk schedules, 2.2 alerts engine, 2.3 pacing)
 - 2026-11-09 · 2.1 Desk schedules built; Desk results now reach Telegram/email; QA 72 PASS · next: 2.2 alerts engine
+- 2026-11-09 · 2.2 alerts engine built; QA 78 PASS · next: 2.3 pacing and forecast

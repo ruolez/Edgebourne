@@ -48,6 +48,14 @@
           </form>
         </section>
         <section class="panel">
+          <div class="panel-head"><h2>Alerts</h2><p>Checked after every pull from Meta. Each one goes to the admins once a day per ad or campaign, and shows on Today until it's fixed.</p></div>
+          <form class="panel-body stack" id="al-form" novalidate>
+            <ul class="al-rules" id="al-rules"></ul>
+            <div class="row"><button class="btn btn-primary" type="submit">Save alerts</button></div>
+            <div id="al-recent"></div>
+          </form>
+        </section>
+        <section class="panel">
           <div class="panel-head"><h2>Telegram</h2><p id="tg-state"></p></div>
           <form class="panel-body stack" id="tg-form" novalidate>
             <p class="muted">New leads and reminders reach each person's phone through your own Telegram bot. Each person then connects it once from Your account.</p>
