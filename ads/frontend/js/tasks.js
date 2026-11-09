@@ -86,7 +86,8 @@ export function proposalCard(p, task = null) {
   </article>`;
 }
 
-export function taskCard(t, openReports = new Set()) {
+// opts.rows(p) renders each proposal as one line (the Claude page decides in its own tab).
+export function taskCard(t, openReports = new Set(), opts = {}) {
   const [cls, label] = STATUS[t.status] || ["", t.status];
   const meta = [KIND_LABELS[t.kind] || t.kind, t.campaign_name, when(t.created_at), t.created_by_name].filter(Boolean).map(esc).join(" · ");
   const working = ACTIVE.has(t.status) && t.status !== "queued" && t.progress ? `<p class="progress"><span class="dot" aria-hidden="true"></span>${esc(t.progress)}</p>` : "";
@@ -95,7 +96,8 @@ export function taskCard(t, openReports = new Set()) {
       <summary>${esc(r.title)}</summary>
       <div class="md">${renderMarkdown(r.body)}</div>
     </details>`).join("");
-  const proposals = t.proposals.length ? `
+  const proposals = t.proposals.length && opts.rows ? `<ul class="prows">${t.proposals.map(opts.rows).join("")}</ul>`
+    : t.proposals.length ? `
     <div class="proposals stack tight">
       <p class="muted small flush">Claude's proposals. Approving an on/off or budget change applies it on Meta right away; other kinds are recorded for the next step.</p>
       ${t.proposals.map((p) => proposalCard(p, t)).join("")}
@@ -110,7 +112,7 @@ export function taskCard(t, openReports = new Set()) {
       <p class="prompt">${esc(t.prompt)}</p>
       ${working}
       ${t.summary ? `<p class="summary">${esc(t.summary)}</p>` : ""}
-      ${scorecardHtml(t.scorecard)}
+      ${opts.foldScore && t.scorecard && t.scorecard.passes ? `<details class="report"><summary>Scorecard: ${esc(t.scorecard.overall ?? "—")}/5 on ${t.scorecard.passes.length} checks</summary>${scorecardHtml(t.scorecard)}</details>` : scorecardHtml(t.scorecard)}
       ${t.error ? `<p class="note bad flush">${esc(t.error)}</p>` : ""}
       ${reports}${proposals}
     </div>
@@ -134,7 +136,7 @@ export function wireTaskActions(root, onChange, openReports) {
       if (!yes) return;
       try {
         await api(`/api/ads/ad/${encodeURIComponent(render.dataset.renderAd)}/render`, { method: "POST",
-          body: { from_task: Number(render.dataset.renderTask), direction: render.dataset.renderNote } });
+          body: { from_task: Number(render.dataset.renderTask), from_proposal: Number(card.dataset.proposal), direction: render.dataset.renderNote } });
         await api(`/api/proposals/${card.dataset.proposal}/approve`, { method: "POST" });
         toast("Sent to Claude. The new version shows up under Runs.");
         onChange();

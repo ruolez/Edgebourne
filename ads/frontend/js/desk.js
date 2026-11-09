@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { boot, esc, onRefresh, toast, when } from "./ui.js";
-import { ACTIVE, taskCard, wireTaskActions } from "./tasks.js";
+import { ACTIVE, wireTaskActions } from "./tasks.js";
+import { adsView, index, loadPreviews, runsView, waitingView, workingStrip } from "./board.js";
 
 const $ = (id) => document.getElementById(id);
 const KINDS = {
@@ -15,8 +16,7 @@ let pollTimer;
 let freshKey = null;
 let lastJson = "";
 const openReports = new Set();
-const seenReports = new Set();
-let firstLoad = true;
+let view = (location.hash.match(/^#(waiting|ads|runs)/) || [])[1] || null;
 
 const ago = (secs) => {
   if (secs == null) return "never";
@@ -93,32 +93,49 @@ function renderMac(bridge) {
   });
 }
 
-function renderTasks() {
-  const el = $("tasks");
-  if (!data.tasks.length) {
-    el.innerHTML = `<section class="panel empty"><h3>Nothing asked yet</h3><p>Pick a kind of help above and write a direction in your own words. Claude answers with a report, and with proposals when something should change.</p></section>`;
-    return;
-  }
-  el.innerHTML = data.tasks.map((t) => taskCard(t, openReports)).join("");
+function setView(next, focusId) {
+  view = next;
+  history.replaceState(null, "", `${location.pathname}${location.search}#${view}`);
+  document.querySelectorAll("#views [data-view]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.view === view)));
+  renderView();
+  if (focusId) {
+    const el = document.getElementById(focusId);
+    if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1600); }
+  } else window.scrollTo({ top: 0 });
+}
+
+function renderView() {
+  const ix = index(data);
+  const waiting = data.families.reduce((n, f) => n + f.pending, 0);
+  $("tab-waiting").innerHTML = `Waiting for you${waiting ? ` <span class="n claude">${waiting}</span>` : ""}`;
+  $("tab-ads").innerHTML = `By ad <span class="n">${data.families.filter((f) => f.root).length}</span>`;
+  $("tab-runs").innerHTML = `All runs <span class="n">${data.tasks.length}</span>`;
+  $("working").innerHTML = workingStrip(data);
+  $("view").setAttribute("aria-labelledby", `tab-${view}`);
+  $("view").innerHTML = view === "waiting" ? waitingView(data, ix) : view === "ads" ? adsView(data, ix, openReports) : runsView(data, ix, openReports);
+  loadPreviews($("view"));
+}
+
+function openComposer(open) {
+  $("composer").hidden = !open;
+  $("ask-open").setAttribute("aria-expanded", String(open));
+  if (open) { $("composer").scrollIntoView({ block: "nearest" }); $("prompt").focus(); }
 }
 
 async function load() {
   try {
     data = await api("/api/desk");
-    // New reports open by themselves; on the first visit, the newest task's do.
-    data.tasks.forEach((t, i) => t.reports.forEach((r) => {
-      if (!seenReports.has(r.id) && (!firstLoad || i === 0)) openReports.add(r.id);
-      seenReports.add(r.id);
-    }));
-    firstLoad = false;
     renderMac(data.bridge);
     const sel = $("campaign");
     const keep = sel.value;
     sel.innerHTML = '<option value="">All campaigns</option>' + data.campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
     sel.value = keep || sel.dataset.want || "";
     delete sel.dataset.want;
-    const json = JSON.stringify(data.tasks);
-    if (json !== lastJson) { lastJson = json; renderTasks(); }
+    if (!view) view = data.families.some((f) => f.pending) ? "waiting" : "ads";
+    if (!data.tasks.length) openComposer(true);
+    document.querySelectorAll("#views [data-view]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.view === view)));
+    const json = JSON.stringify([data.tasks, data.ads, data.families]);
+    if (json !== lastJson) { lastJson = json; renderView(); }
   } catch (err) { toast(err.message, "bad"); }
   clearTimeout(pollTimer);
   const busy = data && data.tasks.some((t) => ACTIVE.has(t.status));
@@ -129,7 +146,17 @@ const me = await boot({ page: "desk", admin: true });
 if (me) {
   const q = new URLSearchParams(location.search);
   setKind(KINDS[q.get("kind")] ? q.get("kind") : "question");
-  if (q.get("ask")) { $("prompt").value = q.get("ask"); $("prompt").focus(); }
+  if (q.get("ask") || q.get("kind")) { openComposer(true); if (q.get("ask")) $("prompt").value = q.get("ask"); }
+  $("ask-open").addEventListener("click", () => openComposer($("composer").hidden));
+  $("ask-close").addEventListener("click", () => openComposer(false));
+  $("views").addEventListener("click", (e) => { const b = e.target.closest("[data-view]"); if (b) setView(b.dataset.view); });
+  document.querySelector(".main").addEventListener("click", (e) => {
+    const run = e.target.closest("[data-goto-run]");
+    if (run) { e.preventDefault(); setView("ads", `run-${run.dataset.gotoRun}`); return; }
+    const prop = e.target.closest("[data-goto-proposal]");
+    if (prop) { e.preventDefault(); setView("waiting", `p-${prop.dataset.gotoProposal}`); return; }
+    if (e.target.closest("[data-ask]")) openComposer(true);
+  });
   if (q.get("campaign")) $("campaign").dataset.want = q.get("campaign");
   $("kinds").addEventListener("click", (e) => { const b = e.target.closest("button[data-kind]"); if (b) setKind(b.dataset.kind); });
   $("ask-form").addEventListener("submit", async (e) => {
@@ -141,12 +168,18 @@ if (me) {
     try {
       await api("/api/desk/tasks", { method: "POST", body: { kind, prompt, campaign_id: $("campaign").value } });
       $("prompt").value = "";
+      openComposer(false);
       toast(data && data.bridge.online ? "Sent. Your Mac picks it up in a moment." : "Queued. It runs when your Mac is on.");
+      lastJson = "";
       load();
     } catch (err) { toast(err.message, "bad"); } finally { btn.disabled = false; }
   });
   $("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("ask-form").requestSubmit(); });
-  wireTaskActions($("tasks"), () => { lastJson = ""; load(); }, openReports);
+  wireTaskActions(document.querySelector(".main"), () => { lastJson = ""; load(); }, openReports);
+  window.addEventListener("hashchange", () => {
+    const h = (location.hash.match(/^#(waiting|ads|runs)/) || [])[1];
+    if (h && h !== view && data) setView(h);
+  });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
   onRefresh(load);
   load();

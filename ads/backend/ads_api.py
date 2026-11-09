@@ -585,9 +585,10 @@ def template_media(spec):
     return None
 
 
-def create_ad_from(user, data, proposal_id=None):
-    """Create an ad (always switched off) from an existing ad's setup with new media and
-    words. Returns (ad_id, None) or (None, (message, http_status))."""
+def prepare_creative(user, data):
+    """Check the inputs and build the creative an ad would get, from an existing ad's setup
+    with new media and words. Returns (ctx, None) or (None, (message, http_status)); Meta
+    errors propagate. Used to create the ad and to preview it before it exists."""
     adset_id = data.get("adset_id")
     template = db.query("SELECT id, name, adset_id, creative_id, campaign_id FROM ads WHERE id = %s",
                         (data.get("template_ad_id"),), one=True)
@@ -609,34 +610,45 @@ def create_ad_from(user, data, proposal_id=None):
         return None, ("Choose an image or video", 400)
     if cta and cta not in CTA_TYPES:
         return None, ("Unknown button", 400)
-    row = {"id": template["id"], "name": name, "campaign_id": adset["campaign_id"]}
     try:
-        try:
-            tpl = meta_client.get(template["creative_id"], fields="object_story_spec,degrees_of_freedom_spec")
-        except meta_client.MetaError:
-            tpl = meta_client.get(template["creative_id"], fields="object_story_spec")
-        story = tpl.get("object_story_spec")
-        if not story:
-            return None, ("That ad can't be used as a starting point (it has no single image or video). Pick another.", 400)
-        if media["kind"] == "same":
-            media = template_media(story)
-            if not media:
-                return None, ("Couldn't find the starting ad's image or video", 400)
-        elif media["kind"] == "video":
-            state = _video_state(media["video_id"])
-            if not state["ready"]:
-                return None, ("Meta is still processing that video. Try again in a minute.", 409)
-            media["thumbnail_url"] = state["thumbnail_url"]
-        spec = build_story_spec(story, media, body, title, cta)
-        payload = {"name": f"{name} creative", "object_story_spec": json.dumps(spec)}
-        if tpl.get("degrees_of_freedom_spec"):
-            payload["degrees_of_freedom_spec"] = json.dumps(tpl["degrees_of_freedom_spec"])
+        tpl = meta_client.get(template["creative_id"], fields="object_story_spec,degrees_of_freedom_spec")
+    except meta_client.MetaError:
+        tpl = meta_client.get(template["creative_id"], fields="object_story_spec")
+    story = tpl.get("object_story_spec")
+    if not story:
+        return None, ("That ad can't be used as a starting point (it has no single image or video). Pick another.", 400)
+    if media["kind"] == "same":
+        media = template_media(story)
+        if not media:
+            return None, ("Couldn't find the starting ad's image or video", 400)
+    elif media["kind"] == "video":
+        state = _video_state(media["video_id"])
+        if not state["ready"]:
+            return None, ("Meta is still processing that video. Try again in a minute.", 409)
+        media["thumbnail_url"] = state["thumbnail_url"]
+    return {"name": name, "adset": adset, "template": template,
+            "spec": build_story_spec(story, media, body, title, cta),
+            "dof": tpl.get("degrees_of_freedom_spec")}, None
+
+
+def create_ad_from(user, data, proposal_id=None):
+    """Create an ad (always switched off). Returns (ad_id, None) or (None, (message, http_status))."""
+    row = {"id": data.get("template_ad_id"), "name": (data.get("name") or "").strip()[:200], "campaign_id": None}
+    try:
+        ctx, err = prepare_creative(user, data)
+        if err:
+            return None, err
+        name = ctx["name"]
+        row = {"id": ctx["template"]["id"], "name": name, "campaign_id": ctx["adset"]["campaign_id"]}
+        payload = {"name": f"{name} creative", "object_story_spec": json.dumps(ctx["spec"])}
+        if ctx["dof"]:
+            payload["degrees_of_freedom_spec"] = json.dumps(ctx["dof"])
         creative = meta_client.post(f"act_{_account()}/adcreatives", data=payload)
         ad = meta_client.post(f"act_{_account()}/ads", data={
-            "name": name, "adset_id": adset["id"], "status": "PAUSED",
+            "name": name, "adset_id": ctx["adset"]["id"], "status": "PAUSED",
             "creative": json.dumps({"creative_id": creative["id"]})})
     except meta_client.MetaError as exc:
-        record(user, "ad", row, "create", None, name, False, str(exc), proposal_id)
+        record(user, "ad", row, "create", None, row["name"], False, str(exc), proposal_id)
         return None, (f"Meta refused: {exc}", 400)
     record(user, "ad", {**row, "id": ad["id"]}, "create", None, name, True, proposal_id=proposal_id)
     try:
@@ -701,6 +713,33 @@ def decide(proposal_id, decision):
     if error:
         return api_error(f"Approved, but Meta refused the change: {error}", 400)
     return jsonify({"status": "applied", "applied": True, "ad_id": new_id})
+
+
+@bp.get("/proposals/<int:proposal_id>/preview")
+@login_required
+def proposal_preview(proposal_id):
+    """Meta's own rendering of a proposed new ad before it exists (generatepreviews)."""
+    p = db.query("SELECT * FROM desk_proposals WHERE id = %s", (proposal_id,), one=True)
+    if not p or p["kind"] != "creative" or not p.get("payload"):
+        return api_error("Only new-ad proposals have a preview", 404)
+    fmt = request.args.get("format", "MOBILE_FEED_STANDARD")
+    if fmt not in dict(PREVIEW_FORMATS):
+        return api_error("Unknown preview format", 400)
+    data = {**p["payload"], "name": p["payload"].get("name") or p["title"]}
+    try:
+        ctx, err = prepare_creative(current_user(), data)
+        if err:
+            return api_error(err[0], err[1])
+        body = meta_client.get(f"act_{_account()}/generatepreviews", ad_format=fmt,
+                               creative=json.dumps({"object_story_spec": ctx["spec"]}))
+    except meta_client.MetaError as exc:
+        return api_error(f"Meta couldn't render this preview: {exc}", 400)
+    first = (body.get("data") or [{}])[0]
+    src = preview_src(first.get("body"))
+    if not src:
+        return api_error("Meta has no preview for this placement", 404)
+    width, height = preview_size(first.get("body"))
+    return jsonify({"src": src, "format": fmt, "width": width, "height": height})
 
 
 @bp.get("/proposals/<int:proposal_id>")

@@ -18,6 +18,7 @@ from functools import wraps
 from flask import Blueprint, jsonify, request
 
 import db
+import desk_view
 import settings_store
 from auth import admin_required, current_user
 from performance_api import overview_data
@@ -85,13 +86,59 @@ def tasks_with_results(where="TRUE", params=(), limit=50):
 
 # ---------------------------------------------------------------- dashboard
 
+def desk_story(tasks):
+    """Adds to each proposal the ad it is about, what it became and its state in words;
+    returns the ads involved and the ad families (desk_view)."""
+    pids = [p["id"] for t in tasks for p in t["proposals"]]
+    results = {r["proposal_id"]: r["entity_id"] for r in db.query(
+        """SELECT proposal_id, entity_id FROM meta_changes
+           WHERE action = 'create' AND ok AND proposal_id = ANY(%s)""", (pids,))} if pids else {}
+    renders = [t for t in tasks if t["kind"] == "render"]
+    by_task = {t["id"]: t for t in tasks}
+    ad_ids = set(results.values())
+    for t in tasks:
+        if (t.get("options") or {}).get("ad_id"):
+            ad_ids.add(t["options"]["ad_id"])
+        for p in t["proposals"]:
+            p["about_ad"] = desk_view.proposal_ad(p, t)
+            if p["about_ad"]:
+                ad_ids.add(p["about_ad"])
+    ads = {a["id"]: a for a in db.query(
+        """SELECT id, name, status, effective_status, thumbnail_url, image_url, object_type, title, body
+           FROM ads WHERE id = ANY(%s)""", (list(ad_ids),))} if ad_ids else {}
+
+    def state(p, task):
+        made = results.get(p["id"])
+        follow = desk_view.followup_for(p, renders)
+        made_state = None
+        if follow:
+            p["followup_task"] = follow["id"]
+            done = [q for q in by_task[follow["id"]]["proposals"] if q["kind"] == "creative"]
+            if done:
+                q = done[-1]
+                made_state = desk_view.proposal_state(q, ads.get(results.get(q["id"])), None)
+                p["made_proposal"] = q["id"]
+                q["requested_by"] = p["id"]
+        p["result_ad"] = made
+        p["state"] = desk_view.proposal_state(p, ads.get(made), follow, made_state)
+
+    for t in tasks:
+        for p in t["proposals"]:
+            state(p, t)
+    return ads, desk_view.families(tasks, results)
+
+
 @bp.get("")
 @admin_required
 def overview():
     expire_stale()
+    tasks = tasks_with_results()
+    ads, families = desk_story(tasks)
     return jsonify({
         "bridge": bridge_status(),
-        "tasks": tasks_with_results(),
+        "tasks": tasks,
+        "ads": ads,
+        "families": families,
         "campaigns": db.query("SELECT id, name FROM campaigns ORDER BY name"),
     })
 

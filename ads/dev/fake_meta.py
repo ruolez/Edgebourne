@@ -190,6 +190,12 @@ def graph(path):
             return jsonify({"data": list(IMAGES.values())})
         if parts == [act, "advideos"]:
             return jsonify({"data": list(VIDEOS.values())})
+        if parts == [act, "generatepreviews"]:
+            if not json.loads(a.get("creative") or "{}").get("object_story_spec"):
+                return jsonify({"error": {"message": "creative is required (fake)", "code": 100}}), 400
+            fmt = a.get("ad_format", "MOBILE_FEED_STANDARD")
+            src = f"https://www.facebook.com/ads/api/preview_iframe.php?d=fake-new&amp;t=fake&amp;f={fmt}"
+            return jsonify({"data": [{"body": f'<iframe src="{src}" width="320" height="560" scrolling="yes" style="border: none;"></iframe>'}]})
         if len(parts) == 2 and parts[1] == "previews":
             fmt = a.get("ad_format", "MOBILE_FEED_STANDARD")
             src = f"https://www.facebook.com/ads/api/preview_iframe.php?d=fake-{parts[0]}&amp;t=fake&amp;f={fmt}"

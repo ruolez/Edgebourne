@@ -190,36 +190,41 @@ print(r['id'])"`).toString().trim());
   await page.waitForFunction(() => document.querySelector('#crm-state')?.textContent === 'Off');
   check('Settings turns lead stages off again', true);
 
-  // 5. Approve Claude's on/off proposal from the Desk; decline the budget one.
-  await page.goto(BASE + '/desk.html');
-  await page.waitForSelector('#tasks .task, #tasks .empty');
-  const approve = page.locator('.proposal', { hasText: 'Turn off N1' }).locator('[data-approve]');
-  if (!(await approve.count())) {
-    results.push('SKIP proposal steps — no pending test proposal (seed one through the agent API to rerun them)');
-    await browser.close();
-    console.log(results.join('\n'));
-    console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');
-    return;
-  }
-  await approve.click();
+  // 5. Claude page: decisions first, then each ad's story, then every run (dev copy of the real Desk).
+  require('child_process').execSync('docker cp dev/seed_desk.py edgebourne-ads-backend:/tmp/seed_desk.py && docker exec edgebourne-ads-backend sh -c "cd /app && python /tmp/seed_desk.py"', { cwd: __dirname + '/..' });
+  await page.goto(BASE + '/desk.html', { waitUntil: 'networkidle' });
+  await page.waitForSelector('#view .decision');
+  check('Claude opens on the decisions waiting', (await page.getAttribute('#tab-waiting', 'aria-selected')) === 'true' && (await page.locator('#view .decision').count()) === 2);
+  check('a waiting decision is grouped under its ad with its versions', /Original.*headline Run it all.*v2/s.test(await page.textContent('#view .family .versions')));
+  check('a new-ad decision shows what changes', /Everything in one system → No more digging for numbers/.test(await page.textContent('#view .decision .changes')));
+  await page.waitForSelector('#view .decision-preview iframe', { timeout: 10000 });
+  check('a new-ad decision loads Meta\'s preview of the ad', true);
+  check('the Ask Claude form stays folded until asked for', await page.isHidden('#composer'));
+  await page.click('#ask-open');
+  check('Ask Claude opens the form', await page.isVisible('#prompt'));
+  await page.click('#ask-close');
+  await page.screenshot({ path: `${OUT}/flow-5-claude-waiting.png`, fullPage: true });
+  await page.click('#views [data-view="ads"]');
+  await page.waitForSelector('#view .runs');
+  const story = await page.textContent('#view .family');
+  check('By ad tells the ad\'s story with outcomes', /Created, off/.test(story) && /made in the New version run/.test(story) && /Not about one ad/.test(await page.textContent('#view')), story.replace(/\s+/g, ' ').trim().slice(0, 60));
+  await page.screenshot({ path: `${OUT}/flow-5-claude-ads.png`, fullPage: true });
+  await page.locator('#view .decide-link').first().click();
+  await page.waitForFunction(() => document.querySelector('#tab-waiting')?.getAttribute('aria-selected') === 'true');
+  check('Decide jumps to the decision', await page.isVisible('#view .decision.flash, #view .decision'));
+  const second = page.locator('#view .decision', { hasText: 'the next hire' });
+  await second.locator('[data-decline]').click();
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => document.querySelectorAll('#view .decision').length === 1);
+  check('declining removes it from the waiting list', /1/.test(await page.textContent('#tab-waiting')));
+  await page.locator('#view .decision [data-approve]').click();
   await page.waitForSelector('dialog.confirm');
-  await page.screenshot({ path: `${OUT}/flow-5-approve.png` });
-  await page.click('dialog.confirm #cd-ok');
-  await page.waitForSelector('.proposal:has-text("Turn off N1") .pill.ok');
-  check('approving applies the proposal', (await page.textContent('.proposal:has-text("Turn off N1")')).includes('Approved and applied'));
-  await page.locator('.proposal', { hasText: 'Raise the campaign budget' }).locator('[data-decline]').click();
-  await page.click('dialog.confirm #cd-ok');
-  await page.waitForSelector('.proposal:has-text("Raise the campaign budget"):has-text("Declined")');
-  check('declining records it', true);
-  await page.screenshot({ path: `${OUT}/flow-6-desk.png`, fullPage: true });
-
-  await page.goto(BASE + '/ads.html');
-  await page.waitForSelector('[data-toggle="ad:120252672229040312"]');
-  check('N1 shows off on the Ads page after the approval', (await page.getAttribute('[data-toggle="ad:120252672229040312"]', 'aria-checked')) === 'false');
-  await page.goto(BASE + '/home.html');
-  await page.waitForSelector('.changes');
-  check('Home lists the changes', (await page.textContent('.changes')).includes('Turned off ad'));
-
+  await Promise.all([page.waitForURL('**/ad.html?id=**created=1**'), page.click('dialog.confirm #cd-ok')]);
+  await page.waitForFunction(() => /angle where it lives/.test(document.querySelector('#ad-name')?.textContent || ''));
+  check('approving a new-ad decision creates the ad, switched off', /Off/.test(await page.textContent('#ad-status')), await page.textContent('#ad-name'));
+  await page.goto(BASE + '/desk.html#runs', { waitUntil: 'networkidle' });
+  await page.waitForSelector('#view .task');
+  check('All runs folds the scorecard', !(await page.isVisible('#view .scorecard')));
 
   await browser.close();
   console.log(results.join('\n'));

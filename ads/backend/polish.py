@@ -137,6 +137,8 @@ def render(ad_id):
              (f"\nApply the fixes from polish run #{from_task}." if fixes else "")
     options = {"ad_id": ad["id"], "ad_name": ad["name"], "direction": direction, "from_task": from_task,
                "scorecard": fixes}
+    if isinstance(data.get("from_proposal"), int):
+        options["from_proposal"] = data["from_proposal"]
     return jsonify({"task_id": _task(user, "render", prompt, ad, options)}), 201
 
 

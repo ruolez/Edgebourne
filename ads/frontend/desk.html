@@ -15,11 +15,18 @@
       <header class="page-head">
         <h1>Claude</h1>
         <span class="mac-status" id="mac-status" role="status"></span>
+        <span class="spacer"></span>
+        <button class="btn btn-claude-outline" type="button" id="ask-open" aria-expanded="false" aria-controls="composer">Ask Claude</button>
       </header>
+      <nav class="tabs" id="views" role="tablist" aria-label="Claude's work">
+        <button type="button" role="tab" data-view="waiting" id="tab-waiting" aria-controls="view">Waiting for you</button>
+        <button type="button" role="tab" data-view="ads" id="tab-ads" aria-controls="view">By ad</button>
+        <button type="button" role="tab" data-view="runs" id="tab-runs" aria-controls="view">All runs</button>
+      </nav>
       <div class="content stack desk">
-        <section class="panel composer" aria-labelledby="ask-title">
+        <section class="panel composer" id="composer" aria-labelledby="ask-title" hidden>
           <form class="panel-body stack" id="ask-form" novalidate>
-            <h2 class="sr-only" id="ask-title">Ask Claude</h2>
+            <h2 class="composer-title" id="ask-title">Ask Claude</h2>
             <div class="segmented kinds" id="kinds" role="radiogroup" aria-label="What kind of help">
               <button type="button" role="radio" data-kind="question">Question</button>
               <button type="button" role="radio" data-kind="review">Review results</button>
@@ -36,13 +43,15 @@
                 <select class="input" id="campaign" name="campaign_id"><option value="">All campaigns</option></select>
               </div>
               <span class="spacer"></span>
+              <button class="btn" type="button" id="ask-close">Close</button>
               <button class="btn btn-claude" type="submit">Send to Claude</button>
             </div>
             <p class="muted small flush" id="ask-hint"></p>
           </form>
         </section>
 
-        <div class="stack" id="tasks" aria-live="polite"></div>
+        <div id="working" aria-live="polite"></div>
+        <div class="stack" id="view" role="tabpanel" aria-live="polite"></div>
 
         <details class="panel mac-panel" id="mac-panel">
           <summary class="panel-body"><b>Your Mac</b> <span class="muted" id="mac-summary"></span></summary>
