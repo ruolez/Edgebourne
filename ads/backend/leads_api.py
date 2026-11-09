@@ -3,6 +3,8 @@ from flask import Blueprint, jsonify, request
 import crm_events
 import db
 import jobs
+import mailer
+import replies
 from auth import current_user, login_required, visible_campaign_ids
 from util import api_error, log_activity
 
@@ -87,7 +89,23 @@ def get_lead(lead_id):
         (lead["campaign_id"],),
     )
     lead["meta_stages"] = crm_events.for_lead(lead_id) if crm_events.enabled() else None
+    lead["replies"] = replies.for_lead(lead_id)
     return jsonify(lead)
+
+
+def _set_status(lead, status):
+    if status == lead["status"]:
+        return
+    db.execute(
+        """UPDATE leads SET status = %s, status_changed_at = now(),
+               first_contacted_at = COALESCE(first_contacted_at,
+                   CASE WHEN %s <> 'new' THEN now() END)
+           WHERE id = %s""",
+        (status, status, lead["id"]),
+    )
+    log_activity("lead.status", subject=str(lead["id"]), details={"from": lead["status"], "to": status})
+    if crm_events.enqueue(lead["id"], status):
+        jobs.wake()
 
 
 @bp.patch("/<int:lead_id>")
@@ -102,18 +120,7 @@ def update_lead(lead_id):
         status = data["status"]
         if status not in STATUSES:
             return api_error("Pick one of: " + ", ".join(STATUSES), 400)
-        if status != lead["status"]:
-            db.execute(
-                """UPDATE leads SET status = %s, status_changed_at = now(),
-                       first_contacted_at = COALESCE(first_contacted_at,
-                           CASE WHEN %s <> 'new' THEN now() END)
-                   WHERE id = %s""",
-                (status, status, lead_id),
-            )
-            log_activity("lead.status", subject=str(lead_id),
-                         details={"from": lead["status"], "to": status})
-            if crm_events.enqueue(lead_id, status):
-                jobs.wake()
+        _set_status(lead, status)
     if "owner_id" in data:
         owner = data["owner_id"]
         if owner is not None:
@@ -136,4 +143,43 @@ def add_note(lead_id):
         return api_error("Write something first", 400)
     db.execute("INSERT INTO lead_notes (lead_id, user_id, body) VALUES (%s, %s, %s)",
                (lead_id, user["id"], body[:5000]))
+    return get_lead(lead_id)
+
+
+@bp.get("/<int:lead_id>/reply")
+@login_required
+def reply_draft(lead_id):
+    """The composer on the lead page: a template filled in for this lead."""
+    user = current_user()
+    lead = _get_visible(lead_id, user)
+    if not lead:
+        return api_error("This lead doesn't exist or isn't in your campaigns", 404)
+    tid = request.args.get("template", type=int)
+    return jsonify({**replies.draft(lead, user, tid),
+                     "templates": [{"id": t["id"], "name": t["name"]} for t in replies.templates()],
+                     "mail_ready": mailer.configured()})
+
+
+@bp.post("/<int:lead_id>/reply")
+@login_required
+def send_reply(lead_id):
+    user = current_user()
+    lead = _get_visible(lead_id, user)
+    if not lead:
+        return api_error("This lead doesn't exist or isn't in your campaigns", 404)
+    if not replies.EMAIL.match((lead["email"] or "").strip()):
+        return api_error("This lead didn't leave an email address", 400)
+    data = request.get_json(silent=True) or {}
+    subject = (data.get("subject") or "").strip()
+    body = (data.get("body") or "").strip()
+    if not subject:
+        return api_error("Add a subject", 400, field="subject")
+    if not body:
+        return api_error("Write the email first", 400, field="body")
+    try:
+        replies.send_now(lead, user, subject[:300], body[:20000], data.get("template_id"))
+    except mailer.MailError as exc:
+        return api_error(str(exc), 502)
+    if data.get("mark_contacted") and lead["status"] == "new":
+        _set_status(lead, "contacted")
     return get_lead(lead_id)

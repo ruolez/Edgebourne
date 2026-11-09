@@ -13,6 +13,7 @@ import jobs
 import notify
 import telegram
 import refresh_api
+import replies
 from auth import admin_required, current_user
 from util import api_error, log_activity
 
@@ -62,6 +63,10 @@ def get_settings():
         "telegram": {"set": bool(telegram.token()), "username": settings_store.get("telegram_bot_username") if telegram.token() else None,
                      "linked": db.query("SELECT COUNT(*) AS n FROM users WHERE telegram_chat_id IS NOT NULL AND is_active", one=True)["n"],
                      "failed": notify.failed_recently()},
+        "replies": {"templates": replies.templates(), "booking_link": replies.booking_link(),
+                    "auto": replies.auto_enabled(), "auto_template_id": int(settings_store.get("reply_auto_template_id") or 0) or None,
+                    "auto_sender": (replies.auto_sender() or {}).get("name"), "placeholders": list(replies.PLACEHOLDERS),
+                    **replies.summary()},
         "auto_refresh_minutes": refresh_api.auto_minutes(settings_store.get("auto_refresh_minutes")),
         "auto_refresh_choices": list(refresh_api.AUTO_CHOICES),
     })
@@ -123,6 +128,88 @@ def save_telegram():
         return api_error(f"Telegram didn't accept that token: {exc}", 400, field="telegram_bot_token")
     log_activity("settings.telegram", details={"bot": bot.get("username")})
     return get_settings()
+
+
+@bp.put("/replies")
+@admin_required
+def save_replies():
+    data = request.get_json(silent=True) or {}
+    changed = {}
+    if "booking_link" in data:
+        link = (data["booking_link"] or "").strip()
+        if link and not link.startswith(("https://", "http://")):
+            return api_error("Paste the full link, starting with https://", 400, field="booking_link")
+        settings_store.set("reply_booking_link", link or None)
+        changed["booking_link"] = link
+    if "auto_template_id" in data:
+        tid = data["auto_template_id"]
+        if tid and not db.query("SELECT 1 FROM reply_templates WHERE id = %s", (tid,), one=True):
+            return api_error("That template doesn't exist any more", 400)
+        settings_store.set("reply_auto_template_id", str(tid) if tid else None)
+        changed["auto_template_id"] = tid
+    if "auto" in data:
+        on = bool(data["auto"])
+        if on and not mailer.configured():
+            return api_error("Set up email first (Settings → Email), so replies can go out", 400)
+        settings_store.set("reply_auto", "1" if on else None)
+        if on:
+            settings_store.set("reply_auto_user_id", str(current_user()["id"]))
+        changed["auto"] = on
+    log_activity("settings.replies", details=changed)
+    return get_settings()
+
+
+def _template_fields(data):
+    name, subject, body = ((data.get(k) or "").strip() for k in ("name", "subject", "body"))
+    for field, value, msg in (("name", name, "Give the template a name"), ("subject", subject, "Add a subject"),
+                              ("body", body, "Write the email")):
+        if not value:
+            return None, api_error(msg, 400, field=field)
+    return (name[:80], subject[:300], body[:20000]), None
+
+
+@bp.post("/replies/templates")
+@admin_required
+def add_template():
+    fields, err = _template_fields(request.get_json(silent=True) or {})
+    if err:
+        return err
+    db.execute("INSERT INTO reply_templates (name, subject, body, position) "
+               "VALUES (%s, %s, %s, (SELECT COALESCE(MAX(position), 0) + 1 FROM reply_templates))", fields)
+    log_activity("settings.reply_template", details={"added": fields[0]})
+    return get_settings()
+
+
+@bp.put("/replies/templates/<int:tid>")
+@admin_required
+def save_template(tid):
+    fields, err = _template_fields(request.get_json(silent=True) or {})
+    if err:
+        return err
+    db.execute("UPDATE reply_templates SET name = %s, subject = %s, body = %s, updated_at = now() WHERE id = %s", (*fields, tid))
+    log_activity("settings.reply_template", details={"changed": fields[0]})
+    return get_settings()
+
+
+@bp.delete("/replies/templates/<int:tid>")
+@admin_required
+def delete_template(tid):
+    if db.query("SELECT COUNT(*) AS n FROM reply_templates", one=True)["n"] <= 1:
+        return api_error("Keep at least one template", 400)
+    row = db.query("DELETE FROM reply_templates WHERE id = %s RETURNING name", (tid,), one=True)
+    if settings_store.get("reply_auto_template_id") == str(tid):
+        settings_store.set("reply_auto_template_id", None)
+    log_activity("settings.reply_template", details={"deleted": row and row["name"]})
+    return get_settings()
+
+
+@bp.post("/replies/preview")
+@admin_required
+def preview_template():
+    data = request.get_json(silent=True) or {}
+    sample = {"full_name": "Maria Lopez", "business_type": "Wholesale bakery, 14 staff", "phone": "(555) 123-4567"}
+    v = replies.values(sample, current_user(), data.get("booking_link") if "booking_link" in data else replies.booking_link())
+    return jsonify({"subject": replies.fill(data.get("subject"), v), "body": replies.fill(data.get("body"), v)})
 
 
 @bp.put("/smtp")

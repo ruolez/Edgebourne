@@ -113,6 +113,7 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   } else results.push('SKIP new-headline proposal — none pending');
 
   // Refresh: on every page, pulls from Meta, then the page reloads its data and the label updates.
+  require('child_process').execSync(`docker exec -w /app edgebourne-ads-backend python -c "import settings_store,time;settings_store.set('last_refresh_at',str(time.time()-600))"`); // outside the 60 s throttle
   await page.goto(BASE + '/ads.html');
   await page.waitForSelector('.page-head [data-refresh]');
   await page.click('.page-head [data-refresh]');
@@ -227,7 +228,7 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   // Telegram: the admin adds the bot, a person connects their chat, a new lead reaches it within seconds.
   const sh = (cmd) => require('child_process').execSync(cmd).toString();
   const tgSent = () => JSON.parse(sh(`docker exec edgebourne-ads-backend python -c "import requests;print(requests.get('http://fake-meta:5001/telegram/_sent').text)"`));
-  sh(`docker exec edgebourne-ads-backend python -c "import db;db.execute('UPDATE users SET telegram_chat_id=NULL, telegram_name=NULL, telegram_link_code=NULL')"`);
+  sh(`docker exec edgebourne-ads-backend python -c "import db;db.execute('UPDATE users SET telegram_chat_id=NULL, telegram_name=NULL, telegram_link_code=NULL');db.execute(\\"DELETE FROM leads WHERE full_name = 'Telegram QA Lead'\\")"`);
   await page.goto(BASE + '/settings.html');
   await page.waitForSelector('#tg-state .pill');
   if (await page.isVisible('#tg-remove')) {
@@ -269,6 +270,64 @@ print(requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'
   for (let i = 0; i < 30 && !alert; i++) { await page.waitForTimeout(1000); alert = tgSent().find((m) => /New lead: Telegram QA Lead/.test(m.text)); }
   check('a new lead reaches Telegram in under 30 s, with a link to it', Boolean(alert) && /Phone: \+15550001111/.test(alert.text), alert ? `${Math.round((Date.now() - t0) / 1000)} s` : 'not sent');
   await page.screenshot({ path: `${OUT}/flow-telegram-account.png` });
+
+  // Lead replies: templates in Settings, an email from the lead page, then the automatic reply.
+  const mailSent = () => JSON.parse(sh(`docker exec edgebourne-ads-backend python -c "import requests;print(requests.get('http://fake-meta:5001/mail/_sent').text)"`));
+  await page.goto(BASE + '/settings.html');
+  await page.evaluate(() => fetch('/api/settings/smtp', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ smtp_host: 'fake-meta', smtp_port: '1025', smtp_security: 'none', smtp_username: '', smtp_from_email: 'ads@edgebourne.test', smtp_from_name: 'Edge Bourne Ads' }) }));
+  await page.evaluate(() => fetch('/api/settings/replies', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto: false, booking_link: '' }) }));
+  await page.reload();
+  await page.waitForSelector('#tpl-list [data-edit]');
+  await page.click('#tpl-list [data-edit]');
+  await page.waitForFunction(() => /Hi Maria/.test(document.querySelector('#tpl-preview')?.textContent || ''));
+  check('the template preview fills in a sample lead and leaves out the empty booking line', !/pick a time yourself/i.test(await page.textContent('#tpl-preview')), await page.textContent('#tpl-preview'));
+  await page.click('#tpl-cancel');
+  const rpSeen = errors.length;
+  await page.fill('#booking_link', 'cal.com/eugene');
+  await page.click('#rp-form button[type=submit]');
+  await page.waitForSelector('#rp-form .field.error .err');
+  errors.splice(rpSeen); // the refused link logs an expected 400
+  check('a booking link without https is refused', true);
+  await page.fill('#booking_link', 'https://cal.com/eugene');
+  await page.click('#rp-form button[type=submit]');
+  await page.waitForFunction(() => document.querySelector('#rp-state')?.textContent === 'By hand');
+  const tgLeadId = await page.evaluate(() => fetch('/api/leads?q=Telegram%20QA%20Lead&status=all').then((r) => r.json()).then((d) => d.leads[0].id));
+  await page.goto(`${BASE}/leads.html#lead=${tgLeadId}`);
+  await page.waitForSelector('#reply-open');
+  await page.click('#reply-open');
+  await page.waitForFunction(() => /Hi Telegram,/.test(document.querySelector('#reply-body')?.value || ''));
+  const draft = await page.inputValue('#reply-body');
+  check('Email them opens a draft filled in for this lead', /\(555\) 000-1111/.test(draft) && /https:\/\/cal\.com\/eugene/.test(draft), draft.split('\n')[0]);
+  await page.fill('#reply-body', draft.replace('Thanks for asking', 'Thanks a lot for asking'));
+  const mailsBefore = mailSent().length;
+  await page.click('#reply-send');
+  await page.waitForSelector('.email-sent');
+  const mail = mailSent().slice(mailsBefore).find((m) => m.to.includes('tgqa@example.com'));
+  check('the email goes out with the edits, from Eugene, answers back to him', Boolean(mail) && /Thanks a lot for asking/.test(mail.text) && /Eugene/.test(mail.from) && mail.reply_to === 'eugene@edgebourne.com', mail ? `${mail.from} / ${mail.reply_to}` : 'no mail');
+  check('sending moves the lead to Contacted and lists the email', (await page.getAttribute('[data-stage="contacted"]', 'aria-pressed')) === 'true' && /emailed them/.test(await page.textContent('.history')));
+  await page.screenshot({ path: `${OUT}/flow-lead-reply.png`, fullPage: true });
+  await page.goto(BASE + '/settings.html');
+  await page.waitForSelector('#rp-auto');
+  await page.check('#rp-auto');
+  await page.click('#rp-form button[type=submit]');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => document.querySelector('#rp-state')?.textContent === 'Automatic reply on');
+  check('the automatic reply needs a confirmation to turn on', true);
+  const autoLead = '7700' + String(Date.now() + 7).slice(-12);
+  const mailsBeforeAuto = mailSent().length;
+  sh(`docker exec edgebourne-ads-backend python -c "
+import json, hmac, hashlib, requests, settings_store
+body = json.dumps({'entry': [{'changes': [{'field': 'leadgen', 'value': {'leadgen_id': '${autoLead}'}}]}]}).encode()
+sig = 'sha256=' + hmac.new(settings_store.get('meta_app_secret').encode(), body, hashlib.sha256).hexdigest()
+requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'X-Hub-Signature-256': sig, 'Content-Type': 'application/json'})"`);
+  let autoMail = null;
+  for (let i = 0; i < 30 && !autoMail; i++) { await page.waitForTimeout(1000); autoMail = mailSent().slice(mailsBeforeAuto).find((m) => /Your free intro call/.test(m.subject)); }
+  check('a new lead gets the automatic reply by itself', Boolean(autoMail), autoMail ? autoMail.subject : 'none');
+  await page.uncheck('#rp-auto');
+  await page.click('#rp-form button[type=submit]');
+  await page.waitForFunction(() => document.querySelector('#rp-state')?.textContent === 'By hand');
+  await page.screenshot({ path: `${OUT}/flow-settings-replies.png`, fullPage: true });
 
   // 5. Claude page: decisions first, then each ad's story, then every run (dev copy of the real Desk).
   require('child_process').execSync('docker cp dev/seed_desk.py edgebourne-ads-backend:/tmp/seed_desk.py && docker exec edgebourne-ads-backend sh -c "cd /app && python /tmp/seed_desk.py"', { cwd: __dirname + '/..' });

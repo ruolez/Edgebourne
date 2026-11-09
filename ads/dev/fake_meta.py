@@ -324,5 +324,68 @@ def graph(path):
     return jsonify({"error": {"message": f"fake Graph: {request.method} /{path} not implemented", "code": 100}}), 400
 
 
+# ---- A mail catcher (SMTP on fake-meta:1025, no TLS, no login); GET /mail/_sent lists what arrived ----
+MAIL = []
+
+
+def _smtp_server():
+    import socketserver
+    from email import message_from_bytes, policy
+
+    class Handler(socketserver.StreamRequestHandler):
+        def handle(self):
+            say = lambda line: self.wfile.write((line + "\r\n").encode())  # noqa: E731
+            say("220 fake-smtp ready")
+            rcpt, sender = [], None
+            while True:
+                line = self.rfile.readline()
+                if not line:
+                    return
+                cmd = line.decode(errors="replace").strip()
+                up = cmd.upper()
+                if up.startswith(("EHLO", "HELO")):
+                    say("250-fake-smtp")
+                    say("250 8BITMIME")
+                elif up.startswith("MAIL FROM"):
+                    sender, rcpt = cmd.split(":", 1)[1].strip(), []
+                    say("250 OK")
+                elif up.startswith("RCPT TO"):
+                    rcpt.append(cmd.split(":", 1)[1].strip().strip("<>"))
+                    say("250 OK")
+                elif up == "DATA":
+                    say("354 go ahead")
+                    raw = b""
+                    while True:
+                        chunk = self.rfile.readline()
+                        if chunk in (b".\r\n", b".\n", b""):
+                            break
+                        raw += chunk[1:] if chunk.startswith(b"..") else chunk
+                    msg = message_from_bytes(raw, policy=policy.default)
+                    body = msg.get_body(preferencelist=("plain",))
+                    MAIL.append({"from": msg["From"], "to": rcpt, "reply_to": msg["Reply-To"], "subject": msg["Subject"],
+                                 "text": body.get_content() if body else ""})
+                    say("250 queued")
+                elif up in ("RSET", "NOOP"):
+                    say("250 OK")
+                elif up == "QUIT":
+                    say("221 bye")
+                    return
+                else:
+                    say("502 not implemented")
+
+    class Server(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
+    Server(("0.0.0.0", 1025), Handler).serve_forever()
+
+
+@app.get("/mail/_sent")
+def mail_sent():
+    return jsonify(MAIL)
+
+
 if __name__ == "__main__":
+    import threading
+    threading.Thread(target=_smtp_server, daemon=True).start()
     app.run(host="0.0.0.0", port=5001)

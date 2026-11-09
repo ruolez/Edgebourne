@@ -197,7 +197,7 @@ a:active, button:active { transform: scale(.98); }
 .btn svg { width: 16px; height: 16px; }
 
 .field { display: flex; flex-direction: column; gap: 6px; }
-.field label { font-weight: 700; font-size: 13px; color: var(--ink-2); }
+.field label, .field .label { font-weight: 700; font-size: 13px; color: var(--ink-2); }
 .field .hint { font-size: 13px; color: var(--ink-3); }
 .input, select.input, textarea.input {
   width: 100%; border: 1px solid var(--line-strong); background: var(--surface);
@@ -1065,3 +1065,21 @@ iframe.preview-loading { position: absolute; width: 1px !important; height: 1px 
 .howto { margin: 0; padding-left: 22px; display: grid; gap: 4px; }
 .tg-box { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
 .tg-box .row { flex-wrap: wrap; }
+
+/* Emailing a lead from the lead page */
+.reply-box { margin: 14px 0 4px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface-2); }
+.reply-box textarea { min-height: 220px; font: inherit; line-height: 1.5; }
+.reply-box .row { align-items: center; flex-wrap: wrap; }
+.reply-box .row a { margin-left: auto; }
+.email-sent summary { cursor: pointer; font-weight: 600; }
+.email-body { white-space: pre-wrap; margin-top: 8px; font-size: 14px; color: var(--ink-2); }
+
+/* Settings → Lead replies */
+.tpl-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.tpl-list li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-s); }
+.tpl-list .tpl-name { flex: 1; min-width: 0; }
+.tpl-list .tpl-name small { display: block; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tpl-edit { padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface-2); }
+.tpl-edit textarea { min-height: 220px; font: inherit; line-height: 1.5; }
+.tpl-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tpl-preview { white-space: pre-wrap; margin: 0; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); font-size: 14px; }

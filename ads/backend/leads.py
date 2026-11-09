@@ -176,6 +176,11 @@ def notify(lead_id):
         alert_phones(lead)
     except Exception:
         log.exception("lead %s: couldn't queue the phone alerts", lead_id)
+    try:
+        import replies
+        replies.queue_auto(lead)
+    except Exception:
+        log.exception("lead %s: couldn't queue the automatic reply", lead_id)
     if not mailer.configured():
         return False
     to = recipients_for(lead)

@@ -61,6 +61,51 @@ function renderTelegram() {
     : "";
 }
 
+// Lead replies: the switch, the booking link and the templates.
+let editing = null; // template id being edited, "new", or null
+const LABELS = { first_name: "First name", full_name: "Full name", business: "Business", phone: "Their phone", my_name: "My name", my_email: "My email", booking_link: "Booking link" };
+
+function renderReplies() {
+  const r = s.replies;
+  const auto = r.templates.find((t) => t.id === r.auto_template_id) || r.templates[0];
+  $("rp-state").innerHTML = r.auto ? '<span class="pill ok">Automatic reply on</span>' : '<span class="pill">By hand</span>';
+  $("booking_link").value = r.booking_link || "";
+  $("rp-auto").checked = r.auto;
+  $("rp-auto-pick").hidden = !r.auto;
+  $("rp-auto-template").innerHTML = r.templates.map((t) => `<option value="${t.id}" ${auto && t.id === auto.id ? "selected" : ""}>${esc(t.name)}</option>`).join("");
+  $("rp-auto-hint").textContent = r.auto ? `Sent within a minute, signed by ${r.auto_sender || "the admin who turned it on"}. Test leads never get one.` : "";
+  $("tpl-list").innerHTML = r.templates.map((t, i) => `<li><span class="tpl-name"><b>${esc(t.name)}</b>${i === 0 ? ' <span class="pill">Opens first</span>' : ""}<small>${esc(t.subject)}</small></span>
+    <button class="btn btn-quiet" type="button" data-edit="${t.id}">Edit</button></li>`).join("");
+  $("tpl-chips").innerHTML = r.placeholders.map((k) => `<button type="button" class="chip" data-insert="{${k}}">${esc(LABELS[k] || k)}</button>`).join("");
+  $("rp-result").innerHTML = r.sent_7d || r.failed_7d
+    ? `<p class="note${r.failed_7d ? " warn" : ""}">${r.sent_7d} sent in the last 7 days.${r.failed_7d ? ` ${r.failed_7d} didn't go out: ${esc(r.last_error || "")}` : ""}</p>` : "";
+}
+
+let previewTimer;
+function previewTemplate() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    try {
+      const p = await api("/api/settings/replies/preview", { method: "POST", body: { subject: $("tpl-subject").value, body: $("tpl-body").value, booking_link: $("booking_link").value } });
+      $("tpl-preview").textContent = `${p.subject}\n\n${p.body}`;
+    } catch (e) { /* the preview is a convenience */ }
+  }, 300);
+}
+
+function editTemplate(id) {
+  editing = id;
+  const t = s.replies.templates.find((x) => x.id === id) || { name: "", subject: "", body: "" };
+  $("tpl-name").value = t.name; $("tpl-subject").value = t.subject; $("tpl-body").value = t.body;
+  $("tpl-delete").hidden = id === "new" || s.replies.templates.length < 2;
+  $("tpl-form").hidden = false;
+  $("tpl-add").hidden = true;
+  fieldError($("tpl-form"));
+  previewTemplate();
+  $("tpl-name").focus();
+}
+
+function closeTemplate() { editing = null; $("tpl-form").hidden = true; $("tpl-add").hidden = false; }
+
 const every = (m) => (m === 60 ? "Every hour" : `Every ${m} minutes`);
 
 function renderAuto() {
@@ -85,6 +130,7 @@ async function load() {
   renderCrm();
   renderAuto();
   renderTelegram();
+  if (editing === null) renderReplies();
   const rows = await api("/api/settings/activity");
   $("activity").innerHTML = rows.length ? `<thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${rows.map((r) =>
     `<tr><td class="muted">${when(r.at)}</td><td>${esc(r.who || ({ meta: "Meta", claude: "Claude", system: "System" }[r.actor] || r.actor))}</td><td>${esc(describe(r))}${r.subject && !r.action.startsWith("lead.") ? ` <span class="muted">${esc(r.subject)}</span>` : ""}</td></tr>`).join("")}</tbody>`
@@ -119,6 +165,8 @@ const ACTIONS = {
   "team.password_reset": "Reset a teammate's password",
   "settings.crm_test": "Sent a test lead stage to Meta",
   "settings.telegram": "Changed the Telegram bot",
+  "settings.replies": "Changed the lead reply settings",
+  "settings.reply_template": "Changed a lead reply template",
   "settings.refresh": "Changed how often the latest comes from Meta",
   "crm.failed": "A lead stage didn't reach Meta",
   "lead.received": "New lead arrived",
@@ -147,6 +195,56 @@ if (me) {
     if (!(await confirmDialog({ title: "Remove the Telegram bot?", body: "Nobody gets Telegram alerts until a bot is added again. People's links are kept.", confirm: "Remove", danger: true }))) return;
     s = await api("/api/settings/telegram", { method: "PUT", body: { remove: true } });
     toast("Telegram bot removed"); renderTelegram();
+  }));
+  $("rp-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
+    fieldError(e.target);
+    const auto = $("rp-auto").checked;
+    if (auto && !s.replies.auto) {
+      const t = s.replies.templates.find((x) => String(x.id) === $("rp-auto-template").value) || s.replies.templates[0];
+      const ok = await confirmDialog({ title: "Reply to every new lead by itself?",
+        body: `<p>From now on every new lead that left an email gets <b>${esc(t.name)}</b> from you within a minute, before anyone has looked at it. Test leads never do.</p><p>Check the wording in the template first.</p>`,
+        confirm: "Turn it on" });
+      if (!ok) return;
+    }
+    try {
+      s = await api("/api/settings/replies", { method: "PUT", body: { booking_link: $("booking_link").value, auto, auto_template_id: Number($("rp-auto-template").value) || null } });
+    } catch (err) {
+      if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; }
+      throw err;
+    }
+    toast(auto ? "Saved. New leads get a reply by themselves." : "Saved"); renderReplies();
+  }); });
+  $("rp-auto").addEventListener("change", (e) => { $("rp-auto-pick").hidden = !e.target.checked; });
+  $("tpl-list").addEventListener("click", (e) => { const b = e.target.closest("[data-edit]"); if (b) editTemplate(Number(b.dataset.edit)); });
+  $("tpl-add").addEventListener("click", () => editTemplate("new"));
+  $("tpl-cancel").addEventListener("click", closeTemplate);
+  ["tpl-subject", "tpl-body"].forEach((id) => $(id).addEventListener("input", previewTemplate));
+  $("tpl-chips").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-insert]");
+    if (!b) return;
+    const body = $("tpl-body");
+    const at = body.selectionStart ?? body.value.length;
+    body.setRangeText(b.dataset.insert, at, body.selectionEnd ?? at, "end");
+    body.focus();
+    previewTemplate();
+  });
+  $("tpl-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
+    fieldError(e.target);
+    const body = { name: $("tpl-name").value, subject: $("tpl-subject").value, body: $("tpl-body").value };
+    try {
+      s = editing === "new" ? await api("/api/settings/replies/templates", { method: "POST", body })
+        : await api(`/api/settings/replies/templates/${editing}`, { method: "PUT", body });
+    } catch (err) {
+      if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; }
+      throw err;
+    }
+    toast("Template saved"); closeTemplate(); renderReplies();
+  }); });
+  $("tpl-delete").addEventListener("click", (e) => run(e.currentTarget, async () => {
+    const t = s.replies.templates.find((x) => x.id === editing);
+    if (!(await confirmDialog({ title: `Delete “${t.name}”?`, body: "Emails already sent keep their text.", confirm: "Delete", danger: true }))) return;
+    s = await api(`/api/settings/replies/templates/${editing}`, { method: "DELETE" });
+    toast("Template deleted"); closeTemplate(); renderReplies();
   }));
   $("auto-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     s = await api("/api/settings/refresh", { method: "PUT", body: { minutes: Number($("auto-minutes").value) } });

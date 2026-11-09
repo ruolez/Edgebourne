@@ -62,6 +62,30 @@
           </form>
         </section>
         <section class="panel">
+          <div class="panel-head"><h2>Lead replies</h2><p id="rp-state"></p></div>
+          <div class="panel-body stack">
+            <p class="muted">Emails to leads, sent from the lead page with “Email them”. Write them once here; each one can still be edited before it goes. The lead's answer goes back to whoever sent it.</p>
+            <form class="stack" id="rp-form" novalidate>
+              <div class="field"><label for="booking_link">Booking link <span class="muted">(optional)</span></label><input class="input" id="booking_link" name="booking_link" inputmode="url" placeholder="https://calendly.com/…"><span class="hint">Fills {booking_link}. Without one, the line that uses it is left out.</span></div>
+              <label class="check"><input type="checkbox" id="rp-auto"> Also send a reply by itself to every new lead that left an email</label>
+              <div class="field" id="rp-auto-pick" hidden><label for="rp-auto-template">Automatic reply uses</label><select class="input" id="rp-auto-template"></select><span class="hint" id="rp-auto-hint"></span></div>
+              <div class="row"><button class="btn btn-primary" type="submit">Save</button></div>
+            </form>
+            <h3 class="section-title">Templates</h3>
+            <ul class="tpl-list" id="tpl-list"></ul>
+            <form class="tpl-edit stack tight" id="tpl-form" hidden novalidate>
+              <div class="field"><label for="tpl-name">Name</label><input class="input" id="tpl-name" name="name" autocomplete="off" placeholder="e.g. First reply"></div>
+              <div class="field"><label for="tpl-subject">Subject</label><input class="input" id="tpl-subject" name="subject" autocomplete="off"></div>
+              <div class="field"><label for="tpl-body">Message</label><textarea class="input" id="tpl-body" name="body" rows="12"></textarea></div>
+              <div class="tpl-chips" id="tpl-chips" aria-label="Insert a placeholder"></div>
+              <div class="field"><span class="label">How a lead sees it <span class="muted">(sample lead Maria Lopez)</span></span><pre class="tpl-preview" id="tpl-preview" aria-live="polite"></pre></div>
+              <div class="row"><button class="btn btn-primary" type="submit">Save template</button><button class="btn btn-quiet" type="button" id="tpl-cancel">Cancel</button><span class="spacer"></span><button class="btn btn-danger-text" type="button" id="tpl-delete" hidden>Delete</button></div>
+            </form>
+            <div><button class="btn" type="button" id="tpl-add">Add a template</button></div>
+            <div id="rp-result"></div>
+          </div>
+        </section>
+        <section class="panel">
           <div class="panel-head"><h2>Lead stages to Meta</h2><p id="crm-state"></p></div>
           <form class="panel-body stack" id="crm-form" novalidate>
             <p class="muted">When you move a lead to Contacted, Qualified, Won or Lost, Meta hears about it. Over time it learns which people become clients and finds more like them. Test leads are never sent.</p>

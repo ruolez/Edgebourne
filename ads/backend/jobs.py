@@ -50,6 +50,11 @@ def _loop():
                 except Exception as exc:
                     log.info("telegram updates skipped: %s", exc)
                 try:
+                    import replies
+                    replies.process_pending()
+                except Exception:
+                    log.exception("sending lead replies failed")
+                try:
                     notify.process_pending()
                 except Exception:
                     log.exception("sending alerts failed")

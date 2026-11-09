@@ -41,14 +41,16 @@ def configured():
     return bool(s["host"] and s["from_email"])
 
 
-def send(to, subject, text, html=None):
+def send(to, subject, text, html=None, from_name=None, reply_to=None):
     s = smtp_settings()
     if not (s["host"] and s["from_email"]):
         raise MailError("Email isn't set up yet. Set it up in the website admin (Email) or in Settings → Email here.")
     recipients = [to] if isinstance(to, str) else list(to)
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = formataddr((s["from_name"], s["from_email"]))
+    msg["From"] = formataddr((from_name or s["from_name"], s["from_email"]))
+    if reply_to:
+        msg["Reply-To"] = reply_to
     msg["To"] = ", ".join(recipients)
     msg["Message-ID"] = make_msgid(domain=s["from_email"].split("@")[-1])
     msg.set_content(text)

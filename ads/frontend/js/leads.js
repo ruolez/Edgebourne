@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, icon, onRefresh, phoneDisplay, setNewCount, shortWait, toast, waited, when } from "./ui.js";
+import { boot, esc, fieldError, icon, onRefresh, phoneDisplay, setNewCount, shortWait, toast, waited, when } from "./ui.js";
 
 const STAGES = [
   { id: "new", label: "New" },
@@ -101,8 +101,9 @@ function detailHtml(lead) {
     ${lead.is_test ? '<p class="note warn">This is a test lead from Meta\'s testing tool.</p>' : ""}
     <div class="reach">
       ${lead.phone ? `<a class="btn btn-call" href="tel:${esc(lead.phone)}">${icon("phone")} Call ${esc(phoneDisplay(lead.phone))}</a>` : ""}
-      ${lead.email ? `<a class="btn" href="mailto:${esc(lead.email)}?subject=${encodeURIComponent("Your free intro call with Edge Bourne")}">${icon("mail")} Email</a>` : ""}
+      ${lead.email ? `<button type="button" class="btn" id="reply-open" aria-expanded="false" aria-controls="reply-form">${icon("mail")} Email them</button>` : ""}
     </div>
+    ${lead.email ? replyForm(lead) : ""}
     <div class="stage">
       <span class="stage-label" id="stage-label">Stage</span>
       <div class="segmented" role="group" aria-labelledby="stage-label" id="stages">
@@ -119,6 +120,7 @@ function detailHtml(lead) {
       <dt>Campaign</dt><dd>${esc(lead.campaign_name || "—")}</dd>
     </dl>
     ${answers ? `<h3 class="section-title">Their answers</h3><dl class="facts">${answers}</dl>` : ""}
+    ${emailsHtml(lead)}
     <h3 class="section-title">Notes</h3>
     <ul class="notes">${lead.notes.map((n) => `<li><div class="meta">${esc(n.author || "Someone")}, ${when(n.created_at)}</div>${esc(n.body)}</li>`).join("") || '<li class="muted">No notes yet. Write down what you learned on the call.</li>'}</ul>
     <form id="note-form" class="stack tight">
@@ -127,6 +129,73 @@ function detailHtml(lead) {
       <div><button class="btn btn-primary" type="submit">Add note</button></div>
     </form>
     ${history ? `<h3 class="section-title">History</h3><ul class="history">${history}</ul>` : ""}`;
+}
+
+function replyForm(lead) {
+  return `<form class="reply-box stack tight" id="reply-form" hidden novalidate>
+      <div class="reply-head"><b>Email to ${esc(lead.email)}</b></div>
+      <p class="note warn" id="reply-mail-note" hidden></p>
+      <div class="field"><label for="reply-template">Start from</label><select class="input" id="reply-template"></select></div>
+      <div class="field"><label for="reply-subject">Subject</label><input class="input" id="reply-subject" name="subject" autocomplete="off"></div>
+      <div class="field"><label for="reply-body">Message</label><textarea class="input" id="reply-body" name="body" rows="11"></textarea><span class="hint">Sent from the console's mailbox with your name; their answer comes back to ${esc(state.me.email)}.</span></div>
+      ${lead.status === "new" ? '<label class="check"><input type="checkbox" id="reply-contacted" checked> Move to Contacted when it\'s sent</label>' : ""}
+      <div class="row"><button class="btn btn-primary" type="submit" id="reply-send">Send email</button><button class="btn btn-quiet" type="button" id="reply-close">Cancel</button>
+        <a class="small muted" href="mailto:${esc(lead.email)}">Use my own mail app instead</a></div>
+    </form>`;
+}
+
+function emailsHtml(lead) {
+  const rows = lead.replies || [];
+  if (!rows.length) return "";
+  const badge = (r) => r.status === "sent" ? "" : r.status === "pending" ? ' <span class="pill">Sending…</span>' : ` <span class="pill bad">Not sent</span>`;
+  return `<h3 class="section-title">Emails</h3><ul class="notes">${rows.map((r) => `<li>
+      <div class="meta">${r.auto ? "Automatic reply" : esc(r.sender || "Someone")}, ${when(r.sent_at || r.created_at)}${badge(r)}</div>
+      <details class="email-sent"><summary>${esc(r.subject)}</summary><div class="email-body">${esc(r.body)}</div></details>
+      ${r.status === "failed" && r.error ? `<p class="small muted">${esc(r.error)}</p>` : ""}</li>`).join("")}</ul>`;
+}
+
+async function loadDraft(lead, templateId) {
+  const d = await api(`/api/leads/${lead.id}/reply${templateId ? `?template=${templateId}` : ""}`);
+  $("reply-template").innerHTML = d.templates.map((t) => `<option value="${t.id}" ${t.id === d.template_id ? "selected" : ""}>${esc(t.name)}</option>`).join("");
+  $("reply-subject").value = d.subject;
+  $("reply-body").value = d.body;
+  const note = $("reply-mail-note");
+  note.hidden = d.mail_ready;
+  note.innerHTML = d.mail_ready ? "" : `Email isn't set up yet, so this can't be sent.${state.me.role === "admin" ? ' <a href="/settings.html">Set it up in Settings → Email</a>.' : " Ask an admin to set it up."}`;
+  $("reply-send").disabled = !d.mail_ready;
+}
+
+function wireReply(lead) {
+  const open = $("reply-open");
+  const form = $("reply-form");
+  if (!open || !form) return;
+  const show = async (on) => {
+    form.hidden = !on;
+    open.setAttribute("aria-expanded", String(on));
+    if (on) {
+      try { await loadDraft(lead); $("reply-body").focus(); } catch (err) { toast(err.message, "bad"); }
+    }
+  };
+  open.addEventListener("click", () => show(form.hidden));
+  $("reply-close").addEventListener("click", () => { show(false); open.focus(); });
+  $("reply-template").addEventListener("change", (e) => loadDraft(lead, e.target.value).catch((err) => toast(err.message, "bad")));
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    fieldError(form);
+    const btn = $("reply-send");
+    btn.disabled = true;
+    try {
+      const updated = await api(`/api/leads/${lead.id}/reply`, { method: "POST", body: {
+        subject: $("reply-subject").value, body: $("reply-body").value,
+        template_id: Number($("reply-template").value) || null, mark_contacted: Boolean($("reply-contacted")?.checked) } });
+      renderDetail(updated);
+      toast(`Email sent to ${lead.email}`);
+      load({ quiet: true });
+    } catch (err) {
+      if (err.body?.field) fieldError(form, err.body.field, err.message); else toast(err.message, "bad");
+      btn.disabled = false;
+    }
+  });
 }
 
 function metaStages(lead) {
@@ -155,6 +224,8 @@ function describe(h) {
   if (h.action === "lead.status") return `${who} moved it from ${h.details.from} to ${h.details.to}`;
   if (h.action === "lead.owner") return `${who} changed the owner`;
   if (h.action === "lead.email_failed") return "The alert email couldn't be sent";
+  if (h.action === "lead.reply") return `${who} emailed them: ${h.details.subject}`;
+  if (h.action === "lead.reply_auto") return `Automatic reply sent: ${h.details.subject}`;
   return h.action;
 }
 
@@ -165,8 +236,10 @@ async function select(id, { push = true } = {}) {
   $("layout").classList.add("showing-detail");
   try {
     const lead = await api(`/api/leads/${id}`);
+    if (state.selected !== id) return; // another lead was picked while this one loaded
     renderDetail(lead);
   } catch (err) {
+    if (state.selected !== id) return;
     $("detail").innerHTML = `<div class="empty"><h3>Can't open this lead</h3><p>${esc(err.message)}</p></div>`;
   }
 }
@@ -178,6 +251,7 @@ function renderDetail(lead) {
     $("layout").classList.remove("showing-detail");
     history.replaceState(null, "", location.pathname);
   });
+  wireReply(lead);
   detail.querySelectorAll("[data-stage]").forEach((b) => b.addEventListener("click", () => patch(lead.id, { status: b.dataset.stage })));
   $("owner").addEventListener("change", (e) => patch(lead.id, { owner_id: e.target.value ? Number(e.target.value) : null }));
   $("note-form").addEventListener("submit", async (e) => {
@@ -245,6 +319,7 @@ async function main() {
   showEmptyDetail();
   const fromHash = Number((location.hash.match(/lead=(\d+)/) || [])[1]);
   onRefresh(() => load());
+  if (fromHash) state.selected = fromHash; // so the list doesn't open the newest lead instead
   await load();
   if (fromHash) select(fromHash, { push: false });
   // New leads appear without a reload; the clocks keep counting.
