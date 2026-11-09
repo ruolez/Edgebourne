@@ -224,6 +224,52 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   await page.click('#auto-form button[type=submit]');
   await page.waitForFunction(() => document.querySelector('#auto-state')?.textContent === 'Every 15 minutes');
 
+  // Telegram: the admin adds the bot, a person connects their chat, a new lead reaches it within seconds.
+  const sh = (cmd) => require('child_process').execSync(cmd).toString();
+  const tgSent = () => JSON.parse(sh(`docker exec edgebourne-ads-backend python -c "import requests;print(requests.get('http://fake-meta:5001/telegram/_sent').text)"`));
+  sh(`docker exec edgebourne-ads-backend python -c "import db;db.execute('UPDATE users SET telegram_chat_id=NULL, telegram_name=NULL, telegram_link_code=NULL')"`);
+  await page.goto(BASE + '/settings.html');
+  await page.waitForSelector('#tg-state .pill');
+  if (await page.isVisible('#tg-remove')) {
+    await page.click('#tg-remove');
+    await page.click('dialog.confirm #cd-ok');
+    await page.waitForFunction(() => document.querySelector('#tg-state')?.textContent === 'Not set up');
+  }
+  const tgSeen = errors.length;
+  await page.fill('#telegram_bot_token', '999:wrong');
+  await page.click('#tg-form button[type=submit]');
+  await page.waitForSelector('#tg-form .field.error .err', { timeout: 5000 }).catch(() => {});
+  errors.splice(tgSeen); // the refused token logs an expected 400
+  check('Settings refuses a bot token Telegram rejects', /didn't accept/.test(await page.textContent('#tg-form')));
+  await page.fill('#telegram_bot_token', '123456:FAKE-token');
+  await page.click('#tg-form button[type=submit]');
+  await page.waitForFunction(() => document.querySelector('#tg-state')?.textContent === '@EdgeBourneAdsBot');
+  check('Settings connects the Telegram bot', true);
+  await page.goto(BASE + '/account.html');
+  await page.click('#tg-link');
+  await page.waitForSelector('#tg-open');
+  const tgLink = await page.getAttribute('#tg-open', 'href');
+  check('Connect Telegram opens the bot with a one-time code', /^https:\/\/t\.me\/EdgeBourneAdsBot\?start=[\w-]{16}$/.test(tgLink), tgLink);
+  sh(`docker exec edgebourne-ads-backend python -c "import requests;requests.post('http://fake-meta:5001/telegram/_start', json={'code': '${tgLink.split('start=')[1]}', 'chat_id': 424242})"`);
+  await page.waitForSelector('#tg-on', { timeout: 15000 });
+  check('the account page sees the Start tap by itself', await page.isChecked('#tg-on'), await page.textContent('#tg'));
+  await page.click('#tg-test');
+  await page.waitForTimeout(800);
+  const welcome = tgSent().map((m) => m.text);
+  check('Telegram got the welcome and the test message', welcome.some((t) => /You're connected/.test(t)) && welcome.some((t) => /Test from Edge Bourne Ads/.test(t)), welcome.slice(-2).join(' | '));
+  const tgLead = '7700' + String(Date.now()).slice(-12);
+  const t0 = Date.now();
+  sh(`docker exec edgebourne-ads-backend python -c "
+import json, hmac, hashlib, requests, settings_store
+settings_store.get('meta_app_secret') or settings_store.set('meta_app_secret', 'dev-app-secret')
+body = json.dumps({'entry': [{'changes': [{'field': 'leadgen', 'value': {'leadgen_id': '${tgLead}'}}]}]}).encode()
+sig = 'sha256=' + hmac.new(settings_store.get('meta_app_secret').encode(), body, hashlib.sha256).hexdigest()
+print(requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'X-Hub-Signature-256': sig, 'Content-Type': 'application/json'}).status_code)"`);
+  let alert = null;
+  for (let i = 0; i < 30 && !alert; i++) { await page.waitForTimeout(1000); alert = tgSent().find((m) => /New lead: Telegram QA Lead/.test(m.text)); }
+  check('a new lead reaches Telegram in under 30 s, with a link to it', Boolean(alert) && /Phone: \+15550001111/.test(alert.text), alert ? `${Math.round((Date.now() - t0) / 1000)} s` : 'not sent');
+  await page.screenshot({ path: `${OUT}/flow-telegram-account.png` });
+
   // 5. Claude page: decisions first, then each ad's story, then every run (dev copy of the real Desk).
   require('child_process').execSync('docker cp dev/seed_desk.py edgebourne-ads-backend:/tmp/seed_desk.py && docker exec edgebourne-ads-backend sh -c "cd /app && python /tmp/seed_desk.py"', { cwd: __dirname + '/..' });
   await page.goto(BASE + '/desk.html', { waitUntil: 'networkidle' });

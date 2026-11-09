@@ -129,7 +129,7 @@ Found while proving Phase 0 and building 1.1. Pick with Eugene; tick here when f
 
 ### Phase 1: Close the loop with Meta
 - [~] 1.1 Lead stages sent to Meta (Conversions API for CRM) (built and tested locally; Eugene: META-APP-SETUP part H, then a live test event)
-- [ ] 1.2 Instant alert to Eugene's phone for every new lead (channel = open decision)
+- [~] 1.2 Instant alert to Eugene's phone for every new lead: **Telegram** (Eugene chose it 2026-11-09). Built: `telegram.py` (bot token in Settings → Telegram, people link from Your account with a one-time `t.me/<bot>?start=` code, getUpdates polling, /stop unlinks), `notify.py` queue (migration 007, retries 1/5/15 min, dedupe), lead alert to everyone who gets the lead email. Dev: fake Telegram in `dev/fake_meta.py` (token `123456:FAKE-token`). Eugene: create the bot with @BotFather, paste the token, connect from Your account, send a test
 - [ ] 1.3 Automatic first reply to the lead (email)
 - [ ] 1.4 Untouched-lead reminders (5 min, 1 h, next morning) and a lead-response report
 
@@ -521,3 +521,4 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-09 · I11 Claude page rebuilt (Impeccable shape → build; decisions/by ad/all runs; Meta previews of proposed ads; dev copy of the real Desk in `dev/seed_desk.py`); unit tests OK, QA 41 PASS · next: Eugene pushes + Update, check a live preview
 - 2026-11-09 · I12 automatic refresh (Settings interval, worker pull, pages catch up by themselves); 85 unit tests, QA 45 PASS · next: Eugene runs Update and tests
 - 2026-11-09 · I2, I3, I5, I6 fixed (preview loader shared by ad page and Claude page, test-leads toggle, lead's Meta line follows itself, CRM wording while off); 85 unit tests, QA 48 PASS · next: Eugene pushes + Update; open: I1/I8 (Eugene), I4, I7, I9, I11 live check, then 1.2 (alert channel)
+- 2026-11-09 · 1.2 Telegram alerts built (Settings bot, account linking, notify queue, lead alert in 1 s in QA); unit tests OK, QA 54 PASS · next: 1.3 manual replies + auto switch, 1.4 reminders

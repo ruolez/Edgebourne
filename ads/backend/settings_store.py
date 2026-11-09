@@ -9,6 +9,7 @@ import config
 import db
 
 SECRET_KEYS = {
+    "telegram_bot_token",
     "meta_app_secret",
     "meta_system_token",
     "meta_verify_token",

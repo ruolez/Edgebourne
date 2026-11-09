@@ -17,6 +17,8 @@ services:
       # Talk to the fake Graph API below instead of Meta. To use real Meta locally, set
       # ADS_FAKE_META_BASE=https://graph.facebook.com/v24.0 in .env.
       - META_GRAPH_BASE=${ADS_FAKE_META_BASE:-http://fake-meta:5001/v24.0}
+      # Telegram also goes to the stand-in; the fake bot token is 123456:FAKE-token.
+      - TELEGRAM_API_BASE=${ADS_FAKE_TELEGRAM_BASE:-http://fake-meta:5001/telegram}
 
   # Local stand-in for the Meta Graph API (ads/dev/fake_meta.py).
   fake-meta:

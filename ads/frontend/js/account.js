@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { applyTheme, boot, currentTheme, fieldError, toast } from "./ui.js";
+import { applyTheme, boot, confirmDialog, currentTheme, esc, fieldError, toast } from "./ui.js";
 
 const me = await boot({ page: "account" });
 if (me) {
@@ -28,6 +28,51 @@ if (me) {
       toast(notify.checked ? "You'll get an email for each new lead" : "Lead emails turned off");
     } catch (err) { toast(err.message, "bad"); }
   });
+  // Telegram: connect once, then new leads and reminders arrive on the phone.
+  const tg = document.getElementById("tg");
+  let tgPoll;
+  const renderTg = (t) => {
+    clearTimeout(tgPoll);
+    if (!t.bot) {
+      tg.innerHTML = `<p class="muted">Telegram alerts: ${me.role === "admin" ? 'add the bot in <a href="/settings.html">Settings → Telegram</a> first.' : "an admin sets up the bot first."}</p>`;
+    } else if (t.linked) {
+      tg.innerHTML = `<label class="check"><input type="checkbox" id="tg-on" ${t.enabled ? "checked" : ""}> Send new leads and reminders to my Telegram <span class="muted">(${esc(t.name || "connected")})</span></label>
+        <div class="row"><button class="btn" type="button" id="tg-test">Send a test</button><button class="btn btn-danger-text" type="button" id="tg-off">Disconnect Telegram</button></div>`;
+    } else if (t.pending) {
+      tg.innerHTML = `<p>Open Telegram and tap <b>Start</b> in the chat with @${esc(t.bot)}. This page notices by itself.</p>
+        <div class="row"><a class="btn btn-primary" id="tg-open" href="${esc(t.link)}" target="_blank" rel="noopener noreferrer">Open Telegram</a><span class="muted">Waiting for you to tap Start…</span></div>`;
+      tgPoll = setTimeout(async () => {
+        const next = await api("/api/me/telegram").catch(() => t);
+        if (next.linked) toast("Telegram connected. Check your phone.");
+        renderTg(next);
+      }, 3000);
+    } else {
+      tg.innerHTML = `<p>Get each new lead on your phone, seconds after it arrives.</p>
+        <div class="row"><button class="btn btn-primary" type="button" id="tg-link">Connect Telegram</button></div>`;
+    }
+  };
+  tg.addEventListener("click", async (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    b.disabled = true;
+    try {
+      if (b.id === "tg-link") renderTg(await api("/api/me/telegram/link", { method: "POST" }));
+      if (b.id === "tg-test") { await api("/api/me/telegram/test", { method: "POST" }); toast("Sent. Check Telegram."); }
+      if (b.id === "tg-off" && await confirmDialog({ title: "Disconnect Telegram?", body: "New leads and reminders stop going to your Telegram. You can connect again any time.", confirm: "Disconnect", danger: true })) {
+        renderTg(await api("/api/me/telegram", { method: "DELETE" }));
+        toast("Telegram disconnected");
+      }
+    } catch (err) { toast(err.message, "bad"); } finally { b.disabled = false; }
+  });
+  tg.addEventListener("change", async (e) => {
+    if (e.target.id !== "tg-on") return;
+    try {
+      renderTg(await api("/api/me/telegram", { method: "PATCH", body: { enabled: e.target.checked } }));
+      toast(e.target.checked ? "New leads go to your Telegram" : "Telegram alerts paused");
+    } catch (err) { toast(err.message, "bad"); }
+  });
+  api("/api/me/telegram").then(renderTg).catch(() => { tg.hidden = true; });
+
   const form = document.getElementById("pw-form");
   form.addEventListener("submit", async (e) => {
     e.preventDefault();

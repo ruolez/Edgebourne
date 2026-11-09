@@ -139,6 +139,48 @@ def breakdown_rows(by):
     return out
 
 
+# ---- Telegram Bot API stand-in (TELEGRAM_API_BASE=http://fake-meta:5001/telegram) ----
+TG_UPDATES, TG_SENT = [], []
+tg_update_ids = itertools.count(1000)
+
+
+@app.post("/telegram/_start")
+def tg_start():
+    """Test hook: someone taps Start (or types text) in the bot's chat."""
+    a = request.get_json(force=True)
+    chat = int(a.get("chat_id", 424242))
+    TG_UPDATES.append({"update_id": next(tg_update_ids), "message": {
+        "message_id": 1, "chat": {"id": chat, "type": "private"},
+        "from": {"id": chat, "first_name": a.get("name", "Eugene"), "username": a.get("username", "eugene_qa")},
+        "text": a.get("text") or f"/start {a['code']}"}})
+    return jsonify({"ok": True})
+
+
+@app.get("/telegram/_sent")
+def tg_sent():
+    return jsonify(TG_SENT)
+
+
+@app.post("/telegram/bot<tok>/<method>")
+def tg_api(tok, method):
+    if tok != "123456:FAKE-token":
+        return jsonify({"ok": False, "error_code": 401, "description": "Unauthorized"}), 401
+    a = request.get_json(silent=True) or {}
+    if method == "getMe":
+        return jsonify({"ok": True, "result": {"id": 123456, "is_bot": True, "first_name": "Edge Bourne Ads", "username": "EdgeBourneAdsBot"}})
+    if method == "deleteWebhook":
+        return jsonify({"ok": True, "result": True})
+    if method == "getUpdates":
+        offset = int(a.get("offset") or 0)
+        return jsonify({"ok": True, "result": [u for u in TG_UPDATES if u["update_id"] >= offset]})
+    if method == "sendMessage":
+        if int(a.get("chat_id", 0)) == 403:
+            return jsonify({"ok": False, "error_code": 403, "description": "Forbidden: bot was blocked by the user"}), 403
+        TG_SENT.append(a)
+        return jsonify({"ok": True, "result": {"message_id": len(TG_SENT), "chat": {"id": a.get("chat_id")}, "text": a.get("text")}})
+    return jsonify({"ok": False, "error_code": 404, "description": f"fake: {method} not implemented"}), 404
+
+
 @app.route("/v24.0/<path:path>", methods=["GET", "POST"])
 def graph(path):
     a = {**request.args.to_dict(), **request.form.to_dict()}
@@ -184,6 +226,15 @@ def graph(path):
             return jsonify({"data": [{"id": "1132280359202136", "name": "EB | Free AI workflow review"}]})
         if len(parts) == 2 and parts[1] == "leads":
             return jsonify({"data": []})
+        if len(parts) == 1 and parts[0].startswith("7700") and len(parts[0]) == 16:
+            # A form lead the webhook announced (QA uses 7700…); shaped like Meta's.
+            from datetime import datetime, timezone
+            return jsonify({"id": parts[0], "created_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000"),
+                            "ad_id": REAL_AD_IDS[1], "ad_name": "N2 - Order portal", "adset_id": ADSET["id"],
+                            "campaign_id": CAMPAIGN["id"], "campaign_name": CAMPAIGN["name"], "form_id": FORM, "is_organic": False,
+                            "field_data": [{"name": "full_name", "values": ["Telegram QA Lead"]},
+                                           {"name": "phone_number", "values": ["+15550001111"]},
+                                           {"name": "email", "values": ["tgqa@example.com"]}]})
         if parts == [PAGE]:
             return jsonify({"id": PAGE, "name": "Edge Bourne Consulting", "access_token": "fake-page-token"})
         if parts == [act, "adimages"]:

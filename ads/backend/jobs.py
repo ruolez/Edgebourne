@@ -30,6 +30,7 @@ def _loop():
     import crm_events
     import insights
     import leads
+    import notify
     import refresh_api
     import settings_store
 
@@ -43,6 +44,15 @@ def _loop():
             conn = db.connect()
             if _locked(conn, 7001):
                 leads.process_pending_events()
+                try:
+                    import telegram
+                    telegram.poll_updates(conn)
+                except Exception as exc:
+                    log.info("telegram updates skipped: %s", exc)
+                try:
+                    notify.process_pending()
+                except Exception:
+                    log.exception("sending alerts failed")
                 try:
                     crm_events.process_pending()
                 except Exception:

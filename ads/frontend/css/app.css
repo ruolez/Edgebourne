@@ -440,8 +440,6 @@ dialog.sheet::backdrop { background: rgba(10, 18, 24, .45); }
 .row.end { justify-content: flex-end; }
 .bare { border: 0; padding: 0; margin: 0; }
 .legend { font-weight: 700; font-size: 13px; color: var(--ink-2); margin-bottom: 6px; padding: 0; }
-.me { text-decoration: none; color: inherit; border-radius: var(--radius-s); }
-.me:hover, .me[aria-current="page"] { background: var(--rail-active); }
 #owner { max-width: 260px; }
 .spacer { flex: 1; }
 
@@ -1064,3 +1062,6 @@ iframe.preview-loading { position: absolute; width: 1px !important; height: 1px 
 .preview-review { margin: 0 0 10px; }
 .leads-bar .check { align-items: center; font-weight: 500; color: var(--ink-2); }
 .leads-bar .check input { margin-top: 0; }
+.howto { margin: 0; padding-left: 22px; display: grid; gap: 4px; }
+.tg-box { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.tg-box .row { flex-wrap: wrap; }

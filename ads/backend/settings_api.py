@@ -10,6 +10,8 @@ import settings_store
 import insights
 import sync
 import jobs
+import notify
+import telegram
 import refresh_api
 from auth import admin_required, current_user
 from util import api_error, log_activity
@@ -57,6 +59,9 @@ def get_settings():
         "last_campaign_sync": settings_store.get("last_campaign_sync"),
         "page_subscribed": settings_store.get("meta_page_subscribed") == "1",
         "crm": crm_events.summary(),
+        "telegram": {"set": bool(telegram.token()), "username": settings_store.get("telegram_bot_username") if telegram.token() else None,
+                     "linked": db.query("SELECT COUNT(*) AS n FROM users WHERE telegram_chat_id IS NOT NULL AND is_active", one=True)["n"],
+                     "failed": notify.failed_recently()},
         "auto_refresh_minutes": refresh_api.auto_minutes(settings_store.get("auto_refresh_minutes")),
         "auto_refresh_choices": list(refresh_api.AUTO_CHOICES),
     })
@@ -97,6 +102,26 @@ def save_refresh():
     settings_store.set("auto_refresh_minutes", str(minutes))
     log_activity("settings.refresh", details={"minutes": minutes})
     jobs.wake()
+    return get_settings()
+
+
+@bp.put("/telegram")
+@admin_required
+def save_telegram():
+    data = request.get_json(silent=True) or {}
+    if data.get("remove"):
+        for key in ("telegram_bot_token", "telegram_bot_username", "telegram_update_offset"):
+            settings_store.set(key, None)
+        log_activity("settings.telegram", details={"removed": True})
+        return get_settings()
+    tok = (data.get("token") or "").strip()
+    if not tok:
+        return api_error("Paste the token @BotFather gave you", 400, field="telegram_bot_token")
+    try:
+        bot = telegram.connect(tok)
+    except telegram.TelegramError as exc:
+        return api_error(f"Telegram didn't accept that token: {exc}", 400, field="telegram_bot_token")
+    log_activity("settings.telegram", details={"bot": bot.get("username")})
     return get_settings()
 
 

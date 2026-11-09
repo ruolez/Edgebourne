@@ -48,6 +48,20 @@
           </form>
         </section>
         <section class="panel">
+          <div class="panel-head"><h2>Telegram</h2><p id="tg-state"></p></div>
+          <form class="panel-body stack" id="tg-form" novalidate>
+            <p class="muted">New leads and reminders reach each person's phone through your own Telegram bot. Each person then connects it once from Your account.</p>
+            <ol class="howto md" id="tg-steps">
+              <li>In Telegram, open <b>@BotFather</b> and send <code>/newbot</code>.</li>
+              <li>Give it a name (for example Edge Bourne Ads) and a username that ends in “bot”.</li>
+              <li>Copy the token it sends back and paste it here.</li>
+            </ol>
+            <div class="field"><label for="telegram_bot_token">Bot token</label><input class="input" id="telegram_bot_token" name="telegram_bot_token" autocomplete="off" spellcheck="false"><span class="hint" id="tg-hint">Looks like 123456789:AAH…</span></div>
+            <div class="row"><button class="btn btn-primary" type="submit">Save</button><button class="btn btn-danger-text" type="button" id="tg-remove" hidden>Remove the bot</button></div>
+            <div id="tg-result"></div>
+          </form>
+        </section>
+        <section class="panel">
           <div class="panel-head"><h2>Lead stages to Meta</h2><p id="crm-state"></p></div>
           <form class="panel-body stack" id="crm-form" novalidate>
             <p class="muted">When you move a lead to Contacted, Qualified, Won or Lost, Meta hears about it. Over time it learns which people become clients and finds more like them. Test leads are never sent.</p>

@@ -148,9 +148,35 @@ def render_email(lead):
     return subject, "\n".join(lines), body_html
 
 
+def recipient_ids(lead):
+    rows = db.query(
+        """SELECT DISTINCT u.id FROM users u
+           LEFT JOIN campaign_members cm ON cm.user_id = u.id
+           WHERE u.is_active AND (u.role = 'admin' OR cm.campaign_id = %s)""",
+        (lead["campaign_id"],),
+    )
+    return [r["id"] for r in rows]
+
+
+def alert_phones(lead):
+    """Telegram for everyone who would get the lead email and linked their chat."""
+    import notify
+    title, lines = notify.lead_alert(lead)
+    url = f"{config.APP_BASE_URL}/leads.html#lead={lead['id']}"
+    for uid in notify.telegram_people(recipient_ids(lead)):
+        notify.queue(uid, "telegram", "lead", title, lines, url, "Open the lead", ref=str(lead["id"]),
+                     dedupe_key=f"lead:{lead['id']}:telegram:{uid}")
+
+
 def notify(lead_id):
     lead = db.query("SELECT * FROM leads WHERE id = %s", (lead_id,), one=True)
-    if not lead or not mailer.configured():
+    if not lead:
+        return False
+    try:
+        alert_phones(lead)
+    except Exception:
+        log.exception("lead %s: couldn't queue the phone alerts", lead_id)
+    if not mailer.configured():
         return False
     to = recipients_for(lead)
     if not to:

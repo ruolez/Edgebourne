@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, toast, when } from "./ui.js";
+import { boot, confirmDialog, esc, fieldError, toast, when } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let s;
@@ -49,6 +49,18 @@ function renderCrm() {
     ? `<p class="note${c.failed ? " warn" : ""}">${parts.join(", ")}.${c.last_error ? ` Last error: ${esc(c.last_error)}` : ""}</p>` : "";
 }
 
+function renderTelegram() {
+  const t = s.telegram;
+  $("tg-state").innerHTML = t.set ? `<span class="pill ok">@${esc(t.username || "bot")}</span>` : '<span class="pill">Not set up</span>';
+  $("tg-steps").hidden = t.set;
+  $("tg-remove").hidden = !t.set;
+  $("telegram_bot_token").value = "";
+  $("telegram_bot_token").placeholder = t.set ? "Saved. Paste a new token to replace it." : "";
+  $("tg-result").innerHTML = t.set
+    ? `<p class="note${t.failed.n ? " warn" : ""}">${t.linked ? `${t.linked} ${t.linked === 1 ? "person has" : "people have"} connected Telegram.` : "Nobody has connected Telegram yet. Do it from Your account."}${t.failed.n ? ` ${t.failed.n} alert${t.failed.n === 1 ? "" : "s"} didn't arrive in the last 2 days: ${esc(t.failed.last_error || "")}` : ""}</p>`
+    : "";
+}
+
 const every = (m) => (m === 60 ? "Every hour" : `Every ${m} minutes`);
 
 function renderAuto() {
@@ -72,6 +84,7 @@ async function load() {
   renderMeta();
   renderCrm();
   renderAuto();
+  renderTelegram();
   const rows = await api("/api/settings/activity");
   $("activity").innerHTML = rows.length ? `<thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${rows.map((r) =>
     `<tr><td class="muted">${when(r.at)}</td><td>${esc(r.who || ({ meta: "Meta", claude: "Claude", system: "System" }[r.actor] || r.actor))}</td><td>${esc(describe(r))}${r.subject && !r.action.startsWith("lead.") ? ` <span class="muted">${esc(r.subject)}</span>` : ""}</td></tr>`).join("")}</tbody>`
@@ -105,6 +118,7 @@ const ACTIONS = {
   "team.updated": "Changed a teammate's access",
   "team.password_reset": "Reset a teammate's password",
   "settings.crm_test": "Sent a test lead stage to Meta",
+  "settings.telegram": "Changed the Telegram bot",
   "settings.refresh": "Changed how often the latest comes from Meta",
   "crm.failed": "A lead stage didn't reach Meta",
   "lead.received": "New lead arrived",
@@ -119,6 +133,21 @@ if (me) {
   await load();
   $("meta-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); toast("Meta settings saved"); load(); }); });
   $("smtp-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/smtp", { method: "PUT", body: values(e.target) }); toast("Email settings saved"); load(); }); });
+  $("tg-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
+    fieldError(e.target);
+    try {
+      s = await api("/api/settings/telegram", { method: "PUT", body: { token: $("telegram_bot_token").value } });
+    } catch (err) {
+      if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; }
+      throw err;
+    }
+    toast(`Telegram bot @${s.telegram.username} is ready`); renderTelegram();
+  }); });
+  $("tg-remove").addEventListener("click", (e) => run(e.currentTarget, async () => {
+    if (!(await confirmDialog({ title: "Remove the Telegram bot?", body: "Nobody gets Telegram alerts until a bot is added again. People's links are kept.", confirm: "Remove", danger: true }))) return;
+    s = await api("/api/settings/telegram", { method: "PUT", body: { remove: true } });
+    toast("Telegram bot removed"); renderTelegram();
+  }));
   $("auto-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     s = await api("/api/settings/refresh", { method: "PUT", body: { minutes: Number($("auto-minutes").value) } });
     toast(`The latest now comes from Meta ${every(s.auto_refresh_minutes).toLowerCase()}`); renderAuto();
