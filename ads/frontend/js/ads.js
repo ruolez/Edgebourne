@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, icon, switchHtml, toast, when } from "./ui.js";
+import { boot, esc, icon, onRefresh, switchHtml, toast, when } from "./ui.js";
 import { editBudget, toggleEntity } from "./controls.js";
 import { count, dayLabel, money, pct, per, plural, statusOf } from "./format.js";
 
@@ -141,7 +141,6 @@ function toolbar() {
 }
 
 function render() {
-  $("synced").textContent = data.last_sync ? `Updated ${when(data.last_sync)}` : "Not synced yet";
   if (!data.campaigns.length) {
     $("ads").innerHTML = `<section class="panel empty"><h3>No ads yet</h3><p>Once Meta is connected in Settings, your campaigns, ad sets and ads appear here. Use Refresh from Meta after connecting.</p></section>`;
     return;
@@ -223,13 +222,6 @@ if (me) {
       editBudget({ level, id, name: b.dataset.name, current: Number(b.dataset.current) }, load);
     }
   });
-  $("refresh").addEventListener("click", async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    btn.textContent = "Refreshing…";
-    try { await api("/api/ads/sync", { method: "POST" }); toast("Up to date with Meta"); load(); }
-    catch (err) { toast(err.message, "bad"); }
-    finally { btn.disabled = false; btn.textContent = "Refresh from Meta"; }
-  });
+  onRefresh(load);
   load();
 }

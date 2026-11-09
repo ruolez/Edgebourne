@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "projectId": "a79e2035-ccf9-4411-b372-6238b5a87181",
+  "targets": {
+    "/home.html": {
+      "baselineDraftId": "85b035cc-260d-4fcf-9d2e-e3c6ca3c4082",
+      "activeDraftId": "7a40568d-d42e-42b2-9819-ba0c82bd447e",
+      "mobileDraftId": "4f63e377-1f9b-4772-be0f-26caa0b68716",
+      "direction": "A Seal & ledger, Plus Jakarta Sans, Impeccable polish pass, global Refresh button",
+      "sourceFiles": [".superdesign/tmp/a-final-desktop.html", ".superdesign/tmp/a-final-mobile.html"],
+      "contextFiles": [".superdesign/design-system.md", "frontend/home.html", "frontend/js/home.js", "frontend/js/ui.js", "frontend/css/app.css", "frontend/js/format.js"]
+    }
+  },
+  "brandAssets": { "logo": { "assetKey": "frontend-img-favicon.svg", "url": "https://vgbujcuwptvheqijyjbe.supabase.co/storage/v1/object/public/hmac-uploads/projects/a79e2035-ccf9-4411-b372-6238b5a87181/brand-assets/frontend-img-favicon.svg/favicon.svg" } }
+}

@@ -102,6 +102,23 @@ def home():
                            FROM meta_changes m LEFT JOIN users u ON u.id = m.user_id
                            WHERE {cw} ORDER BY m.id DESC LIMIT 6""", lp)
     ads = db.query(f"SELECT effective_status, COUNT(*) AS n FROM ads WHERE {lw} GROUP BY 1", lp)
+    call = db.query(f"""SELECT id, full_name, business_type, ad_name, phone, email, created_time FROM leads
+                        WHERE status = 'new' AND NOT is_test AND {lw}
+                        ORDER BY created_time ASC LIMIT 5""", lp)
+    stages = db.query(f"""SELECT status, COUNT(*) AS n FROM leads
+                          WHERE NOT is_test AND status_changed_at > now() - interval '7 days' AND {lw}
+                          GROUP BY status""", lp)
+    waiting = db.query(f"SELECT COUNT(*) AS n FROM leads WHERE status = 'new' AND NOT is_test AND {lw}", lp, one=True)["n"]
+    bw = "TRUE" if scope_ids is None else "id = ANY(%s)"
+    budget = db.query(f"""SELECT COALESCE(SUM(daily_budget_cents), 0) AS c FROM campaigns
+                          WHERE effective_status = 'ACTIVE' AND {bw}""", lp, one=True)["c"]
+    if not budget:
+        aw = "TRUE" if scope_ids is None else "campaign_id = ANY(%s)"
+        budget = db.query(f"""SELECT COALESCE(SUM(daily_budget_cents), 0) AS c FROM adsets
+                              WHERE effective_status = 'ACTIVE' AND {aw}""", lp, one=True)["c"]
+    strip = [{"id": a["id"], "name": a["name"], "status": a["effective_status"], "thumbnail_url": a.get("thumbnail_url"),
+              "spend_cents": int(a["spend_cents"]), "leads": int(a["leads"])}
+             for a in perf["ads"] if a["effective_status"] not in ("DELETED", "ARCHIVED")][:8]
     out = {
         "attention": attention(user, scope_ids),
         "today": {"spend_cents": sum(r["spend_cents"] for r in today_rows), "leads": sum(r["leads"] for r in today_rows),
@@ -110,11 +127,18 @@ def home():
         "week": {**perf["totals"], "range": perf["range"]},
         "ads": {r["effective_status"] or "UNKNOWN": int(r["n"]) for r in ads},
         "leads": leads,
+        "call": call,
+        "waiting": int(waiting),
+        "stages": {r["status"]: int(r["n"]) for r in stages},
+        "daily_budget_cents": int(budget or 0),
+        "ad_strip": strip,
         "changes": changes,
+        "updated_at": settings_store.get("last_refresh_at") or settings_store.get("last_performance_sync"),
     }
     if user["role"] == "admin":
         out["desk"] = db.query("""SELECT id, kind, prompt, status, summary, finished_at FROM desk_tasks
                                   ORDER BY id DESC LIMIT 3""")
+        out["pending_proposals"] = db.query("SELECT COUNT(*) AS n FROM desk_proposals WHERE status = 'pending'", one=True)["n"]
         out["bridge"] = bridge_status()
         out["cap"] = cap_snapshot()
     return jsonify(out)

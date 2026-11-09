@@ -110,6 +110,19 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
       (await page.textContent('#ad-name')).includes('·') && (await page.textContent('#ad-status')).includes('Off'), await page.textContent('#ad-name'));
   } else results.push('SKIP new-headline proposal — none pending');
 
+  // Refresh: on every page, pulls from Meta, then the page reloads its data and the label updates.
+  await page.goto(BASE + '/ads.html');
+  await page.waitForSelector('.page-head [data-refresh]');
+  await page.click('.page-head [data-refresh]');
+  await page.waitForFunction(() => /Updated just now/.test(document.querySelector('.page-head [data-updated]')?.textContent || ''), null, { timeout: 60000 });
+  check('Refresh pulls from Meta and shows when', true, await page.textContent('.page-head [data-updated]'));
+  const again = await page.evaluate(() => fetch('/api/refresh', { method: 'POST' }).then((r) => r.json()));
+  check('a second Refresh within a minute does not hit Meta again', again.ran === false);
+  for (const p of ['leads', 'performance', 'desk', 'research', 'settings', 'team', 'account']) {
+    await page.goto(`${BASE}/${p}.html`, { waitUntil: 'networkidle' });
+    check(`Refresh is on ${p}`, await page.isVisible('.page-head [data-refresh]'));
+  }
+
   // 5. Approve Claude's on/off proposal from the Desk; decline the budget one.
   await page.goto(BASE + '/desk.html');
   await page.waitForSelector('#tasks .task, #tasks .empty');
@@ -139,6 +152,7 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   await page.goto(BASE + '/home.html');
   await page.waitForSelector('.changes');
   check('Home lists the changes', (await page.textContent('.changes')).includes('Turned off ad'));
+
 
   await browser.close();
   console.log(results.join('\n'));

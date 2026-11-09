@@ -7,3 +7,4 @@ nginx/nginx-ssl.conf
 backups/
 prodcred.md
 ads/qa/out/
+ads/.superdesign/tmp/

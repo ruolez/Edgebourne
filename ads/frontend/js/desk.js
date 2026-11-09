@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, toast, when } from "./ui.js";
+import { boot, esc, onRefresh, toast, when } from "./ui.js";
 import { ACTIVE, taskCard, wireTaskActions } from "./tasks.js";
 
 const $ = (id) => document.getElementById(id);
@@ -148,5 +148,6 @@ if (me) {
   $("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("ask-form").requestSubmit(); });
   wireTaskActions($("tasks"), () => { lastJson = ""; load(); }, openReports);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+  onRefresh(load);
   load();
 }

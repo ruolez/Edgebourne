@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, toast, when } from "./ui.js";
+import { boot, esc, onRefresh, toast, when } from "./ui.js";
 import { barList, columnChart } from "./charts.js";
 import { count, dayLabel, money, pct, per } from "./format.js";
 
@@ -27,7 +27,6 @@ function render(data) {
   const t = data.totals;
   const cpl = t.leads ? t.spend_cents / t.leads : null;
   const noData = !data.ads.length && !t.spend_cents;
-  $("synced").textContent = data.last_sync ? `Updated ${when(data.last_sync)}` : "Not synced yet";
   const alerts = data.alerts.map((a) => `<p class="note ${a.level}" role="status">${esc(a.text)}</p>`).join("");
 
   let cap = "";
@@ -145,16 +144,6 @@ if (me) {
     try { localStorage.setItem("ebads-range", range); } catch (err) {}
     load();
   });
-  if (me.role === "admin") {
-    $("refresh").hidden = false;
-    $("refresh").addEventListener("click", async (e) => {
-      e.currentTarget.disabled = true;
-      try {
-        const r = await api("/api/performance/sync", { method: "POST" });
-        toast(`Refreshed: ${r.ads} ads, ${r.daily_rows} daily rows`);
-        load();
-      } catch (err) { toast(err.message, "bad"); } finally { e.currentTarget.disabled = false; }
-    });
-  }
+  onRefresh(load);
   load();
 }

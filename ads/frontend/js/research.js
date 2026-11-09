@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, toast } from "./ui.js";
+import { boot, esc, onRefresh, toast } from "./ui.js";
 import { ACTIVE, taskCard, wireTaskActions } from "./tasks.js";
 
 const $ = (id) => document.getElementById(id);
@@ -53,5 +53,6 @@ if (me) {
     } catch (err) { toast(err.message, "bad"); }
   });
   wireTaskActions($("tasks"), () => { lastJson = ""; load(); }, openReports);
+  onRefresh(load);
   load();
 }

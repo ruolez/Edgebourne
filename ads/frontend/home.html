@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Home | Edge Bourne Ads</title>
+  <title>Today | Edge Bourne Ads</title>
   <link rel="icon" href="/img/favicon.svg">
   <script src="/js/theme.js"></script>
   <link rel="stylesheet" href="/css/app.css">
@@ -13,10 +13,13 @@
     <aside class="rail"></aside>
     <main class="main">
       <header class="page-head">
+        <p class="kicker-date" id="today-date"></p>
         <h1 id="hello">Today</h1>
-        <span class="perf-head-meta" id="today-date"></span>
+        <span class="spacer"></span>
+        <a class="btn btn-claude-outline" href="/desk.html" id="ask-claude" hidden></a>
+        <a class="btn btn-primary" href="/new-ad.html" id="new-ad"></a>
       </header>
-      <div class="content stack" id="home"></div>
+      <div class="content stack" id="home"><p class="muted">Loading…</p></div>
     </main>
   </div>
   <script type="module" src="/js/home.js"></script>

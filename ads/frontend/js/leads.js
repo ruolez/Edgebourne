@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, icon, phoneDisplay, setNewCount, shortWait, toast, waited, when } from "./ui.js";
+import { boot, esc, icon, onRefresh, phoneDisplay, setNewCount, shortWait, toast, waited, when } from "./ui.js";
 
 const STAGES = [
   { id: "new", label: "New" },
@@ -211,6 +211,7 @@ async function main() {
   });
   showEmptyDetail();
   const fromHash = Number((location.hash.match(/lead=(\d+)/) || [])[1]);
+  onRefresh(() => load());
   await load();
   if (fromHash) select(fromHash, { push: false });
   // New leads appear without a reload; the clocks keep counting.

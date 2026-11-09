@@ -179,6 +179,10 @@ def graph(path):
                  "from": {"name": "Daniel K."}, "like_count": 1, "comment_count": 0},
                 {"id": "c2", "message": "We still do invoices in Excel lol", "created_time": TODAY.isoformat() + "T16:40:00+0000",
                  "from": {"name": "Maria L."}, "like_count": 3, "comment_count": 1}], "summary": {"total_count": 2}})
+        if parts == [PAGE, "leadgen_forms"]:
+            return jsonify({"data": [{"id": "1132280359202136", "name": "EB | Free AI workflow review"}]})
+        if len(parts) == 2 and parts[1] == "leads":
+            return jsonify({"data": []})
         if parts == [PAGE]:
             return jsonify({"id": PAGE, "name": "Edge Bourne Consulting", "access_token": "fake-page-token"})
         if parts == [act, "adimages"]:

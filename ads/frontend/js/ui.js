@@ -22,6 +22,17 @@ const ICONS = {
   table: '<path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
   grid: '<rect x="4" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="4" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
   back: '<path d="M14.5 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  sun: '<circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  refresh: '<path d="M20 11.5A8 8 0 0 0 6.2 6.3L4 8.5M4 4.5v4h4M4 12.5a8 8 0 0 0 13.8 5.2L20 15.5M20 19.5v-4h-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  menu: '<path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  clock: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  alarm: '<circle cx="12" cy="13" r="7.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 9.5V13l2.5 1.5M4 5l3-2.5M20 5l-3-2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  missed: '<path d="M6.6 3.5h3l1.5 4-2 1.3a11 11 0 0 0 6.1 6.1l1.3-2 4 1.5v3c0 1-.8 1.8-1.8 1.8C10.5 19.2 4.8 13.5 4.8 5.3c0-1 .8-1.8 1.8-1.8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M15 3.5l5 5M20 3.5l-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  power: '<path d="M12 3.5v8M7.3 6.6a7 7 0 1 0 9.4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  made: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  moon: '<path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
+  logout: '<path d="M14 4.5h4.5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H14M10 16l4-4-4-4M14 12H4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  user: '<circle cx="12" cy="8.5" r="3.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 20c1-3.6 4-5.5 7.5-5.5s6.5 1.9 7.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
 };
 export const icon = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 
@@ -85,6 +96,75 @@ export function applyTheme(t) {
 const themeLabel = (t) => ({ system: "Theme: auto", light: "Theme: light", dark: "Theme: dark" }[t]);
 
 // ---------- frame ----------
+// Desktop: light sidebar. Phone: top bar + bottom tab bar + "More" sheet.
+// Every page gets the Refresh control; a page hands its reload to onRefresh(fn).
+let refreshHandler = null;
+let updatedAt = null;
+let clockSkew = 0;
+export function onRefresh(fn) { refreshHandler = fn; }
+
+export function ago(ts, now = Date.now() / 1000) {
+  if (!ts) return "not yet";
+  const s = Math.max(0, Math.round(now - ts));
+  if (s < 45) return "just now";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} h ago`;
+  return `${Math.round(h / 24)} d ago`;
+}
+
+function paintUpdated() {
+  const text = updatedAt ? `Updated ${ago(updatedAt, Date.now() / 1000 + clockSkew)}` : "Not refreshed yet";
+  document.querySelectorAll("[data-updated]").forEach((el) => { el.textContent = text; });
+  document.querySelectorAll("[data-refresh]").forEach((b) => b.setAttribute("aria-label", `Refresh. ${text}`));
+}
+
+async function doRefresh() {
+  const buttons = document.querySelectorAll("[data-refresh]");
+  buttons.forEach((b) => { b.disabled = true; b.classList.add("busy"); });
+  try {
+    const r = await api("/api/refresh", { method: "POST" });
+    updatedAt = r.updated_at;
+    clockSkew = r.server_now ? r.server_now - Date.now() / 1000 : 0;
+    if (r.ran) toast(r.new_leads ? `Up to date. ${r.new_leads} new lead${r.new_leads === 1 ? "" : "s"} found.` : "Up to date with Meta");
+    else if (r.busy) toast("Already refreshing, one moment");
+    if (refreshHandler) await refreshHandler(); else location.reload();
+    frameStatus();
+  } catch (err) {
+    toast(err.message, "bad");
+  } finally {
+    buttons.forEach((b) => { b.disabled = false; b.classList.remove("busy"); });
+    paintUpdated();
+  }
+}
+
+async function frameStatus() {
+  try {
+    const st = await api("/api/refresh");
+    updatedAt = st.updated_at;
+    clockSkew = st.server_now ? st.server_now - Date.now() / 1000 : 0;
+    setNewCount(st.new_leads || 0);
+    document.querySelectorAll("[data-claude-count]").forEach((el) => { el.hidden = !st.proposals; el.textContent = st.proposals || ""; });
+    const cap = st.cap;
+    const card = document.getElementById("cap-card");
+    if (card && cap && cap.limit_cents) {
+      const used = Math.min(cap.spent_cents / cap.limit_cents, 1);
+      const $$ = (c) => { const d = c % 100 ? 2 : 0; return `$${(c / 100).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })}`; };
+      card.hidden = false;
+      card.innerHTML = `<span class="cap-top"><span>Spending limit</span><b>${$$(cap.spent_cents)} / ${$$(cap.limit_cents)}</b></span>
+        <span class="bar ${used >= 1 ? "bad" : used >= 0.8 ? "warn" : ""}"><i data-w="${(used * 100).toFixed(1)}"></i></span>
+        <small>${cap.remaining_cents <= 0 ? "Reached: every ad is paused" : `${$$(cap.remaining_cents)} left before ads pause`}</small>`;
+      card.querySelectorAll("[data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
+    }
+  } catch (e) { /* the frame works without it */ }
+  paintUpdated();
+}
+
+function refreshButton() {
+  return `<button type="button" class="refresh" data-refresh title="Get the latest from Meta">${icon("refresh")}<span class="r-text"><b>Refresh</b><small data-updated>…</small></span></button>`;
+}
+
 export async function boot({ page, admin = false }) {
   let me;
   try { me = await api("/api/auth/me"); } catch (e) { return null; }
@@ -94,53 +174,111 @@ export async function boot({ page, admin = false }) {
     return null;
   }
   if (admin && me.role !== "admin") { location.href = "/home.html"; return null; }
-  const links = [
-    { id: "home", href: "/home.html", label: "Home", icon: "home" },
-    { id: "leads", href: "/leads.html", label: "Leads", icon: "leads" },
+  const isAdmin = me.role === "admin";
+  const main = [
+    { id: "home", href: "/home.html", label: "Today", icon: "sun" },
+    { id: "leads", href: "/leads.html", label: "Leads", icon: "leads", badge: "leads" },
     { id: "ads", href: "/ads.html", label: "Ads", icon: "ads" },
-    { id: "performance", href: "/performance.html", label: "Performance", icon: "chart" },
-    ...(me.role === "admin" ? [
-      { id: "desk", href: "/desk.html", label: "Desk", icon: "spark" },
-      { id: "research", href: "/research.html", label: "Research", icon: "research" },
-      { id: "team", href: "/team.html", label: "Team", icon: "team" },
-      { id: "settings", href: "/settings.html", label: "Settings", icon: "settings" },
-    ] : []),
+    { id: "performance", href: "/performance.html", label: "Results", icon: "chart" },
   ];
-  const rail = document.querySelector(".rail");
+  const extra = isAdmin ? [
+    { id: "desk", href: "/desk.html", label: "Claude", icon: "spark", badge: "claude" },
+    { id: "research", href: "/research.html", label: "Research", icon: "research" },
+  ] : [];
+  const admin2 = isAdmin ? [
+    { id: "team", href: "/team.html", label: "Team", icon: "team" },
+    { id: "settings", href: "/settings.html", label: "Settings", icon: "settings" },
+  ] : [];
+  const badge = (b) => b === "leads" ? '<span class="count" data-new-count hidden></span>'
+    : b === "claude" ? '<span class="count claude" data-claude-count hidden></span>' : "";
+  const link = (l) => `<a href="${l.href}" ${l.id === page ? 'aria-current="page"' : ""}>${icon(l.icon)}<span class="label">${l.label}</span>${badge(l.badge)}</a>`;
   const initials = me.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+
+  const rail = document.querySelector(".rail");
   rail.innerHTML = `
     <a class="brand" href="/home.html"><img src="/img/favicon.svg" alt=""><span>Edge Bourne Ads</span></a>
     <nav class="nav" aria-label="Main">
-      ${links.map((l) => `<a href="${l.href}" ${l.id === page ? 'aria-current="page"' : ""}>${icon(l.icon)}<span class="label">${l.label}</span>${l.id === "leads" ? '<span class="count" id="nav-new" hidden></span>' : ""}</a>`).join("")}
+      ${[...main, ...extra].map(link).join("")}
+      ${admin2.length ? `<div class="sep" role="separator"></div>${admin2.map(link).join("")}` : ""}
     </nav>
     <div class="rail-foot">
+      ${isAdmin ? '<a class="cap-card" id="cap-card" href="/performance.html" hidden></a>' : ""}
       <a class="me" href="/account.html" ${page === "account" ? 'aria-current="page"' : ""}>
         <span class="avatar" aria-hidden="true">${esc(initials)}</span>
-        <span class="who"><b>${esc(me.name)}</b><small>${me.role === "admin" ? "Admin" : "Team member"}</small></span>
+        <span class="who"><b>${esc(me.name)}</b><small>${isAdmin ? "Admin" : "Team member"}</small></span>
       </a>
       <div class="rail-actions">
-        <button type="button" id="theme-btn">${themeLabel(currentTheme())}</button>
-        <button type="button" id="signout-btn">Sign out</button>
+        <button type="button" data-theme-btn>${themeLabel(currentTheme())}</button>
+        <button type="button" data-signout>Sign out</button>
       </div>
     </div>`;
-  document.getElementById("theme-btn").addEventListener("click", (e) => {
+
+  const app = document.querySelector(".app");
+  const titles = { home: "Today", leads: "Leads", ads: "Ads", ad: "Ad", "new-ad": "New ad", performance: "Results", desk: "Claude", research: "Research", team: "Team", settings: "Settings", account: "Your account" };
+  const top = document.createElement("header");
+  top.className = "topbar";
+  top.innerHTML = `<a class="brand" href="/home.html"><img src="/img/favicon.svg" alt="Edge Bourne"><span>${esc(titles[page] || "Edge Bourne Ads")}</span></a>
+    <button type="button" class="icon-btn" data-refresh>${icon("refresh")}</button>
+    <a class="icon-btn" href="/account.html" aria-label="Your account"><span class="avatar">${esc(initials)}</span></a>`;
+  app.prepend(top);
+
+  const inMore = [...extra, ...admin2].some((l) => l.id === page) || page === "account";
+  const tabs = document.createElement("nav");
+  tabs.className = "tabbar";
+  tabs.setAttribute("aria-label", "Main");
+  tabs.innerHTML = `${main.map((l) => `<a href="${l.href}" ${l.id === page || (l.id === "ads" && (page === "ad" || page === "new-ad")) ? 'aria-current="page"' : ""}>${icon(l.icon)}<span>${l.label}</span>${l.badge === "leads" ? '<span class="count" data-new-count hidden></span>' : ""}</a>`).join("")}
+    <button type="button" data-more ${inMore ? 'aria-current="page"' : ""}>${icon("menu")}<span>More</span></button>`;
+  app.append(tabs);
+
+  const sheet = document.createElement("dialog");
+  sheet.className = "sheet";
+  sheet.setAttribute("aria-label", "More");
+  sheet.innerHTML = `<div class="grab"></div><nav>
+      ${[...extra, ...admin2].map((l) => `<a href="${l.href}" ${l.id === page ? 'aria-current="page"' : ""}>${icon(l.icon)}${l.label}${badge(l.badge)}</a>`).join("")}
+      <a href="/account.html" ${page === "account" ? 'aria-current="page"' : ""}>${icon("user")}Your account</a>
+      <div class="sep"></div>
+      <button type="button" class="item" data-theme-btn>${icon("moon")}<span>${themeLabel(currentTheme())}</span></button>
+      <button type="button" class="item" data-signout>${icon("logout")}Sign out</button>
+    </nav>`;
+  document.body.append(sheet);
+  tabs.querySelector("[data-more]").addEventListener("click", () => sheet.showModal());
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) sheet.close(); });
+
+  // Refresh: in the page header on desktop, in the top bar on phones.
+  const head = document.querySelector(".page-head");
+  if (head && !head.querySelector(".refresh")) {
+    const spacer = head.querySelector(".spacer");
+    const tmp = document.createElement("div");
+    tmp.innerHTML = refreshButton();
+    if (spacer) spacer.after(tmp.firstElementChild);
+    else { const sp = document.createElement("span"); sp.className = "spacer"; head.append(sp, tmp.firstElementChild); }
+  }
+  document.querySelectorAll("[data-refresh]").forEach((b) => b.addEventListener("click", doRefresh));
+
+  document.querySelectorAll("[data-theme-btn]").forEach((b) => b.addEventListener("click", () => {
     const next = THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length];
     applyTheme(next);
-    e.currentTarget.textContent = themeLabel(next);
-  });
-  document.getElementById("signout-btn").addEventListener("click", async () => {
+    document.querySelectorAll("[data-theme-btn]").forEach((x) => {
+      const span = x.querySelector("span");
+      (span || x).textContent = themeLabel(next);
+    });
+  }));
+  document.querySelectorAll("[data-signout]").forEach((b) => b.addEventListener("click", async () => {
     await api("/api/auth/logout", { method: "POST" });
     location.href = "/login.html";
-  });
+  }));
+
+  frameStatus();
+  setInterval(paintUpdated, 30000);
   return me;
 }
 
 export function setNewCount(n) {
-  const el = document.getElementById("nav-new");
-  if (!el) return;
-  el.hidden = !n;
-  el.textContent = n;
-  el.setAttribute("aria-label", `${n} new`);
+  document.querySelectorAll("[data-new-count]").forEach((el) => {
+    el.hidden = !n;
+    el.textContent = n;
+    el.setAttribute("aria-label", `${n} new`);
+  });
 }
 
 export function fieldError(form, name, message) {

@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, icon, shortWait, switchHtml, toast, when } from "./ui.js";
+import { boot, confirmDialog, esc, icon, onRefresh, shortWait, switchHtml, toast, when } from "./ui.js";
 import { CTA_LABELS, count, money, pct, per, statusOf } from "./format.js";
 import { barList, columnChart } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
@@ -408,5 +408,6 @@ if (me) {
     }
   });
   wireTaskActions(document.querySelector(".main"), load, openReports);
+  onRefresh(load);
   load();
 }
