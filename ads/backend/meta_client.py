@@ -18,9 +18,12 @@ class MetaError(Exception):
         self.status = status
 
 
-def _base():
+def _base(video=False):
+    if config.META_GRAPH_BASE:
+        return config.META_GRAPH_BASE
     version = settings_store.get("meta_graph_version") or config.GRAPH_VERSION_DEFAULT
-    return f"https://graph.facebook.com/{version}"
+    # Meta documents chunked video uploads on its own host.
+    return f"https://graph{'-video' if video else ''}.facebook.com/{version}"
 
 
 def system_token():
@@ -30,11 +33,11 @@ def system_token():
     return token
 
 
-def _call(method, path, token, params=None, data=None):
+def _call(method, path, token, params=None, data=None, files=None, timeout=TIMEOUT, video=False):
     params = dict(params or {})
     params["access_token"] = token
-    resp = requests.request(method, f"{_base()}/{path.lstrip('/')}", params=params, data=data,
-                            timeout=TIMEOUT)
+    resp = requests.request(method, f"{_base(video)}/{path.lstrip('/')}", params=params, data=data,
+                            files=files, timeout=timeout)
     try:
         body = resp.json()
     except ValueError:
@@ -50,8 +53,9 @@ def get(path, token=None, **params):
     return _call("GET", path, token or system_token(), params=params)
 
 
-def post(path, token=None, data=None, **params):
-    return _call("POST", path, token or system_token(), params=params, data=data)
+def post(path, token=None, data=None, files=None, timeout=TIMEOUT, video=False, **params):
+    return _call("POST", path, token or system_token(), params=params, data=data, files=files,
+                 timeout=timeout, video=video)
 
 
 def page_token(page_id=None):

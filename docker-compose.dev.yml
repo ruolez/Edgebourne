@@ -6,6 +6,7 @@ services:
     volumes:
       - ./ads/nginx/ads.conf:/etc/nginx/conf.d/zz-ads.conf:ro
       - ./ads/frontend:/srv/ads:ro
+      - ./ads/dev/media:/srv/dev-media:ro
 
   ads-backend:
     volumes:
@@ -13,6 +14,17 @@ services:
     environment:
       - GUNICORN_RELOAD=1
       - APP_BASE_URL=http://ads.localhost:${APP_PORT:-8090}
+      # Talk to the fake Graph API below instead of Meta. To use real Meta locally, set
+      # ADS_FAKE_META_BASE=https://graph.facebook.com/v24.0 in .env.
+      - META_GRAPH_BASE=${ADS_FAKE_META_BASE:-http://fake-meta:5001/v24.0}
+
+  # Local stand-in for the Meta Graph API (ads/dev/fake_meta.py).
+  fake-meta:
+    build: ./ads/backend
+    container_name: edgebourne-fake-meta
+    command: ["python", "/dev-tools/fake_meta.py"]
+    volumes:
+      - ./ads/dev:/dev-tools:ro
 
   backend:
     volumes:

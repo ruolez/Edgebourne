@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New ad | Edge Bourne Ads</title>
+  <link rel="icon" href="/img/favicon.svg">
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail"></aside>
+    <main class="main">
+      <header class="page-head">
+        <a class="crumb" href="/ads.html" id="crumb"></a>
+        <h1>New ad</h1>
+      </header>
+      <div class="content new-ad-layout">
+        <form class="stack" id="new-form" novalidate>
+          <section class="panel step">
+            <div class="panel-head"><span class="step-n">1</span><h2>Where</h2></div>
+            <div class="panel-body stack tight">
+              <div class="grid-2">
+                <div class="field"><label for="adset">Ad set</label><select class="input" id="adset" name="adset_id"></select><span class="hint">Who sees it and the budget it shares.</span></div>
+                <div class="field"><label for="template">Start from</label><select class="input" id="template" name="template_ad_id"></select><span class="hint">Copies its button and lead form. You replace the media and words.</span></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel step">
+            <div class="panel-head"><span class="step-n">2</span><h2>Image or video</h2></div>
+            <div class="panel-body stack tight">
+              <div class="segmented" id="media-tabs" role="tablist">
+                <button type="button" role="tab" data-tab="upload" aria-pressed="true">Upload</button>
+                <button type="button" role="tab" data-tab="library" aria-pressed="false">From your library</button>
+              </div>
+              <div id="tab-upload">
+                <label class="drop" id="drop">
+                  <input type="file" id="file" accept="image/jpeg,image/png,video/mp4,video/quicktime" class="sr-only">
+                  <span class="drop-icon" id="drop-icon"></span>
+                  <b>Drop an image or video here, or choose a file</b>
+                  <span class="muted small">JPG or PNG up to 30 MB · MP4 or MOV up to 250 MB · 4:5 or 9:16 works best</span>
+                </label>
+                <div class="progress-bar" id="up-progress" hidden><i></i><span></span></div>
+              </div>
+              <div id="tab-library" hidden><div class="media-grid" id="library"><p class="muted">Loading…</p></div></div>
+              <div class="chosen" id="chosen" hidden></div>
+            </div>
+          </section>
+
+          <section class="panel step">
+            <div class="panel-head"><span class="step-n">3</span><h2>Words</h2></div>
+            <div class="panel-body stack tight">
+              <div class="field"><label for="body">Primary text</label><textarea class="input" id="body" name="body" rows="6"></textarea><span class="hint" id="body-count"></span></div>
+              <div class="grid-2">
+                <div class="field"><label for="title">Headline</label><input class="input" id="title" name="title" maxlength="255"><span class="hint" id="title-count"></span></div>
+                <div class="field"><label for="cta">Button</label><select class="input" id="cta" name="cta_type"></select></div>
+              </div>
+              <div class="field"><label for="name">Ad name <span class="muted">(only you see this)</span></label><input class="input" id="name" name="name" maxlength="200" placeholder="N6 - What it's about"></div>
+            </div>
+          </section>
+
+          <div class="row create-row">
+            <button class="btn btn-primary" type="submit" id="create">Create ad (off)</button>
+            <span class="muted small">It's created switched off. You'll see Meta's previews next, and turn it on when you're happy.</span>
+          </div>
+        </form>
+
+        <aside class="stack tips">
+          <section class="panel"><div class="panel-body stack tight">
+            <b>What works on Meta</b>
+            <ul class="tip-list">
+              <li>Vertical media (4:5 for feeds, 9:16 for Stories and Reels). Keep text away from the top and bottom 14%.</li>
+              <li>Hook in the first second; most people watch muted, so put the words on screen.</li>
+              <li>The first ~125 characters of the primary text show before "See more": lead with the problem.</li>
+              <li>Headlines read best under 40 characters.</li>
+              <li>A genuinely different idea beats a small variation of one that's running.</li>
+            </ul>
+          </div></section>
+          <section class="panel" id="claude-tip" hidden><div class="panel-body stack tight">
+            <b>Want ideas first?</b>
+            <p class="flush muted small">Ask Claude for new concepts with copy, based on what's working.</p>
+            <a class="btn btn-claude" href="/desk.html?kind=creative">Ask Claude for ad ideas</a>
+          </div></section>
+        </aside>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="/js/new-ad.js"></script>
+</body>
+</html>

@@ -80,6 +80,12 @@ some other way.
    `proposed_value` (budgets in dollars per day, e.g. "$20/day"), `rationale` (with the
    numbers), `expected`, `rollback` (the exact previous value). Respect the workspace rules:
    one budget change per campaign, ≥ 3 days apart, ≤ +20%.
+   Eugene approves proposals in the dashboard, and two kinds are then applied on Meta with
+   one click, so write them exactly: **status** = `entity_id` (the real Meta id of the
+   campaign, ad set or ad) + `proposed_value` `PAUSED` or `ACTIVE`; **budget** = `entity_id`
+   of the campaign or ad set that holds the daily budget (Edge Bourne: the campaign) +
+   `proposed_value` like `$24/day`. Anything else (new creative, targeting, copy) is recorded
+   when approved and needs a later step, so say what that step is in `expected`.
 7. `desk done <id> --summary "<one or two sentences>"`. If you can't finish (Meta down, no
    data, a tool refused), `desk fail <id> --error "<what happened and what would fix it>"`
    rather than stopping silently.

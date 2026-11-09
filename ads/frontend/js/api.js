@@ -13,7 +13,7 @@ export async function api(path, { method = "GET", body } = {}) {
   let data = null;
   try { data = await res.json(); } catch (e) { data = null; }
   if (res.status === 401 && !path.startsWith("/api/auth/login")) {
-    location.href = "/login.html?next=" + encodeURIComponent(location.pathname + location.hash);
+    location.href = "/login.html?next=" + encodeURIComponent(location.pathname + location.search + location.hash);
     throw new ApiError("Sign in to continue", 401, data);
   }
   if (!res.ok) throw new ApiError((data && data.error) || `Request failed (${res.status})`, res.status, data);

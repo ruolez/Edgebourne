@@ -1,19 +1,12 @@
 import { api } from "./api.js";
 import { boot, esc, toast, when } from "./ui.js";
+import { columnChart } from "./charts.js";
+import { count, dayLabel, money, pct, per } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
 let range = "7";
 try { range = localStorage.getItem("ebads-range") || "7"; } catch (e) {}
-
-const money = (cents, { exact = false } = {}) => {
-  const v = (cents || 0) / 100;
-  return v.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: exact || v < 100 ? 2 : 0, maximumFractionDigits: exact || v < 100 ? 2 : 0 });
-};
-const count = (n) => Number(n || 0).toLocaleString();
-const per = (cents, n) => (n ? money(cents / n, { exact: true }) : "—");
-const pct = (a, b) => (b ? `${((a / b) * 100).toFixed(2)}%` : "—");
-const dayLabel = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
 const STATUS = {
   ACTIVE: ["ok", "Running"], PAUSED: ["", "Paused"], CAMPAIGN_PAUSED: ["", "Campaign paused"],
@@ -22,57 +15,6 @@ const STATUS = {
   PENDING_BILLING_INFO: ["bad", "Needs billing"],
 };
 const statusPill = (s) => { const [k, l] = STATUS[s] || ["", (s || "Unknown").toLowerCase()]; return `<span class="pill ${k}">${esc(l)}</span>`; };
-
-// Clean tick steps (1, 2, 2.5, 5 × 10^n) so the axis reads in round numbers.
-function niceMax(max, ticks = 4, integer = false) {
-  if (max <= 0) return { top: ticks, step: 1 };
-  const raw = max / ticks;
-  const mag = 10 ** Math.floor(Math.log10(raw));
-  let step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw);
-  if (integer) step = Math.max(1, Math.ceil(step));
-  return { top: step * Math.ceil(max / step), step };
-}
-
-function columnChart({ el, series, key, color, format, axisFormat, title, integer = false }) {
-  const W = 560, H = 220, L = 52, R = 8, T = 10, B = 26;
-  const values = series.map((d) => d[key]);
-  const { top, step } = niceMax(Math.max(...values, 0), 4, integer);
-  const plotW = W - L - R, plotH = H - T - B;
-  const band = plotW / series.length;
-  const bw = Math.min(24, Math.max(4, band - 2));
-  const y = (v) => T + plotH - (v / top) * plotH;
-  let grid = "", ticks = "";
-  for (let v = 0; v <= top + 1e-9; v += step) {
-    grid += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`;
-    ticks += `<text class="tick" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${axisFormat(v)}</text>`;
-  }
-  const every = Math.ceil(series.length / 6);
-  const cols = series.map((d, i) => {
-    const x = L + i * band + (band - bw) / 2;
-    const h = (d[key] / top) * plotH;
-    const r = Math.min(4, h);
-    // 4px rounded data-end, square at the baseline.
-    const path = h <= 0 ? "" : `M${x},${T + plotH} V${T + plotH - h + r} Q${x},${T + plotH - h} ${x + r},${T + plotH - h} H${x + bw - r} Q${x + bw},${T + plotH - h} ${x + bw},${T + plotH - h + r} V${T + plotH} Z`;
-    const label = i % every === 0 || i === series.length - 1 ? `<text class="tick" x="${L + i * band + band / 2}" y="${H - 6}" text-anchor="middle">${dayLabel(d.day)}</text>` : "";
-    return `<rect class="hit" data-i="${i}" x="${L + i * band}" y="${T}" width="${band}" height="${plotH}"/><path class="col" data-i="${i}" d="${path}" fill="${color}"/>${label}`;
-  }).join("");
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}"><g class="grid">${grid}</g>${ticks}${cols}</svg><div class="tip" hidden></div>`;
-  const tip = el.querySelector(".tip");
-  const svg = el.querySelector("svg");
-  el.querySelectorAll(".hit").forEach((hit) => {
-    hit.addEventListener("mouseenter", () => {
-      const i = Number(hit.dataset.i);
-      const d = series[i];
-      const box = svg.getBoundingClientRect();
-      const scale = box.width / W;
-      tip.innerHTML = `${format(d[key])}<small>${dayLabel(d.day)}</small>`;
-      tip.style.left = `${(L + i * band + band / 2) * scale}px`;
-      tip.style.top = `${y(d[key]) * scale}px`;
-      tip.hidden = false;
-    });
-    hit.addEventListener("mouseleave", () => { tip.hidden = true; });
-  });
-}
 
 function yesterdayLine(y) {
   if (!y) return "";

@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { boot, esc, toast, when } from "./ui.js";
-import { renderMarkdown } from "./markdown.js";
+import { ACTIVE, taskCard, wireTaskActions } from "./tasks.js";
 
 const $ = (id) => document.getElementById(id);
 const KINDS = {
@@ -9,12 +9,6 @@ const KINDS = {
   research: { label: "Research competitors", placeholder: "Who or what to research? e.g. What are IT consultants and software agencies in Southern California running on Facebook right now?" },
   creative: { label: "New ad ideas", placeholder: "What should the new ads do? e.g. Three new concepts for restaurant owners, same free intro call offer." },
 };
-const STATUS = {
-  queued: ["warn", "Waiting for your Mac"], claimed: ["claude", "Claude picked it up"], running: ["claude", "Claude is working"],
-  done: ["ok", "Done"], failed: ["bad", "Didn't finish"], cancelled: ["", "Cancelled"],
-};
-const ACTIVE = new Set(["queued", "claimed", "running"]);
-
 let kind = "question";
 let data = null;
 let pollTimer;
@@ -99,56 +93,13 @@ function renderMac(bridge) {
   });
 }
 
-function proposalCard(p) {
-  const change = p.field || p.current_value || p.proposed_value
-    ? `<div><dt>Change</dt><dd>${esc(p.field || "")}${p.field ? ": " : ""}${esc(p.current_value || "—")} → <b>${esc(p.proposed_value || "—")}</b></dd></div>` : "";
-  const row = (label, v) => (v ? `<div><dt>${label}</dt><dd>${esc(v)}</dd></div>` : "");
-  return `<article class="proposal">
-    <header><span class="tag">${esc(p.kind)}</span><b>${esc(p.title)}</b></header>
-    <dl class="facts">
-      ${row("On", [p.entity_type, p.entity_name].filter(Boolean).join(" · "))}
-      ${change}${row("Why", p.rationale)}${row("Expected", p.expected)}${row("Undo", p.rollback)}
-    </dl>
-  </article>`;
-}
-
-function taskCard(t) {
-  const [cls, label] = STATUS[t.status] || ["", t.status];
-  const meta = [KINDS[t.kind]?.label || t.kind, t.campaign_name, when(t.created_at), t.created_by_name].filter(Boolean).map(esc).join(" · ");
-  const working = ACTIVE.has(t.status) && t.status !== "queued" && t.progress ? `<p class="progress"><span class="dot" aria-hidden="true"></span>${esc(t.progress)}</p>` : "";
-  const reports = t.reports.map((r) => `
-    <details class="report" data-report="${r.id}" ${openReports.has(r.id) ? "open" : ""}>
-      <summary>${esc(r.title)}</summary>
-      <div class="md">${renderMarkdown(r.body)}</div>
-    </details>`).join("");
-  const proposals = t.proposals.length ? `
-    <div class="proposals stack tight">
-      <p class="muted small flush">Claude's proposals. Approving and applying them arrives with Controls (next phase); until then, nothing changes unless you do it yourself or say yes in Claude Code.</p>
-      ${t.proposals.map(proposalCard).join("")}
-    </div>` : "";
-  const actions = [
-    t.status === "queued" ? `<button class="btn btn-small" type="button" data-cancel="${t.id}">Cancel</button>` : "",
-    ["failed", "cancelled", "done"].includes(t.status) ? `<button class="btn btn-small" type="button" data-again="${t.id}">Ask again</button>` : "",
-  ].join("");
-  return `<article class="panel task ${t.status}">
-    <div class="panel-body stack tight">
-      <header class="task-head"><span class="pill ${cls}">${esc(label)}</span><span class="muted small">${meta}</span><span class="spacer"></span>${actions}</header>
-      <p class="prompt">${esc(t.prompt)}</p>
-      ${working}
-      ${t.summary ? `<p class="summary">${esc(t.summary)}</p>` : ""}
-      ${t.error ? `<p class="note bad flush">${esc(t.error)}</p>` : ""}
-      ${reports}${proposals}
-    </div>
-  </article>`;
-}
-
 function renderTasks() {
   const el = $("tasks");
   if (!data.tasks.length) {
     el.innerHTML = `<section class="panel empty"><h3>Nothing asked yet</h3><p>Pick a kind of help above and write a direction in your own words. Claude answers with a report, and with proposals when something should change.</p></section>`;
     return;
   }
-  el.innerHTML = data.tasks.map(taskCard).join("");
+  el.innerHTML = data.tasks.map((t) => taskCard(t, openReports)).join("");
 }
 
 async function load() {
@@ -164,7 +115,8 @@ async function load() {
     const sel = $("campaign");
     const keep = sel.value;
     sel.innerHTML = '<option value="">All campaigns</option>' + data.campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
-    sel.value = keep;
+    sel.value = keep || sel.dataset.want || "";
+    delete sel.dataset.want;
     const json = JSON.stringify(data.tasks);
     if (json !== lastJson) { lastJson = json; renderTasks(); }
   } catch (err) { toast(err.message, "bad"); }
@@ -175,7 +127,10 @@ async function load() {
 
 const me = await boot({ page: "desk", admin: true });
 if (me) {
-  setKind("question");
+  const q = new URLSearchParams(location.search);
+  setKind(KINDS[q.get("kind")] ? q.get("kind") : "question");
+  if (q.get("ask")) { $("prompt").value = q.get("ask"); $("prompt").focus(); }
+  if (q.get("campaign")) $("campaign").dataset.want = q.get("campaign");
   $("kinds").addEventListener("click", (e) => { const b = e.target.closest("button[data-kind]"); if (b) setKind(b.dataset.kind); });
   $("ask-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -191,20 +146,7 @@ if (me) {
     } catch (err) { toast(err.message, "bad"); } finally { btn.disabled = false; }
   });
   $("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("ask-form").requestSubmit(); });
-  $("tasks").addEventListener("click", async (e) => {
-    const cancel = e.target.closest("[data-cancel]");
-    const again = e.target.closest("[data-again]");
-    try {
-      if (cancel) { await api(`/api/desk/tasks/${cancel.dataset.cancel}/cancel`, { method: "POST" }); toast("Cancelled"); load(); }
-      if (again) { await api(`/api/desk/tasks/${again.dataset.again}/again`, { method: "POST" }); toast("Asked again"); load(); }
-    } catch (err) { toast(err.message, "bad"); }
-  });
-  $("tasks").addEventListener("toggle", (e) => {
-    const d = e.target.closest("details[data-report]");
-    if (!d) return;
-    const id = Number(d.dataset.report);
-    if (d.open) openReports.add(id); else openReports.delete(id);
-  }, true);
+  wireTaskActions($("tasks"), () => { lastJson = ""; load(); }, openReports);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
   load();
 }

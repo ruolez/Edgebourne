@@ -10,6 +10,14 @@ const ICONS = {
   search: '<circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
   chart: '<path d="M4 20V10M10 20V4M16 20v-7M21 20H3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
   spark: '<path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" fill="currentColor"/>',
+  home: '<path d="M4 11l8-6.5 8 6.5V20h-5.5v-5h-5v5H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
+  ads: '<rect x="3.5" y="4.5" width="7" height="8.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13.5" y="4.5" width="7" height="8.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 17h7M3.5 20h4.5M13.5 17h7M13.5 20h4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  research: '<circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15 15l5 5M8 10.5h5M10.5 8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>',
+  plus: '<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 5.5V5a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 5v8A1.5 1.5 0 0 0 6 14.5h.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+  external: '<path d="M14 4.5h5.5V10M19.5 4.5L11 13M17 14v4.5a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1H10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  upload: '<path d="M12 15.5V4.5M7.5 9L12 4.5 16.5 9M4.5 15v3.5a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1V15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
   back: '<path d="M14.5 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 export const icon = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
@@ -81,12 +89,15 @@ export async function boot({ page, admin = false }) {
     location.href = "/account.html?first=1";
     return null;
   }
-  if (admin && me.role !== "admin") { location.href = "/leads.html"; return null; }
+  if (admin && me.role !== "admin") { location.href = "/home.html"; return null; }
   const links = [
+    { id: "home", href: "/home.html", label: "Home", icon: "home" },
     { id: "leads", href: "/leads.html", label: "Leads", icon: "leads" },
+    { id: "ads", href: "/ads.html", label: "Ads", icon: "ads" },
     { id: "performance", href: "/performance.html", label: "Performance", icon: "chart" },
     ...(me.role === "admin" ? [
       { id: "desk", href: "/desk.html", label: "Desk", icon: "spark" },
+      { id: "research", href: "/research.html", label: "Research", icon: "research" },
       { id: "team", href: "/team.html", label: "Team", icon: "team" },
       { id: "settings", href: "/settings.html", label: "Settings", icon: "settings" },
     ] : []),
@@ -94,7 +105,7 @@ export async function boot({ page, admin = false }) {
   const rail = document.querySelector(".rail");
   const initials = me.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   rail.innerHTML = `
-    <a class="brand" href="/leads.html"><img src="/img/favicon.svg" alt=""><span>Edge Bourne Ads</span></a>
+    <a class="brand" href="/home.html"><img src="/img/favicon.svg" alt=""><span>Edge Bourne Ads</span></a>
     <nav class="nav" aria-label="Main">
       ${links.map((l) => `<a href="${l.href}" ${l.id === page ? 'aria-current="page"' : ""}>${icon(l.icon)}<span class="label">${l.label}</span>${l.id === "leads" ? '<span class="count" id="nav-new" hidden></span>' : ""}</a>`).join("")}
     </nav>
@@ -142,3 +153,45 @@ export function fieldError(form, name, message) {
   field.appendChild(err);
   input.focus();
 }
+
+// ---------- confirm dialog ----------
+// confirmDialog({ title, body (HTML), confirm, danger, field }) → Promise<false | true | field value>.
+// `field` = { label, value, prefix, suffix, inputmode, validate(v) → error|null, hint(v) → html } adds one input.
+export function confirmDialog({ title, body = "", confirm = "Confirm", danger = false, claude = false, field = null }) {
+  return new Promise((resolve) => {
+    const dlg = document.createElement("dialog");
+    dlg.className = "confirm";
+    dlg.innerHTML = `<form method="dialog" novalidate>
+      <h2>${esc(title)}</h2>
+      ${body ? `<div class="confirm-body">${body}</div>` : ""}
+      ${field ? `<div class="field"><label for="cd-input">${esc(field.label)}</label>
+        <div class="affix">${field.prefix ? `<span>${esc(field.prefix)}</span>` : ""}<input class="input" id="cd-input" inputmode="${field.inputmode || "text"}" value="${esc(field.value ?? "")}" autocomplete="off">${field.suffix ? `<span>${esc(field.suffix)}</span>` : ""}</div>
+        <span class="hint" id="cd-hint"></span><span class="err" id="cd-err" hidden></span></div>` : ""}
+      <div class="row end"><button class="btn" type="button" value="cancel" id="cd-cancel">Cancel</button>
+        <button class="btn ${danger ? "btn-danger" : claude ? "btn-claude" : "btn-primary"}" type="submit" id="cd-ok">${esc(confirm)}</button></div>
+    </form>`;
+    document.body.appendChild(dlg);
+    const input = dlg.querySelector("#cd-input");
+    const hint = dlg.querySelector("#cd-hint");
+    const err = dlg.querySelector("#cd-err");
+    const refresh = () => { if (field && field.hint) hint.innerHTML = field.hint(input.value); };
+    if (input) { input.addEventListener("input", () => { err.hidden = true; refresh(); }); refresh(); }
+    let result = false;
+    dlg.querySelector("#cd-cancel").addEventListener("click", () => dlg.close());
+    dlg.querySelector("form").addEventListener("submit", (e) => {
+      if (field) {
+        const problem = field.validate ? field.validate(input.value) : null;
+        if (problem) { e.preventDefault(); err.textContent = problem; err.hidden = false; input.focus(); return; }
+        result = input.value;
+      } else result = true;
+    });
+    dlg.addEventListener("close", () => { dlg.remove(); resolve(result); });
+    dlg.showModal();
+    (input || dlg.querySelector("#cd-ok")).focus();
+    if (input) input.select();
+  });
+}
+
+// An on/off switch. data-* attributes say what it controls.
+export const switchHtml = (on, attrs, label) =>
+  `<button type="button" class="switch" role="switch" aria-checked="${on ? "true" : "false"}" aria-label="${esc(label)}" ${attrs}><span></span></button>`;

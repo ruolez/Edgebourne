@@ -48,6 +48,31 @@ Screenshots (light/dark, desktop/phone, fails on console errors): `node ads/qa/s
 - nginx resolves `ads-backend` per request, so the main site still starts when this service
   is down.
 
+## Pages
+
+| Page | What it's for |
+|---|---|
+| Home | Needs attention (Meta-stopped ads, ads on but never shown, leads waiting > 1 h, Claude's pending proposals, spending limit, Mac offline), today's spend so far (live, cached 5 min), yesterday, last 7 days, newest leads, Claude, recent changes |
+| Leads | Inbox with the lead clock, stages, owner, notes |
+| Ads | Campaign → ad set → ad cards with media, results for 7/14/30 complete days, on/off switches, budget editing |
+| Ad (`ad.html?id=`) | Meta's real previews per placement (`/{ad}/previews`, iframe from facebook.com), words, results and charts, where it runs, Claude's proposals, its leads, change history, duplicate |
+| New ad | Copies an existing ad's story spec (Page, Instagram identity, lead-form button), new image or video (upload or library) and words; created **off** |
+| Performance | Totals, charts, per-ad table |
+| Desk / Research | Directions for Claude; research adds Ad Library search links |
+
+Controls: admins everywhere, teammates on their assigned campaigns. Every write to Meta goes
+through `ads_api.py` and lands in `meta_changes` (who, what, old → new, result) plus the
+activity log. Budget changes are free with a confirmation that shows dollars, % and a
+warning above +20%. Approving a Claude proposal applies `status` and `budget` proposals that
+name an exact entity; other kinds are recorded. Uploads: images go to `adimages`, videos to
+`advideos` in chunks (memory stays flat); nginx allows 260 MB only on `/api/media/upload`.
+
+Local development uses a fake Graph API (`ads/dev/fake_meta.py`, service `fake-meta` in
+`docker-compose.dev.yml`, thumbnails from `ads/dev/media`) so every write can be tried
+without touching the real account. Set any value for the System User token in local
+Settings; the fake ignores it. `node ads/qa/flows.cjs <out> <image>` runs the controls end to
+end (switch, budget, preview, duplicate, upload + new ad, proposal approval).
+
 ## AI desk (phase 3)
 
 The **Desk** page (admins) is where Eugene gives Claude directions: a question, a results

@@ -36,7 +36,7 @@ if (me) {
       await api("/api/auth/password", { method: "POST", body: { current: form.current.value, new: form.new.value } });
       form.reset();
       toast("Password changed");
-      if (first) location.href = "/leads.html";
+      if (first) location.href = "/home.html";
     } catch (err) {
       if (err.body.field) fieldError(form, err.body.field, err.message); else toast(err.message, "bad");
     }

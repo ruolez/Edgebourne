@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ads | Edge Bourne Ads</title>
+  <link rel="icon" href="/img/favicon.svg">
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail"></aside>
+    <main class="main">
+      <header class="page-head">
+        <h1>Ads</h1>
+        <div class="segmented" id="range" role="group" aria-label="Results for">
+          <button type="button" data-range="7">Last 7 days</button>
+          <button type="button" data-range="14">14 days</button>
+          <button type="button" data-range="30">30 days</button>
+        </div>
+        <span class="spacer"></span>
+        <span class="perf-head-meta" id="synced"></span>
+        <button class="btn" type="button" id="refresh">Refresh from Meta</button>
+        <a class="btn btn-primary" href="/new-ad.html" id="new-ad"></a>
+      </header>
+      <div class="content stack" id="ads"></div>
+    </main>
+  </div>
+  <script type="module" src="/js/ads.js"></script>
+</body>
+</html>

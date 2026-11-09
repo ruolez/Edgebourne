@@ -12,7 +12,7 @@ form.addEventListener("submit", async (e) => {
       body: { email: form.email.value, password: form.password.value, remember: form.remember.checked },
     });
     const next = new URLSearchParams(location.search).get("next");
-    location.href = me.must_change_password ? "/account.html?first=1" : (next && next.startsWith("/") ? next : "/leads.html");
+    location.href = me.must_change_password ? "/account.html?first=1" : (next && next.startsWith("/") ? next : "/home.html");
   } catch (err) {
     fieldError(form, "password", err.message);
     btn.disabled = false;

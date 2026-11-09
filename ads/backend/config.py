@@ -44,6 +44,8 @@ APP_BASE_URL = (os.environ.get("APP_BASE_URL")
                 or (f"https://ads.{_domain}" if _domain else "http://localhost:5563")).rstrip("/")
 
 GRAPH_VERSION_DEFAULT = os.environ.get("META_GRAPH_VERSION", "v24.0")
+# Local development only: point the Graph client at ads/dev/fake_meta.py.
+META_GRAPH_BASE = os.environ.get("META_GRAPH_BASE", "").rstrip("/")
 
 # Defaults for the Edge Bourne account; editable in Settings.
 META_DEFAULTS = {

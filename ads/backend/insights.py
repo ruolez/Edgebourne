@@ -23,28 +23,65 @@ def to_cents(value):
     return int(round(float(value or 0) * 100))
 
 
+CREATIVE_FIELDS = "{id,object_type,title,body,call_to_action_type,video_id,image_url,thumbnail_url}"
+AD_BASE = "id,name,campaign_id,adset_id,status,effective_status,ad_review_feedback,issues_info,created_time,"
+# Larger creative thumbnails when Meta accepts the sizing parameters; plain fields otherwise.
+AD_FIELDS = AD_BASE + "creative.thumbnail_width(720).thumbnail_height(900)" + CREATIVE_FIELDS
+AD_FIELDS_PLAIN = AD_BASE + "creative" + CREATIVE_FIELDS
+
+
+def video_picture(video_id, cache):
+    """The video's preferred full-size frame (the creative thumbnail is tiny)."""
+    if video_id in cache:
+        return cache[video_id]
+    try:
+        thumbs = meta_client.get(video_id, fields="thumbnails{uri,is_preferred,width}").get("thumbnails", {}).get("data", [])
+    except meta_client.MetaError:
+        thumbs = []
+    best = next((t for t in thumbs if t.get("is_preferred")), None) or (max(thumbs, key=lambda t: t.get("width") or 0) if thumbs else None)
+    cache[video_id] = best.get("uri") if best else None
+    return cache[video_id]
+
+
 def sync_ads():
     account = settings_store.get("meta_ad_account_id")
     n = 0
-    for ad in meta_client.paged(
-        f"act_{account}/ads",
-        fields="id,name,campaign_id,adset_id,status,effective_status,ad_review_feedback,creative{thumbnail_url}",
-        limit=100,
-    ):
+    pictures = {}
+    try:
+        rows = list(meta_client.paged(f"act_{account}/ads", fields=AD_FIELDS, limit=100))
+    except meta_client.MetaError:
+        rows = list(meta_client.paged(f"act_{account}/ads", fields=AD_FIELDS_PLAIN, limit=100))
+    for ad in rows:
+        cr = ad.get("creative") or {}
+        image = cr.get("image_url") or (video_picture(cr["video_id"], pictures) if cr.get("video_id") else None)
         db.execute(
-            """INSERT INTO ads (id, name, campaign_id, adset_id, status, effective_status,
-                                thumbnail_url, review_feedback, synced_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s, now())
+            """INSERT INTO ads (id, name, campaign_id, adset_id, status, effective_status, thumbnail_url,
+                                review_feedback, issues, creative_id, object_type, title, body, cta_type,
+                                video_id, image_url, created_time, synced_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, campaign_id = EXCLUDED.campaign_id,
                    adset_id = EXCLUDED.adset_id, status = EXCLUDED.status,
                    effective_status = EXCLUDED.effective_status, thumbnail_url = EXCLUDED.thumbnail_url,
-                   review_feedback = EXCLUDED.review_feedback, synced_at = now()""",
+                   review_feedback = EXCLUDED.review_feedback, issues = EXCLUDED.issues,
+                   creative_id = EXCLUDED.creative_id, object_type = EXCLUDED.object_type,
+                   title = EXCLUDED.title, body = EXCLUDED.body, cta_type = EXCLUDED.cta_type,
+                   video_id = EXCLUDED.video_id, image_url = EXCLUDED.image_url,
+                   created_time = EXCLUDED.created_time, synced_at = now()""",
             (ad["id"], ad["name"], ad.get("campaign_id"), ad.get("adset_id"), ad.get("status"),
-             ad.get("effective_status"), (ad.get("creative") or {}).get("thumbnail_url"),
-             json.dumps(ad.get("ad_review_feedback")) if ad.get("ad_review_feedback") else None),
+             ad.get("effective_status"), cr.get("thumbnail_url"),
+             json.dumps(ad.get("ad_review_feedback")) if ad.get("ad_review_feedback") else None,
+             json.dumps(ad.get("issues_info")) if ad.get("issues_info") else None,
+             cr.get("id"), cr.get("object_type"), cr.get("title"), cr.get("body"), cr.get("call_to_action_type"),
+             cr.get("video_id"), image, ad.get("created_time")),
         )
         n += 1
     return n
+
+
+def sync_structure():
+    """Campaigns, ad sets and ads (no insights): after a change made from the dashboard."""
+    import sync
+    return {"campaigns": sync.sync_campaigns(), "adsets": sync.sync_adsets(), "ads": sync_ads()}
 
 
 def sync_daily(days=30):
@@ -89,8 +126,7 @@ def sync_account():
 
 
 def sync_all(days=30):
-    import sync
-    out = {"campaigns": sync.sync_campaigns(), "ads": sync_ads(), "daily_rows": sync_daily(days)}
+    out = {**sync_structure(), "daily_rows": sync_daily(days)}
     sync_account()
     settings_store.set("last_performance_sync", __import__("datetime").datetime.utcnow().isoformat() + "Z")
     return out

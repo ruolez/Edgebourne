@@ -17,7 +17,8 @@ const BASE = process.env.BASE || 'http://ads.localhost:8090';
       await page.screenshot({ path: `${OUT}/login-${tag}-${scheme}.png` });
       await page.fill('#email', 'eugene@edgebourne.com');
       await page.fill('#password', 'localdev-pass-123');
-      await Promise.all([page.waitForURL('**/leads.html**'), page.click('button[type=submit]')]);
+      await Promise.all([page.waitForURL('**/home.html**'), page.click('button[type=submit]')]);
+      await page.goto(BASE + '/leads.html');
       await page.waitForSelector('.lead-row');
       await page.waitForTimeout(400);
       await page.screenshot({ path: `${OUT}/leads-${tag}-${scheme}.png` });
@@ -26,10 +27,10 @@ const BASE = process.env.BASE || 'http://ads.localhost:8090';
         await page.waitForSelector('#stages');
         await page.screenshot({ path: `${OUT}/lead-detail-${tag}-${scheme}.png`, fullPage: true });
       }
-      for (const p of ['desk', 'performance', 'team', 'settings', 'account']) {
-        await page.goto(`${BASE}/${p}.html`);
+      for (const p of ['home', 'ads', 'ad.html?id=120252672232040312', 'new-ad', 'research', 'desk', 'performance', 'team', 'settings', 'account']) {
+        await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
         await page.waitForTimeout(600);
-        await page.screenshot({ path: `${OUT}/${p}-${tag}-${scheme}.png`, fullPage: true });
+        await page.screenshot({ path: `${OUT}/${p.split('.')[0]}-${tag}-${scheme}.png`, fullPage: true });
       }
       await ctx.close();
     }
