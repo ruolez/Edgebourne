@@ -28,6 +28,8 @@ DEFAULTS = {
     "no_leads": {"on": True, "days": 3},
     "tracking": {"on": True},
     "stale_data": {"on": True, "hours": 3},
+    "cap_soon": {"on": True, "days": 3},
+    "pace_over": {"on": True, "percent": 15},
 }
 MIN_IMPRESSIONS = 1000  # per 7-day window, before fatigue is judged
 
@@ -155,6 +157,19 @@ def evaluate(snap, rules, today):
                 [f"{money(cap['spent_cents'])} of {money(cap['limit_cents'])}. Every ad stops when it's reached; raise it in Meta's billing settings if you want them to keep running."],
                 None, "/performance.html")
 
+    p = snap.get("pacing") or {}
+    r = rules["cap_soon"]
+    if r["on"] and p.get("cap_days") is not None and p["cap_days"] <= r["days"] and not (cap and cap["spent_cents"] >= cap["limit_cents"]):
+        when = date.fromisoformat(p["cap_date"]).strftime("%a %b %-d")
+        add("cap_soon", "account", "warn", f"The spending limit runs out in about {p['cap_days']} day{'s' if p['cap_days'] != 1 else ''}",
+            [f"At the current pace every ad stops around {when}. Raise the limit in Meta's billing settings to keep them running."],
+            None, "/performance.html")
+    r = rules["pace_over"]
+    if r["on"] and p.get("vs_target_pct") is not None and p["vs_target_pct"] > r["percent"]:
+        add("pace_over", "account", "warn", f"This month is heading {p['vs_target_pct']}% over your target",
+            [f"At the current pace the month ends near {money(p['projected_cents'])} against {money(p['target_cents'])}."],
+            None, "/performance.html")
+
     r = rules["tracking"]
     two = [today - timedelta(days=1), today - timedelta(days=2)]
     meta = sum(snap["meta_leads"].get(d, 0) for d in two)
@@ -201,7 +216,7 @@ def snapshot(now):
         camp_days.setdefault(r["campaign_id"], []).append({"day": r["day"], "spend_cents": int(r["spend_cents"]), "leads": int(r["leads"])})
     raw_today = settings_store.get("today_snapshot")
     today_spend = {cid: v["spend_cents"] for cid, v in (json.loads(raw_today)["campaigns"].items() if raw_today else [])}
-    from performance_api import cap_snapshot
+    from performance_api import cap_snapshot, pacing_data
     meta_leads = {r["day"]: int(r["n"]) for r in db.query(
         "SELECT day, SUM(leads) AS n FROM ad_daily WHERE day >= %s AND day < %s GROUP BY day", (today - timedelta(days=3), today))}
     inbox = {r["day"]: int(r["n"]) for r in db.query(
@@ -213,6 +228,7 @@ def snapshot(now):
         "cap": cap_snapshot(), "meta_leads": meta_leads, "inbox_leads": inbox,
         "last_pull_age_h": (now.timestamp() - updated) / 3600 if updated else None,
         "connected": bool(settings_store.get("meta_system_token")),
+        "pacing": pacing_data(None),
     }
 
 

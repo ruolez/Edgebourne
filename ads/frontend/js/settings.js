@@ -114,6 +114,8 @@ const RULE_UI = [
   ["day_overspend", "One day's spend is high (shown on Today only)", [["times", "more than", "× the daily budget"]]],
   ["week_overspend", "The week's spend is high", [["times", "more than", "× the daily budget in 7 days"]]],
   ["spend_cap", "The account spending limit is nearly used", [["percent", "at", "%"]]],
+  ["cap_soon", "The spending limit will run out soon at this pace", [["days", "within", "days"]]],
+  ["pace_over", "The month is heading over your monthly target (set it on Results)", [["percent", "by more than", "%"]]],
   ["cpl_high", "Leads cost too much", [["target_cents", "target $", "per lead,"], ["times", "alert above", "× the target"]]],
   ["no_leads", "No leads while the ads spend", [["days", "for", "days in a row"]]],
   ["tracking", "Leads Meta counted aren't reaching the inbox", []],

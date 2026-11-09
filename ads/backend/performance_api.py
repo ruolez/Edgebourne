@@ -5,8 +5,10 @@ from datetime import date, timedelta
 
 from flask import Blueprint, jsonify, request
 
+import config
 import db
 import insights
+import pacing
 import meta_client
 import settings_store
 from auth import admin_required, current_user, login_required, visible_campaign_ids
@@ -119,10 +121,59 @@ def overview_data(user, days):
     }
 
 
+def pacing_data(scope_ids=None):
+    """This month's pace for the campaigns in scope (None = the whole account, with the
+    monthly target and the spending limit, which are account-wide)."""
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    today = datetime.now(timezone.utc).astimezone(ZoneInfo(config.ACCOUNT_TZ)).date()
+    where, params = ("TRUE", []) if scope_ids is None else ("campaign_id = ANY(%s)", [scope_ids])
+    month_days = [(r["day"], int(r["c"])) for r in db.query(
+        f"SELECT day, SUM(spend_cents) AS c FROM ad_daily WHERE day >= %s AND day < %s AND {where} GROUP BY day",
+        [today.replace(day=1), today] + params)]
+    recent = [int(r["c"]) for r in db.query(
+        f"SELECT day, SUM(spend_cents) AS c FROM ad_daily WHERE day >= %s AND day < %s AND {where} GROUP BY day",
+        [today - timedelta(days=7), today] + params)]
+    cw = "TRUE" if scope_ids is None else "c.id = ANY(%s)"
+    budget = db.query(f"""SELECT COALESCE(SUM(COALESCE(c.daily_budget_cents,
+                             (SELECT SUM(daily_budget_cents) FROM adsets s WHERE s.campaign_id = c.id AND s.effective_status = 'ACTIVE'))), 0) AS c
+                          FROM campaigns c WHERE c.effective_status = 'ACTIVE' AND {cw}""", params, one=True)["c"]
+    raw = settings_store.get("today_snapshot")
+    snap = json.loads(raw).get("campaigns", {}) if raw else {}
+    so_far = sum(v["spend_cents"] for cid, v in snap.items() if scope_ids is None or cid in scope_ids)
+    account = scope_ids is None
+    cap = cap_snapshot() if account else None
+    target = settings_store.get("monthly_target_cents") if account else None
+    return pacing.pace(today, month_days, recent, int(budget or 0), int(target) if target else None,
+                       cap["remaining_cents"] if cap and cap["limit_cents"] else None, so_far)
+
+
 @bp.get("")
 @login_required
 def overview():
-    return jsonify(overview_data(current_user(), RANGES.get(request.args.get("range", "7"), 7)))
+    user = current_user()
+    out = overview_data(user, RANGES.get(request.args.get("range", "7"), 7))
+    out["pacing"] = pacing_data(visible_campaign_ids(user))
+    out["can_set_target"] = user["role"] == "admin"
+    return jsonify(out)
+
+
+@bp.put("/target")
+@admin_required
+def set_target():
+    raw = (request.get_json(silent=True) or {}).get("dollars")
+    if raw in (None, ""):
+        settings_store.set("monthly_target_cents", None)
+    else:
+        try:
+            cents = round(float(raw) * 100)
+        except (TypeError, ValueError):
+            return api_error("Type the monthly amount in dollars, like 600", 400, field="dollars")
+        if cents <= 0:
+            return api_error("Type the monthly amount in dollars, like 600", 400, field="dollars")
+        settings_store.set("monthly_target_cents", str(cents))
+    log_activity("settings.monthly_target", details={"cents": settings_store.get("monthly_target_cents")})
+    return jsonify(pacing_data(None))
 
 
 @bp.post("/sync")

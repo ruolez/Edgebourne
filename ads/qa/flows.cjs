@@ -391,7 +391,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   // Alerts: rules in Settings; a rejected ad raises one alert (Telegram + Today), not twice, and it clears by itself.
   await page.goto(BASE + '/settings.html');
   await page.waitForSelector('#al-rules li');
-  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 10);
+  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 12);
   await page.fill('[data-rule="no_leads"][data-key="days"]', '4');
   await page.fill('[data-rule="cpl_high"][data-key="target_cents"]', '15');
   await page.click('#al-form button[type=submit]');
@@ -422,6 +422,24 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   await page.waitForSelector('main');
   await page.waitForTimeout(800);
   check('it clears from Today once the ad is fixed', !/QA rejected ad/.test(await page.textContent('main')));
+
+  // Pacing: this month on Results, with a monthly target that says what a day should cost.
+  await page.goto(BASE + '/performance.html');
+  await page.waitForSelector('.figures.pace');
+  check('Results shows this month: spent, at this pace, the spending limit', /Spent this month.*Month at this pace.*Account spending limit/s.test(await page.textContent('.figures.pace')));
+  await page.click('#target-edit');
+  const paceSeen = errors.length;
+  await page.fill('#target-dollars', 'lots');
+  await page.click('#target-form button[type=submit]');
+  await page.waitForTimeout(600);
+  check('a monthly target that is not an amount is refused', /Type the monthly amount/.test(await page.textContent('#toast, .toast, body')));
+  errors.splice(paceSeen); // the refused amount logs an expected 400
+  await page.fill('#target-dollars', '600');
+  await page.click('#target-form button[type=submit]');
+  await page.waitForFunction(() => /\$600/.test(document.querySelector('.figures.pace')?.textContent || ''));
+  check('a monthly target shows the daily spend that lands on it', /Land on it with \$[\d.,]+ a day from today|Already spent/.test(await page.textContent('.figures.pace')), await page.textContent('.figures.pace .figure:last-child'));
+  await page.screenshot({ path: `${OUT}/flow-pacing.png` });
+  await page.evaluate(() => fetch('/api/performance/target', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dollars: '' }) }));
 
   // 5. Claude page: decisions first, then each ad's story, then every run (dev copy of the real Desk).
   require('child_process').execSync('docker cp dev/seed_desk.py edgebourne-ads-backend:/tmp/seed_desk.py && docker exec edgebourne-ads-backend sh -c "cd /app && python /tmp/seed_desk.py"', { cwd: __dirname + '/..' });

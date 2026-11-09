@@ -29,22 +29,12 @@ function render(data) {
   const noData = !data.ads.length && !t.spend_cents;
   const alerts = data.alerts.map((a) => `<p class="note ${a.level}" role="status">${esc(a.text)}</p>`).join("");
 
-  let cap = "";
-  if (data.cap && data.cap.limit_cents) {
-    const used = data.cap.spent_cents / data.cap.limit_cents;
-    const days = data.series.length;
-    const avg = data.series.reduce((s, d) => s + d.spend_cents, 0) / Math.max(days, 1);
-    const left = avg > 0 ? Math.floor(data.cap.remaining_cents / avg) : null;
-    cap = `<section class="panel"><div class="panel-body meter-row">
-      <b>${money(data.cap.spent_cents)} of ${money(data.cap.limit_cents)} spending limit used</b>
-      <span class="muted">${data.cap.remaining_cents <= 0 ? "Ads are paused until the limit is raised" : left !== null ? `About ${left} day${left === 1 ? "" : "s"} left at the current pace` : `${money(data.cap.remaining_cents)} left`}</span>
-      <div class="meter ${used >= 1 ? "bad" : used >= 0.8 ? "warn" : ""}" role="meter" aria-valuemin="0" aria-valuemax="${data.cap.limit_cents}" aria-valuenow="${data.cap.spent_cents}" aria-label="Spending limit used"><i data-w="${Math.min(used, 1) * 100}"></i></div>
-    </div></section>`;
-  }
+  const cap = pacingPanel(data);
 
   if (noData) {
     $("perf").innerHTML = alerts + cap + `<section class="panel empty"><h3>No results yet</h3><p>Once the ads have run for a full day, spend, leads and cost per lead show up here.${me.role === "admin" ? " Connect Meta in Settings, then use Refresh from Meta." : ""}</p>${me.role === "admin" ? '<a class="btn" href="/settings.html">Open Settings</a>' : ""}</section>`;
     fixInlineWidths();
+    wirePacing();
     return;
   }
 
@@ -85,6 +75,7 @@ function render(data) {
       <div><h3 class="chart-title">Leads and cost per lead</h3><div id="acc-leads"></div></div></div></section>
     ${me.role === "admin" ? `<section class="panel"><div class="panel-head"><h2>What changed on Meta</h2><p>Last 14 days, from Meta's own history: Ads Manager, this dashboard and Meta's automatic changes</p></div><div class="panel-body" id="activity"><p class="muted">Loading…</p></div></section>` : ""}`;
   $("perf").innerHTML = alerts + cap + figures + charts + ads + extra;
+  wirePacing();
   loadAccountBreakdown();
   if (me.role === "admin") loadActivity();
   fixInlineWidths();
@@ -92,6 +83,50 @@ function render(data) {
     format: (v) => money(v, { exact: true }), axisFormat: (v) => `$${Math.round(v / 100)}` });
   columnChart({ el: $("c-leads"), series: data.series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true,
     format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
+}
+
+// This month: spend so far, where it lands at this pace, the spending limit and the target.
+const shortDay = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+
+function pacingPanel(data) {
+  const p = data.pacing;
+  if (!p) return "";
+  const capFig = data.cap && data.cap.limit_cents ? (() => {
+    const used = data.cap.spent_cents / data.cap.limit_cents;
+    const sub = data.cap.remaining_cents <= 0 ? "Reached: every ad is paused until it's raised"
+      : p.cap_days !== null ? `Runs out around ${shortDay(p.cap_date)} at this pace` : `${money(data.cap.remaining_cents)} left`;
+    return `<div class="figure"><span class="label">Account spending limit</span><span class="value">${money(data.cap.spent_cents)} <small>of ${money(data.cap.limit_cents)}</small></span>
+      <div class="meter ${used >= 1 ? "bad" : used >= 0.8 ? "warn" : ""}" role="meter" aria-valuemin="0" aria-valuemax="${data.cap.limit_cents}" aria-valuenow="${data.cap.spent_cents}" aria-label="Spending limit used"><i data-w="${Math.min(used, 1) * 100}"></i></div>
+      <span class="sub">${sub}</span></div>`;
+  })() : "";
+  const target = p.target_cents
+    ? `<span class="value">${money(p.target_cents)}</span><span class="sub">${p.needed_daily_cents === 0 ? "Already spent" : `Land on it with ${money(p.needed_daily_cents, { exact: true })} a day from today`}${p.vs_target_pct ? `; this pace is ${Math.abs(p.vs_target_pct)}% ${p.vs_target_pct > 0 ? "over" : "under"}` : ""}</span>`
+    : `<span class="value muted">—</span><span class="sub">Not set${data.can_set_target ? "" : " (an admin sets it)"}</span>`;
+  const edit = data.can_set_target ? `<button type="button" class="btn btn-quiet small" id="target-edit">${p.target_cents ? "Change" : "Set a target"}</button>
+      <form class="target-form" id="target-form" hidden novalidate><label class="sr-only" for="target-dollars">Monthly target in dollars</label>
+        <span class="money-input">$<input class="input" id="target-dollars" name="dollars" inputmode="decimal" value="${p.target_cents ? p.target_cents / 100 : ""}" placeholder="600"></span>
+        <button class="btn btn-primary" type="submit">Save</button></form>` : "";
+  return `<h2 class="section-title pace-title">${esc(p.month)} so far</h2>
+    <section class="panel figures pace" aria-label="This month's pace">
+      <div class="figure"><span class="label">Spent this month</span><span class="value">${money(p.mtd_cents)}</span><span class="sub">including today so far</span></div>
+      <div class="figure"><span class="label">Month at this pace</span><span class="value">${money(p.projected_cents)}</span><span class="sub">${money(p.rate_cents, { exact: true })} a day (last 7 days), ${p.days_left} day${p.days_left === 1 ? "" : "s"} to go</span></div>
+      ${capFig}
+      <div class="figure"><span class="label">Monthly target</span>${target}${edit}</div>
+    </section>`;
+}
+
+function wirePacing() {
+  const btn = document.getElementById("target-edit");
+  if (!btn) return;
+  btn.addEventListener("click", () => { $("target-form").hidden = false; btn.hidden = true; $("target-dollars").focus(); });
+  $("target-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await api("/api/performance/target", { method: "PUT", body: { dollars: $("target-dollars").value.trim() } });
+      toast($("target-dollars").value.trim() ? "Monthly target saved" : "Monthly target cleared");
+      load();
+    } catch (err) { toast(err.message, "bad"); }
+  });
 }
 
 // The CSP forbids inline style attributes, so meter widths are applied from JS.
