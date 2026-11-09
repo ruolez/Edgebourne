@@ -207,14 +207,14 @@ def estimate(adset_id):
 
     def fetch():
         rows = meta_client.get(f"{adset_id}/delivery_estimate",
-                               fields="estimate_mau_lower_bound,estimate_mau_upper_bound,estimate_dau,estimate_ready").get("data", [])
+                               fields="estimate_mau_lower_bound,estimate_mau_upper_bound,estimate_ready").get("data", [])
         return rows[0] if rows else {}
     try:
         e = cached(f"estimate:{adset_id}", 6 * 3600, fetch)
     except meta_client.MetaError as exc:
         return api_error(f"Meta has no estimate: {exc}", 400)
     return jsonify({"lower": e.get("estimate_mau_lower_bound"), "upper": e.get("estimate_mau_upper_bound"),
-                    "daily": e.get("estimate_dau"), "ready": e.get("estimate_ready")})
+                    "ready": e.get("estimate_ready")})
 
 
 @bp.get("/activity")

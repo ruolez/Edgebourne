@@ -118,7 +118,14 @@ def run_task(cfg, token, task):
 
     def keepalive():
         while not stop.wait(KEEPALIVE_SECONDS):
-            post_status(cfg, token, task_id, status="running")
+            try:
+                desk.call("POST", f"/api/agent/tasks/{task_id}/status", {"status": "running"}, cfg=cfg, token=token)
+            except desk.DeskError as exc:
+                if exc.status == 409:
+                    return  # the skill already finished the task; Claude is just exiting
+                log(f"task {task_id}: keepalive refused: {exc}")
+            except (urllib.error.URLError, OSError) as exc:
+                log(f"task {task_id}: keepalive failed: {exc}")
 
     threading.Thread(target=keepalive, daemon=True).start()
     try:

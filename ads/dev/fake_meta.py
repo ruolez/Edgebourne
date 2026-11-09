@@ -172,7 +172,7 @@ def graph(path):
                  "object_type": "CAMPAIGN", "extra_data": json.dumps({"old_value": {"new_value": 2000, "currency": "USD"}, "new_value": 2400})}]})
         if len(parts) == 2 and parts[1] == "delivery_estimate":
             return jsonify({"data": [{"estimate_mau_lower_bound": 1_400_000, "estimate_mau_upper_bound": 1_650_000,
-                                      "estimate_dau": [{"min_reach": 900, "max_reach": 2600}], "estimate_ready": True}]})
+                                      "estimate_ready": True}]})
         if len(parts) == 2 and parts[1] == "comments":
             return jsonify({"data": [
                 {"id": "c1", "message": "How much does something like this cost?", "created_time": TODAY.isoformat() + "T18:02:00+0000",

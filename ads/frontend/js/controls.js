@@ -12,7 +12,7 @@ export async function toggleEntity(btn, after) {
   const ok = await confirmDialog({
     title: `${turnOn ? "Turn on" : "Turn off"} “${name}”?`,
     body: turnOn
-      ? `<p>The ${WHAT[level]} starts delivering again and spends from its budget.${level !== "ad" ? " Ads inside it that are on start too." : ""}</p>`
+      ? `<p>The ${WHAT[level]} starts delivering and spends from its budget.${level !== "ad" ? " Ads inside it that are on start too." : ""}</p>`
       : `<p>The ${WHAT[level]} stops showing within a few minutes${level !== "ad" ? ", and every ad inside it stops with it" : ""}. Nothing is deleted; you can turn it back on any time.</p>`,
     confirm: turnOn ? "Turn on" : "Turn off", danger: !turnOn,
   });

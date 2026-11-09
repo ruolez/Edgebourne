@@ -56,6 +56,7 @@ In each use case's **Customize / Permissions** screen, make sure these are added
 
 - `leads_retrieval`
 - `pages_manage_metadata`, `pages_show_list`, `pages_read_engagement`, `pages_manage_ads`
+- `pages_read_user_content` (the ad page's Comments tab reads the post's comments with it)
 - `ads_management`, `ads_read`
 - `business_management`
 - `read_insights` (if offered)

@@ -52,6 +52,8 @@ Meta ads. It has:
 | 4dde6e8 | AI Desk and Mac bridge |
 | 3a9d49e | Ads manager, previews, controls, new ads, Home |
 | 544c4eb | polish passes, new versions, Audience/Video/Comments/History tabs, breakdowns, Meta change history |
+| c05e30a | "Seal & ledger" redesign, Refresh button on every screen |
+| 65ae275 | tab labels centred, Leads "Only mine" filter removed |
 
 **The live ad account** (IDs are not secrets; tokens are and never go in chat or files):
 
@@ -104,9 +106,9 @@ Meta ads. It has:
 Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **[Eugene]** = needs him
 
 ### Phase 0: Prove what's built (do first)
-- [ ] 0.1 **[Eugene]** Run Update on the server (installer one-liner → option 2) so 544c4eb is live.
-- [ ] 0.2 **[Eugene]** `claude setup-token` on the Mac, then store it for the bridge (Keychain service `ads-desk-claude`, see `ads/bridge/install.sh`). Deadline: before 2026-11-11.
-- [ ] 0.3 Real-Meta verification pass (checklist in section 3, Phase 0), fixing what breaks.
+- [x] 0.1 **[Eugene]** Run Update on the server (installer one-liner → option 2) so 544c4eb is live.
+- [x] 0.2 **[Eugene]** `claude setup-token` on the Mac, then store it for the bridge (Keychain service `ads-desk-claude`, see `ads/bridge/install.sh`). Deadline: before 2026-11-11.
+- [~] 0.3 Real-Meta verification pass (11/13 pass; h needs Eugene's token, j fixed pending Update) (checklist in section 3, Phase 0), fixing what breaks.
 - [ ] 0.4 First real "Make a new version" render run, watched end to end.
 
 ### Phase 1: Close the loop with Meta
@@ -164,21 +166,23 @@ Each step lists: goal · how · files · tests · done when · open decisions. M
 
 | # | Path | How to check | Result |
 |---|---|---|---|
-| a | Sync: ads, ad sets, daily insights, thumbnails | Ads page shows N1–N5 with images; Performance has rows | |
-| b | Preview iframes | Ad page Overview shows Feed / Reels / Stories previews | |
-| c | Duplicate | Duplicate N3 → new ad appears, off | |
-| d | On/off on the copy | Turn the copy on and off; check Ads Manager shows the same | |
-| e | Image upload + new ad | New ad from the copy with an uploaded image; created off; preview renders | |
-| f | Video upload (chunked) + new ad | Same with a short MP4; watch Settings/Activity for errors | |
-| g | Breakdowns, rankings, video funnel | Audience and Video tabs fill once there is delivery | |
-| h | Comments | Comments tab lists post comments (needs Page token) | |
-| i | Meta change history | Performance → "What changed on Meta" lists the 2026-11-08 publish | |
-| j | Audience estimate | Ads page shows the ad set estimate | |
-| k | Polish run | Polish → Quick check on N1; scorecard + proposals arrive | |
-| l | Approve a copy version | Creates an ad, off; leave it off | |
-| m | Lead webhook | Meta Lead Ads Testing Tool → lead in inbox + email | |
+| a | Sync: ads, ad sets, daily insights, thumbnails | Ads page shows N1–N5 with images; Performance has rows | ✅ 2026-11-09: N1–N5 with thumbnails, campaign/ad set ACTIVE, 7-day spend $20.47 / 1 lead |
+| b | Preview iframes | Ad page Overview shows Feed / Reels / Stories previews | ✅ Meta preview renders (2–8 s; page is blank meanwhile, no spinner) |
+| c | Duplicate | Duplicate N3 → new ad appears, off | ✅ 120252689342970312 "N3 - Same work twice - copy", PAUSED |
+| d | On/off on the copy | Turn the copy on and off; check Ads Manager shows the same | ✅ Meta (MCP) ACTIVE after on, PAUSED after off, $0 |
+| e | Image upload + new ad | New ad from the copy with an uploaded image; created off; preview renders | ✅ "TEST e - N3 image upload" 120252689366370312, PAUSED, preview shows the still |
+| f | Video upload (chunked) + new ad | Same with a short MP4; watch Settings/Activity for errors | ✅ 1.4 MB MP4 → "TEST f - N3 video upload" 120252689383970312, PAUSED, video preview |
+| g | Breakdowns, rankings, video funnel | Audience and Video tabs fill once there is delivery | ✅ age/gender/region/placement/hour, rankings ("not enough data yet"), funnel p25–p100 |
+| h | Comments | Comments tab lists post comments (needs Page token) | ❌ Meta (#10): needs `pages_read_user_content`. **[Eugene]** regenerate the system user token with it (META-APP-SETUP part C/E) and paste it in Settings → Meta |
+| i | Meta change history | Performance → "What changed on Meta" lists the 2026-11-08 publish | ✅ 33 events incl. Pending Review → Active, delivery starts, "Account billed" |
+| j | Audience estimate | Ads page shows the ad set estimate | ❌→fixed: Meta retired `estimate_dau` (#12); field dropped. Recheck after Update |
+| k | Polish run | Polish → Quick check on N1; scorecard + proposals arrive | ✅ task 2, 4 min, score 3.5/5, 3 copy proposals + 1 new-version request |
+| l | Approve a copy version | Creates an ad, off; leave it off | ✅ proposal 1 → 120252689507540312 "N1 - One simple system · headline Run it all", PAUSED |
+| m | Lead webhook | Meta Lead Ads Testing Tool → lead in inbox + email | ✅ delivered (Success), lead #4 stored as test lead 11:06:25, email 5 s later. Test leads are hidden from the inbox (no toggle). Meta's webhook "Test" sample (lead 444444444444) retried forever → fixed: give up on code 100 or after 24 h |
 
 Clean-up: the test copies stay **paused**; never delete them.
+
+Follow-ups found in 0.3 (small): show test leads behind a toggle on Leads; a loading state on the ad page while Meta's data arrives. Meta's webhook payload uses page id 1404203625446490 (the Page's other id); the handler doesn't check it, keep it that way.
 
 **0.4 Render run.**
 1. Pick a creative proposal with "Make it now" (or queue "Make a new version" on N3 with the direction "rebuild the 9:16 files without the banned FREE WORKFLOW REVIEW wording").
@@ -484,3 +488,5 @@ Append one line per session: date · steps touched · commits · what's next / b
 
 - 2026-11-09 · roadmap written (this file) · — · next: Phase 0 (Eugene: Update + setup-token), then 0.3 verification with Eugene
 - 2026-11-09 · console redesign "Seal & ledger" (design A, Plus Jakarta Sans, Impeccable polish; design files + system in ads/.superdesign/) and a Refresh button on every screen (`POST /api/refresh`: ads, last 3 days, today's spend, catches up missed form leads; 60 s throttle) · next: Eugene runs Update; leadgen webhook field still unsubscribed in the Meta app (Page → leadgen), needs his OK to switch on
+- 2026-11-09 · 65ae275 (tab labels, Only mine filter dropped) is live on the server; 0.1 done (server serves the c05e30a/65ae275 frontend), 0.2 done (Keychain `ads-desk-claude` holds the setup-token) · next: 0.3 verification with Eugene; leadgen webhook switch still needs his OK
+- 2026-11-09 · 0.3 verification run with Eugene approving each write: 11/13 pass (table in section 3); fixes: delivery estimate without the retired `estimate_dau`, webhook events give up on missing leads / after 24 h, bridge 1.2 keepalive stops quietly once the skill closed the task, empty charts label only $0, "starts delivering" wording · test ads left PAUSED: 120252689342970312, …366370312, …383970312, …507540312 · next: Eugene pushes + Update, adds `pages_read_user_content` to the token; then 0.4 render run (proposal 4 on N1 is a ready "Make a new version")

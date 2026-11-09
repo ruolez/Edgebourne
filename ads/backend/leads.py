@@ -2,7 +2,7 @@
 import html
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import config
 import db
@@ -164,10 +164,19 @@ def notify(lead_id):
     return True
 
 
+GIVE_UP_AFTER = timedelta(hours=24)
+META_OBJECT_NOT_FOUND = 100
+
+
+def event_gives_up(code, received_at, now):
+    """A delivery whose lead Meta says doesn't exist (e.g. the webhook Test button's sample) never will."""
+    return code == META_OBJECT_NOT_FOUND or now - received_at > GIVE_UP_AFTER
+
+
 def process_pending_events():
     """Fetch the lead for every webhook delivery not yet processed."""
     pending = db.query(
-        "SELECT id, leadgen_id FROM webhook_events WHERE processed_at IS NULL AND leadgen_id IS NOT NULL "
+        "SELECT id, leadgen_id, received_at FROM webhook_events WHERE processed_at IS NULL AND leadgen_id IS NOT NULL "
         "ORDER BY id LIMIT 50"
     )
     if not pending:
@@ -186,7 +195,12 @@ def process_pending_events():
                        (ev["id"],))
             done += 1
         except meta_client.MetaError as exc:
-            db.execute("UPDATE webhook_events SET error = %s WHERE id = %s", (str(exc), ev["id"]))
+            if event_gives_up(exc.code, ev["received_at"], datetime.now(timezone.utc)):
+                db.execute("UPDATE webhook_events SET processed_at = now(), error = %s WHERE id = %s",
+                           (f"Gave up: {exc}", ev["id"]))
+                log_activity("webhook.dropped", subject=ev["leadgen_id"], actor="system", details={"error": str(exc)})
+            else:
+                db.execute("UPDATE webhook_events SET error = %s WHERE id = %s", (str(exc), ev["id"]))
     return done
 
 

@@ -21,9 +21,11 @@ export function columnChart({ el, series, key, color, format, axisFormat, title,
   const band = plotW / series.length;
   const bw = Math.min(24, Math.max(3, band - 2));
   const y = (v) => T + plotH - (v / top) * plotH;
+  const empty = !values.some((v) => v > 0);
   let grid = "", ticks = "";
   for (let v = 0; v <= top + 1e-9; v += step) {
     grid += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`;
+    if (empty && v > 0) continue;
     ticks += `<text class="tick" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${axisFormat(v)}</text>`;
   }
   const every = Math.ceil(series.length / 6);

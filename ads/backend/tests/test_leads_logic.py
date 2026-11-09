@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import os
 import unittest
+from datetime import datetime, timedelta, timezone
 
 os.environ.setdefault("WORKERS_ENABLED", "0")
 
@@ -73,6 +74,23 @@ class RenderEmailTest(unittest.TestCase):
     def test_test_leads_are_labelled(self):
         subject, _t, _h = leads.render_email(dict(self.LEAD, is_test=True))
         self.assertTrue(subject.startswith("New lead (test lead):"))
+
+
+class EventGivesUpTest(unittest.TestCase):
+    NOW = datetime(2026, 11, 9, 19, 0, tzinfo=timezone.utc)
+    HOUR = timedelta(hours=1)
+    NOT_FOUND = 100
+    NO_PERMISSION = 10
+
+    def test_stops_when_meta_says_the_lead_does_not_exist(self):
+        self.assertTrue(leads.event_gives_up(self.NOT_FOUND, self.NOW, self.NOW))
+
+    def test_keeps_retrying_fixable_errors_for_a_day(self):
+        cases = [(self.NO_PERMISSION, self.NOW - 23 * self.HOUR), (None, self.NOW - self.HOUR)]
+        self.assertEqual([leads.event_gives_up(code, t, self.NOW) for code, t in cases], [False, False])
+
+    def test_stops_any_error_after_a_day(self):
+        self.assertTrue(leads.event_gives_up(self.NO_PERMISSION, self.NOW - 25 * self.HOUR, self.NOW))
 
 
 if __name__ == "__main__":
