@@ -109,7 +109,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **[Eugene]** = needs hi
 - [x] 0.1 **[Eugene]** Run Update on the server (installer one-liner → option 2) so 544c4eb is live.
 - [x] 0.2 **[Eugene]** `claude setup-token` on the Mac, then store it for the bridge (Keychain service `ads-desk-claude`, see `ads/bridge/install.sh`). Deadline: before 2026-11-11.
 - [~] 0.3 Real-Meta verification pass (12/13 pass; h needs Eugene's token with `pages_read_user_content`) (checklist in section 3, Phase 0), fixing what breaks.
-- [~] 0.4 First real "Make a new version" render run, watched end to end (task 3 rendered + uploaded in 9 min; proposal 5 waits for Eugene's approval).
+- [x] 0.4 First real "Make a new version" render run, watched end to end (task 3 rendered + uploaded in 9 min; proposal 5 approved → ad 120252690325970312 "N1 · v2", PAUSED).
 
 ### Phase 1: Close the loop with Meta
 - [~] 1.1 Lead stages sent to Meta (Conversions API for CRM) (built and tested locally; Eugene: META-APP-SETUP part H, then a live test event)
@@ -492,3 +492,4 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-09 · 0.3 verification run with Eugene approving each write: 11/13 pass (table in section 3); fixes: delivery estimate without the retired `estimate_dau`, webhook events give up on missing leads / after 24 h, bridge 1.2 keepalive stops quietly once the skill closed the task, empty charts label only $0, "starts delivering" wording · test ads left PAUSED: 120252689342970312, …366370312, …383970312, …507540312 · next: Eugene pushes + Update, adds `pages_read_user_content` to the token; then 0.4 render run (proposal 4 on N1 is a ready "Make a new version")
 - 2026-11-09 · a61b65b pushed to main · waiting on Eugene: Update + his own test pass; then 0.4 render run
 - 2026-11-09 · 0.3 j passes live (estimate 10.4M–12.3M) · 0.4: render task 3 on N1 (from polish #2) ran headless in 9 min, uploaded 2 videos + 2 stills, proposal 5 "N1 · v2"; fixes: render runs may append to `reports/log.md`, playbook says how to copy files (`cp` in a chain was refused), bridge 1.3 installed · 1.1 built: `crm_events.py` + migration 006, queue on new lead and stage change, worker sends with backoff (24 h give-up, invalid lead → failed at once), Settings panel (dataset, switch, test event), lead page line, Home warning, part H guide; 64 unit tests, QA 24 PASS
+- 2026-11-09 · 347e58c pushed · proposal 5 approved → N1 · v2 120252690325970312 PAUSED, $0 (now 5 test/new ads paused; never delete) · follow-up: a render proposal carries one video, so the 9:16 upload (2015174525716803) isn't attached (needs placement asset customization) · next: Eugene runs Update + part H test event (1.1), then 1.2 needs his alert-channel choice
