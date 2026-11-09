@@ -66,6 +66,8 @@ def allowed_tools(skill_dir, workdir, kind="question"):
         # ffmpeg) inside the workspace's creatives folder. Still no Meta write tools: the
         # result goes back through `desk upload` and a proposal Eugene approves.
         tools += files("creatives") + ["Bash(node:*)", "Bash(cp:*)", "Bash(sips:*)", "Bash(shasum:*)", "Bash(cd:*)"]
+        # Every upload is a write to the ad account, and every write is logged.
+        tools += ["Edit(reports/log.md)", f"Edit(/{workdir}/reports/log.md)"]
     return tools
 
 

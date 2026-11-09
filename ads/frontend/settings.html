@@ -41,6 +41,20 @@
           </form>
         </section>
         <section class="panel">
+          <div class="panel-head"><h2>Lead stages to Meta</h2><p id="crm-state"></p></div>
+          <form class="panel-body stack" id="crm-form" novalidate>
+            <p class="muted">When you move a lead to Contacted, Qualified, Won or Lost, Meta hears about it. Over time it learns which people become clients and finds more like them. Test leads are never sent.</p>
+            <div class="field"><label for="meta_dataset_id">Dataset ID</label><input class="input" id="meta_dataset_id" name="meta_dataset_id" inputmode="numeric"><span class="hint">Events Manager → Data sources → your dataset.</span></div>
+            <label class="check"><input type="checkbox" id="crm_send_enabled"> Send lead stages to Meta</label>
+            <div class="row">
+              <button class="btn btn-primary" type="submit">Save</button>
+            </div>
+            <div class="field"><label for="crm-code">Test code</label><input class="input" id="crm-code" autocomplete="off" placeholder="TEST12345"><span class="hint">Events Manager → your dataset → Test events. Sends one "Lead" event for the newest lead; it shows there within a minute and counts for nothing.</span></div>
+            <div class="row"><button class="btn" type="button" id="crm-test">Send test event</button></div>
+            <div id="crm-result"></div>
+          </form>
+        </section>
+        <section class="panel">
           <div class="panel-head"><h2>Email</h2><p>Sends the new-lead alerts.</p></div>
           <form class="panel-body stack" id="smtp-form" novalidate>
             <p class="note" id="smtp-source" role="status" hidden></p>

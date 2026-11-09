@@ -123,6 +123,40 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
     check(`Refresh is on ${p}`, await page.isVisible('.page-head [data-refresh]'));
   }
 
+  // Lead stages to Meta: a real-looking lead moved to Qualified sends Lead, Contacted and Qualified once each.
+  const leadId = Number(require('child_process').execSync(`docker exec edgebourne-ads-backend python -c "
+import db
+db.execute(\\"DELETE FROM leads WHERE meta_lead_id = '9876543210123456'\\")
+r = db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, campaign_id, campaign_name) VALUES ('9876543210123456', now() - interval '2 hours', 'QA Stage Lead', '120252638288040312', 'Edge Bourne - Free intro call - Leads') RETURNING id\\", returning=True)
+print(r['id'])"`).toString().trim());
+  await page.goto(BASE + '/settings.html');
+  await page.waitForSelector('#crm-state .pill');
+  if (!(await page.isChecked('#crm_send_enabled'))) await page.check('#crm_send_enabled');
+  await page.click('#crm-form button[type=submit]');
+  await page.waitForSelector('#crm-state .pill.ok');
+  check('Settings turns lead stages on', true, await page.textContent('#crm-state'));
+  await page.goto(`${BASE}/leads.html#lead=${leadId}`);
+  await page.waitForSelector('[data-stage="qualified"]');
+  await page.click('[data-stage="qualified"]');
+  let stages = '';
+  for (let i = 0; i < 20 && !/Qualified: sent/.test(stages); i++) {
+    await page.waitForTimeout(1000);
+    const lead = await page.evaluate((id) => fetch(`/api/leads/${id}`).then((r) => r.json()), leadId);
+    stages = (lead.meta_stages || []).map((r) => `${r.stage}:${r.status}`).join(' ');
+    if (/qualified:sent/.test(stages)) break;
+  }
+  check('a stage change sends Lead, Contacted and Qualified to Meta', stages === 'new:sent contacted:sent qualified:sent', stages);
+  await page.reload();
+  await page.waitForSelector('#meta-stages');
+  check('the lead page says what Meta got', /Meta has New, Contacted, Qualified/.test(await page.textContent('#meta-stages')), await page.textContent('#meta-stages'));
+  await page.screenshot({ path: `${OUT}/flow-crm-lead.png` });
+  await page.goto(BASE + '/settings.html');
+  await page.waitForSelector('#crm-state .pill');
+  await page.uncheck('#crm_send_enabled');
+  await page.click('#crm-form button[type=submit]');
+  await page.waitForFunction(() => document.querySelector('#crm-state')?.textContent === 'Off');
+  check('Settings turns lead stages off again', true);
+
   // 5. Approve Claude's on/off proposal from the Desk; decline the budget one.
   await page.goto(BASE + '/desk.html');
   await page.waitForSelector('#tasks .task, #tasks .empty');

@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request, session
 
 import config
+import crm_events
 import db
 import leads
 import mailer
@@ -15,7 +16,8 @@ from util import api_error, log_activity
 bp = Blueprint("settings", __name__, url_prefix="/api/settings")
 
 META_FIELDS = ("meta_app_id", "meta_app_secret", "meta_system_token", "meta_verify_token",
-               "meta_page_id", "meta_ad_account_id", "meta_graph_version")
+               "meta_page_id", "meta_ad_account_id", "meta_graph_version", "meta_dataset_id",
+               "crm_send_enabled")
 SMTP_FIELDS = ("smtp_host", "smtp_port", "smtp_security", "smtp_username", "smtp_password",
                "smtp_from_email", "smtp_from_name")
 
@@ -53,6 +55,7 @@ def get_settings():
         "pending_error": pending["last_error"],
         "last_campaign_sync": settings_store.get("last_campaign_sync"),
         "page_subscribed": settings_store.get("meta_page_subscribed") == "1",
+        "crm": crm_events.summary(),
     })
 
 
@@ -118,6 +121,20 @@ def test_meta():
         "ad_account": account.get("name"),
         "currency": account.get("currency"),
     })
+
+
+@bp.post("/meta/crm-test")
+@admin_required
+def test_crm():
+    code = str((request.get_json(silent=True) or {}).get("code") or "").strip()
+    if not code:
+        return api_error("Paste the test code from Events Manager → your dataset → Test events", 400, field="code")
+    try:
+        res = crm_events.send_test(code)
+    except meta_client.MetaError as exc:
+        return api_error(str(exc), 400)
+    log_activity("settings.crm_test")
+    return jsonify({"received": res.get("events_received"), "trace": res.get("fbtrace_id")})
 
 
 @bp.post("/meta/connect-page")

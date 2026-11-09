@@ -108,11 +108,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **[Eugene]** = needs hi
 ### Phase 0: Prove what's built (do first)
 - [x] 0.1 **[Eugene]** Run Update on the server (installer one-liner → option 2) so 544c4eb is live.
 - [x] 0.2 **[Eugene]** `claude setup-token` on the Mac, then store it for the bridge (Keychain service `ads-desk-claude`, see `ads/bridge/install.sh`). Deadline: before 2026-11-11.
-- [~] 0.3 Real-Meta verification pass (11/13 pass; h needs Eugene's token, j fixed pending Update) (checklist in section 3, Phase 0), fixing what breaks.
-- [ ] 0.4 First real "Make a new version" render run, watched end to end.
+- [~] 0.3 Real-Meta verification pass (12/13 pass; h needs Eugene's token with `pages_read_user_content`) (checklist in section 3, Phase 0), fixing what breaks.
+- [~] 0.4 First real "Make a new version" render run, watched end to end (task 3 rendered + uploaded in 9 min; proposal 5 waits for Eugene's approval).
 
 ### Phase 1: Close the loop with Meta
-- [ ] 1.1 Lead stages sent to Meta (Conversions API for CRM)
+- [~] 1.1 Lead stages sent to Meta (Conversions API for CRM) (built and tested locally; Eugene: META-APP-SETUP part H, then a live test event)
 - [ ] 1.2 Instant alert to Eugene's phone for every new lead (channel = open decision)
 - [ ] 1.3 Automatic first reply to the lead (email)
 - [ ] 1.4 Untouched-lead reminders (5 min, 1 h, next morning) and a lead-response report
@@ -204,7 +204,7 @@ Follow-ups found in 0.3 (small): show test leads behind a toggle on Leads; a loa
     - `custom_data.lead_event_source: "Edge Bourne Ads Console"`
     - `event_time` = when the stage changed
 
-    The whole payload shape is *(verify)*: check the current "Conversions API for CRM" doc for exact field names and accepted stage names.
+    Verified 2026-11-09 against Meta's payload spec: `event_name` is free-form (we send Lead / Contacted / Qualified / Won / Lost), `lead_id` is a JSON number, `event_time` at most 7 days old and later than the lead, and every earlier stage plus the initial lead must be sent too (a jump from New to Won also sends Contacted and Qualified).
   - Retry with backoff, give up after 24 h, and show failures on Home → Needs attention.
   - Settings → Meta gets:
     - a "Dataset ID" field (default 1821497329119793)
@@ -490,3 +490,5 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-09 · console redesign "Seal & ledger" (design A, Plus Jakarta Sans, Impeccable polish; design files + system in ads/.superdesign/) and a Refresh button on every screen (`POST /api/refresh`: ads, last 3 days, today's spend, catches up missed form leads; 60 s throttle) · next: Eugene runs Update; leadgen webhook field still unsubscribed in the Meta app (Page → leadgen), needs his OK to switch on
 - 2026-11-09 · 65ae275 (tab labels, Only mine filter dropped) is live on the server; 0.1 done (server serves the c05e30a/65ae275 frontend), 0.2 done (Keychain `ads-desk-claude` holds the setup-token) · next: 0.3 verification with Eugene; leadgen webhook switch still needs his OK
 - 2026-11-09 · 0.3 verification run with Eugene approving each write: 11/13 pass (table in section 3); fixes: delivery estimate without the retired `estimate_dau`, webhook events give up on missing leads / after 24 h, bridge 1.2 keepalive stops quietly once the skill closed the task, empty charts label only $0, "starts delivering" wording · test ads left PAUSED: 120252689342970312, …366370312, …383970312, …507540312 · next: Eugene pushes + Update, adds `pages_read_user_content` to the token; then 0.4 render run (proposal 4 on N1 is a ready "Make a new version")
+- 2026-11-09 · a61b65b pushed to main · waiting on Eugene: Update + his own test pass; then 0.4 render run
+- 2026-11-09 · 0.3 j passes live (estimate 10.4M–12.3M) · 0.4: render task 3 on N1 (from polish #2) ran headless in 9 min, uploaded 2 videos + 2 stills, proposal 5 "N1 · v2"; fixes: render runs may append to `reports/log.md`, playbook says how to copy files (`cp` in a chain was refused), bridge 1.3 installed · 1.1 built: `crm_events.py` + migration 006, queue on new lead and stage change, worker sends with backoff (24 h give-up, invalid lead → failed at once), Settings panel (dataset, switch, test event), lead page line, Home warning, part H guide; 64 unit tests, QA 24 PASS

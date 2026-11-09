@@ -108,6 +108,7 @@ function detailHtml(lead) {
         ${STAGES.map((s) => `<button type="button" data-stage="${s.id}" aria-pressed="${lead.status === s.id}">${s.label}</button>`).join("")}
       </div>
     </div>
+    ${metaStages(lead)}
     <dl class="facts">
       <dt>Owner</dt><dd><label class="sr-only" for="owner">Owner</label><select class="input" id="owner">${owners}</select></dd>
       <dt>Asked</dt><dd>${when(lead.created_time)}</dd>
@@ -125,6 +126,20 @@ function detailHtml(lead) {
       <div><button class="btn btn-primary" type="submit">Add note</button></div>
     </form>
     ${history ? `<h3 class="section-title">History</h3><ul class="history">${history}</ul>` : ""}`;
+}
+
+function metaStages(lead) {
+  const rows = lead.meta_stages;
+  if (!rows || !rows.length) return "";
+  const label = (id) => (STAGES.find((s) => s.id === id) || { label: id }).label;
+  const sent = rows.filter((r) => r.status === "sent");
+  const parts = [];
+  if (sent.length) parts.push(`Meta has ${sent.map((r) => label(r.stage)).join(", ")} (${when(sent[sent.length - 1].sent_at)})`);
+  for (const r of rows.filter((x) => x.status !== "sent")) {
+    parts.push(r.status === "pending" ? `${label(r.stage)} ${r.attempts ? "will be sent again" : "is on its way"}`
+      : `${label(r.stage)} ${r.status === "failed" ? "didn't reach Meta" : "wasn't sent"}: ${esc(r.last_error || "")}`);
+  }
+  return `<p class="meta-stages muted" id="meta-stages">${parts.join(". ")}.</p>`;
 }
 
 function prettyQuestion(key) {

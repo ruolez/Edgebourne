@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import config
+import crm_events
 import db
 import mailer
 import meta_client
@@ -75,6 +76,8 @@ def store_lead(data, is_test=False):
         returning=True,
     )
     if row:
+        if not is_test:
+            crm_events.enqueue(row["id"], "new", _parse_time(data.get("created_time")))
         return row["id"], True
     existing = db.query("SELECT id FROM leads WHERE meta_lead_id = %s", (str(data["id"]),), one=True)
     return existing["id"], False

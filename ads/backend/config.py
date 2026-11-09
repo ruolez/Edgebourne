@@ -51,6 +51,7 @@ META_GRAPH_BASE = os.environ.get("META_GRAPH_BASE", "").rstrip("/")
 META_DEFAULTS = {
     "meta_page_id": os.environ.get("META_PAGE_ID", "1404203629446490"),
     "meta_ad_account_id": os.environ.get("META_AD_ACCOUNT_ID", "1025971549903293"),
+    "meta_dataset_id": os.environ.get("META_DATASET_ID", "1821497329119793"),
 }
 
 # Background workers (webhook processing, hourly sync) can be switched off in tests.

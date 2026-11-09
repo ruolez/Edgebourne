@@ -1,6 +1,8 @@
 from flask import Blueprint, jsonify, request
 
+import crm_events
 import db
+import jobs
 from auth import current_user, login_required, visible_campaign_ids
 from util import api_error, log_activity
 
@@ -84,6 +86,7 @@ def get_lead(lead_id):
            WHERE u.is_active AND (u.role = 'admin' OR cm.campaign_id = %s) ORDER BY u.name""",
         (lead["campaign_id"],),
     )
+    lead["meta_stages"] = crm_events.for_lead(lead_id) if crm_events.enabled() else None
     return jsonify(lead)
 
 
@@ -109,6 +112,8 @@ def update_lead(lead_id):
             )
             log_activity("lead.status", subject=str(lead_id),
                          details={"from": lead["status"], "to": status})
+            if crm_events.enqueue(lead_id, status):
+                jobs.wake()
     if "owner_id" in data:
         owner = data["owner_id"]
         if owner is not None:

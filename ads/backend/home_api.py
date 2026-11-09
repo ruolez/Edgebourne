@@ -69,6 +69,11 @@ def attention(user, scope_ids):
             items.append({"level": "bad" if cap["spent_cents"] >= cap["limit_cents"] else "warn",
                           "text": "The account spending limit is almost used up; ads pause when it's reached.",
                           "href": "/performance.html", "action": "See spending"})
+        failed = db.query("SELECT COUNT(*) AS n FROM crm_events WHERE status = 'failed' "
+                          "AND created_at > now() - interval '14 days'", one=True)["n"]
+        if failed:
+            items.append({"level": "warn", "text": f"{failed} lead stage{'s' if failed != 1 else ''} didn't reach Meta.",
+                          "href": "/settings.html", "action": "Open Settings"})
         queued = db.query("SELECT COUNT(*) AS n FROM desk_tasks WHERE status = 'queued'", one=True)["n"]
         if queued and not bridge_status()["online"]:
             items.append({"level": "warn", "text": f"{queued} Desk request{'s' if queued != 1 else ''} waiting: your Mac is offline.",

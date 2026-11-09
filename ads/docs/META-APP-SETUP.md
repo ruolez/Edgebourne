@@ -125,6 +125,31 @@ Check from Terminal: `meta auth status`.
    "EB | Free intro call | Higher intent" → **Create lead**. It appears in Leads (marked as a
    test) and in your inbox within a minute or two (Meta pings can lag a few minutes).
 
+## H. Lead stages to Meta (about 10 min)
+
+Once this is on, every lead you move to Contacted, Qualified, Won or Lost in the console is
+reported to Meta, so Meta learns which people turn into clients. Test leads are never sent.
+Screens in Meta move around; if a name below doesn't match, look for the nearest one.
+
+1. **Give the system user the dataset.** business.facebook.com → Settings → Users → System
+   users → the console's system user → **Assign assets** → **Datasets** (older screens:
+   Pixels) → the Edge Bourne dataset (ID 1821497329119793) → turn on **Manage** → Save.
+2. **Get a test code.** Events Manager → Data sources → that dataset → **Test events** tab.
+   Copy the code it shows for server events (looks like `TEST12345`).
+3. **Send a test.** Console → Settings → **Lead stages to Meta**: check the Dataset ID, paste
+   the code under Test code, press **Send test event**. Within a minute a **Lead** event shows
+   on the Test events tab. If the console says Meta refused it, the message says why (most
+   often step 1 is missing).
+4. **Switch it on.** Tick **Send lead stages to Meta** and press Save.
+5. **Tell Meta what the stages mean** (after the first real stage change shows in the
+   dataset's Overview): Events Manager → the dataset → Settings → the CRM / lead stages
+   section → mark **Lead** as the first stage, **Contacted** and **Qualified** as the middle
+   stages, **Won** as the converted stage. Lost needs no mapping.
+
+What gets sent: the stage name, when it changed, and Meta's own id for the lead (the one the
+form gave us). No names, phone numbers or emails. Meta accepts stages up to 7 days old, so
+turning the switch on later still reports the last week's moves.
+
 ## Email (for lead alerts)
 
 Nothing to set up if the website already sends email (website admin → **Email**): the ads

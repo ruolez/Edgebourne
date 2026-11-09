@@ -26,6 +26,7 @@ def _locked(conn, key):
 
 
 def _loop():
+    import crm_events
     import insights
     import leads
 
@@ -38,6 +39,10 @@ def _loop():
             conn = db.connect()
             if _locked(conn, 7001):
                 leads.process_pending_events()
+                try:
+                    crm_events.process_pending()
+                except Exception:
+                    log.exception("sending lead stages to Meta failed")
                 if time.time() - last_sync > SYNC_EVERY:
                     last_sync = time.time()
                     try:

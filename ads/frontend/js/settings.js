@@ -37,6 +37,18 @@ function renderMeta() {
   });
 }
 
+function renderCrm() {
+  const c = s.crm;
+  const on = s.meta.crm_send_enabled === "1";
+  $("meta_dataset_id").value = s.meta.meta_dataset_id || "";
+  $("crm_send_enabled").checked = on;
+  $("crm-state").innerHTML = !on ? '<span class="pill">Off</span>'
+    : c.failed ? `<span class="pill warn">${c.failed} didn't reach Meta</span>` : '<span class="pill ok">On</span>';
+  const parts = [`${c.sent} sent`, c.pending && `${c.pending} waiting`, c.failed && `${c.failed} failed`, c.skipped && `${c.skipped} skipped`].filter(Boolean);
+  $("crm-result").innerHTML = c.sent || c.pending || c.failed || c.skipped
+    ? `<p class="note${c.failed ? " warn" : ""}">${parts.join(", ")}.${c.last_error ? ` Last error: ${esc(c.last_error)}` : ""}</p>` : "";
+}
+
 async function load() {
   s = await api("/api/settings");
   fill($("meta-form"), s.meta);
@@ -50,6 +62,7 @@ async function load() {
       ? `Using the mailbox below (${use.host}). Clear the SMTP server and save to go back to the website's email settings.`
       : "Email isn't set up yet. Set it up once in the website admin under Email and it's used here too, or enter a mailbox below.";
   renderMeta();
+  renderCrm();
   const rows = await api("/api/settings/activity");
   $("activity").innerHTML = rows.length ? `<thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${rows.map((r) =>
     `<tr><td class="muted">${when(r.at)}</td><td>${esc(r.who || ({ meta: "Meta", claude: "Claude", system: "System" }[r.actor] || r.actor))}</td><td>${esc(describe(r))}${r.subject && !r.action.startsWith("lead.") ? ` <span class="muted">${esc(r.subject)}</span>` : ""}</td></tr>`).join("")}</tbody>`
@@ -82,6 +95,8 @@ const ACTIONS = {
   "team.added": "Added a teammate",
   "team.updated": "Changed a teammate's access",
   "team.password_reset": "Reset a teammate's password",
+  "settings.crm_test": "Sent a test lead stage to Meta",
+  "crm.failed": "A lead stage didn't reach Meta",
   "lead.received": "New lead arrived",
   "lead.status": "Moved a lead",
   "lead.owner": "Changed a lead's owner",
@@ -94,6 +109,14 @@ if (me) {
   await load();
   $("meta-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); toast("Meta settings saved"); load(); }); });
   $("smtp-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/smtp", { method: "PUT", body: values(e.target) }); toast("Email settings saved"); load(); }); });
+  $("crm-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
+    s = await api("/api/settings/meta", { method: "PUT", body: { meta_dataset_id: $("meta_dataset_id").value, crm_send_enabled: $("crm_send_enabled").checked ? "1" : "" } });
+    toast($("crm_send_enabled").checked ? "Lead stages now go to Meta" : "Lead stages are no longer sent"); load();
+  }); });
+  $("crm-test").addEventListener("click", (e) => run(e.currentTarget, async () => {
+    const r = await api("/api/settings/meta/crm-test", { method: "POST", body: { code: $("crm-code").value } });
+    $("crm-result").innerHTML = `<p class="note ok">Meta received ${esc(String(r.received ?? 0))} event. Check Test events in Events Manager.</p>`;
+  }));
   $("smtp-test").addEventListener("click", (e) => run(e.currentTarget, async () => { const r = await api("/api/settings/smtp/test", { method: "POST" }); toast(`Test email sent to ${r.sent_to}${r.source === "website" ? " using the website's mailbox" : ""}`); }));
   $("meta-test").addEventListener("click", (e) => run(e.currentTarget, async () => {
     const r = await api("/api/settings/meta/test", { method: "POST" });

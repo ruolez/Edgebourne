@@ -39,6 +39,7 @@ TEXTS = {
 # Same-origin pictures served by the dev nginx from ads/dev/media (copies of the real N1-N5 frames).
 PIC = "/dev-media/N1.jpg"
 ADS, CREATIVES, VIDEOS, IMAGES, UPLOADS = {}, {}, {}, {}, {}
+CRM_EVENTS = []  # lead stages the console sent (Conversions API for CRM)
 
 
 def cta():
@@ -239,6 +240,13 @@ def graph(path):
                         "status": a.get("status", "PAUSED"), "creative_id": json.loads(a["creative"])["creative_id"],
                         "created_time": TODAY.isoformat() + "T12:00:00-0800"}
             return jsonify({"id": aid})
+        if len(parts) == 2 and parts[1] == "events":
+            events = json.loads(a.get("data") or "[]")
+            bad = [e for e in events if not str(e.get("user_data", {}).get("lead_id", "")).isdigit()]
+            if bad or not events:
+                return jsonify({"error": {"message": "Invalid parameter (fake): lead_id", "code": 100}}), 400
+            CRM_EVENTS.extend({**e, "test_event_code": a.get("test_event_code")} for e in events)
+            return jsonify({"events_received": len(events), "messages": [], "fbtrace_id": "fake"})
         if len(parts) == 2 and parts[1] == "copies" and parts[0] in ADS:
             src = ADS[parts[0]]
             aid = str(next(ids))

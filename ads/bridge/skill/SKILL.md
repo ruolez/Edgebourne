@@ -157,7 +157,10 @@ null). This run may edit files under `creatives/` and run node / ffmpeg (nothing
 4. Render the 4:5 still and, if the original is a video, the 4:5 video with its sound bed;
    9:16 too when the source supports it. Run `textaudit.js` and the probe, check a 0.3 s
    contact sheet for motion, and look at the frames before uploading.
-5. `desk upload <file>` for each output (prints `hash` or `video_id`).
+5. `desk upload <file>` for each output (prints `hash` or `video_id`), then append one line per
+   upload to `reports/log.md` (date, task, file, id; "library only, no ad created"). Copy files
+   with `cp` one command at a time (no `&&` chains, no `-R` into a new folder: create it with
+   `mkdir -p` first), or a small node script if `cp` is refused.
 6. `desk propose <id> --file …` with one `creative` proposal: `payload.template_ad_id` = the ad,
    `media` = `{"kind": "video", "video_id": "..."}` (or image + hash), `name` "<ad name> ·
    v<n>", and the same words unless the fixes changed them. Approving it creates the ad off.
