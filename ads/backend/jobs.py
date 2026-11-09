@@ -55,6 +55,11 @@ def _loop():
                 except Exception:
                     log.exception("sending lead replies failed")
                 try:
+                    import schedules
+                    schedules.run()  # the Mac bridge long-polls the queue, so new tasks start at once
+                except Exception:
+                    log.exception("Desk schedules failed")
+                try:
                     import reminders
                     reminders.run()
                 except Exception:

@@ -183,7 +183,7 @@ function runItem(t, ix, openReports) {
   const reports = t.reports.map((r) => `<details class="report" data-report="${r.id}" ${openReports.has(r.id) ? "open" : ""}><summary>Read the report: ${esc(r.title)}</summary><div class="md">${renderMarkdown(r.body)}</div></details>`).join("");
   const props = t.proposals.length ? `<ul class="prows">${t.proposals.map((p) => proposalRow(p, ix)).join("")}</ul>` : "";
   return `<li class="run" id="run-${t.id}">
-    <div class="run-when"><b>${esc(RUN_WORDS[t.kind] || KIND_LABELS[t.kind] || t.kind)}</b><span class="muted small">${esc(when(t.created_at))}</span></div>
+    <div class="run-when"><b>${esc((t.options && t.options.schedule) || RUN_WORDS[t.kind] || KIND_LABELS[t.kind] || t.kind)}</b><span class="muted small">${esc(when(t.created_at))}</span></div>
     <div class="run-body">
       ${score || status ? `<div class="row tight">${score}${status}</div>` : ""}
       <p class="run-summary">${esc(t.summary || t.error || firstLine(t.prompt))}</p>

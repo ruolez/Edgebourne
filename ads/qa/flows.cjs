@@ -350,6 +350,44 @@ for name, mins in (('Reminder QA Five', 7), ('Reminder QA Hour', 61)):
   await page.waitForSelector('#response:not([hidden])');
   check('Leads shows how fast leads hear back', /Last 30 days: half heard back within .* of \d+ within 5 min/.test(await page.textContent('#response')), await page.textContent('#response'));
 
+  // Desk schedules: switch one on, change its time, a due schedule files one run (not a pile), the finish reaches Telegram.
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute('UPDATE desk_schedules SET enabled=FALSE, next_run_at=NULL, skipped=0, last_task_id=NULL')"`);
+  await page.goto(BASE + '/desk.html#schedules', { waitUntil: 'networkidle' });
+  await page.waitForSelector('.sched');
+  check('Schedules lists the four checks, all off', (await page.locator('.sched').count()) === 4 && (await page.locator('.sched [aria-checked="true"]').count()) === 0);
+  await page.click('#sched-1 [data-sched-toggle]');
+  await page.waitForFunction(() => /next/.test(document.querySelector('#sched-1 .sched-when')?.textContent || ''));
+  check('switching the daily health check on shows its next run', /Every day at 8:30 AM · next/.test(await page.textContent('#sched-1 .sched-when')), await page.textContent('#sched-1 .sched-when'));
+  await page.click('#sched-1 .sched-edit summary');
+  await page.selectOption('#every-1', 'days');
+  await page.selectOption('#days-1', '2');
+  await page.fill('#at-1', '07:15');
+  await page.click('#sched-1 .sched-rule button[type=submit]');
+  await page.waitForFunction(() => /Every 2 days at 7:15 AM/.test(document.querySelector('#sched-1 .sched-when')?.textContent || ''));
+  check('the time can be changed', true);
+  const tasksBefore = Number(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query('SELECT COUNT(*) AS n FROM desk_tasks', one=True)['n'])"`));
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE desk_schedules SET next_run_at = now() - interval '1 minute' WHERE id = 1\\")"`);
+  let made = 0;
+  for (let i = 0; i < 40 && !made; i++) { await page.waitForTimeout(1000); made = Number(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query('SELECT COUNT(*) AS n FROM desk_tasks', one=True)['n'])"`)) - tasksBefore; }
+  check('a due schedule files a Desk run by itself', made === 1, `${made} new task(s)`);
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE desk_schedules SET next_run_at = now() - interval '1 minute' WHERE id = 1\\")"`);
+  await page.waitForTimeout(32000);
+  const sched = JSON.parse(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,json;print(json.dumps(db.query('SELECT skipped, last_task_id FROM desk_schedules WHERE id = 1', one=True)))"`));
+  const after = Number(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query('SELECT COUNT(*) AS n FROM desk_tasks', one=True)['n'])"`));
+  check('while that run still waits for the Mac, the next one is skipped, not piled up', after - tasksBefore === 1 && sched.skipped === 1, JSON.stringify(sched));
+  const tgBeforeDesk = tgSent().length;
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "
+import db, desk_api
+db.execute(\\"UPDATE desk_tasks SET status = 'done', finished_at = now(), summary = 'All 5 ads delivering; 4 leads yesterday at \\$5.10 each.' WHERE id = %s\\", (${sched.last_task_id},))
+desk_api.tell_finished(${sched.last_task_id})"`);
+  let deskMsg = null;
+  for (let i = 0; i < 40 && !deskMsg; i++) { await page.waitForTimeout(1000); deskMsg = tgSent().slice(tgBeforeDesk).find((m) => /Daily health check: done/.test(m.text)); }
+  check('a finished scheduled run reaches Telegram with its summary', Boolean(deskMsg) && /4 leads yesterday/.test(deskMsg.text), deskMsg ? deskMsg.text.split('\n').slice(0, 2).join(' | ') : 'none');
+  await page.click('#tab-runs');
+  check('the run is labelled with its schedule', /Daily health check/.test(await page.textContent('#view')));
+  await page.screenshot({ path: `${OUT}/flow-schedules.png`, fullPage: true });
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,json;db.execute('UPDATE desk_schedules SET enabled=FALSE, next_run_at=NULL, skipped=0, last_task_id=NULL, rule=%s WHERE id = 1', (json.dumps({'every': 'day', 'at': '08:30'}),))"`);
+
   // 5. Claude page: decisions first, then each ad's story, then every run (dev copy of the real Desk).
   require('child_process').execSync('docker cp dev/seed_desk.py edgebourne-ads-backend:/tmp/seed_desk.py && docker exec edgebourne-ads-backend sh -c "cd /app && python /tmp/seed_desk.py"', { cwd: __dirname + '/..' });
   await page.goto(BASE + '/desk.html', { waitUntil: 'networkidle' });

@@ -134,7 +134,7 @@ Found while proving Phase 0 and building 1.1. Pick with Eugene; tick here when f
 - [~] 1.4 Untouched-lead reminders and response report. Built: `reminders.py` (5 min → owner or the lead's people, 1 h → admins, 8 AM America/Los_Angeles list of every lead still waiting; untouched = still New, no stage change, no email from the lead page, no note; test leads and leads over 24 h never; Telegram when linked, else email; each once), Your account switch (migration 009), Leads header "Last 30 days: half heard back within … · N of M within 5 min · K not contacted". Live check after Eugene links Telegram
 
 ### Phase 2: Works without being asked
-- [ ] 2.1 Desk schedules (daily health, 3-day review, Monday summary, monthly audit)
+- [~] 2.1 Desk schedules. Built: `schedules.py` + migration 010 (4 presets, all off: Daily health 8:30, Optimizer review every 3 days 9:00, Monday summary 8:00, Monthly audit the 1st 9:00, America/Los_Angeles, DST-safe), the worker files an ordinary Desk task (same read-only bridge tools; skipped, not piled, while the previous run still waits), Claude page → Schedules tab (switch, change time, Run it now), every finished Desk run messages its people (admins for scheduled ones) with the summary; skill playbook "Scheduled runs" (installed). Eugene: switch on the ones he wants
 - [ ] 2.2 Alerts engine (rules checked after every sync, sent to the 1.2 channel)
 - [ ] 2.3 Spend pacing and month-end forecast
 
@@ -523,4 +523,5 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-09 · I2, I3, I5, I6 fixed (preview loader shared by ad page and Claude page, test-leads toggle, lead's Meta line follows itself, CRM wording while off); 85 unit tests, QA 48 PASS · next: Eugene pushes + Update; open: I1/I8 (Eugene), I4, I7, I9, I11 live check, then 1.2 (alert channel)
 - 2026-11-09 · 1.2 Telegram alerts built (Settings bot, account linking, notify queue, lead alert in 1 s in QA); unit tests OK, QA 54 PASS · next: 1.3 manual replies + auto switch, 1.4 reminders
 - 2026-11-09 · 1.3 lead replies built (manual composer, templates, optional automatic reply); fixed: opening leads.html#lead=X could show the newest lead instead (load race); dev mail catcher on fake-meta:1025; QA 61 PASS · next: 1.4 reminders
-- 2026-11-09 · 1.4 reminders + response line built; Phase 1 code complete (1.1–1.4 wait on Eugene's live steps: part H test event, Telegram bot + link, reply wording/booking link); 103 unit tests, QA 65 PASS · next: Phase 2 (2.1 Desk schedules, 2.2 alerts engine, 2.3 pacing)
+- 2026-11-09 · 1.4 reminders + response line built; Phase 1 code complete (1.1–1.4 wait on Eugene's live steps: part H test event, Telegram bot + link, reply wording/booking link); 100 unit tests, QA 65 PASS · next: Phase 2 (2.1 Desk schedules, 2.2 alerts engine, 2.3 pacing)
+- 2026-11-09 · 2.1 Desk schedules built; Desk results now reach Telegram/email; QA 72 PASS · next: 2.2 alerts engine

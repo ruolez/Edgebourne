@@ -11,18 +11,23 @@ for a person to approve (phase 4).
 import hashlib
 import json
 import hmac
+import logging
 import secrets
 import time
 from functools import wraps
 
 from flask import Blueprint, jsonify, request
 
+import config
 import db
 import desk_view
+import schedules
 import settings_store
 from auth import admin_required, current_user
 from performance_api import overview_data
 from util import api_error, log_activity
+
+log = logging.getLogger(__name__)
 
 bp = Blueprint("desk", __name__, url_prefix="/api/desk")
 agent_bp = Blueprint("agent", __name__, url_prefix="/api/agent")
@@ -166,6 +171,46 @@ def create_task():
     return jsonify(tasks_with_results("t.id = %s", [task["id"]], 1)[0]), 201
 
 
+@bp.get("/schedules")
+@admin_required
+def list_schedules():
+    return jsonify({"schedules": schedules.listing(), "tz": config.ACCOUNT_TZ})
+
+
+@bp.patch("/schedules/<int:sid>")
+@admin_required
+def update_schedule(sid):
+    s = db.query("SELECT * FROM desk_schedules WHERE id = %s", (sid,), one=True)
+    if not s:
+        return api_error("That schedule doesn't exist", 404)
+    data = request.get_json(silent=True) or {}
+    rule = s["rule"]
+    if "rule" in data:
+        rule, bad = schedules.clean_rule(data["rule"] or {})
+        if bad:
+            return api_error("Check the schedule's timing", 400, field=bad)
+    enabled = bool(data["enabled"]) if "enabled" in data else s["enabled"]
+    from datetime import datetime, timezone
+    nxt = schedules.next_run(rule, datetime.now(timezone.utc), schedules.tz()) if enabled else None
+    db.execute("UPDATE desk_schedules SET rule = %s, enabled = %s, next_run_at = %s WHERE id = %s",
+               (json.dumps(rule), enabled, nxt, sid))
+    log_activity("desk.schedule", subject=str(sid), details={"name": s["name"], "enabled": enabled, "when": schedules.describe(rule)})
+    return list_schedules()
+
+
+@bp.post("/schedules/<int:sid>/run")
+@admin_required
+def run_schedule_now(sid):
+    s = db.query("SELECT * FROM desk_schedules WHERE id = %s", (sid,), one=True)
+    if not s:
+        return api_error("That schedule doesn't exist", 404)
+    task = db.execute("INSERT INTO desk_tasks (kind, prompt, created_by, options) VALUES (%s, %s, %s, %s) RETURNING id",
+                      (s["kind"], s["prompt"], current_user()["id"], json.dumps({"schedule_id": sid, "schedule": s["name"]})), returning=True)
+    db.execute("UPDATE desk_schedules SET last_task_id = %s WHERE id = %s", (task["id"], sid))
+    log_activity("desk.task_created", subject=str(task["id"]), details={"kind": s["kind"], "schedule": s["name"]})
+    return jsonify({"task_id": task["id"]})
+
+
 @bp.post("/tasks/<int:task_id>/cancel")
 @admin_required
 def cancel_task(task_id):
@@ -307,9 +352,32 @@ def set_status(task_id):
             (status, summary, error if status == "failed" else None, task_id), returning=True)
         if row:
             log_activity(f"desk.task_{status}", subject=str(task_id), actor="claude")
+            try:
+                tell_finished(task_id)
+            except Exception:
+                log.exception("desk task %s: couldn't queue the alert", task_id)
     if not row:
         return api_error("This task isn't open any more (finished, cancelled or timed out)", 409)
     return jsonify({"ok": True})
+
+
+def tell_finished(task_id):
+    """A finished run reaches its people's phones: the admins for scheduled runs, otherwise
+    whoever asked. The summary is the message, so the skill writes it for that."""
+    import notify
+    t = db.query("SELECT id, kind, prompt, status, summary, error, created_by, options FROM desk_tasks WHERE id = %s", (task_id,), one=True)
+    sched = (t["options"] or {}).get("schedule")
+    people = notify.admin_ids() if sched or not t["created_by"] else [t["created_by"]]
+    what = sched or (t["prompt"][:60] + ("…" if len(t["prompt"]) > 60 else ""))
+    ok = t["status"] == "done"
+    title = f"{what}: done" if ok else f"{what}: didn't finish"
+    lines = [(t["summary"] if ok else t["error"]) or ("See the report." if ok else "No reason given.")]
+    waiting = db.query("SELECT COUNT(*) AS n FROM desk_proposals WHERE task_id = %s AND status = 'pending'", (task_id,), one=True)["n"]
+    if waiting:
+        lines.append(f"{waiting} idea{'s' if waiting != 1 else ''} waiting for your decision.")
+    for uid, channel in notify.reach(people, "notify_reminders"):
+        notify.queue(uid, channel, "desk", title, lines, f"{config.APP_BASE_URL}/desk.html#{'waiting' if waiting else 'runs'}",
+                     "Open in the console", ref=str(task_id), dedupe_key=f"desk:{task_id}:{uid}")
 
 
 def _open_task(task_id):

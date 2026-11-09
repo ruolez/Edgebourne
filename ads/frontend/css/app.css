@@ -1084,3 +1084,15 @@ iframe.preview-loading { position: absolute; width: 1px !important; height: 1px 
 .tpl-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .tpl-preview { white-space: pre-wrap; margin: 0; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); font-size: 14px; }
 .response-line { flex-basis: 100%; order: 3; margin: 6px 0 0; color: var(--ink-3); font-size: 14px; }
+
+/* Claude page → Schedules */
+.sched-intro { margin: 0 0 4px; max-width: 70ch; }
+.sched-head { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; }
+.sched-head h3 { margin: 0 0 4px; font-size: 17px; }
+.sched-head p { margin: 0; max-width: 64ch; }
+.sched-when { margin: 0; }
+.sched-edit summary { cursor: pointer; font-weight: 600; color: var(--ink-2); }
+.sched-rule { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 12px; }
+.sched-rule .field { min-width: 120px; }
+.sched-rule .field[hidden] { display: none; }
+.sched-save { min-width: 0 !important; }

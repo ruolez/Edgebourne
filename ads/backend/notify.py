@@ -44,6 +44,26 @@ def telegram_people(user_ids):
     return [r["id"] for r in rows]
 
 
+def reach(user_ids, flag="notify_reminders"):
+    """[(user id, channel)]: Telegram when the person linked it, otherwise email. `flag` is the
+    person's own on/off switch for this kind of alert (a users column)."""
+    if not user_ids:
+        return []
+    by_tg = set(telegram_people(user_ids))
+    rows = db.query(f"SELECT id FROM users WHERE id = ANY(%s) AND is_active AND {flag}", (list(user_ids),))
+    out = []
+    for r in rows:
+        if r["id"] in by_tg:
+            out.append((r["id"], "telegram"))
+        elif mailer.configured():
+            out.append((r["id"], "email"))
+    return out
+
+
+def admin_ids():
+    return [r["id"] for r in db.query("SELECT id FROM users WHERE role = 'admin' AND is_active")]
+
+
 def queue(user_id, channel, kind, title, lines, url=None, button="Open", ref=None, dedupe_key=None):
     db.execute(
         "INSERT INTO notifications (user_id, channel, kind, ref, dedupe_key, title, lines, url, button) "

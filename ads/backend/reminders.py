@@ -65,25 +65,6 @@ def digest_text(leads, now):
     return title, lines
 
 
-def _reach(user_ids):
-    """Each person by Telegram when linked, otherwise by email."""
-    if not user_ids:
-        return []
-    by_tg = set(notify.telegram_people(user_ids))
-    rows = db.query("SELECT id FROM users WHERE id = ANY(%s) AND is_active AND notify_reminders", (list(user_ids),))
-    out = []
-    for r in rows:
-        if r["id"] in by_tg:
-            out.append((r["id"], "telegram"))
-        elif mailer.configured():
-            out.append((r["id"], "email"))
-    return out
-
-
-def _admins():
-    return [r["id"] for r in db.query("SELECT id FROM users WHERE role = 'admin' AND is_active")]
-
-
 LEADS_SQL = """SELECT l.*, (SELECT COUNT(*) FROM lead_notes n WHERE n.lead_id = l.id) AS notes FROM leads l
                WHERE l.status = 'new' AND NOT l.is_test AND l.first_contacted_at IS NULL"""
 
@@ -96,13 +77,13 @@ def run(now=None):
     for lead in db.query(LEADS_SQL + " AND l.created_time > %s", (now - TOO_OLD,)):
         url = f"{config.APP_BASE_URL}/leads.html#lead={lead['id']}"
         kinds = due(lead, now)
-        admins = _admins()
+        admins = notify.admin_ids()
         for kind in kinds:
             people = ([lead["owner_id"]] if lead["owner_id"] else leads_mod.recipient_ids(lead)) if kind == "5m" else admins
             if kind == "5m" and "1h" in kinds:  # caught up late: admins get only the hour one
                 people = [p for p in people if p not in admins]
             title, lines = reminder_text(lead, kind, now)
-            for uid, channel in _reach(people):
+            for uid, channel in notify.reach(people):
                 notify.queue(uid, channel, "reminder", title, lines, url, "Open the lead", ref=str(lead["id"]),
                              dedupe_key=f"reminder:{kind}:{lead['id']}:{uid}")
                 queued += 1
@@ -115,7 +96,7 @@ def run(now=None):
         waiting = [l for l in db.query(LEADS_SQL + " ORDER BY l.created_time") if untouched(l)]
         if waiting:
             title, lines = digest_text(waiting, now)
-            for uid, channel in _reach(_admins()):
+            for uid, channel in notify.reach(notify.admin_ids()):
                 notify.queue(uid, channel, "digest", title, lines, f"{config.APP_BASE_URL}/leads.html", "Open the leads",
                              dedupe_key=f"digest:{local.date().isoformat()}:{uid}")
                 queued += 1

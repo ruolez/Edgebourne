@@ -2,6 +2,13 @@ import { api } from "./api.js";
 import { boot, esc, onRefresh, toast, when } from "./ui.js";
 import { ACTIVE, wireTaskActions } from "./tasks.js";
 import { adsView, index, loadPreviews, runsView, waitingView, workingStrip } from "./board.js";
+import { schedulesView, wireSchedules } from "./schedules.js";
+
+let scheduleList = null;
+async function loadSchedules() {
+  try { scheduleList = (await api("/api/desk/schedules")).schedules; } catch (e) { /* the tab says Loading */ }
+  if (view === "schedules") { $("view").innerHTML = schedulesView(scheduleList, data && data.bridge); }
+}
 
 const $ = (id) => document.getElementById(id);
 const KINDS = {
@@ -16,7 +23,7 @@ let pollTimer;
 let freshKey = null;
 let lastJson = "";
 const openReports = new Set();
-let view = (location.hash.match(/^#(waiting|ads|runs)/) || [])[1] || null;
+let view = (location.hash.match(/^#(waiting|ads|runs|schedules)/) || [])[1] || null;
 
 const ago = (secs) => {
   if (secs == null) return "never";
@@ -110,8 +117,11 @@ function renderView() {
   $("tab-waiting").innerHTML = `Waiting for you${waiting ? ` <span class="n claude">${waiting}</span>` : ""}`;
   $("tab-ads").innerHTML = `By ad <span class="n">${data.families.filter((f) => f.root).length}</span>`;
   $("tab-runs").innerHTML = `All runs <span class="n">${data.tasks.length}</span>`;
+  const schedOn = scheduleList ? scheduleList.filter((x) => x.enabled).length : 0;
+  $("tab-schedules").innerHTML = `Schedules${schedOn ? ` <span class="n">${schedOn} on</span>` : ""}`;
   $("working").innerHTML = workingStrip(data);
   $("view").setAttribute("aria-labelledby", `tab-${view}`);
+  if (view === "schedules") { $("view").innerHTML = schedulesView(scheduleList, data.bridge); return; }
   $("view").innerHTML = view === "waiting" ? waitingView(data, ix) : view === "ads" ? adsView(data, ix, openReports) : runsView(data, ix, openReports);
   loadPreviews($("view"));
 }
@@ -176,8 +186,10 @@ if (me) {
   });
   $("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("ask-form").requestSubmit(); });
   wireTaskActions(document.querySelector(".main"), () => { lastJson = ""; load(); }, openReports);
+  wireSchedules($("view"), async () => { await loadSchedules(); lastJson = ""; load(); });
+  loadSchedules();
   window.addEventListener("hashchange", () => {
-    const h = (location.hash.match(/^#(waiting|ads|runs)/) || [])[1];
+    const h = (location.hash.match(/^#(waiting|ads|runs|schedules)/) || [])[1];
     if (h && h !== view && data) setView(h);
   });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });

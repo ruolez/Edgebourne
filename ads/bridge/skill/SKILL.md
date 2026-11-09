@@ -102,6 +102,24 @@ files; `cat`, `tail` and pipes are not allowed.
    rather than stopping silently.
 
 
+## Scheduled runs
+
+A prompt that starts with "Scheduled" was filed by a Desk schedule (daily health check,
+optimizer review, Monday summary, monthly audit), not typed by Eugene. Nobody asked a question,
+so do exactly the scope the prompt names and nothing more:
+
+- **Daily health check**: health only, never budget advice. If everything is fine, the report is
+  five lines or fewer. Propose only for something broken (a rejected ad, a delivery error).
+- **Optimizer review**: the `/meta-ads-launch optimize` logic. Proposals are the output; respect
+  the budget rules (one change per campaign, ≥ 3 days apart, ≤ +20%) and check `desk history`
+  for the last budget proposal and its date first.
+- **Monday summary** and **Monthly audit**: the report is the output; propose only what the
+  numbers clearly support.
+
+The `--summary` you pass to `desk done` is sent to Eugene's phone as the message, so write it
+for that: the verdict first, one or two sentences, numbers with their period
+("All 5 ads delivering; 4 leads yesterday at $5.10 each, on target.").
+
 ## Kind `polish`: the preset audit passes
 
 `options` carries `ad_id`, `ad_name`, `direction` (Eugene's words, may be empty), `variants`

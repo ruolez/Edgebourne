@@ -89,7 +89,7 @@ export function proposalCard(p, task = null) {
 // opts.rows(p) renders each proposal as one line (the Claude page decides in its own tab).
 export function taskCard(t, openReports = new Set(), opts = {}) {
   const [cls, label] = STATUS[t.status] || ["", t.status];
-  const meta = [KIND_LABELS[t.kind] || t.kind, t.campaign_name, when(t.created_at), t.created_by_name].filter(Boolean).map(esc).join(" · ");
+  const meta = [(t.options && t.options.schedule) || KIND_LABELS[t.kind] || t.kind, t.campaign_name, when(t.created_at), t.created_by_name || (t.options && t.options.schedule ? "on schedule" : "")].filter(Boolean).map(esc).join(" · ");
   const working = ACTIVE.has(t.status) && t.status !== "queued" && t.progress ? `<p class="progress"><span class="dot" aria-hidden="true"></span>${esc(t.progress)}</p>` : "";
   const reports = t.reports.map((r) => `
     <details class="report" data-report="${r.id}" ${openReports.has(r.id) ? "open" : ""}>
