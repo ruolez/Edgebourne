@@ -42,7 +42,8 @@ function headerFigures() {
   // People: unique across the whole account from Meta, not the campaigns added up.
   if (!state.campaign && data.reach_total != null) m.reach = data.reach_total;
   if (prev && !state.campaign && data.prev_reach_total != null) prev.reach = data.prev_reach_total;
-  return figuresHtml(m, prev, data.target_qualified_cents);
+  const camp = state.campaign ? camps[0] : null;
+  return figuresHtml(m, prev, data.target_qualified_cents, camp ? { today: camp.today, ever: camp.ever } : { today: data.today_total, ever: data.ever_total });
 }
 
 function toolbar() {

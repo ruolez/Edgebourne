@@ -182,12 +182,20 @@ export function cardsHtml(rows) {
 
 // ---------------------------------------------------------------- figures with "vs before"
 
-export function figuresHtml(m, prev, target) {
+// "today 37 · all time 1,955" under a views or people figure (null parts are left out).
+function todayEver(today, ever, key) {
+  const t = today && today[key], e = ever && ever[key];
+  if (t == null && e == null) return "";
+  return `<span class="fig-s">${t != null ? `today ${count(t)}` : ""}${t != null && e != null ? " · " : ""}${e != null ? `all time ${count(e)}` : ""}</span>`;
+}
+
+export function figuresHtml(m, prev, target, { today = null, ever = null } = {}) {
   const f = (label, value, d) => `<div class="fig"><span class="fig-l">${label}</span><b class="fig-v">${value}</b>${d || ""}</div>`;
   const qcpl = m.qualified ? m.spend_cents / m.qualified : null;
   return `<div class="figs">
     ${f("Spent", money(m.spend_cents, { exact: true }), prev ? delta(m.spend_cents, prev.spend_cents, null).replace(/d-(good|bad)/, "d-mute") : "")}
-    ${f("Views", count(m.impressions), `${prev ? delta(m.impressions, prev.impressions, false) : ""}<span class="fig-s" title="Different people who saw it at least once">${count(m.reach)} ${m.reach === 1 ? "person" : "people"} reached${m.reach_summed ? " (approx.)" : ""}</span>`)}
+    ${f("Views", count(m.impressions), `${prev ? delta(m.impressions, prev.impressions, false) : ""}${todayEver(today, ever, "impressions")}`)}
+    ${f("People reached", count(m.reach) + (m.reach_summed ? "*" : ""), `${prev && !m.reach_summed ? delta(m.reach, prev.reach, false) : ""}${todayEver(today, ever, "reach")}`)}
     ${f("Leads", count(m.leads), prev ? delta(m.leads, prev.leads, false) : "")}
     ${f("Cost per lead", per(m.spend_cents, m.leads), prev ? delta(cpl(m), cpl(prev), true) : "")}
     ${f("Qualified", count(m.qualified), prev ? delta(m.qualified, prev.qualified, false) : "")}
@@ -318,7 +326,6 @@ function moreNumbers(r) {
     ${video ? cell("Hold rate", pct(m.thruplays, m.video_3s), "ThruPlays ÷ 3-second views") : ""}
     ${video ? cell("ThruPlays", count(m.thruplays), "Watched 15 s or to the end") : ""}
     ${cell("Lead rate", pct(m.leads, m.link_clicks), "Leads ÷ link clicks")}
-    ${r.level === "ad" ? cell("Views since it started", count(r.lifetime_impressions), "Includes today so far") : ""}
     ${r.level === "ad" && r.created_time ? cell("Created", esc(when(r.created_time))) : ""}
   </dl>`;
 }
@@ -383,7 +390,7 @@ export async function peek(r, { onClose } = {}) {
       ${r.level === "ad" ? `<a class="btn btn-small" href="/leads.html?ad=${encodeURIComponent(r.id)}">Its leads</a>` : ""}</div>
     ${context(r)}
     <h3 class="pk-h">This period ${r.prev ? "<small>against the same days before</small>" : ""}</h3>
-    ${figuresHtml(m, r.prev, null).replace('class="figs"', 'class="figs pk-figs"')}
+    ${figuresHtml(m, r.prev, null, { today: r.today, ever: r.ever }).replace('class="figs"', 'class="figs pk-figs"')}
     ${moreNumbers(r)}
     ${(r.spark || []).length ? `<h3 class="pk-h">Day by day</h3><div class="pk-charts"><p class="pk-cap">Spent</p><div class="chart" id="pk-spend"></div><p class="pk-cap">Leads</p><div class="chart" id="pk-leads"></div></div>` : ""}
     <div class="pk-diag"><p class="muted small">Asking Meta how it rates this ad…</p></div>

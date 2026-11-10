@@ -236,21 +236,27 @@ def apply_reach(rows, reach, field):
             m["reach"] = reach.get(r["id"], 0)
 
 
-def unique_reach(level, start, end):
-    """{id: people} for one window (complete days), cached 30 minutes; None when Meta doesn't answer."""
+def unique_reach(level, start=None, end=None, preset=None, ttl=1800):
+    """{id: people} for one window (or a Meta date preset such as "maximum"), cached; None when Meta doesn't answer."""
     import insights_api
     account = settings_store.get("meta_ad_account_id")
     if not account:
         return None
+    window = {"date_preset": preset} if preset else {"time_range": json.dumps({"since": start.isoformat(), "until": end.isoformat()})}
 
     def fetch():
-        rows = list(meta_client.paged(f"act_{account}/insights", level=level, fields=f"{REACH_ID[level]},reach", limit=500,
-                                      time_range=json.dumps({"since": start.isoformat(), "until": end.isoformat()})))
+        rows = list(meta_client.paged(f"act_{account}/insights", level=level, fields=f"{REACH_ID[level]},reach", limit=500, **window))
         return reach_map(level, rows)
     try:
-        return insights_api.cached(f"reach:{level}:{start}:{end}", 1800, fetch)
+        return insights_api.cached(f"reach:{level}:{preset or f'{start}:{end}'}", ttl, fetch)
     except meta_client.MetaError:
         return None
+
+
+def reach_today_and_ever(level):
+    """(today, since it started): people per id. Today changes through the day, so it's kept 10 minutes."""
+    today = account_info.today()
+    return unique_reach(level, today, today, ttl=600), unique_reach(level, preset="maximum")
 
 
 def lifetime_reach(ad_id):

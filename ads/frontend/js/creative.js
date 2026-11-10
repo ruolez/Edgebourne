@@ -121,8 +121,8 @@ function renderOverview() {
               <div><dt>Spent</dt><dd>${money(lifetime.spend_cents, { exact: true })}</dd></div>
               <div><dt>Leads</dt><dd>${count(lifetime.leads)}</dd></div>
               <div><dt>Per lead</dt><dd>${per(lifetime.spend_cents, lifetime.leads)}</dd></div>
-              <div><dt>Views</dt><dd>${count(lifetime.impressions)}</dd></div>
-              <div title="Different people who saw it at least once"><dt>People reached</dt><dd>${count(lifetime.reach)}${lifetime.reach_summed ? "*" : ""}</dd></div>
+              <div><dt>Views</dt><dd>${count(lifetime.impressions)}<small class="dd-sub">today ${count(lifetime.today_impressions)}</small></dd></div>
+              <div title="Different people who saw it at least once"><dt>People reached</dt><dd>${count(lifetime.reach)}${lifetime.reach_summed ? "*" : ""}<small class="dd-sub">today ${count(lifetime.today_reach)}</small></dd></div>
               <div><dt>Click rate</dt><dd>${pct(lifetime.link_clicks, lifetime.impressions)}</dd></div>
               ${ad.object_type === "VIDEO" ? `<div><dt>Hook rate</dt><dd>${hook}</dd></div>` : ""}
             </dl>

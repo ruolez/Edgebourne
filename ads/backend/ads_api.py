@@ -360,7 +360,7 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
         ad["lifetime_impressions"] = lifetime.get(ad["id"], 0)
         ad["pending_proposals"] = pending.get(ad["id"], 0)
     # Totals count every ad's spend, archived and deleted ones included (they spent real money).
-    every = db.query(f"SELECT id, adset_id FROM ads WHERE {xw}", xp)
+    every = db.query(f"SELECT id, adset_id, campaign_id FROM ads WHERE {xw}", xp)
     every_m = [{"adset_id": a["adset_id"], "m": {**metrics.get(a["id"], {}), "qualified": quality.get(a["id"], 0)},
                 "p": {**metrics_prev.get(a["id"], {}), "qualified": quality_prev.get(a["id"], 0)} if prev else {}} for a in every]
     for s in adsets:
@@ -382,9 +382,26 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
         insights.apply_reach(rows_, insights.unique_reach(level, start, end), "m")
         if prev:
             insights.apply_reach(rows_, insights.unique_reach(level, *prev), "prev")
+    # Today and since it started, next to the window: views add up, people come from Meta.
+    today = account_info.today()
+    views = {r["ad_id"]: (int(r["today"]), int(r["ever"])) for r in db.query(
+        f"""SELECT ad_id, COALESCE(SUM(impressions) FILTER (WHERE day = %s), 0) AS today, COALESCE(SUM(impressions), 0) AS ever
+            FROM ad_daily WHERE {xw} GROUP BY ad_id""", [today] + xp)}
+    for level, rows_ in (("ad", ads), ("adset", adsets), ("campaign", campaigns)):
+        r_today, r_ever = insights.reach_today_and_ever(level)
+        for row in rows_:
+            ids = [row["id"]] if level == "ad" else [a["id"] for a in every if a[f"{level}_id"] == row["id"]]
+            v_today = sum(views.get(i, (0, 0))[0] for i in ids)
+            v_ever = sum(views.get(i, (0, 0))[1] for i in ids)
+            row["today"] = {"impressions": v_today, "reach": (r_today or {}).get(row["id"], 0) if r_today is not None else None}
+            row["ever"] = {"impressions": v_ever, "reach": (r_ever or {}).get(row["id"], 0) if r_ever is not None else None}
+    acct_today, acct_ever = insights.reach_today_and_ever("account")
     reach_total = (insights.unique_reach("account", start, end) or {}).get("account")
     import targets
+    all_views = [views.get(a["id"], (0, 0)) for a in every]
     out = {"reach_total": reach_total if not campaign_id else None,
+           "today_total": {"impressions": sum(v[0] for v in all_views), "reach": (acct_today or {}).get("account")} if not campaign_id else None,
+           "ever_total": {"impressions": sum(v[1] for v in all_views), "reach": (acct_ever or {}).get("account")} if not campaign_id else None,
            "prev_reach_total": (insights.unique_reach("account", *prev) or {}).get("account") if prev and not campaign_id else None,
            "range": {"start": start.isoformat(), "end": end.isoformat(), "days": days, "label": ranges.label(start, end)},
            "target_qualified_cents": targets.qualified(), "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync"), "archived": archived_n}
@@ -429,6 +446,9 @@ def ad_detail(ad_id):
                                 COALESCE(SUM(reach),0) AS reach, COALESCE(SUM(link_clicks),0) AS link_clicks,
                                 COALESCE(SUM(leads),0) AS leads FROM ad_daily WHERE ad_id = %s""", (ad_id,), one=True)
     life = {k: int(v) for k, v in totals.items()}
+    today_row = db.query("SELECT impressions, reach FROM ad_daily WHERE ad_id = %s AND day = %s", (ad_id, account_info.today()), one=True)
+    life["today_impressions"] = int(today_row["impressions"]) if today_row else 0
+    life["today_reach"] = int(today_row["reach"]) if today_row else 0  # one day's reach is already unique
     unique = insights.lifetime_reach(ad_id)
     if unique is not None:
         life["reach"] = unique
