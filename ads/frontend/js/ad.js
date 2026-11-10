@@ -46,10 +46,10 @@ function renderHead() {
   const { ad } = data;
   document.title = `${ad.name} | Edge Bourne Ads`;
   $("crumb").innerHTML = `${icon("back")}<span>${esc(ad.campaign_name || "Ads")}</span>`;
-  $("ad-name").textContent = ad.name;
+  $("cr-title").textContent = ad.name;
   const [cls, label] = statusOf(ad.effective_status);
-  $("ad-status").innerHTML = `<span class="pill ${cls}">${esc(label)}</span>`;
-  $("ad-actions").innerHTML = `
+  $("cr-status").innerHTML = `<span class="pill ${cls}">${esc(label)}</span>`;
+  $("cr-actions").innerHTML = `
     ${["ACTIVE", "PAUSED"].includes(ad.status) ? `<span class="switch-label">${ad.status === "ACTIVE" ? "On" : "Off"}</span>${switchHtml(ad.status === "ACTIVE", `data-toggle="ad:${ad.id}" data-name="${esc(ad.name)}"`, "Ad on or off")}` : ""}
     <button class="btn" type="button" id="dup">${icon("copy")}<span>Duplicate</span></button>
     <a class="btn" href="/new-ad.html?from=${encodeURIComponent(ad.id)}">${icon("plus")}<span>New ad from this</span></a>
@@ -57,13 +57,13 @@ function renderHead() {
     ${me.role === "admin" && !["ACTIVE", "ARCHIVED", "DELETED"].includes(ad.status) ? '<button class="btn" type="button" id="archive">Archive</button>' : ""}
     ${me.role === "admin" && !["ACTIVE", "DELETED"].includes(ad.status) ? '<button class="btn btn-danger-text" type="button" id="delete">Delete</button>' : ""}`;
   const tabs = TABS.filter(([id]) => id !== "video" || ad.object_type === "VIDEO");
-  $("ad-tabs").innerHTML = tabs.map(([id, l]) => `<button type="button" role="tab" data-tab="${id}" aria-selected="${id === tab}">${esc(l)}${id === "comments" && data.comment_total ? ` <span class="n">${data.comment_total}</span>` : ""}</button>`).join("");
+  $("cr-tabs").innerHTML = tabs.map(([id, l]) => `<button type="button" role="tab" data-tab="${id}" aria-selected="${id === tab}">${esc(l)}${id === "comments" && data.comment_total ? ` <span class="n">${data.comment_total}</span>` : ""}</button>`).join("");
 }
 
 function showTab(next) {
   tab = next;
   history.replaceState(null, "", `${location.pathname}${location.search}#tab=${tab}`);
-  document.querySelectorAll("#ad-tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  document.querySelectorAll("#cr-tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
   clearTimeout(pollTimer);
   ({ overview: renderOverview, polish: renderPolish, audience: renderAudience, video: renderVideo, comments: renderComments, history: renderHistory }[tab] || renderOverview)();
 }
@@ -94,10 +94,10 @@ function renderOverview() {
   const leadsHtml = data.leads.length ? `<ul class="lead-mini">${data.leads.map((l) => `<li><a href="/leads.html#lead=${l.id}"><b>${esc(l.full_name || "Unnamed")}</b><span>${esc(l.business_type || "")}</span></a><span class="pill ${l.status}">${esc(l.status)}</span><small>${esc(shortWait(l.created_time))} ago${l.is_test ? " · test" : ""}</small></li>`).join("")}</ul>` : '<p class="muted flush">No leads from this ad yet.</p>';
   const pending = data.proposals.filter((p) => p.status === "pending");
   const hook = lifetime.impressions && data.funnel ? pct(data.funnel.video_3s, lifetime.impressions) : "—";
-  $("ad").innerHTML = `
+  $("cr-main").innerHTML = `
     ${new URLSearchParams(location.search).get("created") ? '<p class="note claude-note">Created and <b>off</b>. Check the previews below, then turn it on with the switch at the top when you\'re happy.</p>' : ""}
     ${notes.length ? `<p class="note bad">${notes.map(esc).join("<br>")}</p>` : ""}
-    <div class="ad-layout">
+    <div class="cr-layout">
       <section class="panel preview-panel">
         <div class="panel-head"><h2>Preview</h2><p>As Meta renders it</p></div>
         <div class="panel-body stack tight">
@@ -245,7 +245,7 @@ async function renderPolish() {
   try { runs = (await api(`/api/ads/ad/${encodeURIComponent(adId)}/polish-runs`)).tasks; } catch (err) { toast(err.message, "bad"); }
   const last = runs.find((r) => r.kind === "polish" && r.scorecard);
   const selected = new Set(JSON.parse(sessionStorage.getItem("ebads-passes") || "null") || passes.presets.full);
-  $("ad").innerHTML = `
+  $("cr-main").innerHTML = `
     <div class="polish-layout">
       <section class="panel polish-panel">
         <div class="panel-head"><h2>Polish this ad</h2><p>The checks that took N1–N5 from first draft to approved</p></div>
@@ -335,7 +335,7 @@ async function renderPolish() {
 const BY = [["placement", "Placement"], ["age", "Age"], ["gender", "Gender"], ["device", "Device"], ["region", "Region"], ["hour", "Hour of day"]];
 
 async function renderAudience() {
-  $("ad").innerHTML = `
+  $("cr-main").innerHTML = `
     <section class="panel">
       <div class="panel-head wrap"><h2>Who saw it, and where</h2><span class="spacer"></span>
         <div class="segmented" id="aud-range">${[["7", "7 days"], ["14", "14 days"], ["30", "30 days"], ["lifetime", "All time"]].map(([k, l]) => `<button type="button" data-r="${k}" aria-pressed="${k === audienceRange}">${l}</button>`).join("")}</div></div>
@@ -362,7 +362,7 @@ async function renderAudience() {
 // ---------------------------------------------------------------- video
 
 async function renderVideo() {
-  $("ad").innerHTML = '<section class="panel"><div class="panel-body"><p class="muted">Loading…</p></div></section>';
+  $("cr-main").innerHTML = '<section class="panel"><div class="panel-body"><p class="muted">Loading…</p></div></section>';
   try {
     const d = await api(`/api/insights/ad/${encodeURIComponent(adId)}/diagnostics`);
     const f = d.funnel;
@@ -373,7 +373,7 @@ async function renderVideo() {
     const hook = f.impressions ? f.video_3s / f.impressions : null;
     const hold = f.video_3s ? f.thruplays / f.video_3s : null;
     const rank = (k, label) => { const r = d.rankings[k]; const v = r.value || "UNKNOWN"; const cls = v.startsWith("ABOVE") ? "ok" : v === "AVERAGE" ? "" : v.startsWith("BELOW") ? "bad" : ""; return `<div><dt>${label}</dt><dd><span class="pill ${cls}">${esc(r.label || "Not enough data yet")}</span></dd></div>`; };
-    $("ad").innerHTML = `
+    $("cr-main").innerHTML = `
       <div class="video-grid">
         <section class="panel">
           <div class="panel-head"><h2>Watch funnel</h2><p>Since it started</p></div>
@@ -405,7 +405,7 @@ async function renderVideo() {
         </div>
       </div>`;
     barList($("funnel"), steps, { key: "v", format: (v) => count(v), max: f.impressions || 1, extra: (i) => (f.impressions ? `${((i.v / f.impressions) * 100).toFixed(1)}%` : "") });
-  } catch (err) { $("ad").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
+  } catch (err) { $("cr-main").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
 // ---------------------------------------------------------------- comments
@@ -431,16 +431,16 @@ function commentHtml(c) {
 }
 
 async function renderComments() {
-  $("ad").innerHTML = '<section class="panel"><div class="panel-body"><p class="muted">Loading comments from Facebook…</p></div></section>';
+  $("cr-main").innerHTML = '<section class="panel"><div class="panel-body"><p class="muted">Loading comments from Facebook…</p></div></section>';
   try {
     const d = await api(`/api/insights/ad/${encodeURIComponent(adId)}/comments`);
     const open = d.items.filter((c) => !c.answered && !c.hidden).length;
-    $("ad").innerHTML = `<section class="panel comments-panel">
+    $("cr-main").innerHTML = `<section class="panel comments-panel">
       <div class="panel-head"><h2>Comments</h2><p>${count(d.total)} on the ad's post${open ? ` · ${open} not answered` : ""}</p><span class="spacer"></span>${d.post_url ? `<a class="btn btn-quiet btn-small" href="${esc(d.post_url)}" target="_blank" rel="noopener noreferrer">Open on Facebook ${icon("external")}</a>` : ""}</div>
       <div class="panel-body">${d.items.length ? `<ul class="comments">${d.items.map(commentHtml).join("")}</ul>
         <p class="muted small flush">Hiding keeps a comment visible to its writer and their friends, and to no one else. Nothing is deleted from here.</p>`
         : `<p class="muted flush">${esc(d.note || "No comments yet. Questions here are warm leads: reply within a few hours.")}</p>`}</div></section>`;
-  } catch (err) { $("ad").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
+  } catch (err) { $("cr-main").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
 document.addEventListener("click", async (e) => {
@@ -474,7 +474,7 @@ document.addEventListener("submit", async (e) => {
 
 function renderHistory() {
   const decided = data.proposals.filter((p) => p.status !== "pending");
-  $("ad").innerHTML = `
+  $("cr-main").innerHTML = `
     <section class="panel"><div class="panel-head"><h2>Changes</h2><p>Made from this dashboard</p></div>
       <div class="panel-body">${data.changes.length ? `<ul class="changes">${data.changes.map(changeLine).join("")}</ul>` : '<p class="muted flush">No changes yet.</p>'}</div></section>
     ${decided.length ? `<section class="panel"><div class="panel-head"><h2>Claude's earlier proposals</h2></div><div class="panel-body stack tight">${decided.map(proposalCard).join("")}</div></section>` : ""}`;
@@ -491,14 +491,14 @@ async function load() {
     showTab(tab);
     api(`/api/insights/ad/${encodeURIComponent(adId)}/comments`).then((c) => { data.comment_total = c.total; renderHead(); }).catch(() => {});
   } catch (err) {
-    $("ad").innerHTML = `<section class="panel empty"><h3>Ad not found</h3><p>${esc(err.message)}</p><a class="btn" href="/ads.html">Back to ads</a></section>`;
+    $("cr-main").innerHTML = `<section class="panel empty"><h3>Ad not found</h3><p>${esc(err.message)}</p><a class="btn" href="/ads.html">Back to ads</a></section>`;
   }
 }
 
 me = await boot({ page: "ads" });
 if (me) {
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("#ad-tabs [data-tab]");
+    const t = e.target.closest("#cr-tabs [data-tab]");
     if (t) { showTab(t.dataset.tab); return; }
     const g = e.target.closest("[data-goto]");
     if (g) { showTab(g.dataset.goto); window.scrollTo({ top: 0, behavior: "smooth" }); return; }

@@ -67,21 +67,21 @@ function adCard(ad, canControl) {
   const img = ad.image_url || ad.thumbnail_url;
   const issue = ad.effective_status === "DISAPPROVED" || ad.effective_status === "WITH_ISSUES";
   const notShown = ad.effective_status === "ACTIVE" && !ad.lifetime_impressions;
-  return `<article class="ad-card ${issue ? "has-issue" : ""}">
-    <a class="ad-media" href="/ad.html?id=${encodeURIComponent(ad.id)}" aria-label="Open ${esc(ad.name)}">
+  return `<article class="cr-card ${issue ? "has-issue" : ""}">
+    <a class="cr-media" href="/ad.html?id=${encodeURIComponent(ad.id)}" aria-label="Open ${esc(ad.name)}">
       ${img ? `<img src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="ph"></span>'}
       ${ad.object_type === "VIDEO" ? `<span class="play">${icon("play")}</span>` : ""}
       <span class="pill ${cls} on-media">${esc(label)}</span>
       ${ad.pending_proposals ? `<span class="badge-claude" title="Claude has a proposal for this ad">${icon("spark")}</span>` : ""}
     </a>
-    <div class="ad-body">
-      <div class="ad-title-row">
-        <a class="ad-name" href="/ad.html?id=${encodeURIComponent(ad.id)}">${esc(ad.name)}</a>
+    <div class="cr-body">
+      <div class="cr-title-row">
+        <a class="cr-name" href="/ad.html?id=${encodeURIComponent(ad.id)}">${esc(ad.name)}</a>
         ${canControl && ["ACTIVE", "PAUSED"].includes(ad.status) ? switchHtml(isOn(ad.status), `data-toggle="ad:${ad.id}" data-name="${esc(ad.name)}"`, `${ad.name} on or off`) : ""}
       </div>
-      ${ad.title ? `<p class="ad-headline">${esc(ad.title)}</p>` : ""}
-      ${notShown ? '<p class="ad-note">Not shown to anyone yet</p>' : ""}
-      <dl class="ad-stats">
+      ${ad.title ? `<p class="cr-headline">${esc(ad.title)}</p>` : ""}
+      ${notShown ? '<p class="cr-note">Not shown to anyone yet</p>' : ""}
+      <dl class="cr-stats">
         <div><dt>Spent</dt><dd>${money(m.spend_cents, { exact: true })}</dd></div>
         <div><dt>Leads</dt><dd>${count(m.leads)}</dd></div>
         <div><dt>Per lead</dt><dd>${per(m.spend_cents, m.leads)}</dd></div>
@@ -97,7 +97,7 @@ function adRow(ad, canControl) {
   const m = ad.m;
   const img = ad.image_url || ad.thumbnail_url;
   return `<tr>
-    <td><a class="ad-cell" href="/ad.html?id=${encodeURIComponent(ad.id)}">${img ? `<img src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="ph"></span>'}<b>${esc(ad.name)}</b></a></td>
+    <td><a class="cr-cell" href="/ad.html?id=${encodeURIComponent(ad.id)}">${img ? `<img src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="ph"></span>'}<b>${esc(ad.name)}</b></a></td>
     <td><span class="pill ${cls}">${esc(label)}</span></td>
     <td>${canControl && ["ACTIVE", "PAUSED"].includes(ad.status) ? switchHtml(isOn(ad.status), `data-toggle="ad:${ad.id}" data-name="${esc(ad.name)}"`, `${ad.name} on or off`) : ""}</td>
     <td class="num">${money(m.spend_cents, { exact: true })}</td>
@@ -118,16 +118,16 @@ function adsBlock(ads, canControl) {
   });
   if (!list.length) return `<p class="muted">No ads match “${esc(FILTERS[filter][0])}”.</p>`;
   if (view === "table") {
-    return `<div class="scroll-x"><table class="table middle ads-table">
+    return `<div class="scroll-x"><table class="table middle cr-table">
       <thead><tr><th>Ad</th><th>Status</th><th>On</th><th class="num">Spent</th><th class="num">Leads</th><th class="num">Per lead</th>
         <th class="num">Click rate</th><th class="num" title="3-second views ÷ impressions">Hook</th><th class="num" title="ThruPlays ÷ 3-second views">Hold</th><th class="num">Qualified</th><th>Spend per day</th></tr></thead>
       <tbody>${list.map((a) => adRow(a, canControl)).join("")}</tbody></table></div>`;
   }
-  return `<div class="ad-grid">${list.map((a) => adCard(a, canControl)).join("")}</div>`;
+  return `<div class="cr-grid">${list.map((a) => adCard(a, canControl)).join("")}</div>`;
 }
 
 function toolbar() {
-  return `<div class="ads-toolbar">
+  return `<div class="cr-toolbar">
     <div class="segmented" id="filters" role="group" aria-label="Show">${Object.entries(FILTERS).map(([k, [l, fn]]) => {
       const n = data.campaigns.flatMap((c) => c.adsets.flatMap((s) => s.ads)).filter(fn).length;
       return `<button type="button" data-filter="${k}" aria-pressed="${k === filter}">${esc(l)} <span class="n">${n}</span></button>`;
@@ -144,17 +144,17 @@ function toolbar() {
 
 function render() {
   if (!data.campaigns.length) {
-    $("ads").innerHTML = `<section class="panel empty"><h3>No ads yet</h3><p>Once Meta is connected in Settings, your campaigns, ad sets and ads appear here. Use Refresh from Meta after connecting.</p></section>`;
+    $("cr-all").innerHTML = `<section class="panel empty"><h3>No ads yet</h3><p>Once Meta is connected in Settings, your campaigns, ad sets and ads appear here. Use Refresh from Meta after connecting.</p></section>`;
     return;
   }
-  $("ads").innerHTML = toolbar() + data.campaigns.map((c) => {
+  $("cr-all").innerHTML = toolbar() + data.campaigns.map((c) => {
     const [cc, cl] = statusOf(c.effective_status);
     const sets = c.adsets.map((s) => {
       const [sc, sl] = statusOf(s.effective_status);
       const learn = LEARNING[s.learning_stage];
-      return `<section class="adset">
-        <header class="adset-head">
-          <div class="adset-title">
+      return `<section class="aset">
+        <header class="aset-head">
+          <div class="aset-title">
             <span class="level">Ad set</span>
             <h3>${esc(s.name)}</h3>
             <span class="pill ${sc}">${esc(sl)}</span>
@@ -163,9 +163,9 @@ function render() {
           </div>
           ${c.can_control ? switchHtml(isOn(s.status), `data-toggle="adset:${s.id}" data-name="${esc(s.name)}"`, `${s.name} on or off`) : ""}
         </header>
-        ${s.targeting_summary ? `<p class="adset-target">${esc(s.targeting_summary)}</p>` : ""}
+        ${s.targeting_summary ? `<p class="aset-target">${esc(s.targeting_summary)}</p>` : ""}
         ${s.ads.length ? adsBlock(s.ads, c.can_control) : '<p class="muted">No ads in this ad set.</p>'}
-        <p class="adset-estimate muted small" data-estimate="${esc(s.id)}"></p>
+        <p class="aset-estimate muted small" data-estimate="${esc(s.id)}"></p>
       </section>`;
     }).join("");
     return `<section class="panel campaign">
@@ -211,10 +211,10 @@ if (me) {
     try { localStorage.setItem("ebads-range", range); } catch (err) {}
     load();
   });
-  $("ads").addEventListener("change", (e) => {
+  $("cr-all").addEventListener("change", (e) => {
     if (e.target.id === "sort") { sortBy = e.target.value; savePrefs(); render(); loadEstimates(); }
   });
-  $("ads").addEventListener("click", (e) => {
+  $("cr-all").addEventListener("click", (e) => {
     if (e.target.closest("#archived")) { showArchived = !showArchived; load(); return; }
     const fb = e.target.closest("[data-filter]");
     if (fb) { filter = fb.dataset.filter; savePrefs(); render(); loadEstimates(); return; }

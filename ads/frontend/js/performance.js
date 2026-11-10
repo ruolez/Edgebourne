@@ -96,7 +96,7 @@ function render() {
     <thead><tr><th>Day</th><th class="num">Spent</th><th class="num">Leads</th></tr></thead>
     <tbody>${data.series.map((d) => `<tr><td>${dayLabel(d.day)}</td><td class="num">${money(d.spend_cents, { exact: true })}</td><td class="num">${d.leads}</td></tr>`).join("")}</tbody></table></div></details>`;
 
-  const ads = `<section class="panel" id="ads-panel" aria-label="Ads"></section>
+  const ads = `<section class="panel" id="cr-panel" aria-label="Ads"></section>
     <p class="muted small flush">Complete days only (${dayLabel(data.range.start)} to ${dayLabel(data.range.end)}): today is left out because Meta reports late. A cost in grey comes from fewer than ${EARLY} leads, too few to judge the ad on.</p>`;
 
   const extra = `<section class="panel"><div class="panel-head wrap"><h2>Who and where</h2><p>${campaign ? "This campaign" : "All ads"}, same period</p><span class="spacer"></span>
@@ -139,7 +139,7 @@ function costCell(cents, n) {
 
 function adRow(a) {
   return `<tr>
-    <td><a class="ad-cell" href="/ad.html?id=${encodeURIComponent(a.id)}">${a.thumbnail_url ? `<img src="${esc(a.thumbnail_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="ph"></span>'}<b>${esc(a.name)}</b></a></td>
+    <td><a class="cr-cell" href="/ad.html?id=${encodeURIComponent(a.id)}">${a.thumbnail_url ? `<img src="${esc(a.thumbnail_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="ph"></span>'}<b>${esc(a.name)}</b></a></td>
     <td>${statusPill(a.effective_status)}</td>
     <td class="num">${money(a.spend_cents, { exact: true })}</td>
     <td class="num">${count(a.impressions)}</td>
@@ -166,7 +166,7 @@ function headCell(c) {
 }
 
 function renderAds() {
-  const box = document.getElementById("ads-panel");
+  const box = document.getElementById("cr-panel");
   if (!box) return;
   const list = adsShown();
   const counts = Object.fromEntries(Object.entries(FILTERS).map(([k, [, fn]]) => [k, data.ads.filter(fn).length]));
@@ -179,21 +179,21 @@ function renderAds() {
         <button type="button" class="btn btn-quiet btn-small" data-clear>Show all ads</button></div>`;
   const head = box.querySelector(".results-bar");
   const bar = `<div class="panel-head wrap results-bar"><h2>Ads</h2>
-      <div class="segmented" id="ad-filter" role="group" aria-label="Show ads">${Object.entries(FILTERS).map(([k, [l]]) =>
+      <div class="segmented" id="cr-filter" role="group" aria-label="Show ads">${Object.entries(FILTERS).map(([k, [l]]) =>
         `<button type="button" data-filter="${k}" aria-pressed="${k === table.filter}">${esc(l)} <span class="n">${counts[k]}</span></button>`).join("")}</div>
-      <div class="search">${icon("search")}<label class="sr-only" for="ad-q">Find an ad</label><input class="input" id="ad-q" type="search" placeholder="Find an ad" autocomplete="off"></div>
+      <div class="search">${icon("search")}<label class="sr-only" for="cr-q">Find an ad</label><input class="input" id="cr-q" type="search" placeholder="Find an ad" autocomplete="off"></div>
     </div>`;
-  if (!head) box.innerHTML = bar + '<div class="panel-body" id="ads-body"></div>';
-  else box.querySelectorAll("#ad-filter button").forEach((b) => {
+  if (!head) box.innerHTML = bar + '<div class="panel-body" id="cr-results"></div>';
+  else box.querySelectorAll("#cr-filter button").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.filter === table.filter));
     b.querySelector(".n").textContent = counts[b.dataset.filter];
   });
-  document.getElementById("ads-body").innerHTML = body;
+  document.getElementById("cr-results").innerHTML = body;
 }
 
 function wireAds() {
   document.addEventListener("click", (e) => {
-    const f = e.target.closest("#ad-filter [data-filter]");
+    const f = e.target.closest("#cr-filter [data-filter]");
     if (f) { table.filter = f.dataset.filter; saveTable(); renderAds(); return; }
     const s = e.target.closest(".results-table [data-sort]");
     if (s) {
@@ -204,14 +204,14 @@ function wireAds() {
       document.querySelector(`.results-table [data-sort="${col.key}"]`)?.focus();
       return;
     }
-    if (e.target.closest("#ads-panel [data-clear]")) {
+    if (e.target.closest("#cr-panel [data-clear]")) {
       table.filter = "all"; table.q = "";
-      const q = document.getElementById("ad-q"); if (q) q.value = "";
+      const q = document.getElementById("cr-q"); if (q) q.value = "";
       saveTable(); renderAds();
     }
   });
   document.addEventListener("input", (e) => {
-    if (e.target.id !== "ad-q") return;
+    if (e.target.id !== "cr-q") return;
     table.q = e.target.value; renderAds();
   });
 }

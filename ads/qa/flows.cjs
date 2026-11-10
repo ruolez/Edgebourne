@@ -70,7 +70,7 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   await page.fill('#cd-input', 'N4 - Weekly report (flow copy)');
   await Promise.all([page.waitForURL('**created=1**'), page.click('dialog.confirm #cd-ok')]);
   await page.waitForSelector('.claude-note');
-  check('duplicate opens the new ad with the "created, off" note', (await page.textContent('#ad-name')).includes('flow copy'));
+  check('duplicate opens the new ad with the "created, off" note', (await page.textContent('#cr-title')).includes('flow copy'));
   await page.screenshot({ path: `${OUT}/flow-3-duplicate.png`, fullPage: true });
 
   // 4. New ad with an uploaded image.
@@ -84,8 +84,8 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
     await page.fill('#title', 'One system for the whole shop');
     await page.screenshot({ path: `${OUT}/flow-4-new-ad.png`, fullPage: true });
     await Promise.all([page.waitForURL('**/ad.html?id=**created=1**'), page.click('#create')]);
-    await page.waitForSelector('#ad-status .pill');
-    check('new image ad is created and opens off', (await page.textContent('#ad-status')).includes('Off'), await page.textContent('#ad-name'));
+    await page.waitForSelector('#cr-status .pill');
+    check('new image ad is created and opens off', (await page.textContent('#cr-status')).includes('Off'), await page.textContent('#cr-title'));
   }
 
   // 4b. Polish: start a run from the ad page, then turn Claude's new-headline proposal into an ad.
@@ -107,9 +107,9 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
     await create.click();
     await page.waitForSelector('dialog.confirm');
     await Promise.all([page.waitForURL('**created=1**'), page.click('dialog.confirm #cd-ok')]);
-    await page.waitForSelector('#ad-status .pill');
+    await page.waitForSelector('#cr-status .pill');
     check('approving a new-copy proposal creates that ad, switched off',
-      (await page.textContent('#ad-name')).includes('·') && (await page.textContent('#ad-status')).includes('Off'), await page.textContent('#ad-name'));
+      (await page.textContent('#cr-title')).includes('·') && (await page.textContent('#cr-status')).includes('Off'), await page.textContent('#cr-title'));
   } else results.push('SKIP new-headline proposal — none pending');
 
   // Refresh: on every page, pulls from Meta, then the page reloads its data and the label updates.
@@ -139,8 +139,8 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   await page.waitForSelector('dialog.confirm');
   await page.screenshot({ path: `${OUT}/flow-archive-confirm.png` });
   await page.click('dialog.confirm #cd-ok');
-  await page.waitForFunction(() => /Archived/.test(document.querySelector('#ad-status')?.textContent || ''));
-  check('Archive marks the ad archived and hides the Archive button', !(await page.isVisible('#archive')), await page.textContent('#ad-status'));
+  await page.waitForFunction(() => /Archived/.test(document.querySelector('#cr-status')?.textContent || ''));
+  check('Archive marks the ad archived and hides the Archive button', !(await page.isVisible('#archive')), await page.textContent('#cr-status'));
   await page.goto(BASE + '/ads.html', { waitUntil: 'networkidle' });
   const listed = async () => page.evaluate((id) => !!document.querySelector(`[href*="${id}"]`), dup.id);
   check('an archived ad is hidden on the Ads page', !(await listed()));
@@ -450,7 +450,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   const spentRows = await cells(2);
   check('Results lists only ads that spent money by default, biggest spend first',
     spentRows.length > 0 && spentRows.every((t) => dollars(t) > 0) && spentRows.map(dollars).every((v, i, a) => !i || a[i - 1] >= v)
-    && Number(await page.textContent('#ad-filter [data-filter="spent"] .n')) === spentRows.length, spentRows.join(' '));
+    && Number(await page.textContent('#cr-filter [data-filter="spent"] .n')) === spentRows.length, spentRows.join(' '));
   const total = dollars((await page.textContent('.results-table tfoot td.num')).trim());
   check('the total row adds up the ads shown', Math.abs(total - spentRows.map(dollars).reduce((a, b) => a + b, 0)) < 0.01, String(total));
   check('each figure says how it compares with the days before', (await page.locator('.figures:not(.pace) .delta').count()) >= 4, (await page.textContent('.figures:not(.pace) .figure.hero .delta')) || '');
@@ -466,18 +466,18 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   await page.reload();
   await page.waitForSelector('.results-table tbody tr');
   check('the chosen order is kept after a reload', (await page.getAttribute('.results-table th:nth-child(7)', 'aria-sort')) === 'descending');
-  await page.fill('#ad-q', 'order portal');
+  await page.fill('#cr-q', 'order portal');
   const found = await cells(0);
   check('Find an ad narrows the table to matching names', found.length > 0 && found.every((t) => /order portal/i.test(t)), found.join(' | '));
-  await page.fill('#ad-q', 'zzz no such ad');
-  check('no match says so and offers every ad', /No ad called/.test(await page.textContent('#ads-panel')) && await page.isVisible('#ads-panel [data-clear]'));
-  await page.click('#ads-panel [data-clear]');
-  check('Show all ads brings every ad back', (await page.locator('.results-table tbody tr').count()) === Number(await page.textContent('#ad-filter [data-filter="all"] .n'))
-    && (await page.inputValue('#ad-q')) === '');
-  await page.click('#ad-filter [data-filter="running"]');
+  await page.fill('#cr-q', 'zzz no such ad');
+  check('no match says so and offers every ad', /No ad called/.test(await page.textContent('#cr-panel')) && await page.isVisible('#cr-panel [data-clear]'));
+  await page.click('#cr-panel [data-clear]');
+  check('Show all ads brings every ad back', (await page.locator('.results-table tbody tr').count()) === Number(await page.textContent('#cr-filter [data-filter="all"] .n'))
+    && (await page.inputValue('#cr-q')) === '');
+  await page.click('#cr-filter [data-filter="running"]');
   const st = await cells(1);
   check('Running shows only ads that are on', st.length > 0 && st.every((t) => t === 'Running'), st.join(' '));
-  await page.click('#ad-filter [data-filter="spent"]');
+  await page.click('#cr-filter [data-filter="spent"]');
   check('with one campaign there is no campaign picker', await page.isHidden('#campaign-pick'));
   const one = await page.evaluate(async () => {
     const all = await (await fetch('/api/performance?range=7')).json();
@@ -518,8 +518,8 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   await page.locator('#view .decision [data-approve]').click();
   await page.waitForSelector('dialog.confirm');
   await Promise.all([page.waitForURL('**/ad.html?id=**created=1**'), page.click('dialog.confirm #cd-ok')]);
-  await page.waitForFunction(() => /angle where it lives/.test(document.querySelector('#ad-name')?.textContent || ''));
-  check('approving a new-ad decision creates the ad, switched off', /Off/.test(await page.textContent('#ad-status')), await page.textContent('#ad-name'));
+  await page.waitForFunction(() => /angle where it lives/.test(document.querySelector('#cr-title')?.textContent || ''));
+  check('approving a new-ad decision creates the ad, switched off', /Off/.test(await page.textContent('#cr-status')), await page.textContent('#cr-title'));
   await page.goto(BASE + '/desk.html#runs', { waitUntil: 'networkidle' });
   await page.waitForSelector('#view .task');
   check('All runs folds the scorecard', !(await page.isVisible('#view .scorecard')));
@@ -742,8 +742,8 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
     newSets.length === 1 && newSets[0].status === 'PAUSED' && newSets[0].targeting.geo_locations.cities.map((c) => `${c.key}:${c.radius}:${c.distance_unit}`).join() === '2420886:15:mile'
     && newSets[0].targeting.age_range.join() === '30,64' && newSets[0].targeting.flexible_spec[0].behaviors.length === 2 && newSets[0].destination_type === 'ON_AD',
     JSON.stringify(newSets[0] && newSets[0].targeting));
-  await page.waitForFunction(() => document.querySelectorAll('#adset option').length > 0);
-  check('the next step is adding an ad to the new ad set', (await page.inputValue('#adset')) === newSets[0].id);
+  await page.waitForFunction(() => document.querySelectorAll('#aset-pick option').length > 0);
+  check('the next step is adding an ad to the new ad set', (await page.inputValue('#aset-pick')) === newSets[0].id);
 
   // New campaign: one form for campaign, ad set, form and ads; created off; resumes after a refusal; publish needs the budget typed.
   await page.goto(BASE + '/ads.html');
@@ -759,7 +759,7 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   await page.waitForFunction(() => /more than 3 times what runs now/.test(document.getElementById('review').textContent));
   check('a budget far above what runs now is refused', true);
   await page.fill('#c-budget', '15');
-  await page.click('#ad-add');
+  await page.click('#cr-add');
   await page.selectOption('#a-tpl-1', '120252672230740312');
   check('a second ad starts from the words of the ad it copies', /typing the same thing twice/i.test(await page.inputValue('#a-title-1')) || (await page.inputValue('#a-body-1')).length > 20);
   await page.fill('#a-name-1', 'QA N7 - Retyping');
@@ -806,7 +806,7 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   check("the ad page lists Meta's automatic changes in plain words", /Image touch-ups.*Video filters.*Text improvements.*Relevant comments/s.test(await page.textContent('#enh')));
   check('features that change the words or pictures are flagged when on', /On, and they change your words or pictures: Video filters/.test(await page.textContent('#enh')));
   const crBefore = Object.keys(fake('_creatives')).length;
-  const statusBefore = await page.textContent('#ad-status');
+  const statusBefore = await page.textContent('#cr-status');
   await page.click('[data-enh="video_filtering"]');
   await page.waitForSelector('dialog.confirm');
   check('switching one asks first and says Meta reviews the ad again', /reviews the ad again/.test(await page.textContent('dialog.confirm')));
@@ -816,7 +816,7 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   const spec = newCr[0] && newCr[0].degrees_of_freedom_spec.creative_features_spec;
   check('a new creative carries the change and keeps every other setting', newCr.length === 1 && spec.video_filtering.enroll_status === 'OPT_OUT'
     && spec.image_touchups.enroll_status === 'OPT_IN' && spec.text_optimizations.enroll_status === 'OPT_OUT', JSON.stringify(spec));
-  check("the ad's on/off state is untouched", (await page.textContent('#ad-status')) === statusBefore);
+  check("the ad's on/off state is untouched", (await page.textContent('#cr-status')) === statusBefore);
 
   // Ideas: tags on the ad page, results by idea on Results, Claude's tag suggestion applied on approval.
   await page.goto(BASE + '/ad.html?id=120252672232030312');
@@ -959,6 +959,18 @@ print(r['id'])"`).trim();
   errors.splice(cSeen);
   check("a comment that isn't on this ad's post is refused", foreign === 404);
   check('replies and hiding are logged', sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(','.join(r['action'] for r in db.query('SELECT action FROM meta_changes ORDER BY id DESC LIMIT 3')[::-1]))"`).trim() === 'comment_reply,comment_hide,comment_show');
+
+
+  // Ad blockers hide elements whose class or id looks like an ad (EasyList: .ad-cell, .adset, #ads-panel …).
+  // An ads console is full of them, so no class or id may start with ad- / ads- / adset / advert / sponsor / banner / promo.
+  const risky = [];
+  for (const p of ['home.html', 'ads.html', 'ad.html?id=120252672229400312', 'performance.html', 'new-campaign.html', 'new-ad.html', 'desk.html']) {
+    await page.goto(BASE + '/' + p);
+    await page.waitForTimeout(1500);
+    risky.push(...(await page.evaluate(() => [...document.querySelectorAll('[class], [id]')].flatMap((e) => [...(typeof e.className === 'string' ? e.className.split(/\s+/) : []), e.id])
+      .filter((n) => /^(ad|ads|adset|adsets|advert|advertisement|sponsor|sponsored|banner|promo|promoted)([-_]|$)/i.test(n)))).map((n) => `${p}: ${n}`));
+  }
+  check('no class or id an ad blocker would hide', risky.length === 0, [...new Set(risky)].slice(0, 6).join(' | '));
 
   await browser.close();
   console.log(results.join('\n'));

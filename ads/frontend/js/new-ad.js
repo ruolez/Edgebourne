@@ -22,7 +22,7 @@ function fillFromTemplate() {
   if (!$("body").value.trim() || $("body").dataset.fromTemplate === "1") { $("body").value = t.body || ""; $("body").dataset.fromTemplate = "1"; }
   if (!$("title").value.trim() || $("title").dataset.fromTemplate === "1") { $("title").value = t.title || ""; $("title").dataset.fromTemplate = "1"; }
   if (t.cta_type) $("cta").value = t.cta_type;
-  if (!$("adset").dataset.touched && t.adset_id) $("adset").value = t.adset_id;
+  if (!$("aset-pick").dataset.touched && t.adset_id) $("aset-pick").value = t.adset_id;
   ["body", "title"].forEach((id) => $(id).dispatchEvent(new Event("input")));
 }
 
@@ -141,11 +141,11 @@ if (me) {
   if (!options.adsets.length || !options.templates.length) {
     document.querySelector(".new-ad-layout").innerHTML = `<section class="panel empty"><h3>Nothing to build on yet</h3><p>A new ad copies the setup of an existing one (its lead form and button). Once your campaigns are synced from Meta, come back here.</p><a class="btn" href="/ads.html">Back to ads</a></section>`;
   } else {
-    $("adset").innerHTML = options.adsets.map((s) => `<option value="${esc(s.id)}">${esc(s.name)} · ${esc(s.campaign_name)}</option>`).join("");
+    $("aset-pick").innerHTML = options.adsets.map((s) => `<option value="${esc(s.id)}">${esc(s.name)} · ${esc(s.campaign_name)}</option>`).join("");
     $("template").innerHTML = options.templates.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("");
     $("cta").innerHTML = options.cta_types.map((c) => `<option value="${c}">${esc(CTA_LABELS[c] || c)}</option>`).join("");
     const wantSet = new URLSearchParams(location.search).get("adset");
-    if (wantSet && options.adsets.some((s) => s.id === wantSet)) { $("adset").value = wantSet; $("adset").dataset.touched = "1"; }
+    if (wantSet && options.adsets.some((s) => s.id === wantSet)) { $("aset-pick").value = wantSet; $("aset-pick").dataset.touched = "1"; }
     const from = new URLSearchParams(location.search).get("from");
     if (from && options.templates.some((t) => t.id === from)) $("template").value = from;
     counter($("body"), $("body-count"), 125);
@@ -153,7 +153,7 @@ if (me) {
     fillFromTemplate();
     $("template").addEventListener("change", fillFromTemplate);
     if (me.role === "admin") loadForms();
-    $("adset").addEventListener("change", () => { $("adset").dataset.touched = "1"; });
+    $("aset-pick").addEventListener("change", () => { $("aset-pick").dataset.touched = "1"; });
     ["body", "title"].forEach((id) => $(id).addEventListener("input", (e) => { if (e.isTrusted) $(id).dataset.fromTemplate = "0"; }));
 
     $("media-tabs").addEventListener("click", (e) => {
@@ -168,7 +168,7 @@ if (me) {
         const p = await api(`/api/proposals/${encodeURIComponent(q.get("proposal"))}`);
         const pl = p.payload || {};
         if (pl.template_ad_id && options.templates.some((t) => t.id === pl.template_ad_id)) $("template").value = pl.template_ad_id;
-        if (pl.adset_id) $("adset").value = pl.adset_id;
+        if (pl.adset_id) $("aset-pick").value = pl.adset_id;
         ["body", "title", "name"].forEach((k) => { if (pl[k]) { $(k).value = pl[k]; $(k).dataset.fromTemplate = "0"; $(k).dispatchEvent(new Event("input")); } });
         if (pl.cta_type) $("cta").value = pl.cta_type;
         if (!pl.media || pl.media.kind === "same") pickTab("same");
@@ -197,7 +197,7 @@ if (me) {
       btn.textContent = "Creating…";
       try {
         const r = await api("/api/ads/new", { method: "POST", body: {
-          adset_id: $("adset").value, template_ad_id: $("template").value, name,
+          adset_id: $("aset-pick").value, template_ad_id: $("template").value, name,
           body: $("body").value, title: $("title").value, cta_type: $("cta").value, form_id: $("form").value || null,
           media: media.kind === "same" ? { kind: "same" } : { kind: media.kind, hash: media.hash, video_id: media.video_id },
         } });

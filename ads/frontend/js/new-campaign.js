@@ -29,7 +29,7 @@ function mediaOptions(ad) {
 }
 
 function adCard(ad, i) {
-  return `<fieldset class="ad-card" data-ad="${i}"><legend>Ad ${i + 1}</legend>
+  return `<fieldset class="cr-card" data-ad="${i}"><legend>Ad ${i + 1}</legend>
     <div class="grid-2">
       <div class="field"><label for="a-tpl-${i}">Starts from</label><select class="input" id="a-tpl-${i}" data-k="template_ad_id">${opts.templates.map((t) => `<option value="${esc(t.id)}" ${t.id === ad.template_ad_id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></div>
       <div class="field"><label for="a-media-${i}">Image or video</label><select class="input" id="a-media-${i}" data-k="media">${mediaOptions(ad)}</select></div>
@@ -45,8 +45,8 @@ function adCard(ad, i) {
 }
 
 function renderAds() {
-  $("ads-list").innerHTML = ads.map(adCard).join("");
-  $("ad-add").hidden = ads.length >= opts.max_ads;
+  $("cr-list").innerHTML = ads.map(adCard).join("");
+  $("cr-add").hidden = ads.length >= opts.max_ads;
 }
 
 function readAds() {
@@ -228,8 +228,8 @@ if (me) {
         }
         changed();
       });
-      $("ad-add").addEventListener("click", () => { readAds(); ads.push(blankAd()); renderAds(); changed(); $(`a-name-${ads.length - 1}`).focus(); });
-      $("ads-list").addEventListener("click", (e) => {
+      $("cr-add").addEventListener("click", () => { readAds(); ads.push(blankAd()); renderAds(); changed(); $(`a-name-${ads.length - 1}`).focus(); });
+      $("cr-list").addEventListener("click", (e) => {
         const rm = e.target.closest("[data-ad-remove]");
         if (rm) { readAds(); ads.splice(Number(rm.dataset.adRemove), 1); renderAds(); changed(); }
       });

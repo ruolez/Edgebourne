@@ -478,6 +478,8 @@ bridge 1.3); `cp` in a chain was refused (playbook now says one command at a tim
 
 ## 5. Gotchas already learned (don't relearn them)
 
+- **Ad blockers hide "ad" class names.** EasyList hides `.ad-cell`, `.ad-card`, `.ad-grid`, `.ad-head`, `.adset`, `#ads-panel` and many more; in an ads console that blanked ad names on Results and could hide whole ad sets on Ads (Eugene's screenshot, 2026-11-09). Ad things use the `cr-` (creative) and `aset` prefixes instead; QA fails on any class or id starting with ad- / ads- / adset / advert / sponsor / banner / promo. Data values (`level: "ad"`, `#ads` tab links) are fine: blockers only match markup.
+
 **Headless Desk runs on the Mac**
 - They use `--permission-mode dontAsk`. Heredoc JSON piped into `desk` is refused.
   - Write JSON to `reports/desk/tmp/task<id>-*.json`.
@@ -538,3 +540,4 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-09 · 5.2 swipe file + competitor watch built (Research page, weekly Competitor check schedule off, desk 1.4); unit tests OK, QA 164 PASS; committed, not pushed · next: 5.3 Meta's own advice
 - 2026-11-09 · 5.3 Meta's advice on Today (score, suggestions, apply with the +20% warning, benchmarks from the Monday summary); Phase 5 code complete (5.1 ideas, 5.2 swipe file, 5.3 advice); unit tests OK, QA 172 PASS; pushed · next: Eugene runs Update, turns on the Competitor check and adds watched Pages; Phase 6 (smaller gaps)
 - 2026-11-09 · 6.1 comments reply / hide built; qa/run.sh also clears the Meta cache; unit tests OK, QA 179 PASS; committed, not pushed · next: fix Results ads table names (Eugene's screenshot), then 6.2 tracking health
+- 2026-11-09 · fix: ad names blank on Results for people with an ad blocker (EasyList hid .ad-cell, .adset, #ads-panel …): ad-like class and id names renamed to cr- / aset, a QA guard added; the Ad column now stays in view when the table scrolls at any width; QA 180 PASS; committed, not pushed
