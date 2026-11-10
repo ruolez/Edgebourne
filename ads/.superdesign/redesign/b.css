@@ -1,0 +1,51 @@
+/* Direction B · Ledger — the books of a small business. Warm paper, ink, the seal teal Eugene chose.
+   Serif numerals for money; Meta's verdicts read like stamps; the timeline reads like ledger entries. */
+.dir-b{
+  --font:"Plus Jakarta Sans",system-ui,sans-serif; --font-num:"Plus Jakarta Sans",system-ui,sans-serif; --serif:"Newsreader",Georgia,serif; --fs:14px;
+  --canvas:#F4F1EA; --rail-bg:#EFEBE2; --surface:#FFFDF9; --inset:#ECE7DC; --sel-bg:#EAF3EF;
+  --ink-1:#1C2B33; --ink-2:#46555E; --ink-3:#77838A;
+  --line:rgba(28,43,51,.09); --line-2:rgba(28,43,51,.18);
+  --accent:#0D7468; --accent-ink:#FFFFFF; --accent-soft:#E1F0EC; --accent-strong:#0A5C53;
+  --ok:#2F7D5B; --ok-soft:#E3F1E8; --warn:#B7791F; --warn-ink:#7A4E05; --warn-soft:#FAEFD8;
+  --bad:#B4412E; --bad-soft:#F8E3DD; --info:#3D5A80; --info-soft:#E4EBF3; --mute-soft:#ECE7DC;
+  --claude:#6B4FD8; --claude-soft:#EEEAFC; --claude-line:rgba(107,79,216,.4);
+  --nav-on:#FFFDF9; --nav-on-ink:#0A5C53; --view-on:#1C2B33; --view-on-ink:#FFFDF9;
+  --bulk-bg:#1C2B33; --bulk-ink:#F4F1EA;
+  --s0:#0D7468; --s1:#B7791F; --s2:#6B4FD8;
+  --r-s:8px; --r-m:12px; --r-l:14px; --r-pill:999px; --r-th:6px;
+  --rail-w:248px; --nav-h:38px; --btn-h:36px; --row-h:56px; --thumb:32px; --pad-x:36px; --card-pad:22px;
+  --h1:30px; --h1-w:600; --h1-track:-.01em;
+  --fig-gap:0; --fig-pad:14px 20px; --fig-bg:transparent; --fig-size:26px; --fig-shadow:none;
+  --shadow-card:0 0 0 1px rgba(28,43,51,.07),0 1px 2px -1px rgba(28,43,51,.08),0 2px 6px rgba(28,43,51,.04);
+  --shadow-chip:0 1px 2px rgba(28,43,51,.12); --shadow-pop:0 16px 40px -12px rgba(28,43,51,.45);
+}
+.dir-b .pagehead h1,.dir-b .id-head h2{font-family:var(--serif);font-weight:600}
+.dir-b .rail{border-right:1px solid var(--line)}
+.dir-b .nav a[aria-current]{box-shadow:var(--shadow-card);font-weight:600}
+/* figures = a ledger line, not cards */
+.dir-b .figs{border-top:1px solid var(--line-2);border-bottom:1px solid var(--line-2);padding:4px 0}
+.dir-b .fig{border-left:1px solid var(--line);border-radius:0;padding:10px 20px}
+.dir-b .fig:first-child{border-left:0;padding-left:0}
+.dir-b .fig-v{font-family:var(--serif);font-weight:500;letter-spacing:0}
+/* stamps */
+.dir-b .pill{background:transparent;border-radius:5px;height:24px;padding:0 8px 0 6px;box-shadow:inset 0 0 0 1.5px currentColor,inset 0 0 0 3px var(--surface),inset 0 0 0 3.6px currentColor;font-weight:600;font-size:11.5px;letter-spacing:.03em}
+.dir-b .t-mute{color:var(--ink-3)}
+.dir-b .grid th{font-size:12px;letter-spacing:.01em;background:var(--surface)}
+.dir-b .grid td.num{font-family:var(--serif);font-size:15px}
+.dir-b .grid td.num .delta,.dir-b .grid td.num .best{font-family:var(--font)}
+.dir-b .grid td.strong{font-weight:600}
+.dir-b .sp polyline{stroke:var(--accent)}
+.dir-b .view{box-shadow:inset 0 0 0 1px var(--line-2)}
+.dir-b .view.on{box-shadow:none}
+/* ledger timeline: dotted leaders, entries like book lines */
+.dir-b .ev{grid-template-columns:18px 70px 1fr auto;border-bottom:1px dotted var(--line-2);padding:14px 0}
+.dir-b .ev:last-child{border-bottom:0}
+.dir-b .ev-time{font-family:var(--serif);font-size:15px;color:var(--ink-2)}
+.dir-b .ev-src{border:0;font-weight:600;color:var(--ink-3);font-size:11px;letter-spacing:.04em}
+.dir-b .src-meta .ev-src{color:var(--info)}
+.dir-b .cmp td b{font-family:var(--serif);font-size:16px;font-weight:500}
+.dir-b .cmp td.win b{font-weight:600}
+.dir-b .verdict{border:1px dashed var(--warn)}
+.dir-b .it-t{font-family:var(--serif);font-size:13px}
+.dir-b .p-figs b{font-family:var(--serif);font-weight:500;font-size:22px}
+.dir-b .p-tabs{background:var(--surface)}

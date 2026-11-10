@@ -1,0 +1,48 @@
+/* Direction C · Studio — the creative is the row. Cool light, cobalt, soft layered depth, larger media.
+   Signature: every thumbnail wears its delivery state as a ring; selection becomes a filmstrip tray. */
+.dir-c{
+  --font:"Manrope",system-ui,sans-serif; --font-num:"Manrope",system-ui,sans-serif; --fs:14px;
+  --canvas:#EEF1F6; --rail-bg:#FFFFFF; --surface:#FFFFFF; --inset:#F1F3F8; --sel-bg:#EEF3FF;
+  --ink-1:#111827; --ink-2:#465063; --ink-3:#7A8394;
+  --line:rgba(17,24,39,.07); --line-2:rgba(17,24,39,.14);
+  --accent:#2E5BFF; --accent-ink:#FFFFFF; --accent-soft:#E8EEFF; --accent-strong:#1F45D6;
+  --ok:#14995B; --ok-soft:#E3F6EC; --warn:#E08A00; --warn-ink:#8F5600; --warn-soft:#FFF2DB;
+  --bad:#E0432F; --bad-soft:#FDE8E5; --info:#7A55E8; --info-soft:#F0EBFD; --mute-soft:#EEF0F4;
+  --claude:#8B5CF6; --claude-soft:#F1EBFE; --claude-line:rgba(139,92,246,.4);
+  --nav-on:#E8EEFF; --nav-on-ink:#1F45D6; --view-on:#2E5BFF; --view-on-ink:#FFFFFF;
+  --bulk-bg:#FFFFFF; --bulk-ink:#111827;
+  --s0:#2E5BFF; --s1:#14995B; --s2:#E08A00;
+  --r-s:10px; --r-m:16px; --r-l:20px; --r-pill:999px; --r-th:8px;
+  --rail-w:240px; --nav-h:40px; --btn-h:38px; --row-h:68px; --thumb:42px; --pad-x:32px; --card-pad:22px;
+  --h1:28px; --h1-w:800; --h1-track:-.03em;
+  --fig-gap:12px; --fig-pad:14px 16px; --fig-bg:var(--surface); --fig-size:24px;
+  --shadow-card:0 0 0 1px rgba(17,24,39,.04),0 1px 2px rgba(17,24,39,.06),0 4px 12px -2px rgba(17,24,39,.06);
+  --fig-shadow:var(--shadow-card); --shadow-chip:0 1px 3px rgba(17,24,39,.12); --shadow-pop:0 0 0 1px rgba(17,24,39,.06),0 24px 48px -12px rgba(17,24,39,.35);
+}
+.dir-c .rail{border-right:0;box-shadow:1px 0 0 var(--line)}
+.dir-c .nav a{font-weight:600}
+.dir-c .pagehead h1{font-weight:800}
+.dir-c .grid td{border-bottom-color:rgba(17,24,39,.05)}
+.dir-c .grid .nm b{font-weight:700}
+.dir-c .pill{font-weight:600}
+/* status ring on the creative */
+.dir-c .grid .th,.dir-c .p-ad .th{box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--ring,transparent)}
+.dir-c .st-live{--ring:var(--ok)} .dir-c .st-learning{--ring:#7FD1A6} .dir-c .st-review{--ring:var(--warn)}
+.dir-c .st-rejected,.dir-c .st-issues{--ring:var(--bad)} .dir-c .st-off{--ring:var(--line-2)}
+.dir-c .namecell{gap:16px}
+.dir-c .figs .fig-v{font-weight:800}
+/* filmstrip tray */
+.dir-c .bulk{padding:10px 10px 10px 12px;gap:8px;bottom:22px}
+.dir-c .film{gap:6px;padding-right:10px;border-right:1px solid var(--line)}
+.dir-c .film .th.xs{width:34px;height:42px;border-radius:6px}
+.dir-c .bulk .btn.quiet{color:var(--ink-2)}
+.dir-c .bulk-n{order:-1;font-weight:600;padding-left:4px}
+.dir-c .sp polyline{stroke:var(--accent);stroke-width:2}
+.dir-c .ev-done .ev-dot{background:var(--accent)}
+.dir-c .tabs a[aria-current]{border-color:var(--accent);color:var(--accent-strong)}
+.dir-c .cmp thead th{background:var(--inset)}
+.dir-c .cmp-h .th.md{width:88px;height:110px;border-radius:10px}
+.dir-c .cmp td b{font-weight:700}
+.dir-c .p-bulk .mini-btn{background:var(--inset);color:var(--ink-1)}
+.dir-c .p-bulk .mini-btn.primary{background:var(--accent);color:#fff}
+.dir-c .p-tabs{background:#fff}

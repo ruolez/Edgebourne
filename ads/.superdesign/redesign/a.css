@@ -1,0 +1,65 @@
+/* Direction A · Signal — a control room for delivery. Dense, graphite, borders only.
+   One signal colour: green means "on air". Signature: the 14-day delivery track on every row. */
+.dir-a{
+  --font:"Geist",system-ui,sans-serif; --font-num:"Geist Mono",ui-monospace,monospace; --fs:13.5px;
+  --canvas:#F6F6F4; --rail-bg:#F6F6F4; --surface:#FFFFFF; --inset:#EEEEEB; --sel-bg:#F1F8F3;
+  --ink-1:#141619; --ink-2:#4A4F57; --ink-3:#7C828B;
+  --line:rgba(20,22,25,.08); --line-2:rgba(20,22,25,.16);
+  --accent:#141619; --accent-ink:#FFFFFF; --accent-soft:#E7F6EC; --accent-strong:#0F8A4C;
+  --signal:#16A34A;
+  --ok:#0F8A4C; --ok-soft:#E7F6EC; --warn:#D99A0B; --warn-ink:#8A5B00; --warn-soft:#FCF3DC;
+  --bad:#C8372D; --bad-soft:#FBE9E7; --info:#3B5BDB; --info-soft:#E9EDFC; --mute-soft:#EEEEEB;
+  --claude:#6A4FD8; --claude-soft:#EFEBFC; --claude-line:rgba(106,79,216,.35);
+  --nav-on:#FFFFFF; --nav-on-ink:#141619; --view-on:#141619; --view-on-ink:#fff;
+  --bulk-bg:#141619; --bulk-ink:#F6F6F4;
+  --s0:#16A34A; --s1:#3B5BDB; --s2:#D99A0B;
+  --r-s:6px; --r-m:8px; --r-l:10px; --r-pill:6px; --r-th:4px;
+  --rail-w:232px; --nav-h:32px; --btn-h:32px; --row-h:46px; --thumb:26px; --pad-x:28px; --card-pad:18px;
+  --h1:22px; --h1-w:600; --h1-track:-.02em;
+  --fig-gap:0; --fig-pad:12px 16px; --fig-bg:var(--surface); --fig-size:20px; --fig-shadow:none;
+  --shadow-card:0 0 0 1px var(--line); --shadow-chip:0 0 0 1px var(--line-2); --shadow-pop:0 12px 32px -8px rgba(0,0,0,.35);
+}
+.dir-a .nav a[aria-current]{box-shadow:0 0 0 1px var(--line-2)}
+.dir-a .count{background:var(--signal)}
+.dir-a .count.claude{background:var(--claude)}
+.dir-a .figs{border:1px solid var(--line);border-radius:var(--r-m);overflow:hidden}
+.dir-a .fig{border-radius:0;border-left:1px solid var(--line);flex-direction:row;align-items:baseline;gap:8px;flex-wrap:wrap}
+.dir-a .fig:first-child{border-left:0}
+.dir-a .fig-l{width:100%}
+.dir-a .grid{font-size:13px}
+.dir-a .grid th{height:34px;text-transform:none;font-family:var(--font)}
+.dir-a .grid td.num{font-size:12.5px}
+.dir-a .c-st .pill{margin-left:12px;vertical-align:middle}
+.dir-a .c-st .track{vertical-align:middle}
+.dir-a .pill{background:none;padding:0;height:auto;min-width:118px;font-weight:500}
+.dir-a .pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;margin-right:2px}
+.dir-a .pill .pi{display:none}
+.dir-a .t-ok{color:var(--ok)} .dir-a .t-mute{color:var(--ink-3)}
+.dir-a .track{display:inline-flex;gap:2px}
+.dir-a .track i{width:5px;height:14px;border-radius:1.5px;background:var(--inset)}
+.dir-a .track .d-L{background:var(--signal)}
+.dir-a .track .d-R{background:repeating-linear-gradient(135deg,var(--warn) 0 2px,var(--warn-soft) 2px 4px)}
+.dir-a .track .d-X{background:var(--bad)}
+.dir-a .st-learning .track .d-L{background:#7cc79a}
+.dir-a .sp polyline{stroke:var(--ink-2)}
+.dir-a .ev-src{font-family:var(--font-num);font-size:10.5px}
+.dir-a .ev-time{font-size:12px}
+.dir-a .tabs a[aria-current]{border-color:var(--signal)}
+.dir-a .view{border-radius:6px}
+.dir-a .cmp td.win{background:var(--accent-soft)}
+.dir-a .switch.on i{background:var(--signal)}
+.dir-a .cb.on,.dir-a .cb.some{background:var(--ink-1)}
+.dir-a .p-tabs a[aria-current]{color:var(--ink-1)}
+.dir-a .sel-dot{background:var(--ink-1)}
+.dir-a .p-ad-b .pill{min-width:0}
+/* dark */
+.dir-a.dark{
+  --canvas:#0E0F11; --rail-bg:#0E0F11; --surface:#16181B; --inset:#1D2024; --sel-bg:#15221A;
+  --ink-1:#ECEDEE; --ink-2:#AEB3BA; --ink-3:#7A8089;
+  --line:rgba(255,255,255,.07); --line-2:rgba(255,255,255,.14);
+  --accent:#ECEDEE; --accent-ink:#0E0F11; --accent-soft:#12261A; --accent-strong:#4ADE80; --signal:#22C55E;
+  --ok:#4ADE80; --ok-soft:#12261A; --warn:#F2B53A; --warn-ink:#F2C56B; --warn-soft:#2A2110;
+  --bad:#F07065; --bad-soft:#2C1513; --info:#8DA2F7; --info-soft:#161C33; --mute-soft:#1D2024;
+  --claude:#A895F5; --claude-soft:#1E1934; --nav-on:#1D2024; --nav-on-ink:#ECEDEE; --view-on:#ECEDEE; --view-on-ink:#0E0F11;
+  --bulk-bg:#ECEDEE; --bulk-ink:#0E0F11; --s0:#22C55E; --s1:#8DA2F7; --s2:#F2B53A;
+}

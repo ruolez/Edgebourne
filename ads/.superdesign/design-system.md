@@ -13,7 +13,10 @@ Pages: Home (today overview), Leads (inbox), Ads (campaign → ad set → ad car
 ## Voice
 Plain, calm, specific words. No jargon where a plain word works ("Turned off", "Cost per lead", "Needs attention"). Money always in dollars.
 
-## Visual identity: "Seal & ledger" (chosen 2026-11-09)
+## Visual identity: "Signal" (chosen 2026-11-10, replaces Seal & ledger)
+Source of truth: `.superdesign/redesign/a.css` (tokens, light + dark) and `base.css` (structure); mockups `a.html`. Graphite neutrals (#F6F6F4 canvas, #141619 ink), one signal green #16A34A = delivering/on air, warn #D99A0B (in review), bad #C8372D, violet #6A4FD8 = Claude only. Geist (UI) + Geist Mono (numbers), 13–13.5px dense tables, 46px rows, 32px controls, radius 6/8/10, borders-only depth (rgba hairlines), dark mode first-class. Signature: 14-day delivery track (one bar per day: green live, striped amber in review, red rejected, empty off) beside a dot + word status. Sidebar 232px, groups Work (Today, Inbox, Leads) / Run (Ads, Insights, Claude) / Settings; ⌘K jump field at top; selection → black floating bulk bar with creative thumbnails.
+
+## Previous identity: "Seal & ledger" (2026-11-09 to 2026-11-10)
 - Font: Plus Jakarta Sans only (variable 400-800), self-hosted. Titles 600-700 with -0.02em tracking; body 15-16px; tabular numbers everywhere money or counts appear.
 - Page (paper) #F4F6F5; cards white with a layered hairline shadow (0 0 0 1px rgba(28,43,51,.06), 0 1px 2px -1px rgba(28,43,51,.08), 0 2px 6px rgba(28,43,51,.04)); inset fields #EBEFED.
 - Ink #1C2B33 / #4B5A63 / #5F6E77; hairline rgba(28,43,51,.10).

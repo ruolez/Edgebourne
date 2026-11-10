@@ -1,0 +1,14 @@
+body{font:15px/1.5 system-ui,sans-serif;margin:0;background:#1d1f22;color:#e8e8e8}
+header{padding:28px 32px 8px;max-width:1500px}
+h1{font-size:24px;margin:0 0 6px}
+header p{color:#b8bcc2;margin:0 0 16px}
+a{color:#9cc3ff}
+.legend{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.legend div{background:#2a2d31;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px}
+.legend span{color:#b8bcc2;font-size:13.5px}
+section{padding:18px 32px}
+section h2{font-size:16px;margin:0 0 10px;color:#fff}
+.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+figure{margin:0}
+figure img{width:100%;border-radius:8px;display:block;cursor:zoom-in}
+figcaption{font-size:13px;color:#b8bcc2;margin-top:6px}
