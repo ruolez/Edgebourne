@@ -39,7 +39,7 @@ def build(alerts, leads, proposals, read_keys):
         key = f"proposal:{p['id']}"
         items.append({"key": key, "category": "claude", "rule": "proposal", "level": "claude",
                       "title": f"Claude suggests: {p.get('summary') or 'a change'}",
-                      "lines": [p["entity_name"]] if p.get("entity_name") else [], "href": "/desk.html#waiting",
+                      "lines": [p["entity_name"]] if p.get("entity_name") else [], "href": f"/desk.html#p/{p['id']}",
                       "at": p["created_at"], "entity_id": p.get("entity_id"), "open": True, "unread": key not in read_keys})
     items.sort(key=lambda i: i["at"], reverse=True)
     return items

@@ -37,7 +37,7 @@ There are also feature gaps:
 | Work | **Leads** | unchanged; adds a filter by ad and by campaign |
 | Run | **Ads** | one manager table with a Campaigns · Ad sets · Ads level switch, plus Lead forms tab, New ▾ menu |
 | Run | **Insights** | tabs: Results · Compare · Tests · Reports |
-| Run | **Claude** | tabs: Waiting · By ad · All runs · Research · Schedules |
+| Run | **Claude** | tabs: Requests (trays + thread, see ROADMAP 8.9) · By ad · Schedules, plus Research |
 | Admin | **Settings** | left sub-nav. This account: Meta, Targets, Alerts, Tracking, Lead stages, A/B, Replies, Activity. Console: Meta app, Team, Email/Telegram, Refresh, Accounts |
 
 **Clients:** see Today, Leads, Ads (read-only) and Insights (Results + Reports).

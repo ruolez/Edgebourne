@@ -325,7 +325,7 @@ details.table-view summary { cursor: pointer; color: var(--ink-2); font-weight: 
 
 /* ---------- Desk (violet = Claude) ---------- */
 .facts > div { display: contents; }
-.btn-claude { background: var(--violet); border-color: var(--violet); color: #fff; }
+.btn-claude { background: var(--violet); border-color: var(--violet); color: var(--on-violet); }
 .btn-claude:hover { opacity: .92; }
 .btn-small { padding: 5px 10px; font-size: 14px; }
 .pill.claude { background: var(--violet-soft); color: var(--violet); }
@@ -799,12 +799,9 @@ dialog.confirm .affix .input:focus { box-shadow: none; }
 /* ---------------------------------------------------------------- Claude page: decisions, ads, runs */
 .desk { max-width: 1080px; }
 #views { margin-bottom: 20px; }
-.tabs .n.claude { background: var(--violet); color: #fff; }
+.tabs .n.claude { background: var(--violet); color: var(--on-violet); }
 .composer-title { font: 600 18px/1.2 var(--font-display); margin: 0; letter-spacing: -.01em; }
 
-.working-strip { display: grid; gap: 6px; padding: 12px 16px; border-radius: var(--radius-s); background: var(--violet-soft); }
-.working-strip .progress { flex-wrap: wrap; color: var(--ink); font-weight: 500; }
-.working-strip .progress b { color: var(--violet); }
 #working:empty { display: none; }
 
 .family + .family { margin-top: 12px; }

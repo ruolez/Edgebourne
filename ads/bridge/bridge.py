@@ -28,7 +28,7 @@ desk = importlib.machinery.SourceFileLoader("desk", os.path.join(HERE, "desk")).
 RUN_LIMIT_SECONDS = 25 * 60
 RENDER_LIMIT_SECONDS = 50 * 60
 ADVICE_LIMIT_SECONDS = 90 * 60  # an advice run may cut a 9:16 version of every running ad
-KEEPALIVE_SECONDS = 60
+KEEPALIVE_SECONDS = 15  # also how quickly Stop on the Claude page reaches a run
 LOG_DIR = os.path.expanduser("~/Library/Logs/ads-desk")
 
 READ_TOOLS = [
@@ -96,6 +96,26 @@ def post_status(cfg, token, task_id, **body):
         return False
 
 
+def end_process(proc):
+    """Ends the Claude run and everything it started. It may already be gone."""
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+        time.sleep(5)
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def was_stopped(cfg, token, task_id):
+    """True when the person pressed Stop on the Claude page."""
+    try:
+        _, current = desk.call("GET", f"/api/agent/tasks/{task_id}", cfg=cfg, token=token)
+    except (desk.DeskError, urllib.error.URLError, OSError):
+        return False
+    return bool(current) and current["status"] == "cancelled"
+
+
 def run_task(cfg, token, task):
     task_id = task["id"]
     log(f"task {task_id} ({task['kind']}): starting Claude")
@@ -126,7 +146,11 @@ def run_task(cfg, token, task):
                 desk.call("POST", f"/api/agent/tasks/{task_id}/status", {"status": "running"}, cfg=cfg, token=token)
             except desk.DeskError as exc:
                 if exc.status == 409:
-                    return  # the skill already finished the task; Claude is just exiting
+                    # The skill finished the task (Claude is just exiting), or it was stopped from the page.
+                    if was_stopped(cfg, token, task_id):
+                        log(f"task {task_id}: stopped from the Claude page")
+                        end_process(proc)
+                    return
                 log(f"task {task_id}: keepalive refused: {exc}")
             except (urllib.error.URLError, OSError) as exc:
                 log(f"task {task_id}: keepalive failed: {exc}")
@@ -135,10 +159,7 @@ def run_task(cfg, token, task):
     try:
         proc.wait(timeout=ADVICE_LIMIT_SECONDS if task.get("kind") == "advice" else RENDER_LIMIT_SECONDS if render else RUN_LIMIT_SECONDS)
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGTERM)
-        time.sleep(5)
-        if proc.poll() is None:
-            os.killpg(proc.pid, signal.SIGKILL)
+        end_process(proc)
         log(f"task {task_id}: stopped after the time limit")
     finally:
         stop.set()

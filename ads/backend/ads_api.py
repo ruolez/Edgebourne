@@ -18,6 +18,7 @@ import account_info
 import money_rules
 import ranges
 import db
+import desk_view
 import insights
 import meta_client
 import settings_store
@@ -971,6 +972,36 @@ def check_proposal(proposal_id):
         return jsonify(proposal_plan(p))
     except meta_client.MetaError as exc:
         return api_error(f"Couldn't read the live budget from Meta: {exc}", 400)
+
+
+def review_plan(p):
+    """proposal_plan, plus "Make a new version" requests, which start a run on the Mac."""
+    if desk_view.is_version_request(p):
+        task = db.query("SELECT id, options FROM desk_tasks WHERE id = %s", (p["task_id"],), one=True)
+        ad = desk_view.proposal_ad(p, task)
+        if ad:
+            return {"kind": "render", "ad_id": ad, "from_task": task["id"], "note": p.get("rationale") or p["title"]}
+    return proposal_plan(p)
+
+
+@bp.post("/proposals/review")
+@login_required
+def review_proposals():
+    """One fresh read of Meta for everything about to be accepted together. Applying still goes
+    through /approve one by one, so every money rule holds for each."""
+    ids = [int(i) for i in (request.get_json(silent=True) or {}).get("ids") or [] if str(i).isdigit()][:100]
+    rows = db.query("SELECT * FROM desk_proposals WHERE id = ANY(%s) AND status = 'pending' ORDER BY id", (ids,))
+    user = current_user()
+    pairs = []
+    for p in rows:
+        level, row = proposal_target(p)
+        if (row and not can_touch(user, row["campaign_id"])) or (not row and user["role"] != "admin" and p["kind"] != "tags"):
+            continue
+        try:
+            pairs.append((p, review_plan(p)))
+        except meta_client.MetaError as exc:
+            pairs.append((p, {"kind": "unclear", "problem": f"Couldn't read Meta just now, so this one waits: {exc}"}))
+    return jsonify({"items": desk_view.review(pairs), "gone": len(ids) - len(rows)})
 
 
 @bp.post("/proposals/<int:proposal_id>/<decision>")

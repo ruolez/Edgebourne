@@ -38,6 +38,7 @@
   --info-soft: #E9EDFC;
   --violet: #6A4FD8;             /* Claude only */
   --violet-soft: #EFEBFC;
+  --on-violet: #FFFFFF;
   --focus: #3B5BDB;
   --lift: 0 0 0 1px var(--line);
   --shadow-pop: 0 0 0 1px rgba(20, 22, 25, .08), 0 16px 40px -12px rgba(20, 22, 25, .35);
@@ -59,7 +60,7 @@
     --seal: #ECEDEE; --seal-deep: #FFFFFF; --seal-soft: #23262B; --on-seal: #0E0F11; --rail: #0B0C0E; --rail-active: #1D2024;
     --amber: #F2B53A; --amber-ink: #F2C56B; --amber-soft: #2A2110; --rust: #F07065; --rust-ink: #F48C82; --rust-soft: #2C1513;
     --pine: #4ADE80; --pine-soft: #12261A; --on-pine: #0E0F11; --info: #8DA2F7; --info-soft: #161C33;
-    --violet: #A895F5; --violet-soft: #1E1934; --focus: #8DA2F7;
+    --violet: #A895F5; --violet-soft: #1E1934; --on-violet: #141619; --focus: #8DA2F7;
     --shadow-pop: 0 0 0 1px rgba(255, 255, 255, .1), 0 16px 40px -12px rgba(0, 0, 0, .7);
     --chart-spend: #9EA3AB; --chart-leads: #22C55E; --grid: rgba(255, 255, 255, .07);
     color-scheme: dark;
@@ -72,7 +73,7 @@
   --seal: #ECEDEE; --seal-deep: #FFFFFF; --seal-soft: #23262B; --on-seal: #0E0F11; --rail: #0B0C0E; --rail-active: #1D2024;
   --amber: #F2B53A; --amber-ink: #F2C56B; --amber-soft: #2A2110; --rust: #F07065; --rust-ink: #F48C82; --rust-soft: #2C1513;
   --pine: #4ADE80; --pine-soft: #12261A; --on-pine: #0E0F11; --info: #8DA2F7; --info-soft: #161C33;
-  --violet: #A895F5; --violet-soft: #1E1934; --focus: #8DA2F7;
+  --violet: #A895F5; --violet-soft: #1E1934; --on-violet: #141619; --focus: #8DA2F7;
   --shadow-pop: 0 0 0 1px rgba(255, 255, 255, .1), 0 16px 40px -12px rgba(0, 0, 0, .7);
   --chart-spend: #9EA3AB; --chart-leads: #22C55E; --grid: rgba(255, 255, 255, .07);
   color-scheme: dark;

@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="/css/tokens.css?v=1794342631">
   <link rel="stylesheet" href="/css/app.css?v=1794342631">
   <link rel="stylesheet" href="/css/shell.css?v=1794342631">
+  <link rel="stylesheet" href="/css/desk.css?v=1794342631">
 </head>
 <body>
   <div class="app">
@@ -26,9 +27,8 @@
         <button class="btn btn-claude-outline" type="button" id="ask-open" aria-expanded="false" aria-controls="composer">Ask Claude</button>
       </header>
       <nav class="tabs" id="views" role="tablist" aria-label="Claude's work">
-        <button type="button" role="tab" data-view="waiting" id="tab-waiting" aria-controls="view">Waiting for you</button>
+        <button type="button" role="tab" data-view="requests" id="tab-requests" aria-controls="work">Requests</button>
         <button type="button" role="tab" data-view="ads" id="tab-ads" aria-controls="view">By ad</button>
-        <button type="button" role="tab" data-view="runs" id="tab-runs" aria-controls="view">All runs</button>
         <button type="button" role="tab" data-view="schedules" id="tab-schedules" aria-controls="view">Schedules</button>
       </nav>
       <div class="content stack desk">
@@ -58,14 +58,18 @@
           </form>
         </section>
 
-        <div id="working" aria-live="polite"></div>
-        <div class="stack" id="view" role="tabpanel" aria-live="polite"></div>
+        <div class="work" id="work" role="tabpanel" aria-labelledby="tab-requests">
+          <aside class="trays" id="trays" aria-label="Your requests"></aside>
+          <section class="detail" id="detail" aria-label="The open request"></section>
+        </div>
+        <div class="stack" id="view" role="tabpanel" aria-live="polite" hidden></div>
 
         <details class="panel mac-panel" id="mac-panel">
           <summary class="panel-body"><b>Your Mac</b> <span class="muted" id="mac-summary"></span></summary>
           <div class="panel-body stack" id="mac-body"></div>
         </details>
       </div>
+      <div class="bk-dock" id="pick-bar" hidden></div>
     </main>
   </div>
   <script type="module" src="/js/desk.js"></script>

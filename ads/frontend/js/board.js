@@ -1,17 +1,17 @@
-// The Claude page's three views: decisions waiting, each ad's story, every run.
+// Pieces of the Claude page: one suggestion, and each ad's story.
 // Data comes from /api/desk: tasks (with proposals carrying about_ad, state, result_ad),
 // ads (by id) and families (an ad plus every ad made from it).
 import { api } from "./api.js";
 import { esc, icon, showPreviewFrame, when } from "./ui.js";
 import { statusOf } from "./format.js";
 import { renderMarkdown } from "./markdown.js";
-import { KIND_LABELS, scoreClass, taskCard } from "./tasks.js";
+import { KIND_LABELS, scoreClass } from "./tasks.js";
 
 const STATE_PILL = {
   waiting: "claude", working: "claude", live: "ok", off: "", review: "warn", archived: "", deleted: "",
   applied: "ok", approved: "ok", done: "ok", declined: "", expired: "", failed: "bad",
 };
-const RUN_WORDS = { advice: "Meta's advice", polish: "Polish", render: "New version", question: "Question", review: "Results review", research: "Competitor research", creative: "New ad ideas" };
+export const RUN_WORDS = { advice: "Meta's advice", polish: "Polish", render: "New version", question: "Question", review: "Results review", research: "Competitor research", creative: "New ad ideas" };
 const ACTIVE = new Set(["queued", "claimed", "running"]);
 
 export function index(data) {
@@ -59,7 +59,7 @@ function familyHead(fam, ix) {
 
 const TEST_METRICS = { cpl: "Cost per lead", cpql: "Cost per qualified lead", ctr: "Click rate", hook: "Hook rate" };
 
-function firstLine(text) {
+export function firstLine(text) {
   return String(text || "").split("\n")[0];
 }
 
@@ -112,36 +112,8 @@ function sourceLine(p, ix) {
   if (!t) return "";
   const score = t.scorecard && t.scorecard.overall != null ? ` · scored ${t.scorecard.overall}/5` : "";
   const asked = p.requested_by ? "The new version you asked for · " : "";
-  const story = p.kind === "experiment" ? "" : ` · <a href="#ads" data-goto-run="${t.id}">See this ad's story</a>`;
+  const story = p.kind === "experiment" || !p.about_ad ? "" : ` · <a href="#ads" data-goto-run="${t.id}">See this ad's story</a>`;
   return `<p class="source muted small flush">${asked}From the ${esc((RUN_WORDS[t.kind] || KIND_LABELS[t.kind] || t.kind).toLowerCase())} run, ${esc(when(t.created_at))}${score}${story}</p>`;
-}
-
-function actions(p, ix) {
-  if (p.kind === "tags" && p.payload) {
-    return `<div class="row decide"><button class="btn btn-claude" type="button" data-approve="${p.id}">Apply the tags</button>
-      <button class="btn btn-quiet" type="button" data-decline="${p.id}">Decline</button></div>`;
-  }
-  if (p.kind === "experiment" && p.payload) {
-    return `<div class="row decide"><button class="btn btn-claude" type="button" data-approve="${p.id}">Track this test</button>
-      <button class="btn btn-quiet" type="button" data-decline="${p.id}">Decline</button></div>`;
-  }
-  if (p.kind === "creative" && p.payload && p.payload.update_ad) {
-    return `<div class="row decide"><button class="btn btn-claude" type="button" data-approve="${p.id}">Update the ad</button>
-      <button class="btn btn-quiet" type="button" data-decline="${p.id}">Decline</button></div>`;
-  }
-  if (p.kind === "creative" && p.payload) {
-    return `<div class="row decide"><button class="btn btn-claude" type="button" data-approve="${p.id}">Create this ad (off)</button>
-      <a class="btn" href="/new-ad.html?proposal=${p.id}">Edit first</a>
-      <button class="btn btn-quiet" type="button" data-decline="${p.id}">Decline</button></div>`;
-  }
-  const t = ix.taskOf.get(p.id);
-  const adId = p.about_ad;
-  if (adId && /^make a new version/i.test(p.title || "")) {
-    return `<div class="row decide"><button class="btn btn-claude" type="button" data-render-ad="${esc(adId)}" data-render-task="${t.id}" data-render-note="${esc(p.rationale || p.title)}">Make it now</button>
-      <button class="btn btn-quiet" type="button" data-decline="${p.id}">Not now</button></div>`;
-  }
-  return `<div class="row decide"><button class="btn btn-claude" type="button" data-approve="${p.id}">Approve</button>
-    <button class="btn btn-quiet" type="button" data-decline="${p.id}">Decline</button></div>`;
 }
 
 function changeSummary(p, ix) {
@@ -150,50 +122,57 @@ function changeSummary(p, ix) {
   if (p.kind === "experiment") return `Tracks “${pl.name || p.title}” on the Tests page. Nothing changes on Meta.`;
   if (p.kind === "creative" && pl.update_ad) return `Updates “${p.entity_name || (ix && ix.ads && ix.ads[pl.template_ad_id] || {}).name || "the ad"}” on Meta: Reels and Stories show Claude's 9:16 video, feeds keep the 4:5 one. Same words and form.`;
   if (p.kind === "creative") return `New ad “${pl.name || p.title}”, created switched off${pl.media && pl.media.kind !== "same" ? ", with Claude's new " + pl.media.kind : ""}.`;
+  if (p.kind === "status") return [p.entity_name, /^(paused|off|pause)$/i.test(p.proposed_value || "") ? "turns off" : /^(active|on|resume)$/i.test(p.proposed_value || "") ? "turns on" : p.proposed_value].filter(Boolean).join(" · ");
   return [p.entity_name, p.field && `${p.field}: ${p.current_value || "—"} → ${p.proposed_value || "—"}`].filter(Boolean).join(" · ");
 }
 
-export function decisionCard(p, ix) {
+const isVersion = (p) => /^make a new version/i.test(p.title || "");
+
+// What kind of suggestion this is, as a short label; `rank` keeps the same kinds together.
+export function suggestionType(p) {
+  const pl = p.payload || {};
+  if (isVersion(p)) return { label: "New version", rank: 3 };
+  if (p.kind === "budget") return { label: "Budget", rank: 0 };
+  if (p.kind === "status") return { label: "On / off", rank: 1 };
+  if (p.kind === "creative") return pl.update_ad ? { label: "Update ad", rank: 2 } : { label: "New ad", rank: 2 };
+  if (p.kind === "targeting") return { label: "Targeting", rank: 4 };
+  if (p.kind === "experiment") return { label: "Test", rank: 5 };
+  if (p.kind === "tags") return { label: "Labels", rank: 6 };
+  return { label: "Note", rank: 7 };
+}
+
+// One suggestion: a line you can tick, accept or decline, which opens to the reason and Meta's preview.
+export function suggestion(p, ix, { open, picked }) {
   const hasPreview = p.kind === "creative" && p.payload;
-  const isRender = /^make a new version/i.test(p.title || "");
-  return `<article class="decision${hasPreview ? " with-preview" : ""}" id="p-${p.id}" data-proposal="${p.id}" data-title="${esc(p.title)}" data-change="${esc(changeSummary(p, ix))}">
-    ${hasPreview ? `<div class="decision-preview" data-preview="${p.id}"${p.payload.update_ad ? ' data-format="INSTAGRAM_REELS"' : ""} aria-label="Preview of the new ad as Meta shows it"><div class="preview-skeleton"><span></span><span></span><span></span><p>Loading Meta's preview…</p></div></div>` : ""}
-    <div class="decision-body">
-      <h3>${esc(p.title)}</h3>
-      ${p.rationale ? `<p class="why">${esc(p.rationale)}</p>` : ""}
-      ${changeList(p, ix)}
-      ${isRender ? '<p class="muted small flush">Claude rebuilds the video on your Mac (10–40 minutes) and brings it back here for a yes or no. Nothing changes on the live ad.</p>' : ""}
-      ${actions(p, ix)}
-      ${sourceLine(p, ix)}
+  const editable = hasPreview && !p.payload.update_ad;
+  const change = changeSummary(p, ix);
+  return `<article class="sg" id="p-${p.id}" data-proposal="${p.id}" data-title="${esc(p.title)}" data-change="${esc(change)}">
+    <div class="sg-head">
+      <label class="sg-tick"><input type="checkbox" data-pick="${p.id}" ${picked ? "checked" : ""} aria-label="Select: ${esc(p.title)}"></label>
+      <button type="button" class="sg-open" data-toggle="${p.id}" aria-expanded="${open}" aria-controls="sg-body-${p.id}">
+        <span class="sg-type">${esc(suggestionType(p).label)}</span>
+        <span class="sg-text"><b>${esc(p.title)}</b>${change ? `<small>${esc(change)}</small>` : ""}</span>
+        <svg class="sg-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <span class="sg-do">
+        <button class="btn btn-small btn-claude-outline" type="button" data-accept="${p.id}">Accept</button>
+        <button class="btn btn-small btn-quiet" type="button" data-decline="${p.id}">Decline</button>
+      </span>
+    </div>
+    <div class="sg-body${hasPreview ? " with-preview" : ""}" id="sg-body-${p.id}" ${open ? "" : "hidden"}>
+      ${hasPreview ? `<div class="decision-preview" data-preview="${p.id}"${p.payload.update_ad ? ' data-format="INSTAGRAM_REELS"' : ""} aria-label="Preview of the ad as Meta shows it"><div class="preview-skeleton"><span></span><span></span><span></span><p>Loading Meta's preview…</p></div></div>` : ""}
+      <div class="sg-why">
+        ${p.rationale ? `<p class="why">${esc(p.rationale)}</p>` : ""}
+        ${changeList(p, ix)}
+        ${isVersion(p) ? '<p class="muted small flush">Claude rebuilds the video on your Mac (10–40 minutes) and brings it back here for a yes or no. Nothing changes on the live ad.</p>' : ""}
+        ${editable ? `<p class="flush"><a class="btn btn-small" href="/new-ad.html?proposal=${p.id}">Edit first</a></p>` : ""}
+        ${sourceLine(p, ix)}
+      </div>
     </div>
   </article>`;
 }
 
 // ---------------------------------------------------------------- views
-
-export function workingStrip(data) {
-  const busy = data.tasks.filter((t) => ACTIVE.has(t.status));
-  if (!busy.length) return "";
-  return `<section class="working-strip" aria-label="Claude is working">${busy.map((t) => `
-    <p class="progress"><span class="dot" aria-hidden="true"></span><b>${esc(t.status === "queued" ? "Waiting for your Mac" : "Claude is working")}:</b> ${esc(firstLine(t.prompt))}${t.progress ? ` <span class="muted">· ${esc(t.progress)}</span>` : ""}
-    ${t.status === "queued" ? `<button class="btn btn-small btn-quiet" type="button" data-cancel="${t.id}">Cancel</button>` : ""}</p>`).join("")}</section>`;
-}
-
-export function waitingView(data, ix) {
-  const fams = data.families.filter((f) => f.pending);
-  if (!fams.length) {
-    return `<section class="panel empty"><h3>Nothing is waiting for you</h3>
-      <p>When Claude suggests a change, it lands here with a preview and a yes or no. Ask for a review of an ad, or for new ad ideas, to get some.</p>
-      <p><button class="btn btn-claude-outline" type="button" data-ask>Ask Claude</button></p></section>`;
-  }
-  return fams.map((f) => {
-    const pending = f.proposals.map((id) => ix.proposals.get(id)).filter((p) => p && p.status === "pending");
-    return `<section class="family" data-family="${esc(f.root || "account")}">
-      ${familyHead(f, ix)}
-      <div class="stack">${pending.map((p) => decisionCard(p, ix)).join("")}</div>
-    </section>`;
-  }).join("");
-}
 
 function outcome(p, ix) {
   const made = p.result_ad && ix.ads[p.result_ad];
@@ -203,8 +182,8 @@ function outcome(p, ix) {
   return "";
 }
 
-function proposalRow(p, ix) {
-  const decide = p.status === "pending" ? ` <a class="decide-link" href="#waiting" data-goto-proposal="${p.id}">Decide</a>` : "";
+export function proposalRow(p, ix) {
+  const decide = p.status === "pending" ? ` <a class="decide-link" href="#p/${p.id}">Decide</a>` : "";
   const run = p.followup_task && ix.tasks.get(p.followup_task);
   if (run && run.status === "done") {
     // A "make a new version" request: what it made is shown on the run that made it.
@@ -242,11 +221,6 @@ export function adsView(data, ix, openReports) {
         })()}</ol>
     </div>
   </section>`).join("");
-}
-
-export function runsView(data, ix, openReports) {
-  if (!data.tasks.length) return `<section class="panel empty"><h3>Nothing asked yet</h3><p>Use Ask Claude for a question, a results review, competitor research or new ad ideas.</p></section>`;
-  return data.tasks.map((t) => taskCard(t, openReports, { rows: (p) => proposalRow(p, ix), foldScore: true })).join("");
 }
 
 // ---------------------------------------------------------------- previews

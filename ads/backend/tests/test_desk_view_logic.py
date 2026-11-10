@@ -94,3 +94,110 @@ class FamiliesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BoardTest(unittest.TestCase):
+    def board_of(self, *tasks):
+        return desk_view.board([{"queue_rank": 0, "archived_at": None, "seen_at": None, "finished_at": None, **t} for t in tasks])
+
+    def test_each_request_lands_in_one_tray(self):
+        waiting = task(1, "review", proposals=[proposal(1, 1)], finished_at="2026-11-09T10:00")
+        running = task(2, "render", status="running")
+        queued = task(3, "question", status="queued")
+        done = task(4, "question", finished_at="2026-11-09T11:00")
+        failed = task(5, "question", status="failed", finished_at="2026-11-09T12:00")
+        cleared = task(6, "question", archived_at="2026-11-09T13:00", finished_at="2026-11-09T12:30")
+        self.assertEqual(
+            {k: v for k, v in self.board_of(waiting, running, queued, done, failed, cleared).items() if k != "fresh"},
+            {"needs_you": [1], "working": [2], "next": [3], "finished": [5, 4], "cleared": [6]})
+
+    def test_a_running_request_stays_working_while_its_suggestions_arrive(self):
+        running = task(1, "review", status="running", proposals=[proposal(1, 1)])
+        result = self.board_of(running)
+        self.assertEqual((result["working"], result["needs_you"]), ([1], []))
+
+    def test_waiting_suggestions_keep_a_cleared_request_in_needs_you(self):
+        t = task(1, "review", proposals=[proposal(1, 1)], archived_at="2026-11-09T13:00")
+        self.assertEqual(self.board_of(t)["needs_you"], [1])
+
+    def test_the_queue_runs_moved_up_requests_first_then_oldest(self):
+        tasks = [task(1, "question", status="queued"), task(2, "question", status="queued"),
+                 task(3, "question", status="queued", queue_rank=-1)]
+        self.assertEqual(self.board_of(*tasks)["next"], [3, 1, 2])
+
+    def test_finished_means_new_until_opened_or_decided(self):
+        new = task(1, "question", finished_at="2026-11-09T10:00")
+        opened = task(2, "question", finished_at="2026-11-09T10:00", seen_at="2026-11-09T11:00")
+        decided = task(3, "review", finished_at="2026-11-09T10:00", proposals=[proposal(1, 3, status="applied")])
+        self.assertEqual(self.board_of(new, opened, decided)["fresh"], [1])
+
+
+def plan_item(pid=1, plan=None, **kw):
+    return desk_view.review_item(proposal(pid, 9, title="T", **kw), plan or {"kind": "record"})
+
+
+class ReviewItemTest(unittest.TestCase):
+    def test_each_kind_of_change_lands_in_its_group(self):
+        cases = [
+            ({"kind": "budget", "from": 2000, "to": 2400, "pct": 20, "big": False, "problem": None}, "money"),
+            ({"kind": "status", "to": "ACTIVE", "spend": {"daily_cents": 2000}}, "money"),
+            ({"kind": "status", "to": "PAUSED"}, "live"),
+            ({"kind": "vertical", "name": "N1", "live": True}, "live"),
+            ({"kind": "create"}, "create"),
+            ({"kind": "render", "ad_id": N1}, "mac"),
+            ({"kind": "experiment"}, "local"),
+            ({"kind": "tags"}, "local"),
+            ({"kind": "record"}, "local"),
+        ]
+        for plan, group in cases:
+            self.assertEqual(plan_item(plan=plan)["group"], group, plan["kind"])
+
+    def test_a_budget_step_within_the_rules_is_ticked_with_the_amounts_it_was_read_at(self):
+        item = plan_item(plan={"kind": "budget", "from": 2000, "to": 2400, "pct": 20, "big": False, "problem": None})
+        self.assertEqual((item["tick"], item["needs_tick"], item["body"]),
+                         (True, False, {"from_cents": 2000, "to_cents": 2400, "accept_big": False}))
+
+    def test_a_big_budget_step_waits_for_its_own_tick(self):
+        item = plan_item(plan={"kind": "budget", "from": 2000, "to": 4000, "pct": 100, "big": True, "problem": None})
+        self.assertEqual((item["tick"], item["needs_tick"], item["body"]["accept_big"]), (False, True, True))
+
+    def test_a_budget_that_moved_since_claude_looked_waits_for_its_own_tick(self):
+        step = {"kind": "budget", "from": 3100, "to": 2400, "pct": -23, "big": False, "problem": None}
+        cases = [("$20/day", True, "Claude saw $20.00 a day. It's $31.00 now."), ("$31/day", False, None), (None, False, None)]
+        for seen, held, note in cases:
+            item = plan_item(plan=step, current_value=seen)
+            self.assertEqual((item["needs_tick"], item["tick"], item["note"]), (held, not held, note), seen)
+
+    def test_turning_something_on_waits_for_its_own_tick(self):
+        item = plan_item(plan={"kind": "status", "to": "ACTIVE", "spend": {"daily_cents": 2000, "where": "C"}})
+        self.assertEqual((item["tick"], item["needs_tick"], item["body"]), (False, True, {"confirm_daily_cents": 2000}))
+
+    def test_what_cannot_be_applied_is_blocked_with_the_reason(self):
+        cases = [
+            ({"kind": "unclear", "problem": "Not one clear amount"}, "Not one clear amount"),
+            ({"kind": "budget", "from": 2000, "to": 90000, "pct": 4400, "big": True, "problem": "Above the ceiling"}, "Above the ceiling"),
+        ]
+        for plan, reason in cases:
+            item = plan_item(plan=plan)
+            self.assertEqual((item["group"], item["blocked"], item["tick"]), ("blocked", reason, False))
+
+
+class ReviewTest(unittest.TestCase):
+    def test_two_changes_to_the_same_budget_are_never_ticked_together(self):
+        step = {"kind": "budget", "from": 2000, "to": 2400, "pct": 20, "big": False, "problem": None}
+        items = desk_view.review([
+            (proposal(1, 9, title="A", kind="budget", entity_id="c1"), step),
+            (proposal(2, 9, title="B", kind="budget", entity_id="c1"), step),
+            (proposal(3, 9, title="C", kind="budget", entity_id="c2"), step),
+        ])
+        self.assertEqual([(i["id"], i["tick"], i["conflict"]) for i in items],
+                         [(1, False, "budget:c1"), (2, False, "budget:c1"), (3, True, None)])
+
+    def test_money_comes_first_and_blocked_last(self):
+        items = desk_view.review([
+            (proposal(1, 9, title="A"), {"kind": "unclear", "problem": "x"}),
+            (proposal(2, 9, title="B"), {"kind": "tags"}),
+            (proposal(3, 9, title="C", entity_id="c1"), {"kind": "status", "to": "ACTIVE", "spend": {}}),
+            (proposal(4, 9, title="D"), {"kind": "create"}),
+        ])
+        self.assertEqual([i["id"] for i in items], [3, 4, 2, 1])

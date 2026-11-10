@@ -43,7 +43,7 @@ kbd {
   min-width: 20px; height: 18px; padding: 0 6px; border-radius: 9px; display: inline-grid; place-items: center;
   background: var(--signal); color: #fff; font: 600 11px/1 var(--font-num);
 }
-.count.claude { background: var(--violet); color: #fff; }
+.count.claude { background: var(--violet); color: var(--on-violet); }
 .count.bad { background: var(--rust); }
 .rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }
 .cap-card { background: var(--surface); border-radius: var(--radius-m); box-shadow: 0 0 0 1px var(--line); padding: 10px 12px; text-decoration: none; color: var(--ink); display: block; }
