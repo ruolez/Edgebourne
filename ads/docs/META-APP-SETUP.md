@@ -150,6 +150,26 @@ What gets sent: the stage name, when it changed, and Meta's own id for the lead 
 form gave us). No names, phone numbers or emails. Meta accepts stages up to 7 days old, so
 turning the switch on later still reports the last week's moves.
 
+## I. Instant ad status updates (about 5 min)
+
+Without this, the console learns that Meta approved or rejected an ad at the next automatic refresh
+(every 15 minutes by default). With it, Meta calls the console within seconds.
+
+1. In the console: **Settings → Meta connection**, switch on **Instant status updates from Meta**.
+   The console asks Meta to send the app the ad account's status changes (fields
+   `with_issues_ad_objects`, `in_process_ad_objects`, `ad_recommendations`, `creative_fatigue`) and
+   installs the app on this ad account.
+2. If the console says Meta didn't let the app listen to ad accounts, do that part by hand:
+   developers.facebook.com → your app (Edge Bourne Ads Console) → **Webhooks** → choose
+   **Ad Account** in the object list → callback URL `https://ads.edgebourne.com/webhooks/meta`, the
+   same verify token as for the Page → **Verify and save** → **Subscribe** to the four fields above.
+   Then switch it on again in the console.
+3. Check: the switch shows "Last update from Meta …" after the next ad change (turn a paused test ad
+   on and wait for review). Approvals and rejections also appear in the Inbox.
+
+The System User needs admin access to the ad account for step 1. Switching it off only uninstalls
+the app from this ad account; polling carries on either way.
+
 ## Email (for lead alerts)
 
 Nothing to set up if the website already sends email (website admin → **Email**): the ads

@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { money, currencySymbol } from "./format.js";
-import { boot, confirmDialog, esc, fieldError, toast, when } from "./ui.js";
+import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let s;
@@ -37,6 +37,15 @@ function renderMeta() {
   $("webhook-note").innerHTML = `In your Meta app, under Webhooks, subscribe the <b>Page</b> object to <b>leadgen</b> with callback URL <b>${esc(s.webhook_url)}</b> and the verify token above.`
     + (s.pending_webhooks ? `<br><br><b>${s.pending_webhooks} lead ping(s) waiting.</b> ${esc(s.pending_error || "")} <button class="btn" type="button" id="retry">Try again</button>` : "")
     + (s.last_campaign_sync ? `<br>Campaigns last synced ${when(s.last_campaign_sync)}.` : "");
+  const sw = s.status_webhooks || {};
+  $("sw-status").innerHTML = `${switchHtml(sw.on, 'id="status-hooks"', "Instant status updates from Meta")} <b>Instant status updates from Meta</b>`;
+  $("sw-status-note").textContent = sw.on ? (sw.last_at ? `Last update from Meta ${when(sw.last_at)}.` : "On. Nothing has changed since.")
+    : "Off: approvals and rejections show at the next refresh. On: within seconds (needs the Meta app step in part I of the setup guide).";
+  $("sw-status").querySelector("[role=switch]")?.addEventListener("click", async (e) => {
+    const on = e.currentTarget.getAttribute("aria-checked") !== "true";
+    try { await api("/api/settings/meta/status-updates", { method: "POST", body: { on } }); toast(on ? "Meta will tell the console about status changes" : "Instant status updates are off"); load(); }
+    catch (err) { toast(err.message, "bad"); }
+  });
   $("retry")?.addEventListener("click", async () => {
     const r = await api("/api/settings/webhooks/retry", { method: "POST" });
     toast(`${r.processed} lead(s) fetched`);

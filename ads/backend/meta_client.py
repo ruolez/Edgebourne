@@ -148,6 +148,10 @@ def post(path, token=None, data=None, files=None, timeout=TIMEOUT, video=False, 
                  timeout=timeout, video=video)
 
 
+def delete(path, token=None, **params):
+    return _call("DELETE", path, token or system_token(), params=params)
+
+
 def page_token(page_id=None):
     page_id = page_id or settings_store.get("meta_page_id")
     body = get(page_id, fields="access_token,name")

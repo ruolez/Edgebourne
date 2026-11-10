@@ -38,6 +38,54 @@ def account_for_page(page_id):
     return account_ctx.DEFAULT
 
 
+LEVEL_NAMES = {"AD": "ad", "ADGROUP": "ad", "AD_SET": "adset", "ADSET": "adset", "CAMPAIGN": "campaign",
+               "CREATIVE": "creative", "AD_CREATIVE": "creative"}
+STATUS_FIELDS = ("with_issues_ad_objects", "in_process_ad_objects", "field_changed", "effective_status",
+                 "creative_fatigue", "ad_recommendations")
+
+
+def parse_ad_account(payload):
+    """Rows for each change in an ad_account webhook: which account, which object, at which level."""
+    if payload.get("object") != "ad_account":
+        return []
+    out = []
+    for entry in payload.get("entry", []):
+        account = str(entry.get("id") or "").removeprefix("act_")
+        for change in entry.get("changes", []):
+            value = change.get("value") or {}
+            object_id = value.get("id") or value.get("object_id") or value.get("ad_id")
+            kind = str(value.get("level") or value.get("object_type") or "").upper()
+            detail = {k: value[k] for k in ("error_code", "error_summary", "error_message", "changed_fields", "status_name")
+                      if k in value}
+            out.append({"account": account, "field": change.get("field"), "object_id": str(object_id) if object_id else None,
+                        "level": LEVEL_NAMES.get(kind) if object_id else None, "detail": detail})
+    return out
+
+
+def refetch_plan(rows):
+    """Object ids to read again from Meta, grouped by level, each once."""
+    plan = {}
+    for r in rows:
+        if r.get("object_id") and r.get("level"):
+            ids = plan.setdefault(r["level"], [])
+            if r["object_id"] not in ids:
+                ids.append(r["object_id"])
+    return plan
+
+
+def account_for_ad_account(ad_account_id):
+    """The console account that owns this Meta ad account, or None (never guessed: an unknown ad
+    account's status changes are dropped and logged)."""
+    import account_ctx
+    with account_ctx.all_accounts():
+        accounts = [r["id"] for r in db.query("SELECT id FROM accounts WHERE archived_at IS NULL ORDER BY id")]
+    for acct in accounts:
+        with account_ctx.use(acct):
+            if str(settings_store.get("meta_ad_account_id") or "").removeprefix("act_") == ad_account_id:
+                return acct
+    return None
+
+
 @bp.post("/meta")
 def receive():
     raw = request.get_data()
@@ -51,7 +99,16 @@ def receive():
         abort(400)
     import account_ctx
     count = 0
-    for entry in payload.get("entry", []):
+    for row in parse_ad_account(payload):
+        acct = account_for_ad_account(row["account"])
+        if acct is None:
+            log.warning("status webhook for ad account %s, which no account names: dropped", row["account"])
+            continue
+        with account_ctx.use(acct):
+            db.execute("INSERT INTO webhook_events (payload, kind, field, object_id) VALUES (%s, 'ad_account', %s, %s)",
+                       (json.dumps({**row, "raw": payload}), row["field"], row["object_id"]))
+        count += 1
+    for entry in (payload.get("entry", []) if payload.get("object") != "ad_account" else []):
         for change in entry.get("changes", []):
             if change.get("field") != "leadgen":
                 continue

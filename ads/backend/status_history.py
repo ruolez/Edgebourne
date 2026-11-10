@@ -337,3 +337,30 @@ def transitions(level, entity, events, rules, now, today):
                 f"{LEVEL_WORDS[level]} “{name}” was {verb} outside this console",
                 ["Someone changed it in Ads Manager (or through Claude on the Mac). Nothing to do if that was you."])
     return out
+
+
+def process_webhooks(limit=200):
+    """Worker job: Meta's ad-account webhooks say something changed; read those objects again."""
+    import insights
+    import settings_store
+    import webhooks
+    rows = db.query("SELECT id, payload FROM webhook_events WHERE kind = 'ad_account' AND processed_at IS NULL "
+                    "ORDER BY id LIMIT %s", (limit,))
+    if not rows:
+        return 0
+    plan = webhooks.refetch_plan([r["payload"] for r in rows])
+    error = None
+    for level, ids in plan.items():
+        try:
+            insights.sync_entities(level, ids, "webhook")
+        except Exception as exc:
+            error = str(exc)[:500]
+    ids = [r["id"] for r in rows]
+    if error:
+        # Retried on the next pass; after an hour the poll has caught up anyway, so stop retrying.
+        db.execute("UPDATE webhook_events SET error = %s, processed_at = CASE WHEN received_at < now() - interval '1 hour' "
+                   "THEN now() END WHERE id = ANY(%s)", (error, ids))
+        return 0
+    db.execute("UPDATE webhook_events SET processed_at = now(), error = NULL WHERE id = ANY(%s)", (ids,))
+    settings_store.set("meta_status_webhook_at", datetime.now(timezone.utc).isoformat())
+    return len(ids)

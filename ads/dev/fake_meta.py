@@ -386,11 +386,43 @@ def fake_studies():
     return jsonify(STUDIES)
 
 
-@app.route("/v24.0/<path:path>", methods=["GET", "POST"])
+SUBSCRIPTIONS = {"app": {}, "accounts": []}  # app-level webhook objects, ad accounts that installed the app
+
+
+@app.route("/fake/_subscriptions")
+def fake_subscriptions():
+    return jsonify(SUBSCRIPTIONS)
+
+
+@app.route("/v24.0/", methods=["GET"])
+def graph_ids():
+    """Meta's multi-id read: GET /?ids=a,b&fields=…; an unknown id fails the whole call, as on Meta."""
+    out = {}
+    for oid in (request.args.get("ids") or "").split(","):
+        obj = by_id(oid)
+        if obj is None:
+            return jsonify({"error": {"message": f"Object {oid} does not exist (fake)", "code": 100}}), 400
+        out[oid] = ad_view(obj) if oid in ADS else obj
+    return jsonify(out)
+
+
+@app.route("/v24.0/<path:path>", methods=["GET", "POST", "DELETE"])
 def graph(path):
     a = {**request.args.to_dict(), **request.form.to_dict()}
     parts = path.strip("/").split("/")
     act = f"act_{ACCOUNT}"
+    if len(parts) == 2 and parts[1] == "subscriptions" and request.method == "POST":
+        SUBSCRIPTIONS["app"][a.get("object")] = {"callback_url": a.get("callback_url"), "fields": (a.get("fields") or "").split(","),
+                                                 "app_token": "|" in (a.get("access_token") or "")}
+        return jsonify({"success": True})
+    if parts == [act, "subscribed_apps"]:
+        if request.method == "POST":
+            SUBSCRIPTIONS["accounts"] = [ACCOUNT]
+            return jsonify({"success": True})
+        if request.method == "DELETE":
+            SUBSCRIPTIONS["accounts"] = []
+            return jsonify({"success": True})
+        return jsonify({"data": [{"id": "fake-app", "name": "Edge Bourne Ads Console"}] if SUBSCRIPTIONS["accounts"] else []})
     if request.method == "GET":
         if parts == ["me"]:
             return jsonify({"id": "1", "name": "ads-console (fake)"})

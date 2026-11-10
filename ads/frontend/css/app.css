@@ -1489,3 +1489,5 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .st-what small{color:var(--ink-3);font-size:13px}
 .st-src{font-size:12px;color:var(--ink-3)}
 @media (max-width:720px){.st-ev{grid-template-columns:14px 1fr auto}.st-when{grid-column:2;order:2}.st-what{grid-column:2}}
+.status-hooks{align-items:center;gap:10px;flex-wrap:wrap}
+.status-hooks #sw-status{display:inline-flex;align-items:center;gap:10px}

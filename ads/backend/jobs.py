@@ -43,6 +43,7 @@ def _loop():
         """What can't wait: new leads, replies, Claude's schedules, reminders, lead stages, report
         emails. Done for every account before any slow Meta pull. Errors stay inside the job."""
         for name, job in (("new leads", leads.process_pending_events),
+                          ("Meta status webhooks", lambda: __import__("status_history").process_webhooks()),
                           ("lead replies", lambda: __import__("replies").process_pending()),
                           ("Desk schedules", lambda: __import__("schedules").run()),
                           ("lead reminders", lambda: __import__("reminders").run()),

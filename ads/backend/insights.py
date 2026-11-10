@@ -168,3 +168,44 @@ def sync_all(days=30):
     out = {**sync_structure(), "daily_rows": sync_daily(days)}
     settings_store.set("last_performance_sync", __import__("datetime").datetime.utcnow().isoformat() + "Z")
     return out
+
+
+def _fetch_many(ids, fields, fallback):
+    """Meta's multi-id read (?ids=a,b), with the older field set if a new field is refused, and one by
+    one if an id no longer exists (Meta refuses the whole batch then)."""
+    out = {}
+    for chunk in (ids[i:i + 50] for i in range(0, len(ids), 50)):
+        try:
+            try:
+                out.update(meta_client.get("", ids=",".join(chunk), fields=fields))
+            except meta_client.MetaError:
+                out.update(meta_client.get("", ids=",".join(chunk), fields=fallback))
+        except meta_client.MetaError:
+            for one in chunk:
+                try:
+                    out[one] = meta_client.get(one, fields=fallback)
+                except meta_client.MetaError:
+                    pass
+    return out
+
+
+def sync_entities(level, ids, source="webhook"):
+    """Read these campaigns, ad sets or ads again (a webhook named them) and record what changed."""
+    import sync
+    if level == "creative":
+        rows = db.query("SELECT id FROM ads WHERE creative_id = ANY(%s)", (list(ids),))
+        level, ids = "ad", [r["id"] for r in rows]
+    if not ids:
+        return []
+    events = []
+    if level == "ad":
+        pictures = {}
+        for ad in _fetch_many(list(ids), AD_FIELDS, AD_FIELDS_PLAIN).values():
+            events += upsert_ad(ad, source, pictures)
+    elif level == "adset":
+        for a in _fetch_many(list(ids), sync.ADSET_FIELDS, sync.ADSET_FIELDS_PLAIN).values():
+            events += sync.upsert_adset(a, source)
+    elif level == "campaign":
+        for c in _fetch_many(list(ids), sync.CAMPAIGN_FIELDS, sync.CAMPAIGN_FIELDS_PLAIN).values():
+            events += sync.upsert_campaign(c, source)
+    return events

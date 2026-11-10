@@ -58,7 +58,7 @@ def _smtp_in_use():
 @admin_required
 def get_settings():
     pending = db.query("SELECT COUNT(*) AS n, MAX(error) AS last_error FROM webhook_events "
-                       "WHERE processed_at IS NULL", one=True)
+                       "WHERE processed_at IS NULL AND kind = 'leadgen'", one=True)
     import account_ctx
     import accounts_api
     import targets
@@ -78,6 +78,8 @@ def get_settings():
         "pending_error": pending["last_error"],
         "last_campaign_sync": settings_store.get("last_campaign_sync"),
         "page_subscribed": settings_store.get("meta_page_subscribed") == "1",
+        "status_webhooks": {"on": settings_store.get("meta_status_webhooks") == "1",
+                            "last_at": settings_store.get("meta_status_webhook_at")},
         "crm": crm_events.summary(),
         "telegram": {"set": bool(telegram.token()), "username": settings_store.get("telegram_bot_username") if telegram.token() else None,
                      "linked": db.query("SELECT COUNT(*) AS n FROM users WHERE telegram_chat_id IS NOT NULL AND is_active", one=True)["n"],
@@ -411,6 +413,45 @@ def connect_page():
     ads_api.record(current_user(), "account", {"id": page_id, "name": "Page leadgen webhooks", "campaign_id": None},
                    "subscribe", None, "leadgen", True)
     return jsonify({"ok": True, "apps": apps.get("data", [])})
+
+
+STATUS_WEBHOOK_FIELDS = "with_issues_ad_objects,in_process_ad_objects,ad_recommendations,creative_fatigue"
+
+
+@bp.post("/meta/status-updates")
+@admin_required
+def status_updates():
+    """Instant status updates: Meta calls the console when an ad is approved, rejected or has issues.
+    Two steps: the app listens to the ad_account object (app token), and this ad account installs the
+    app (System User token). Off removes this ad account only; polling carries on either way."""
+    on = bool((request.get_json(silent=True) or {}).get("on"))
+    account = settings_store.get("meta_ad_account_id")
+    if not account:
+        return api_error("Add the ad account ID first", 400)
+    import ads_api
+    try:
+        if on:
+            app_id, secret = settings_store.get("meta_app_id"), settings_store.get("meta_app_secret")
+            verify = settings_store.get("meta_verify_token")
+            if not (app_id and secret and verify):
+                return api_error("Fill in the Meta app (App ID, App secret, verify token) first", 400)
+            try:
+                meta_client.post(f"{app_id}/subscriptions", token=f"{app_id}|{secret}", object="ad_account",
+                                 callback_url=f"{config.APP_BASE_URL}/webhooks/meta", fields=STATUS_WEBHOOK_FIELDS,
+                                 verify_token=verify)
+            except meta_client.MetaError as exc:
+                return api_error(f"Meta didn't let the app listen to ad accounts: {exc} In the Meta app, open Webhooks → "
+                                 "Ad Account and subscribe the fields by hand (docs/META-APP-SETUP.md part I), then try again.", 400)
+            meta_client.post(f"act_{account}/subscribed_apps")
+        else:
+            meta_client.delete(f"act_{account}/subscribed_apps")
+    except meta_client.MetaError as exc:
+        return api_error(str(exc), 400)
+    settings_store.set("meta_status_webhooks", "1" if on else "")
+    log_activity("settings.status_webhooks_" + ("on" if on else "off"), subject=account)
+    ads_api.record(current_user(), "account", {"id": f"act_{account}", "name": "Ad status webhooks", "campaign_id": None},
+                   "subscribe" if on else "unsubscribe", None, STATUS_WEBHOOK_FIELDS if on else None, True)
+    return jsonify({"ok": True, "on": on})
 
 
 @bp.post("/meta/sync")

@@ -1268,6 +1268,29 @@ with account_ctx.use(a2):
   const unreadBefore = (await call('GET', '/api/refresh')).body.inbox_unread;
   await call('POST', '/api/inbox/read', { keys: [approved.key] });
   check('marking an Inbox item read lowers the unread count by one', (await call('GET', '/api/refresh')).body.inbox_unread === unreadBefore - 1);
+  // 8.3 Instant status updates: the switch subscribes the app and the ad account; a signed webhook makes the
+  // worker read the ad again within seconds (no poll), records it as from Meta and raises the alert.
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import settings_store as s; s.set('meta_app_id','1626330625641508'); s.set('meta_verify_token','qa-verify-token')"`);
+  const hooksOn = await call('POST', '/api/settings/meta/status-updates', { on: true });
+  const subs = fake('_subscriptions');
+  check('turning on instant status updates subscribes the app (app token) and installs it on the ad account',
+    hooksOn.status === 200 && subs.app.ad_account && subs.app.ad_account.app_token && subs.app.ad_account.fields.includes('with_issues_ad_objects') && subs.accounts.length === 1, JSON.stringify(subs));
+  const N1 = '120252672229040312';
+  sh(`docker exec edgebourne-ads-backend python -c "import requests;requests.get('http://fake-meta:5001/fake/_review?ad=${N1}&to=DISAPPROVED')"`);
+  sh(`docker cp dev/status_webhook.py edgebourne-ads-backend:/tmp/status_webhook.py`);
+  const hookResp = sh(`docker exec -w /app edgebourne-ads-backend python /tmp/status_webhook.py ${N1} with_issues_ad_objects`);
+  let viaHook = null;
+  for (let i = 0; i < 20 && !viaHook; i++) {
+    await page.waitForTimeout(500);
+    viaHook = (await call('GET', `/api/ads/ad/${N1}`)).body.timeline.find((r) => r.source === 'webhook' && r.new_value === 'DISAPPROVED');
+  }
+  check('a signed status webhook is read within seconds and recorded as from Meta', !!viaHook, hookResp.trim());
+  const unsigned = await page.evaluate(async () => (await fetch('/webhooks/meta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"object":"ad_account","entry":[]}' })).status);
+  check('an unsigned status webhook is refused', unsigned === 403);
+  const hooksOff = await call('POST', '/api/settings/meta/status-updates', { on: false });
+  check('turning it off removes the ad account, keeps polling', hooksOff.status === 200 && fake('_subscriptions').accounts.length === 0);
+  sh(`docker exec edgebourne-ads-backend python -c "import requests;requests.get('http://fake-meta:5001/fake/_review?ad=${N1}&to=ACTIVE')"`);
+  pull();
   await page.goto(BASE + '/ad.html?id=120252672229400312#tab=history');
   await page.waitForSelector('.st-tl');
   const n2Timeline = await page.locator('.st-tl').innerText();
