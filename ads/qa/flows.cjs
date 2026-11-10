@@ -709,19 +709,19 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   // New ad set: starts from the live one, places and ages change, the estimate follows, created paused.
   await page.goto(BASE + '/ads.html');
   await Promise.all([page.waitForURL('**/new-adset.html?campaign=**'), page.locator('.campaign-add').first().click()]);
-  await page.waitForSelector('#places li b');
+  await page.waitForSelector('#pl-list li b');
   check('a new ad set starts from the live one: its places, ages and hints',
-    (await page.locator('#places li').count()) === 4 && /San Diego area/.test(await page.textContent('#places'))
+    (await page.locator('#pl-list li').count()) === 4 && /San Diego area/.test(await page.textContent('#pl-list'))
     && (await page.inputValue('#age_min')) === '25' && (await page.inputValue('#suggest_min')) === '30' && await page.isChecked('#keep_hints'));
   check('a campaign with its own budget asks for none on the ad set', await page.isHidden('#budget-field') && /shared by all its ad sets/.test(await page.textContent('#budget-note')));
   await page.waitForFunction(() => /M/.test(document.getElementById('estimate').textContent));
   check('the audience estimate shows', /1\.4M – 1\.6M/.test(await page.textContent('#estimate')), await page.textContent('#estimate'));
-  for (let i = 0; i < 4; i++) await page.locator('#places [data-remove]').first().click();
-  await page.fill('#place-q', 'fon');
-  await page.waitForSelector('#place-results li[data-pick]');
+  for (let i = 0; i < 4; i++) await page.locator('#pl-list [data-remove]').first().click();
+  await page.fill('#pl-q', 'fon');
+  await page.waitForSelector('#pl-results li[data-pick]');
   await page.keyboard.press('Enter');
-  check("a place is found with Meta's place search and added with a radius", /Fontana, California/.test(await page.textContent('#places')) && (await page.inputValue('#places select')) === '25');
-  await page.selectOption('#places select', '15');
+  check("a place is found with Meta's place search and added with a radius", /Fontana, California/.test(await page.textContent('#pl-list')) && (await page.inputValue('#pl-list select')) === '25');
+  await page.selectOption('#pl-list select', '15');
   await page.fill('#name', 'QA Inland Empire');
   await page.fill('#age_min', '30');
   const asSeen = errors.length;
@@ -744,6 +744,61 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
     JSON.stringify(newSets[0] && newSets[0].targeting));
   await page.waitForFunction(() => document.querySelectorAll('#adset option').length > 0);
   check('the next step is adding an ad to the new ad set', (await page.inputValue('#adset')) === newSets[0].id);
+
+  // New campaign: one form for campaign, ad set, form and ads; created off; resumes after a refusal; publish needs the budget typed.
+  await page.goto(BASE + '/ads.html');
+  await Promise.all([page.waitForURL('**/new-campaign.html'), page.click('#campaign-link')]);
+  await page.waitForSelector('#nc-list li b');
+  await page.waitForFunction(() => /Still to do/.test(document.getElementById('review').textContent));
+  check('the wizard lists what is still missing, by step', /Goal.*Give the campaign a name.*Budget/s.test(await page.textContent('#review')) && await page.isDisabled('#nc-create'));
+  await page.fill('#c-name', 'QA Payroll - Leads');
+  await page.fill('#c-budget', '90');
+  await page.fill('#s-name', 'QA SoCal - Instant form');
+  await page.fill('#a-name-0', 'QA N6 - Payroll');
+  await page.fill('#a-title-0', 'Payroll in one click');
+  await page.waitForFunction(() => /more than 3 times what runs now/.test(document.getElementById('review').textContent));
+  check('a budget far above what runs now is refused', true);
+  await page.fill('#c-budget', '15');
+  await page.click('#ad-add');
+  await page.selectOption('#a-tpl-1', '120252672230740312');
+  check('a second ad starts from the words of the ad it copies', /typing the same thing twice/i.test(await page.inputValue('#a-title-1')) || (await page.inputValue('#a-body-1')).length > 20);
+  await page.fill('#a-name-1', 'QA N7 - Retyping');
+  await page.selectOption('#f-form', '1132280359202136');
+  await page.waitForFunction(() => /Ready to create/.test(document.getElementById('review').textContent));
+  check('the review reads in dollars: the campaign, the ad set, the form, each ad',
+    /\$15\.00 a day \(about \$456\.00 a month\).*San Diego area.*EB \| Free AI workflow review.*QA N6 - Payroll.*QA N7 - Retyping/s.test(await page.textContent('#review')));
+  sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen('http://localhost:5001/fake/_refuse_next_ad')"`);
+  const campsBefore = Object.keys(fake('_campaigns')).length;
+  const ncSeen = errors.length;
+  await page.click('#nc-create');
+  await page.waitForSelector('dialog.confirm');
+  check('creating says everything starts switched off', /All switched off: nothing spends until you publish/.test(await page.textContent('dialog.confirm')));
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForSelector('#resume');
+  errors.splice(ncSeen); // Meta's refusal is logged by the server, not the page; keep the check honest anyway
+  check('when Meta refuses an ad halfway, what was made stays off and the page says what stopped', /Meta refused ad 1/.test(await page.textContent('#build'))
+    && Object.keys(fake('_campaigns')).length === campsBefore + 1 && Object.values(fake('_campaigns')).slice(-1)[0].status === 'PAUSED');
+  await page.click('#resume');
+  await page.waitForSelector('#pub-form');
+  const builtCamps = Object.values(fake('_campaigns')).slice(campsBefore);
+  const builtSets = Object.values(fake('_adsets')).filter((s) => s.campaign_id === builtCamps[0].id);
+  check('finishing makes only what was missing: one campaign, one ad set, two ads, all off',
+    builtCamps.length === 1 && builtSets.length === 1 && (await page.locator('.build-table tbody tr').count()) === 4
+    && builtCamps[0].daily_budget === '1500' && builtSets[0].status === 'PAUSED' && !builtSets[0].daily_budget);
+  check('each new ad links to its preview', (await page.locator('.build-table a[href^="/ad.html"]').count()) === 2);
+  await page.fill('#pub-typed', '20');
+  await page.click('#pub-form button[type=submit]');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForSelector('#pub-form .field.error .err');
+  check('publishing needs the exact daily budget typed', /Type the daily budget, \$15\.00/.test(await page.textContent('#pub-form')) && Object.values(fake('_campaigns')).slice(-1)[0].status === 'PAUSED');
+  errors.splice(ncSeen);
+  await page.fill('#pub-typed', '15');
+  await page.click('#pub-form button[type=submit]');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => /Published/.test(document.getElementById('build').textContent));
+  const order = sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(','.join(r['level'] for r in db.query(\\"SELECT level FROM meta_changes WHERE action = 'status' AND new_value = 'ACTIVE' ORDER BY id DESC LIMIT 4\\")[::-1]))"`).trim();
+  check('publishing turns on the ads, then the ad set, then the campaign last', order === 'ad,ad,adset,campaign' && Object.values(fake('_campaigns')).slice(-1)[0].status === 'ACTIVE', order);
+  await page.screenshot({ path: `${OUT}/flow-new-campaign.png`, fullPage: true });
 
   await browser.close();
   console.log(results.join('\n'));

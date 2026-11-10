@@ -41,6 +41,7 @@ def summarize_targeting(t):
 def sync_adsets():
     account = settings_store.get("meta_ad_account_id")
     n = 0
+    seen = []
     for a in meta_client.paged(
         f"act_{account}/adsets",
         fields="id,name,campaign_id,status,effective_status,daily_budget,lifetime_budget,"
@@ -62,12 +63,18 @@ def sync_adsets():
              (a.get("learning_stage_info") or {}).get("status"), summarize_targeting(a.get("targeting"))),
         )
         n += 1
+        seen.append(a["id"])
+    # Like ads: an ad set deleted in Ads Manager drops out of the listing; keep it, marked deleted.
+    if seen:
+        db.execute("UPDATE adsets SET effective_status = 'DELETED', status = 'DELETED' "
+                   "WHERE NOT (id = ANY(%s)) AND COALESCE(status, '') <> 'ARCHIVED'", (seen,))
     return n
 
 
 def sync_campaigns():
     account = settings_store.get("meta_ad_account_id")
     seen = 0
+    ids = []
     for c in meta_client.paged(f"act_{account}/campaigns",
                                fields="id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy",
                                limit=100):
@@ -84,5 +91,9 @@ def sync_campaigns():
              cents(c.get("daily_budget")), cents(c.get("lifetime_budget")), c.get("bid_strategy")),
         )
         seen += 1
+        ids.append(c["id"])
+    if ids:
+        db.execute("UPDATE campaigns SET effective_status = 'DELETED', status = 'DELETED' "
+                   "WHERE NOT (id = ANY(%s)) AND COALESCE(status, '') <> 'ARCHIVED'", (ids,))
     settings_store.set("last_campaign_sync", __import__("datetime").datetime.utcnow().isoformat() + "Z")
     return seen

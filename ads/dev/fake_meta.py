@@ -76,13 +76,19 @@ def by_id(oid):
         return ADSET
     if oid in NEW_ADSETS:
         return NEW_ADSETS[oid]
+    if oid in NEW_CAMPAIGNS:
+        return NEW_CAMPAIGNS[oid]
     return ADS.get(oid) or CREATIVES.get(oid) or VIDEOS.get(oid)
 
 
 def effective(ad):
-    if CAMPAIGN["status"] == "PAUSED":
+    if ad["status"] != "ACTIVE":
+        return ad["status"]
+    camp = CAMPAIGN if ad.get("campaign_id") == CAMPAIGN["id"] else NEW_CAMPAIGNS.get(ad.get("campaign_id"), CAMPAIGN)
+    aset = ADSET if ad.get("adset_id") == ADSET["id"] else NEW_ADSETS.get(ad.get("adset_id"), ADSET)
+    if camp["status"] == "PAUSED":
         return "CAMPAIGN_PAUSED"
-    if ADSET["status"] == "PAUSED":
+    if aset["status"] == "PAUSED":
         return "ADSET_PAUSED"
     return ad["status"]
 
@@ -192,6 +198,8 @@ def tg_api(tok, method):
 
 BUSINESS = "9990001"
 NEW_ADSETS = {}
+NEW_CAMPAIGNS = {}
+REFUSE_NEXT_AD = []
 PLACES = [{"key": "2421696", "name": "Riverside", "type": "city", "region": "California", "country_code": "US"},
           {"key": "2420379", "name": "Los Angeles", "type": "city", "region": "California", "country_code": "US"},
           {"key": "2421830", "name": "San Diego", "type": "city", "region": "California", "country_code": "US"},
@@ -211,6 +219,17 @@ FORMS = {"1132280359202136": {
                        "button_text": "Visit our website", "website_url": "https://edgebourne.com"},
     "follow_up_action_url": "https://edgebourne.com"}}
 STUDIES = {}
+
+
+@app.route("/fake/_refuse_next_ad")
+def fake_refuse_next_ad():
+    REFUSE_NEXT_AD.append(1)
+    return jsonify({"ok": True})
+
+
+@app.route("/fake/_campaigns")
+def fake_campaigns():
+    return jsonify(NEW_CAMPAIGNS)
 
 
 @app.route("/fake/_adsets")
@@ -246,7 +265,7 @@ def graph(path):
                             "spend_cap": "15000", "amount_spent": "4120", "account_status": 1,
                             "business": {"id": BUSINESS, "name": "Edge Bourne"}})
         if parts == [act, "campaigns"]:
-            return jsonify({"data": [CAMPAIGN]})
+            return jsonify({"data": [CAMPAIGN, *NEW_CAMPAIGNS.values()]})
         if parts == [act, "adsets"]:
             return jsonify({"data": [ADSET, *NEW_ADSETS.values()]})
         if parts == ["search"] and a.get("type") == "adgeolocationmeta":
@@ -362,6 +381,13 @@ def graph(path):
                               "video_id": media.get("video_id"), "image_url": PIC if "link_data" in spec else None,
                               "thumbnail_url": PIC, "object_story_spec": spec}
             return jsonify({"id": cid})
+        if parts == [act, "campaigns"]:
+            if a.get("status") != "PAUSED" or a.get("objective") != "OUTCOME_LEADS" or not a.get("name"):
+                return jsonify({"error": {"message": "Invalid parameter (fake): campaign", "code": 100}}), 400
+            cid = str(next(ids))
+            NEW_CAMPAIGNS[cid] = {"id": cid, "name": a["name"], "status": "PAUSED", "effective_status": "PAUSED", "objective": a["objective"],
+                                  "daily_budget": a.get("daily_budget"), "bid_strategy": a.get("bid_strategy")}
+            return jsonify({"id": cid})
         if parts == [act, "adsets"]:
             # Shaped like Meta's ad set create: the fake checks what the builder relies on.
             t = json.loads(a.get("targeting") or "{}")
@@ -376,9 +402,13 @@ def graph(path):
                                "destination_type": a.get("destination_type"), "promoted_object": json.loads(a.get("promoted_object") or "{}"),
                                "targeting": t, "start_time": a.get("start_time"), "end_time": a.get("end_time")}
             return jsonify({"id": sid})
+        if parts == [act, "ads"] and REFUSE_NEXT_AD:
+            REFUSE_NEXT_AD.pop()
+            return jsonify({"error": {"message": "Ad account has hit a temporary limit (fake)", "code": 17}}), 400
         if parts == [act, "ads"]:
             aid = str(next(ids))
-            ADS[aid] = {"id": aid, "name": a["name"], "campaign_id": CAMPAIGN["id"], "adset_id": a["adset_id"],
+            parent = NEW_ADSETS.get(a["adset_id"]) or ADSET
+            ADS[aid] = {"id": aid, "name": a["name"], "campaign_id": parent["campaign_id"], "adset_id": a["adset_id"],
                         "status": a.get("status", "PAUSED"), "creative_id": json.loads(a["creative"])["creative_id"],
                         "created_time": TODAY.isoformat() + "T12:00:00-0800"}
             return jsonify({"id": aid})
@@ -443,7 +473,7 @@ def graph(path):
                 if key in a:
                     obj[key] = a[key]
             if "status" in a:
-                obj["effective_status"] = a["status"]
+                obj["effective_status"] = a["status"] if parts[0] not in ADS else effective(obj)
             return jsonify({"success": True})
     return jsonify({"error": {"message": f"fake Graph: {request.method} /{path} not implemented", "code": 100}}), 400
 

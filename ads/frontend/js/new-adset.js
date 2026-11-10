@@ -1,35 +1,21 @@
 import { api } from "./api.js";
 import { boot, confirmDialog, esc, fieldError, icon, toast } from "./ui.js";
 import { money } from "./format.js";
+import { placeLabel, placesHtml, placesWidget } from "./places.js";
 
 const $ = (id) => document.getElementById(id);
 let opts;
-let locations = [];
 let hints = [];
+const locations_ = () => places.get();
 
-const label = (l) => (l.kind === "pin" ? `${l.name || "Map pin"}` : l.name);
-const kindWord = { pin: "Area", city: "City", region: "State", zip: "ZIP" };
-
-function renderPlaces() {
-  $("places").innerHTML = locations.length ? locations.map((l, i) => `<li>
-      <span class="place-kind">${kindWord[l.kind]}</span><b>${esc(label(l))}</b>
-      ${l.kind === "pin" || l.kind === "city" ? `<label class="sr-only" for="r-${i}">Radius for ${esc(label(l))}</label>
-        <select class="input radius" id="r-${i}" data-radius="${i}">${radii(l).map((r) => `<option value="${r}" ${r === Number(l.radius) ? "selected" : ""}>+ ${r} mi</option>`).join("")}</select>` : ""}
-      <button type="button" class="btn btn-quiet btn-small" data-remove="${i}" aria-label="Remove ${esc(label(l))}">Remove</button>
-    </li>`).join("") : '<li class="muted">No places yet. Add one below.</li>';
-}
-
-function radii(l) {
-  const [lo, hi] = l.kind === "city" ? opts.city_radius : opts.pin_radius;
-  const set = new Set([lo, 10, 15, 20, 25, 30, 40, hi, Number(l.radius)].filter((r) => r >= lo && r <= hi));
-  return [...set].sort((a, b) => a - b);
-}
+let places;
+const label = placeLabel;
 
 function spec() {
   const n = (id) => ($(id).value === "" ? null : Number($(id).value));
   const dollars = $("budget").value.trim();
   return {
-    name: $("name").value, locations, age_min: n("age_min"), age_max: n("age_max"),
+    name: $("name").value, locations: locations_(), age_min: n("age_min"), age_max: n("age_max"),
     suggest_min: $("advantage").checked ? n("suggest_min") : null, suggest_max: $("advantage").checked ? n("suggest_max") : null,
     advantage: $("advantage").checked, keep_hints: $("keep_hints").checked,
     start_day: $("start_day").value || null, start_hour: 0, end_day: $("end_day").value || null, end_hour: 23,
@@ -61,6 +47,7 @@ function syncAdvantage() {
 function summary() {
   const s = spec();
   const parts = [`Ages ${s.age_min ?? 18}–${s.age_max ?? 65}${(s.age_max ?? 65) >= 65 ? "+" : ""}`];
+  const locations = locations_();
   if (locations.length) parts.push(locations.length <= 3 ? locations.map((l) => `${label(l)}${l.radius ? ` (${l.radius} mi)` : ""}`).join(", ") : `${locations.length} places`);
   if (s.keep_hints && hints.length) parts.push(`Hints: ${hints.slice(0, 3).join(", ")}${hints.length > 3 ? ` +${hints.length - 3}` : ""}`);
   if (s.advantage) parts.push("Advantage+ audience");
@@ -73,7 +60,7 @@ function estimateSoon() {
   clearTimeout(estTimer);
   estTimer = setTimeout(async () => {
     const mine = ++estSeq;
-    if (!locations.length) { $("estimate").textContent = "—"; return; }
+    if (!locations_().length) { $("estimate").textContent = "—"; return; }
     $("estimate").classList.add("loading");
     try {
       const e = await api("/api/adsets/estimate", { method: "POST", body: { template_adset_id: $("template").value, spec: spec() } });
@@ -92,34 +79,14 @@ function changed() { summary(); estimateSoon(); }
 async function loadTemplate() {
   try {
     const t = await api(`/api/adsets/template/${encodeURIComponent($("template").value)}`);
-    locations = t.locations; hints = t.hints;
+    places.set(t.locations); hints = t.hints;
     $("age_min").value = t.age_min; $("age_max").value = t.age_max;
     $("suggest_min").value = t.suggest_min ?? ""; $("suggest_max").value = t.suggest_max ?? "";
     $("advantage").checked = t.advantage; $("keep_hints").checked = t.keep_hints && hints.length > 0;
     $("hints").textContent = hints.join(", ");
     $("hints-row").hidden = !hints.length;
-    renderPlaces(); syncAdvantage(); changed();
+    syncAdvantage(); changed();
   } catch (err) { toast(err.message, "bad"); }
-}
-
-// Place search: Meta's own place list, so every key is one Meta accepts.
-let searchSeq = 0;
-let searchTimer;
-let results = [];
-function showResults(list) {
-  results = list;
-  const box = $("place-results");
-  box.innerHTML = list.map((p, i) => `<li role="option" id="pr-${i}" data-pick="${i}" tabindex="-1"><span class="place-kind">${kindWord[p.kind]}</span>${esc(p.name)}</li>`).join("")
-    || '<li class="muted" role="option" aria-disabled="true">Nothing found</li>';
-  box.hidden = false;
-  $("place-q").setAttribute("aria-expanded", "true");
-}
-function hideResults() { $("place-results").hidden = true; $("place-q").setAttribute("aria-expanded", "false"); }
-function pick(i) {
-  const p = results[i];
-  if (!p) return;
-  if (!locations.some((l) => l.key === p.key && l.kind === p.kind)) locations.push({ ...p, ...(p.kind === "city" ? { radius: 25 } : {}) });
-  $("place-q").value = ""; hideResults(); renderPlaces(); changed(); $("place-q").focus();
 }
 
 const me = await boot({ page: "ads", admin: true });
@@ -129,6 +96,8 @@ if (me) {
   if (!opts || !opts.campaigns.length || !opts.adsets.length) {
     document.querySelector(".new-ad-layout").innerHTML = `<section class="panel empty"><h3>Nothing to build on yet</h3><p>A new ad set starts from an existing one. Once your campaigns are synced from Meta, come back here.</p><a class="btn" href="/ads.html">Back to ads</a></section>`;
   } else {
+    $("places-box").innerHTML = placesHtml("pl");
+    places = placesWidget("pl", { cityRadius: opts.city_radius, pinRadius: opts.pin_radius, onChange: changed });
     $("campaign").innerHTML = opts.campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}${c.effective_status === "ACTIVE" ? "" : " (off)"}</option>`).join("");
     const want = new URLSearchParams(location.search).get("campaign");
     if (want && opts.campaigns.some((c) => c.id === want)) $("campaign").value = want;
@@ -136,43 +105,8 @@ if (me) {
     await loadTemplate();
     $("campaign").addEventListener("change", () => { syncCampaign(); loadTemplate(); });
     $("template").addEventListener("change", loadTemplate);
-    $("as-form").addEventListener("input", (e) => { if (e.target.id !== "place-q") changed(); });
+    $("as-form").addEventListener("input", (e) => { if (e.target.id !== "pl-q") changed(); });
     $("advantage").addEventListener("change", () => { syncAdvantage(); changed(); });
-    $("places").addEventListener("change", (e) => {
-      const r = e.target.closest("[data-radius]");
-      if (r) { locations[Number(r.dataset.radius)].radius = Number(r.value); changed(); }
-    });
-    $("places").addEventListener("click", (e) => {
-      const b = e.target.closest("[data-remove]");
-      if (b) { locations.splice(Number(b.dataset.remove), 1); renderPlaces(); changed(); }
-    });
-    $("place-q").addEventListener("input", () => {
-      clearTimeout(searchTimer);
-      const q = $("place-q").value.trim();
-      if (q.length < 2) { hideResults(); return; }
-      searchTimer = setTimeout(async () => {
-        const mine = ++searchSeq;
-        try { const r = await api(`/api/adsets/places?q=${encodeURIComponent(q)}`); if (mine === searchSeq) showResults(r.items); }
-        catch (err) { if (mine === searchSeq) toast(err.message, "bad"); }
-      }, 250);
-    });
-    $("place-q").addEventListener("keydown", (e) => {
-      if (e.key === "ArrowDown" && results.length) { e.preventDefault(); $("pr-0")?.focus(); }
-      if (e.key === "Escape") hideResults();
-      if (e.key === "Enter") { e.preventDefault(); if (results.length) pick(0); }
-    });
-    $("place-results").addEventListener("keydown", (e) => {
-      const li = e.target.closest("[data-pick]");
-      if (!li) return;
-      const i = Number(li.dataset.pick);
-      if (e.key === "Enter") { e.preventDefault(); pick(i); }
-      if (e.key === "ArrowDown") { e.preventDefault(); $(`pr-${i + 1}`)?.focus(); }
-      if (e.key === "ArrowUp") { e.preventDefault(); (i ? $(`pr-${i - 1}`) : $("place-q")).focus(); }
-      if (e.key === "Escape") { hideResults(); $("place-q").focus(); }
-    });
-    $("place-results").addEventListener("click", (e) => { const li = e.target.closest("[data-pick]"); if (li) pick(Number(li.dataset.pick)); });
-    document.addEventListener("click", (e) => { if (!e.target.closest(".place-add")) hideResults(); });
-
     $("as-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const form = $("as-form");

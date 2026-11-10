@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New campaign | Edge Bourne Ads</title>
+  <link rel="icon" href="/img/favicon.svg">
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail"></aside>
+    <main class="main">
+      <header class="page-head">
+        <a class="crumb" href="/ads.html" id="crumb"></a>
+        <h1 id="title">New campaign</h1>
+      </header>
+      <div class="content new-ad-layout" id="wizard">
+        <form class="stack" id="nc-form" novalidate>
+          <section class="panel step" data-step="goal">
+            <div class="panel-head"><span class="step-n">1</span><h2>Goal</h2></div>
+            <div class="panel-body stack tight">
+              <p class="flush">Leads through an Instant Form: people tap the ad, a form opens inside Facebook or Instagram with their details filled in, and the lead lands in your inbox here.</p>
+              <div class="field"><label for="c-name">Campaign name <span class="muted">(only you see this)</span></label><input class="input" id="c-name" name="name" maxlength="200" placeholder="EB - Payroll - Leads" autocomplete="off"></div>
+            </div>
+          </section>
+          <section class="panel step" data-step="budget">
+            <div class="panel-head"><span class="step-n">2</span><h2>Budget</h2></div>
+            <div class="panel-body stack tight">
+              <div class="field"><label for="c-budget">Daily budget</label><span class="money-input">$<input class="input" id="c-budget" name="budget" inputmode="decimal" placeholder="20"></span>
+                <span class="hint" id="budget-hint">Shared by everything in the campaign. Meta sends it as cents.</span></div>
+              <p class="muted small flush">Lowest cost bidding: Meta gets as many leads as it can for the budget. It may spend up to 75% more on a good day and evens out over the week.</p>
+            </div>
+          </section>
+          <section class="panel step" data-step="adset">
+            <div class="panel-head"><span class="step-n">3</span><h2>Who sees it</h2></div>
+            <div class="panel-body stack tight">
+              <div class="grid-2">
+                <div class="field"><label for="s-template">Start from</label><select class="input" id="s-template"></select><span class="hint">Copies its places, ages and audience hints.</span></div>
+                <div class="field"><label for="s-name">Ad set name</label><input class="input" id="s-name" name="adset" maxlength="200" placeholder="SoCal - Instant form" autocomplete="off"></div>
+              </div>
+              <div class="field"><span class="label">Places</span><div id="places-box"></div></div>
+              <label class="check"><input type="checkbox" id="s-advantage"> <span>Advantage+ audience <span class="muted">· Meta may reach beyond the hints when it finds likely leads (recommended)</span></span></label>
+              <div class="grid-2">
+                <div class="field"><span class="label">Age limits</span><div class="age-pair"><input class="input" type="number" id="s-age-min" min="18" max="65"> to <input class="input" type="number" id="s-age-max" min="18" max="65"></div></div>
+                <div class="field" id="s-suggest"><span class="label">Suggested ages</span><div class="age-pair"><input class="input" type="number" id="s-sug-min" min="18" max="65"> to <input class="input" type="number" id="s-sug-max" min="18" max="65"></div></div>
+              </div>
+              <label class="check" id="s-hints-row"><input type="checkbox" id="s-hints"> <span>Keep the audience hints: <span class="muted" id="s-hints-text"></span></span></label>
+              <p class="muted small flush">Placements: Advantage+. Estimated audience: <b id="s-estimate">—</b></p>
+            </div>
+          </section>
+          <section class="panel step" data-step="form">
+            <div class="panel-head"><span class="step-n">4</span><h2>Lead form</h2></div>
+            <div class="panel-body stack tight">
+              <div class="field"><label for="f-form">The form people fill in</label><select class="input" id="f-form" name="form"></select>
+                <span class="hint">Need a different one? <a href="/forms.html" target="_blank" rel="noopener">Build a form</a> in a new tab, then <button type="button" class="link-btn" id="f-reload">reload this list</button>.</span></div>
+            </div>
+          </section>
+          <section class="panel step" data-step="ads">
+            <div class="panel-head"><span class="step-n">5</span><h2>Ads</h2><p>Two to four genuinely different ideas learn faster than one.</p></div>
+            <div class="panel-body stack tight">
+              <div id="ads-list" class="stack tight"></div>
+              <button type="button" class="btn btn-small" id="ad-add">Add an ad</button>
+            </div>
+          </section>
+          <div class="row create-row">
+            <button class="btn btn-primary" type="submit" id="nc-create">Create everything (off)</button>
+            <span class="muted small">The campaign, ad set and ads are created switched off. You check the previews, then publish.</span>
+          </div>
+        </form>
+        <aside class="stack tips">
+          <section class="panel review-card"><div class="panel-body stack tight" id="review"><b>Review</b><p class="muted flush">Fill in the steps; the check runs as you go.</p></div></section>
+        </aside>
+      </div>
+      <div class="content stack" id="build" hidden></div>
+    </main>
+  </div>
+  <script type="module" src="/js/new-campaign.js"></script>
+</body>
+</html>

@@ -203,6 +203,7 @@ const me = await boot({ page: "ads" });
 if (me) {
   $("new-ad").innerHTML = `${icon("plus")}<span>New ad</span>`;
   $("forms-link").hidden = me.role !== "admin";
+  $("campaign-link").hidden = me.role !== "admin";
   $("range").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-range]");
     if (!b) return;
