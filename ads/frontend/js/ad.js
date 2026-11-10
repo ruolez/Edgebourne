@@ -47,8 +47,8 @@ function renderHead() {
   document.title = `${ad.name} | Edge Bourne Ads`;
   $("crumb").hidden = true;
   setCrumbs([{ label: "Ads", href: "/ads.html" },
-    ...(ad.campaign_id ? [{ label: ad.campaign_name || "Campaign", href: `/ads.html?campaign=${encodeURIComponent(ad.campaign_id)}` }] : []),
-    ...(ad.adset_id ? [{ label: ad.adset_name || "Ad set", href: `/ads.html?campaign=${encodeURIComponent(ad.campaign_id)}` }] : []),
+    ...(ad.campaign_id ? [{ label: ad.campaign_name || "Campaign", href: `/campaign.html?id=${encodeURIComponent(ad.campaign_id)}` }] : []),
+    ...(ad.adset_id ? [{ label: ad.adset_name || "Ad set", href: `/adset.html?id=${encodeURIComponent(ad.adset_id)}` }] : []),
     { label: ad.name, href: location.pathname + location.search }]);
   $("cr-title").textContent = ad.name;
   const [cls, label] = statusOf(ad.effective_status);

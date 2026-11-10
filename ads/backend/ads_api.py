@@ -377,8 +377,9 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
             c["prev"] = _sum([{"m": s["prev"]} for s in c["adsets"]])
         c["pending_proposals"] = pending.get(c["id"], 0)
         c["can_control"] = can_touch(user, c["id"]) and user["role"] != "client"
+    import targets
     out = {"range": {"start": start.isoformat(), "end": end.isoformat(), "days": days, "label": ranges.label(start, end)},
-           "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync"), "archived": archived_n}
+           "target_qualified_cents": targets.qualified(), "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync"), "archived": archived_n}
     if prev:
         out["prev_range"] = {"start": prev[0].isoformat(), "end": prev[1].isoformat(), "label": ranges.label(*prev)}
     return out

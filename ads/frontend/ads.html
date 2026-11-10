@@ -21,19 +21,28 @@
     <main class="main">
       <header class="page-head">
         <h1>Ads</h1>
-        <div class="segmented" id="range" role="group" aria-label="Results for">
-          <button type="button" data-range="7">Last 7 days</button>
-          <button type="button" data-range="14">14 days</button>
-          <button type="button" data-range="30">30 days</button>
-        </div>
+        <p class="page-sub" id="cr-sub"></p>
         <span class="spacer"></span>
-        <a class="btn" href="/forms.html" id="forms-link" hidden>Lead forms</a>
-        <a class="btn" href="/new-campaign.html" id="campaign-link" hidden>New campaign</a>
+        <div class="segmented" id="level" role="group" aria-label="Show">
+          <button type="button" data-level="ad">Ads</button>
+          <button type="button" data-level="adset">Ad sets</button>
+          <button type="button" data-level="campaign">Campaigns</button>
+        </div>
+        <details class="menu" id="new-menu" hidden>
+          <summary class="btn">New<span class="caret" aria-hidden="true"></span></summary>
+          <div class="menu-pop" role="menu">
+            <a role="menuitem" href="/new-ad.html">New ad</a>
+            <a role="menuitem" href="/new-adset.html">New ad set</a>
+            <a role="menuitem" href="/new-campaign.html" id="campaign-link">New campaign</a>
+            <a role="menuitem" href="/forms.html" id="forms-link">New lead form</a>
+          </div>
+        </details>
         <a class="btn btn-primary" href="/new-ad.html" id="new-ad"></a>
       </header>
-      <div class="content stack" id="cr-all"></div>
+      <div class="content stack" id="cr-all"><p class="muted">Loading…</p></div>
+      <div id="bulk" class="bk-dock"></div>
     </main>
   </div>
-  <script type="module" src="/js/ads.js"></script>
+  <script type="module" src="/js/listing.js"></script>
 </body>
 </html>

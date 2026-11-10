@@ -52,7 +52,9 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   await page.waitForFunction(() => document.querySelector('[data-toggle="ad:120252672229400312"]')?.getAttribute('aria-checked') === 'true');
   check('switch turns it back on', true);
 
-  // 2. Budget: validation, +20% warning, then a real change.
+  // 2. Budget: validation, +20% warning, then a real change (campaign budgets live on the Campaigns level).
+  await page.goto(BASE + '/ads.html?level=campaign');
+  await page.waitForSelector('[data-budget^="campaign:"]');
   await page.click('[data-budget^="campaign:"]');
   await page.waitForSelector('dialog.confirm #cd-input');
   await page.fill('#cd-input', '0.5');
@@ -673,7 +675,7 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   // Lead forms: build one with a live check and phone preview, create it on the Page, use it in a new ad.
   const fake = (p) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/fake/${p}').read().decode())"`));
   await page.goto(BASE + '/ads.html');
-  await Promise.all([page.waitForURL('**/forms.html'), page.click('#forms-link')]);
+  await Promise.all([page.waitForURL('**/forms.html'), page.click('.subnav a[href="/forms.html"]')]);
   await page.waitForSelector('#list table');
   check('Lead forms lists the Page forms with their leads', /EB \| Free AI workflow review/.test(await page.textContent('#list')));
   await page.click('#new-form');
@@ -724,7 +726,7 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   check("a new ad's button opens the chosen form", !!adMade && cr && cr.object_story_spec.video_data.call_to_action.value.lead_gen_form_id === newForms[0].id, JSON.stringify(cr && cr.object_story_spec.video_data.call_to_action));
 
   // New ad set: starts from the live one, places and ages change, the estimate follows, created paused.
-  await page.goto(BASE + '/ads.html');
+  await page.goto(BASE + '/ads.html?level=campaign');
   await Promise.all([page.waitForURL('**/new-adset.html?campaign=**'), page.locator('.campaign-add').first().click()]);
   await page.waitForSelector('#pl-list li b');
   check('a new ad set starts from the live one: its places, ages and hints',
@@ -764,6 +766,7 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
 
   // New campaign: one form for campaign, ad set, form and ads; created off; resumes after a refusal; publish needs the budget typed.
   await page.goto(BASE + '/ads.html');
+  await page.click('#new-menu summary');
   await Promise.all([page.waitForURL('**/new-campaign.html'), page.click('#campaign-link')]);
   await page.waitForSelector('#nc-list li b');
   await page.waitForFunction(() => /Still to do/.test(document.getElementById('review').textContent));
@@ -1357,13 +1360,65 @@ with account_ctx.use(a2):
   await page.goto(BASE + '/inbox.html');
   await page.waitForSelector('.ib-item, .ib-empty');
   check('the Inbox page lists items with read state and filters', (await page.locator('#ib-filters [data-f]').count()) === 7 && (await page.locator('.ib-item').count()) > 0);
+  // 8.6 Ads manager: select → bulk bar (Cancel changes nothing, confirm turns off), peek with the timeline, level in the URL,
+  // a saved view from the toolbar, campaign and ad set pages with breadcrumbs.
+  await page.goto(BASE + '/ads.html?view=delivering');
+  await page.waitForSelector('.tbl [data-pick]');
+  const picks = page.locator('.tbl [data-pick]');
+  const pickedIds = [await picks.nth(0).getAttribute('data-pick'), await picks.nth(1).getAttribute('data-pick')];
+  await picks.nth(0).check(); await picks.nth(1).check();
+  await page.waitForSelector('.bk');
+  check('selecting ads shows the bulk bar with the count', /2\s*selected/.test(await page.textContent('.bk')));
+  await page.click('.bk [data-bulk="off"]');
+  await page.waitForSelector('dialog.confirm');
+  const offDialog = await page.textContent('dialog.confirm');
+  await page.click('dialog.confirm #cd-cancel');
+  await page.waitForTimeout(400);
+  const stillOn = await page.evaluate((ids) => Promise.all(ids.map((i) => fetch(`/api/ads/ad/${i}`).then((r) => r.json()).then((d) => d.ad.status))), pickedIds);
+  check('bulk off lists every ad first, and Cancel changes nothing', /Turn off 2 ads/.test(offDialog) && stillOn.every((x) => x === 'ACTIVE'), offDialog.replace(/\s+/g, ' ').slice(0, 160));
+  await page.click('.bk [data-bulk="off"]');
+  await page.waitForSelector('dialog.confirm');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => !document.querySelector('.bk'));
+  const nowOff = await page.evaluate((ids) => Promise.all(ids.map((i) => fetch(`/api/ads/ad/${i}`).then((r) => r.json()).then((d) => d.ad.status))), pickedIds);
+  check('confirmed, bulk off turns both off', nowOff.every((x) => x === 'PAUSED'), nowOff.join());
+  for (const i of pickedIds) {  // back on, one by one through the console's own switch rules
+    const sp = await call('GET', `/api/ads/ad/${i}/spend`);
+    await call('POST', `/api/ads/ad/${i}/status`, { status: 'ACTIVE', confirm_daily_cents: sp.body.daily_cents });
+  }
+  await page.goto(BASE + '/ads.html');
+  await page.waitForSelector('.tbl tbody tr');
+  await page.locator('.tbl tbody tr').first().locator('td.num').first().click();
+  await page.waitForSelector('.pk.open .pk-tl li');
+  check('clicking a row opens a quick look with its history, and the URL remembers it', /peek=ad/.test(page.url()) && (await page.locator('.pk.open .pk-tl li').count()) > 0);
+  await page.keyboard.press('Escape');
+  await page.click('#level [data-level="adset"]');
+  await page.waitForSelector('.tbl tr[data-row^="adset:"]');
+  check('the level switch shows ad sets and keeps it in the URL', /level=adset/.test(page.url()));
+  await page.click('.view-chip#save-view');
+  await page.waitForSelector('dialog.confirm #cd-input');
+  await page.fill('#cd-input', 'QA ad sets');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForSelector('[data-saved]');
+  await page.goto(BASE + '/ads.html');
+  await page.waitForSelector('[data-saved]');
+  await page.click('[data-saved]');
+  await page.waitForSelector('.tbl tr[data-row^="adset:"]');
+  check('a saved view from the toolbar brings back its level', /level=adset/.test(page.url()));
+  await page.click('[data-unsave]');
+  await page.goto(BASE + '/campaign.html?id=' + C1);
+  await page.waitForSelector('.tbl tr[data-row^="adset:"]');
+  check('a campaign page lists its ad sets under Ads › campaign', (await page.textContent('.crumbs')).includes('Free intro call') && await page.isVisible('#c-spend svg'));
+  await page.goto(BASE + '/adset.html?id=120252672227950312');
+  await page.waitForSelector('.tbl tr[data-row^="ad:"]');
+  check('an ad set page shows its ads, learning and who sees it', /Learning/.test(await page.textContent('.learn')) && (await page.textContent('.crumbs')).split('/').length === 3);
   // Phones: no page wider than the screen.
   const phonePage = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
   await phonePage.goto(BASE + '/login.html');
   await phonePage.fill('#email', 'eugene@edgebourne.com'); await phonePage.fill('#password', 'localdev-pass-123');
   await Promise.all([phonePage.waitForURL('**/home.html**'), phonePage.click('button[type=submit]')]);
   const tooWide = [];
-  for (const p of ['/home.html', '/leads.html', '/ads.html', '/ad.html?id=120252672229400312', '/performance.html', '/report.html', '/desk.html', '/team.html', '/settings.html', '/new-campaign.html']) {
+  for (const p of ['/home.html', '/inbox.html', '/leads.html', '/ads.html', '/campaign.html?id=120252638288040312', '/adset.html?id=120252672227950312', '/ad.html?id=120252672229400312', '/performance.html', '/report.html', '/desk.html', '/team.html', '/settings.html', '/new-campaign.html']) {
     await phonePage.goto(BASE + p); await phonePage.waitForTimeout(1500);
     const sw = await phonePage.evaluate(() => document.documentElement.scrollWidth);
     if (sw > 391) tooWide.push(`${p} ${sw}px`);
