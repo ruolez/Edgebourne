@@ -37,6 +37,46 @@
             </form>
           </section>
         </div>
+        <div class="swipe-layout">
+          <section class="panel">
+            <div class="panel-head wrap"><h2>Swipe file</h2><p id="swipe-count">Competitor ads worth keeping</p><span class="spacer"></span>
+              <div class="segmented" id="swipe-filter" role="group" aria-label="Show">
+                <button type="button" data-sf="all" aria-pressed="true">All</button>
+                <button type="button" data-sf="long" aria-pressed="false">Running 30+ days</button>
+                <button type="button" data-sf="claude" aria-pressed="false">Found by Claude</button>
+              </div>
+              <button type="button" class="btn btn-small" id="swipe-add">Save an ad</button></div>
+            <div class="panel-body stack tight">
+              <form class="swipe-form stack tight" id="swipe-form" hidden novalidate>
+                <div class="grid-2">
+                  <div class="field"><label for="sw-link">Ad Library link</label><input class="input" id="sw-link" name="link" placeholder="https://www.facebook.com/ads/library/?id=…" autocomplete="off"></div>
+                  <div class="field"><label for="sw-page">Whose ad</label><input class="input" id="sw-page" name="page_name" placeholder="The Page name" autocomplete="off"></div>
+                </div>
+                <div class="field"><label for="sw-body">The ad's text <span class="muted">(optional)</span></label><textarea class="input" id="sw-body" name="body" rows="3"></textarea></div>
+                <div class="grid-2">
+                  <div class="field"><label for="sw-title">Headline <span class="muted">(optional)</span></label><input class="input" id="sw-title" name="title" autocomplete="off"></div>
+                  <div class="field"><label for="sw-start">Running since <span class="muted">(from the Library)</span></label><input class="input" type="date" id="sw-start" name="started_on"></div>
+                </div>
+                <div class="field"><label for="sw-notes">Why it's worth keeping</label><input class="input" id="sw-notes" name="notes" autocomplete="off" placeholder="e.g. Same offer as ours, but the hook names the cost of the problem"></div>
+                <div class="row"><button class="btn btn-primary" type="submit">Save</button><button class="btn btn-quiet" type="button" id="swipe-cancel">Cancel</button></div>
+              </form>
+              <div id="swipes"><p class="muted flush">Loading…</p></div>
+            </div>
+          </section>
+          <section class="panel watched">
+            <div class="panel-head"><h2>Watched Pages</h2></div>
+            <div class="panel-body stack tight">
+              <p class="muted small flush">Claude checks these every week once the <a href="/desk.html#schedules">Competitor check</a> schedule is on, and saves new and long-running ads here.</p>
+              <ul class="watch-list" id="watched"></ul>
+              <form class="stack tight" id="watch-form" novalidate>
+                <div class="field"><label for="w-name">Page name</label><input class="input" id="w-name" name="name" placeholder="A competitor's Facebook Page" autocomplete="off"></div>
+                <div class="field"><label for="w-id">Page id <span class="muted">(optional)</span></label><input class="input" id="w-id" name="page_id" inputmode="numeric" autocomplete="off"></div>
+                <div class="field"><label for="w-terms">Search words <span class="muted">(optional)</span></label><input class="input" id="w-terms" name="search_terms" placeholder="e.g. custom software Riverside" autocomplete="off"></div>
+                <button class="btn btn-small" type="submit">Watch this Page</button>
+              </form>
+            </div>
+          </section>
+        </div>
         <h2 class="section-h">Research so far</h2>
         <div class="stack" id="tasks"></div>
       </div>

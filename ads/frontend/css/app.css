@@ -1316,3 +1316,27 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .idea-row { display: grid; grid-template-columns: 130px minmax(0, 1fr); align-items: center; gap: 4px 12px; }
 .idea-row label { margin: 0; }
 @media (max-width: 720px) { .idea-row { grid-template-columns: 1fr; } }
+
+/* ---------- Swipe file ---------- */
+.swipe-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+.swipe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.swipe { border: 1px solid var(--line); border-radius: var(--radius-s); padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.swipe.long { border-color: color-mix(in srgb, var(--pine) 40%, var(--line)); }
+.swipe header { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.swipe header b { margin-right: auto; }
+.swipe img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; border-radius: 6px; background: var(--surface-2); }
+.swipe-title { margin: 0; font-weight: 700; }
+.swipe-body { margin: 0; color: var(--ink-2); font-size: 14px; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.swipe-note { font-size: 14px; min-height: 34px; padding: 6px 10px; }
+.swipe footer { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.swipe footer a { color: var(--focus); font-weight: 700; text-decoration: none; display: inline-flex; gap: 4px; align-items: center; }
+.swipe footer svg { width: 13px; height: 13px; }
+.swipe-form { border: 1px solid var(--line); border-radius: var(--radius-s); padding: 12px; }
+.watch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.watch-list li { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.watch-list li span { display: flex; flex-direction: column; min-width: 0; }
+@media (max-width: 1100px) { .swipe-layout { grid-template-columns: 1fr; } }
+.link-btn.muted { color: var(--ink-3); font-weight: 600; }
+.link-btn.muted:hover { color: var(--ink); }
+.swipe-grid { align-items: start; }
+.watch-list .link-btn { white-space: nowrap; }

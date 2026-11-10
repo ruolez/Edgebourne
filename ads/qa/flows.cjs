@@ -354,7 +354,7 @@ for name, mins in (('Reminder QA Five', 7), ('Reminder QA Hour', 61)):
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute('UPDATE desk_schedules SET enabled=FALSE, next_run_at=NULL, skipped=0, last_task_id=NULL')"`);
   await page.goto(BASE + '/desk.html#schedules', { waitUntil: 'networkidle' });
   await page.waitForSelector('.sched');
-  check('Schedules lists the four checks, all off', (await page.locator('.sched').count()) === 4 && (await page.locator('.sched [aria-checked="true"]').count()) === 0);
+  check('Schedules lists the five checks, all off', (await page.locator('.sched').count()) === 5 && (await page.locator('.sched [aria-checked="true"]').count()) === 0);
   await page.click('#sched-1 [data-sched-toggle]');
   await page.waitForFunction(() => /next/.test(document.querySelector('#sched-1 .sched-when')?.textContent || ''));
   check('switching the daily health check on shows its next run', /Every day at 8:30 AM · next/.test(await page.textContent('#sched-1 .sched-when')), await page.textContent('#sched-1 .sched-when'));
@@ -857,6 +857,51 @@ print(r['id'])"`).trim();
   await page.click('dialog.confirm #cd-ok');
   await page.waitForFunction((id) => !document.getElementById(`p-${id}`), tagProp);
   check('approving applies them, marked as from Claude', sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;r=db.query(\\"SELECT value, source FROM ad_tags WHERE ad_id = '120252672233160312' AND dimension = 'hook'\\", one=True);print(r['value'], r['source'])"`).trim() === 'Outcome promise claude');
+
+  // Swipe file: save a competitor ad, long runs flagged, watched Pages, Claude adds what it found.
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute('DELETE FROM swipes');db.execute('DELETE FROM watched_pages')"`);
+  await page.goto(BASE + '/research.html');
+  await page.waitForSelector('#swipes p');
+  await page.fill('#w-name', 'Acme Business Software');
+  await page.fill('#w-terms', 'custom software Riverside');
+  await page.click('#watch-form button[type=submit]');
+  await page.waitForFunction(() => /Acme Business Software/.test(document.getElementById('watched').textContent));
+  check('a competitor Page can be watched', /custom software Riverside · not checked yet/.test(await page.textContent('#watched')));
+  await page.click('#swipe-add');
+  await page.fill('#sw-link', 'https://www.facebook.com/ads/library/?id=1234567890123');
+  await page.fill('#sw-page', 'Acme Business Software');
+  await page.fill('#sw-body', 'Still running your shop on spreadsheets? We build software around how you work.');
+  const longAgo = await page.evaluate(() => new Date(Date.now() - 45 * 864e5).toISOString().slice(0, 10));
+  await page.fill('#sw-start', longAgo);
+  await page.click('#swipe-form button[type=submit]');
+  await page.waitForSelector('.swipe');
+  check('a saved ad shows how long it has run, and 30+ days reads as likely working', /Running 4[56] days: likely working/.test(await page.textContent('.swipe'))
+    && (await page.getAttribute('.swipe a', 'href')) === 'https://www.facebook.com/ads/library/?id=1234567890123');
+  await page.click('#swipe-add');
+  await page.fill('#sw-link', '1234567890123');
+  await page.fill('#sw-page', 'Acme Business Software');
+  await page.click('#swipe-form button[type=submit]');
+  await page.waitForTimeout(500);
+  check('saving the same Library ad again updates it instead of adding a copy', (await page.locator('.swipe').count()) === 1);
+  await page.fill('.swipe-note', 'Same promise as N1');
+  await page.press('.swipe-note', 'Tab');
+  await page.waitForTimeout(400);
+  const ag = JSON.parse(sh('docker cp dev/qa_agent_swipes.py edgebourne-ads-backend:/app/qa_agent_swipes.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_agent_swipes.py; docker exec edgebourne-ads-backend rm -f /app/qa_agent_swipes.py').trim().split('\n').pop());
+  check("Claude's side: the watched Pages, then new ads saved and a bad one skipped with the reason",
+    ag.watched.join() === 'Acme Business Software' && ag.first.added === 2 && ag.first.skipped[0] === "Paste the Ad Library link, or the ad's text"
+    && ag.again.added === 0 && ag.again.refreshed === 1 && ag.refused === 401, JSON.stringify(ag));
+  await page.reload();
+  await page.waitForSelector('.swipe');
+  check('found ads show as from Claude, with their tags; a stopped one counts to the day it stopped',
+    (await page.locator('.swipe').count()) === 3 && /Ran 97 days/.test(await page.textContent('#swipes')) && /Outcome promise/.test(await page.textContent('#swipes'))
+    && /checked/.test(await page.textContent('#watched')) && !/not checked yet/.test(await page.textContent('#watched')));
+  await page.click('#swipe-filter [data-sf="long"]');
+  check('Running 30+ days shows only the long runs', (await page.locator('.swipe').count()) === 2);
+  check('the note was kept', await page.evaluate(() => [...document.querySelectorAll('.swipe-note')].some((i) => i.value === 'Same promise as N1')));
+  await page.goto(BASE + '/desk.html#schedules');
+  await page.waitForSelector('#view');
+  await page.waitForTimeout(600);
+  check('a weekly Competitor check schedule is offered, off', /Competitor check/.test(await page.textContent('#view')));
 
   await browser.close();
   console.log(results.join('\n'));

@@ -123,6 +123,21 @@ files; `cat`, `tail` and pipes are not allowed.
    rather than stopping silently.
 
 
+## Competitor watch (swipe file)
+
+- `desk watched` lists the Pages Eugene watches (name, Page id if known, search terms, when last
+  checked) and the Ad Library ids already in the swipe file.
+- Search with `ads_library_search` (US, active). Meta's public Ad Library API covers only
+  political and EU ads, so this search is the only way to see US competitors' commercial ads.
+- Save ads with `desk swipe --file reports/desk/tmp/task<id>-swipes.json`: a JSON list of
+  `{"library_id", "page_name", "page_id", "body", "title", "cta", "media_url" (https only),
+  "started_on": "YYYY-MM-DD", "stopped_on", "platforms": [...], "notes", "tags": {"hook", "angle",
+  "format", "offer"}}`. Saving an id already in the file refreshes its dates and text; nothing
+  is duplicated. Tag hooks in this dashboard's styles (Question, Command, Pain statement,
+  Outcome promise, Number or stat, Story, Social proof).
+- An ad running 30 days or more is the best public sign it works; say why it likely does.
+- Never copy a competitor's ad. Turn what works into ideas for Edge Bourne's own voice.
+
 ## Scheduled runs
 
 A prompt that starts with "Scheduled" was filed by a Desk schedule (daily health check,
