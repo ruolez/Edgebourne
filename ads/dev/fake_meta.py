@@ -202,6 +202,16 @@ def tg_api(tok, method):
 BUSINESS = "9990001"
 NEW_ADSETS = {}
 NEW_CAMPAIGNS = {}
+# Opportunity Score + recommendations: the live account's one (2026-11-09) plus a budget one to apply.
+ADVICE = {"score": 87, "recs": [
+    {"type": "reels_pc_recommendation", "object_ids": ["120252672227950312"], "recommendation_stage": "mid_flight_recommendation",
+     "recommendation_content": {"lift_estimate": "You could get 8% lower cost per result by optimizing your Reels format",
+                                "body": "Including a fullscreen vertical video (9:16) with audio in your Reels ads can improve performance.",
+                                "opportunity_score_lift": "4"}, "url": "https://adsmanager.facebook.com/adsmanager/manage/accounts?act=1025971549903293"},
+    {"type": "SCALE_GOOD_CAMPAIGN", "recommendation_signature": "fake-scale-1", "object_ids": ["120252638288040312"],
+     "recommendation_stage": "mid_flight_recommendation", "recommendation_data": {"additional_budget": 600},
+     "recommendation_content": {"lift_estimate": "Up to 18% more leads", "body": "This campaign gets leads below your average cost.",
+                                "opportunity_score_lift": "9"}, "url": "https://adsmanager.facebook.com/adsmanager/manage/campaigns"}]}
 REFUSE_NEXT_AD = []
 PLACES = [{"key": "2421696", "name": "Riverside", "type": "city", "region": "California", "country_code": "US"},
           {"key": "2420379", "name": "Los Angeles", "type": "city", "region": "California", "country_code": "US"},
@@ -266,7 +276,9 @@ def graph(path):
         if parts == [act]:
             return jsonify({"name": "Edge Bourne Consulting", "currency": "USD", "timezone_name": "America/Los_Angeles",
                             "spend_cap": "15000", "amount_spent": "4120", "account_status": 1,
-                            "business": {"id": BUSINESS, "name": "Edge Bourne"}})
+                            "business": {"id": BUSINESS, "name": "Edge Bourne"}, "opportunity_score": ADVICE["score"]})
+        if parts == [act, "recommendations"]:
+            return jsonify({"data": [{"recommendations": ADVICE["recs"]}]})
         if parts == [act, "campaigns"]:
             return jsonify({"data": [CAMPAIGN, *NEW_CAMPAIGNS.values()]})
         if parts == [act, "adsets"]:
@@ -441,6 +453,16 @@ def graph(path):
                           "follow_up_action_url": a.get("follow_up_action_url"), "locale": a.get("locale"),
                           "is_optimized_for_quality": a.get("is_optimized_for_quality") == "true"}
             return jsonify({"id": fid})
+        if parts == [act, "recommendations"]:
+            sig = a.get("recommendation_signature", "").strip('"')
+            rec = next((r for r in ADVICE["recs"] if r.get("recommendation_signature") == sig), None)
+            if not rec:
+                return jsonify({"error": {"message": "Invalid recommendation signature (fake)", "code": 100}}), 400
+            if rec["type"] == "SCALE_GOOD_CAMPAIGN":
+                CAMPAIGN["daily_budget"] = str(int(CAMPAIGN["daily_budget"]) + rec["recommendation_data"]["additional_budget"])
+            ADVICE["recs"].remove(rec)
+            ADVICE["score"] = min(100, ADVICE["score"] + int(rec["recommendation_content"]["opportunity_score_lift"]))
+            return jsonify({"success": True})
         if len(parts) == 2 and parts[0] == BUSINESS and parts[1] == "ad_studies":
             # Shaped like Meta's ad study rules (split testing guide): fake only checks what we rely on.
             cells = json.loads(a.get("cells") or "[]")

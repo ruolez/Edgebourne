@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, icon, onRefresh, toast, when } from "./ui.js";
+import { boot, confirmDialog, esc, icon, onRefresh, toast, when } from "./ui.js";
 import { money, per, plural } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -98,7 +98,9 @@ function render(d) {
     : '<p class="muted flush">No changes made from the dashboard yet.</p>';
   const changesCard = `<section class="panel changes-card" aria-labelledby="h-changes"><div class="card-head"><h2 id="h-changes">Changes</h2></div>${changes}</section>`;
 
-  $("home").innerHTML = `${attention}<div class="today">${callCard}${moneyCard}${adsCard}${claudeCard}${changesCard}</div>`;
+  const adviceCard = d.bridge ? `<section class="panel advice-card" aria-labelledby="h-advice" id="advice"><div class="card-head"><h2 id="h-advice">Meta's advice</h2></div><p class="muted flush">Reading from Meta…</p></section>` : "";
+  $("home").innerHTML = `${attention}<div class="today">${callCard}${moneyCard}${adsCard}${claudeCard}${changesCard}${adviceCard}</div>`;
+  if (adviceCard) loadAdvice();
   if (!claudeCard) $("home").querySelector(".changes-card").classList.add("wide");
   $("home").querySelectorAll("[data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
 }
@@ -117,3 +119,59 @@ if (me) {
   load();
   setInterval(() => { if (!document.hidden) load(); }, 60000);
 }
+
+
+// ---------------------------------------------------------------- Meta's advice (admins)
+
+function adviceHtml(a) {
+  const delta = a.previous_score != null && a.score != null && a.previous_score !== a.score
+    ? ` <span class="${a.score > a.previous_score ? "good-text" : "bad-text"}">${a.score > a.previous_score ? "▲" : "▼"} ${Math.abs(a.score - a.previous_score)}</span>` : "";
+  const score = a.score != null ? `<span class="opp-score" title="Meta's Opportunity Score: how closely the account follows its best practices"><b>${a.score}</b>/100${delta}</span>` : "";
+  const items = a.items.length ? `<ul class="advice-list">${a.items.map((r) => {
+      const b = r.budget;
+      const step = b && b.from ? `<p class="flush small ${b.big ? "bad-text" : "muted"}">${money(b.from, { exact: true })} → ${money(b.to, { exact: true })} a day (+${b.pct}%)${b.big ? ": more than +20%, so Meta may restart learning and results can wobble for a few days." : "."}</p>` : "";
+      return `<li>
+        <div class="advice-text"><span class="ttl"><b>${esc(r.label)}</b>${r.points ? `<span class="pill">+${r.points} points</span>` : ""}</span>
+          ${r.lift ? `<p class="flush">${esc(r.lift)}</p>` : ""}${step}
+          ${r.note ? `<p class="flush muted small">${esc(r.note)}</p>` : ""}</div>
+        <div class="advice-do">${r.can_apply ? `<button type="button" class="btn btn-small" data-apply="${esc(r.signature)}" data-label="${esc(r.label)}" data-big="${b && b.big ? "1" : ""}" data-step="${b && b.from ? `${money(b.from, { exact: true })} → ${money(b.to, { exact: true })} a day` : ""}" data-does="${esc(r.applies || "")}">Apply</button>` : ""}
+          ${r.url ? `<a class="btn btn-quiet btn-small" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Ads Manager ${icon("external")}</a>` : ""}</div>
+      </li>`;
+    }).join("")}</ul>` : '<p class="muted flush">No suggestions from Meta right now.</p>';
+  const bm = a.benchmarks;
+  const bench = bm ? `<div class="bench"><h3>How you compare</h3>${bm.summary ? `<p class="flush">${esc(bm.summary)}</p>` : ""}
+      <table class="table middle"><thead><tr><th></th><th class="num">You</th><th class="num">Similar advertisers</th><th></th></tr></thead>
+      <tbody>${bm.items.map((i) => `<tr><th scope="row">${esc(i.label)}</th><td class="num">${esc(i.ours)}</td><td class="num">${esc(i.peers)}</td><td class="muted small">${esc(i.note)}</td></tr>`).join("")}</tbody></table>
+      <p class="muted small flush">From Claude's Monday summary, ${esc(bm.as_of)}.</p></div>`
+    : '<p class="muted small flush bench-empty">Benchmarks against similar advertisers come with Claude\'s Monday summary (Claude → Schedules).</p>';
+  return `<div class="card-head"><h2 id="h-advice">Meta's advice</h2>${score}<span class="spacer"></span>
+      <button type="button" class="link-btn" id="advice-fresh">Check again</button></div>
+    ${a.error_note ? `<p class="note warn">${esc(a.error_note)}</p>` : ""}${items}
+    <p class="muted small flush">Only part of Meta's list comes through its API; Ads Manager may show more.${a.fetched_at ? ` Checked ${esc(when(a.fetched_at))}.` : ""}</p>
+    ${bench}`;
+}
+
+async function loadAdvice(fresh = false) {
+  const box = document.getElementById("advice");
+  if (!box) return;
+  try { box.innerHTML = adviceHtml(await api(`/api/advice${fresh ? "?fresh=1" : ""}`)); }
+  catch (err) { box.innerHTML = `<div class="card-head"><h2>Meta's advice</h2></div><p class="muted flush">${esc(err.message)}</p>`; }
+}
+
+document.addEventListener("click", async (e) => {
+  if (e.target.closest("#advice-fresh")) { loadAdvice(true); return; }
+  const b = e.target.closest("[data-apply]");
+  if (!b) return;
+  const big = !!b.dataset.big;
+  const yes = await confirmDialog({
+    title: `Apply “${b.dataset.label}”?`,
+    body: `<p>${esc(b.dataset.does || "Meta applies it to the account.")}</p>${b.dataset.step ? `<p><b>${esc(b.dataset.step)}</b></p>` : ""}${big ? '<p class="note warn">More than +20% in one step: Meta may restart learning and results can wobble for a few days. The usual rule here is +20% at most, three days apart.</p>' : ""}`,
+    confirm: big ? "Apply anyway" : "Apply", danger: big,
+  });
+  if (!yes) return;
+  b.disabled = true;
+  try {
+    document.getElementById("advice").innerHTML = adviceHtml(await api("/api/advice/apply", { method: "POST", body: { signature: b.dataset.apply, accept_big: big } }));
+    toast("Applied on Meta");
+  } catch (err) { toast(err.message, "bad"); b.disabled = false; }
+});

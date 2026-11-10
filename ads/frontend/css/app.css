@@ -1340,3 +1340,23 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .link-btn.muted:hover { color: var(--ink); }
 .swipe-grid { align-items: start; }
 .watch-list .link-btn { white-space: nowrap; }
+
+/* ---------- Meta's advice (Today) ---------- */
+.today > .advice-card { grid-column: span 12; }
+.opp-score { font-size: 15px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.opp-score b { font-size: 22px; color: var(--ink); }
+.good-text { color: var(--pine); font-weight: 700; }
+.advice-list { list-style: none; margin: 0 0 8px; padding: 0; }
+.advice-list li { display: flex; gap: 16px; justify-content: space-between; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.advice-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.advice-text .pill { font-size: 12px; }
+.advice-do { display: flex; gap: 8px; flex: none; align-items: center; }
+.advice-do svg { width: 13px; height: 13px; }
+.bench { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.bench h3 { margin: 0 0 6px; font-size: 16px; }
+.bench-empty { margin-top: 10px; }
+@media (max-width: 720px) { .advice-list li { flex-direction: column; } }
+.advice-card { padding: 20px 24px 22px; display: flex; flex-direction: column; }
+.advice-card .card-head { padding: 0 0 6px; align-items: center; }
+.advice-text .ttl { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+@media (max-width: 720px) { .advice-card { padding: 18px; } }

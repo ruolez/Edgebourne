@@ -903,6 +903,33 @@ print(r['id'])"`).trim();
   await page.waitForTimeout(600);
   check('a weekly Competitor check schedule is offered, off', /Competitor check/.test(await page.textContent('#view')));
 
+  // Meta's advice on Today: score, suggestions in plain words, apply one through the +20% warning, benchmarks from the Mac.
+  sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/120252638288040312?access_token=x', data=b'daily_budget=2000'))"`);
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,settings_store;settings_store.set('meta_advice',None);settings_store.set('meta_benchmarks',None);db.execute('UPDATE campaigns SET daily_budget_cents = 2000 WHERE id = %s', ('120252638288040312',))"`);
+  await page.goto(BASE + '/home.html');
+  await page.waitForSelector('.advice-list');
+  check("Today shows Meta's Opportunity Score and its suggestions, most points first",
+    /87\/100/.test(await page.textContent('#advice')) && (await page.$$eval('.advice-list .ttl b', (b) => b.map((x) => x.textContent))).join('|') === "Spend more on a campaign that's doing well|Add a vertical 9:16 video for Reels");
+  check('a suggestion that needs new media points to Ads Manager instead of an Apply button',
+    (await page.locator('.advice-list li').nth(1).locator('[data-apply]').count()) === 0 && /Needs a new 9:16 video/.test(await page.textContent('.advice-list li:nth-child(2)')));
+  check('a budget suggestion shows the step in dollars and flags more than +20%', /\$20\.00 → \$26\.00 a day \(\+30%\): more than \+20%/.test(await page.textContent('.advice-list li:first-child')));
+  const budgetBefore = Object.values(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/v24.0/120252638288040312?access_token=x').read().decode())"`).match(/"daily_budget":"?(\d+)/).slice(1))[0];
+  await page.click('[data-apply]');
+  await page.waitForSelector('dialog.confirm');
+  check('applying it asks first, with the +20% warning, and says "Apply anyway"', /More than \+20% in one step/.test(await page.textContent('dialog.confirm')) && /Apply anyway/.test(await page.textContent('dialog.confirm #cd-ok')));
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => /96\/100/.test(document.getElementById('advice').textContent));
+  const budgetAfter = sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/v24.0/120252638288040312?access_token=x').read().decode())"`).match(/"daily_budget":"?(\d+)/)[1];
+  check('Meta applies it: the budget moves by its step, the score rises, the suggestion goes', budgetBefore === '2000' && budgetAfter === '2600'
+    && (await page.locator('.advice-list li').count()) === 1 && /▲ 9/.test(await page.textContent('#advice')), `${budgetBefore} → ${budgetAfter}`);
+  check('the change is logged like any other', sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;r=db.query('SELECT action, ok FROM meta_changes ORDER BY id DESC LIMIT 1', one=True);print(r['action'], r['ok'])"`).trim() === 'recommendation True');
+  check('without benchmarks yet it says where they come from', /come with Claude's Monday summary/.test(await page.textContent('#advice')));
+  const bmk = JSON.parse(sh('docker cp dev/qa_agent_benchmarks.py edgebourne-ads-backend:/app/qa_agent_benchmarks.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_agent_benchmarks.py; docker exec edgebourne-ads-backend rm -f /app/qa_agent_benchmarks.py').trim().split('\n').pop());
+  await page.reload();
+  await page.waitForSelector('#advice .bench');
+  check("the Monday summary's benchmarks show on Today", bmk.body.saved === 2 && /Cost per lead\s*\$4\.79\s*\$18–\$42/.test(await page.textContent('#advice .bench')) && /From Claude's Monday summary, 2026-11-09/.test(await page.textContent('#advice')));
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE campaigns SET daily_budget_cents = 2000 WHERE id = '120252638288040312'\\")"`);
+
   await browser.close();
   console.log(results.join('\n'));
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');

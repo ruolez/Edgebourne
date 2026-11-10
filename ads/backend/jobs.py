@@ -104,6 +104,12 @@ def _loop():
                         meta_tests.sync_running()
                     except Exception:
                         log.exception("reading Meta A/B tests failed")
+                    if settings_store.get("meta_system_token"):
+                        try:
+                            import advice_api
+                            advice_api.refresh_if_stale()
+                        except Exception as exc:
+                            log.info("Meta's advice not read: %s", exc)
         except Exception:
             log.exception("worker pass failed")
         finally:

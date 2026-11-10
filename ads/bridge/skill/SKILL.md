@@ -138,6 +138,15 @@ files; `cat`, `tail` and pipes are not allowed.
 - An ad running 30 days or more is the best public sign it works; say why it likely does.
 - Never copy a competitor's ad. Turn what works into ideas for Edge Bourne's own voice.
 
+## Benchmarks (Monday summary)
+
+The benchmark and peer tools are only in the Ads MCP, so the dashboard shows what you post.
+After the Monday summary, read `ads_insights_industry_benchmark`, `ads_insights_performance_vs_peers`
+and `ads_insights_auction_ranking_benchmarks`, then `desk benchmarks --file
+reports/desk/tmp/task<id>-benchmarks.json` with `{"as_of": "YYYY-MM-DD", "summary": "<one sentence>",
+"items": [{"label": "Cost per lead", "ours": "$4.79", "peers": "$18–$42", "note": "Professional
+services, US"}]}` (at most 12 rows, the numbers as shown to people, with units). Today shows them.
+
 ## Scheduled runs
 
 A prompt that starts with "Scheduled" was filed by a Desk schedule (daily health check,
