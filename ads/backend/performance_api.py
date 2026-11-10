@@ -39,13 +39,31 @@ def cap_snapshot():
             "currency": snap.get("currency"), "timezone": snap.get("timezone")}
 
 
-def overview_data(user, days):
-    """Everything the Performance page shows; also the AI desk's snapshot."""
-    today = date.today()
-    # Complete days only: today is partial and conversions report late.
+def periods(today, days):
+    """(start, end) of the last `days` complete days, and of the same length just before.
+    Complete days only: today is partial and conversions report late."""
     end = today - timedelta(days=1)
     start = end - timedelta(days=days - 1)
+    return (start, end), (start - timedelta(days=days), start - timedelta(days=1))
+
+
+def campaign_choices(user, start, end):
+    """Campaigns the person can see, with spend in the period, for the Results picker."""
+    where, params = _scope_sql(user, "c.id")
+    return [{**r, "spend_cents": int(r["spend_cents"])} for r in db.query(
+        f"""SELECT c.id, c.name, c.effective_status,
+                   COALESCE((SELECT SUM(spend_cents) FROM ad_daily d WHERE d.campaign_id = c.id AND d.day BETWEEN %s AND %s), 0) AS spend_cents
+            FROM campaigns c WHERE {where} AND c.effective_status <> 'DELETED'
+            ORDER BY spend_cents DESC, c.name""", [start, end] + params)]
+
+
+def overview_data(user, days, campaign_id=None):
+    """Everything the Performance page shows; also the AI desk's snapshot. `campaign_id`
+    narrows it to one campaign the person can see."""
+    (start, end), (prev_start, prev_end) = periods(date.today(), days)
     where, params = _scope_sql(user, "d.campaign_id")
+    if campaign_id:
+        where, params = f"({where}) AND d.campaign_id = %s", params + [campaign_id]
 
     totals = db.query(
         f"""SELECT COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
@@ -65,7 +83,7 @@ def overview_data(user, days):
         r = filled.get(d) or {}
         series.append({"day": d, "spend_cents": int(r.get("spend_cents") or 0), "leads": int(r.get("leads") or 0)})
 
-    lwhere, lparams = _scope_sql(user, "l.campaign_id")
+    lwhere, lparams = where.replace("d.campaign_id", "l.campaign_id"), params
     quality = db.query(
         f"""SELECT l.ad_id,
                    COUNT(*) AS inbox,
@@ -78,13 +96,22 @@ def overview_data(user, days):
     )
     q_by_ad = {r["ad_id"]: r for r in quality}
 
+    before = db.query(
+        f"""SELECT COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(leads),0) AS leads
+            FROM ad_daily d WHERE day BETWEEN %s AND %s AND {where}""",
+        [prev_start, prev_end] + params, one=True)
+    before_q = db.query(
+        f"""SELECT COUNT(*) FILTER (WHERE l.status IN ('qualified','won')) AS qualified FROM leads l
+            WHERE NOT l.is_test AND l.created_time::date BETWEEN %s AND %s AND {lwhere}""",
+        [prev_start, prev_end] + lparams, one=True)
+
     per_ad = db.query(
-        f"""SELECT a.id, COALESCE(a.name, MAX(d.ad_name)) AS name, a.effective_status, a.thumbnail_url,
+        f"""SELECT a.id, a.campaign_id, COALESCE(a.name, MAX(d.ad_name)) AS name, a.effective_status, a.thumbnail_url,
                    COALESCE(SUM(d.spend_cents),0) AS spend_cents, COALESCE(SUM(d.impressions),0) AS impressions,
                    COALESCE(SUM(d.link_clicks),0) AS link_clicks, COALESCE(SUM(d.leads),0) AS leads
             FROM ads a LEFT JOIN ad_daily d ON d.ad_id = a.id AND d.day BETWEEN %s AND %s
             WHERE {where.replace('d.campaign_id', 'a.campaign_id')}
-            GROUP BY a.id, a.name, a.effective_status, a.thumbnail_url
+            GROUP BY a.id, a.campaign_id, a.name, a.effective_status, a.thumbnail_url
             ORDER BY spend_cents DESC, a.name""",
         [start, end] + params,
     )
@@ -113,6 +140,9 @@ def overview_data(user, days):
         "yesterday": last and {"day": last["day"], "spend_cents": last["spend_cents"], "leads": last["leads"],
                                "prev_spend_cents": prev["spend_cents"], "prev_leads": prev["leads"]},
         "totals": {**{k: int(v) for k, v in totals.items()}, "qualified": qualified_total},
+        "previous": {"start": prev_start.isoformat(), "end": prev_end.isoformat(),
+                     "spend_cents": int(before["spend_cents"]), "leads": int(before["leads"]),
+                     "qualified": int(before_q["qualified"] or 0)},
         "series": series,
         "ads": per_ad,
         "cap": cap,
@@ -152,7 +182,16 @@ def pacing_data(scope_ids=None):
 @login_required
 def overview():
     user = current_user()
-    out = overview_data(user, RANGES.get(request.args.get("range", "7"), 7))
+    days = RANGES.get(request.args.get("range", "7"), 7)
+    campaign_id = request.args.get("campaign") or None
+    if campaign_id:
+        ids = visible_campaign_ids(user)
+        if ids is not None and campaign_id not in ids:
+            return api_error("Not found", 404)
+    out = overview_data(user, days, campaign_id)
+    (start, end), _ = periods(date.today(), days)
+    out["campaigns"] = campaign_choices(user, start, end)
+    out["campaign"] = campaign_id
     out["pacing"] = pacing_data(visible_campaign_ids(user))
     out["can_set_target"] = user["role"] == "admin"
     return jsonify(out)

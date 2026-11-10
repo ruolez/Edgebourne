@@ -1,18 +1,46 @@
 import { api } from "./api.js";
-import { boot, esc, onRefresh, toast, when } from "./ui.js";
+import { boot, esc, icon, onRefresh, toast, when } from "./ui.js";
 import { barList, columnChart } from "./charts.js";
 import { count, dayLabel, money, pct, per } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
+let data;
 let range = "7";
 try { range = localStorage.getItem("ebads-range") || "7"; } catch (e) {}
+const qs = new URLSearchParams(location.search);
+if (["7", "14", "30"].includes(qs.get("range"))) range = qs.get("range");
+let campaign = qs.get("campaign") || "";
+
+// The ads table: which ads, in what order. Kept per browser.
+const FILTERS = {
+  spent: ["Spent money", (a) => a.spend_cents > 0],
+  running: ["Running", (a) => a.effective_status === "ACTIVE"],
+  all: ["All", (a) => a.effective_status !== "DELETED" || a.spend_cents > 0],
+};
+const COLUMNS = [
+  { key: "name", label: "Ad", text: true, value: (a) => (a.name || "").toLowerCase() },
+  { key: "status", label: "Status", text: true, value: (a) => (STATUS[a.effective_status] || ["", a.effective_status || ""])[1] },
+  { key: "spend", label: "Spent", value: (a) => a.spend_cents },
+  { key: "impressions", label: "Impressions", value: (a) => a.impressions },
+  { key: "ctr", label: "Click rate", value: (a) => (a.impressions ? a.link_clicks / a.impressions : null), title: "Link clicks ÷ impressions" },
+  { key: "leads", label: "Leads", value: (a) => a.leads },
+  { key: "cpl", label: "Cost per lead", value: (a) => (a.leads ? a.spend_cents / a.leads : null), low: true },
+  { key: "qualified", label: "Qualified", value: (a) => a.qualified, title: "Marked Qualified or Won in the leads inbox" },
+  { key: "cpq", label: "Per qualified", value: (a) => (a.qualified ? a.spend_cents / a.qualified : null), low: true },
+];
+const EARLY = 3; // fewer leads than this: too early to judge an ad's cost per lead
+let table = { filter: "spent", sort: "spend", dir: "desc", q: "" };
+try { table = { ...table, ...JSON.parse(localStorage.getItem("ebads-results") || "{}"), q: "" }; } catch (e) {}
+if (!FILTERS[table.filter]) table.filter = "spent";
+if (!COLUMNS.some((c) => c.key === table.sort)) { table.sort = "spend"; table.dir = "desc"; }
+const saveTable = () => { try { localStorage.setItem("ebads-results", JSON.stringify({ filter: table.filter, sort: table.sort, dir: table.dir })); } catch (e) {} };
 
 const STATUS = {
   ACTIVE: ["ok", "Running"], PAUSED: ["", "Paused"], CAMPAIGN_PAUSED: ["", "Campaign paused"],
   ADSET_PAUSED: ["", "Ad set paused"], IN_PROCESS: ["warn", "In review"], PENDING_REVIEW: ["warn", "In review"],
   DISAPPROVED: ["bad", "Rejected"], WITH_ISSUES: ["bad", "Has issues"], ARCHIVED: ["", "Archived"],
-  PENDING_BILLING_INFO: ["bad", "Needs billing"],
+  DELETED: ["", "Deleted"], PENDING_BILLING_INFO: ["bad", "Needs billing"],
 };
 const statusPill = (s) => { const [k, l] = STATUS[s] || ["", (s || "Unknown").toLowerCase()]; return `<span class="pill ${k}">${esc(l)}</span>`; };
 
@@ -23,8 +51,21 @@ function yesterdayLine(y) {
   return `<span class="sub">Yesterday: ${m(y.spend_cents)} spent (${vs(y.spend_cents, y.prev_spend_cents, m)}), ${count(y.leads)} lead${y.leads === 1 ? "" : "s"} (${vs(y.leads, y.prev_leads, count)})</span>`;
 }
 
-function render(data) {
+// "▲ 18% vs prior 7 days": `better` says which direction is good news (null: neither).
+function change(now, before, better, prev) {
+  const span = `${dayLabel(prev.start)} – ${dayLabel(prev.end)}`;
+  const vs = `vs prior ${data.range.days} days`;
+  if (now == null) return "";
+  if (before == null || before === 0) return `<span class="delta" title="${esc(span)}">none in prior ${data.range.days} days</span>`;
+  const d = Math.round(((now - before) / before) * 100);
+  if (d === 0) return `<span class="delta" title="${esc(span)}">same as prior ${data.range.days} days</span>`;
+  const tone = better === null ? "" : (d < 0) === (better === "down") ? "good" : "bad";
+  return `<span class="delta ${tone}" title="${esc(span)}">${d > 0 ? "▲" : "▼"} ${Math.abs(d)}% ${vs}</span>`;
+}
+
+function render() {
   const t = data.totals;
+  const p = data.previous;
   const cpl = t.leads ? t.spend_cents / t.leads : null;
   const noData = !data.ads.length && !t.spend_cents;
   const alerts = data.alerts.map((a) => `<p class="note ${a.level}" role="status">${esc(a.text)}</p>`).join("");
@@ -38,12 +79,13 @@ function render(data) {
     return;
   }
 
+  const ratio = (c, n) => (n ? c / n : null);
   const figures = `<section class="panel figures" aria-label="Totals for the period">
-    <div class="figure hero"><span class="label">Cost per lead</span><span class="value">${cpl ? money(cpl, { exact: true }) : "—"}</span><span class="sub">${count(t.leads)} lead${t.leads === 1 ? "" : "s"} from ${money(t.spend_cents)}</span>${yesterdayLine(data.yesterday)}</div>
-    <div class="figure"><span class="label">Spent</span><span class="value">${money(t.spend_cents)}</span></div>
-    <div class="figure"><span class="label">Leads</span><span class="value">${count(t.leads)}</span></div>
-    <div class="figure"><span class="label">Qualified or won</span><span class="value">${count(t.qualified)}</span><span class="sub">from the leads inbox</span></div>
-    <div class="figure"><span class="label">Cost per qualified lead</span><span class="value">${per(t.spend_cents, t.qualified)}</span><span class="sub">the number that matters most</span></div>
+    <div class="figure hero"><span class="label">Cost per lead</span><span class="value">${cpl ? money(cpl, { exact: true }) : "—"}</span>${change(cpl, ratio(p.spend_cents, p.leads), "down", p)}<span class="sub">${count(t.leads)} lead${t.leads === 1 ? "" : "s"} from ${money(t.spend_cents)}</span>${yesterdayLine(data.yesterday)}</div>
+    <div class="figure"><span class="label">Spent</span><span class="value">${money(t.spend_cents)}</span>${change(t.spend_cents, p.spend_cents, null, p)}</div>
+    <div class="figure"><span class="label">Leads</span><span class="value">${count(t.leads)}</span>${change(t.leads, p.leads, "up", p)}</div>
+    <div class="figure"><span class="label">Qualified or won</span><span class="value">${count(t.qualified)}</span>${change(t.qualified, p.qualified, "up", p)}<span class="sub">from the leads inbox</span></div>
+    <div class="figure"><span class="label">Cost per qualified lead</span><span class="value">${per(t.spend_cents, t.qualified)}</span>${change(ratio(t.spend_cents, t.qualified), ratio(p.spend_cents, p.qualified), "down", p)}<span class="sub">the number that matters most</span></div>
   </section>`;
 
   const charts = `<div class="charts">
@@ -54,27 +96,16 @@ function render(data) {
     <thead><tr><th>Day</th><th class="num">Spent</th><th class="num">Leads</th></tr></thead>
     <tbody>${data.series.map((d) => `<tr><td>${dayLabel(d.day)}</td><td class="num">${money(d.spend_cents, { exact: true })}</td><td class="num">${d.leads}</td></tr>`).join("")}</tbody></table></div></details>`;
 
-  const rows = data.ads.map((a) => `<tr>
-    <td><span class="ad-cell">${a.thumbnail_url ? `<img src="${esc(a.thumbnail_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="ph"></span>'}<b>${esc(a.name)}</b></span></td>
-    <td>${statusPill(a.effective_status)}</td>
-    <td class="num">${money(a.spend_cents, { exact: true })}</td>
-    <td class="num">${count(a.impressions)}</td>
-    <td class="num">${pct(a.link_clicks, a.impressions)}</td>
-    <td class="num">${count(a.leads)}</td>
-    <td class="num">${per(a.spend_cents, a.leads)}</td>
-    <td class="num">${count(a.qualified)}</td>
-  </tr>`).join("");
-  const ads = `<section class="panel"><div class="panel-head"><h2>Ads</h2><p>Click rate = link clicks ÷ impressions.</p></div><div class="panel-body scroll-x"><table class="table middle">
-    <thead><tr><th>Ad</th><th>Status</th><th class="num">Spent</th><th class="num">Impressions</th><th class="num">Click rate</th><th class="num">Leads</th><th class="num">Cost per lead</th><th class="num">Qualified</th></tr></thead>
-    <tbody>${rows}</tbody></table></div></section>
-    <p class="muted small flush">Complete days only (${dayLabel(data.range.start)} to ${dayLabel(data.range.end)}): today is left out because Meta reports late. Judge an ad only after it has spent at least twice your target cost per lead.</p>`;
+  const ads = `<section class="panel" id="ads-panel" aria-label="Ads"></section>
+    <p class="muted small flush">Complete days only (${dayLabel(data.range.start)} to ${dayLabel(data.range.end)}): today is left out because Meta reports late. A cost in grey comes from fewer than ${EARLY} leads, too few to judge the ad on.</p>`;
 
-  const extra = `<section class="panel"><div class="panel-head wrap"><h2>Who and where</h2><p>All ads, same period</p><span class="spacer"></span>
+  const extra = `<section class="panel"><div class="panel-head wrap"><h2>Who and where</h2><p>${campaign ? "This campaign" : "All ads"}, same period</p><span class="spacer"></span>
       <div class="format-scroll"><div class="segmented" id="acc-by">${[["placement", "Placement"], ["age", "Age"], ["gender", "Gender"], ["device", "Device"], ["region", "Region"], ["hour", "Hour"]].map(([k, l]) => `<button type="button" data-by="${k}" aria-pressed="${k === accBy}">${l}</button>`).join("")}</div></div></div>
       <div class="panel-body aud-grid"><div><h3 class="chart-title">Share of spend</h3><div id="acc-spend"><p class="muted">Loading from Meta…</p></div></div>
       <div><h3 class="chart-title">Leads and cost per lead</h3><div id="acc-leads"></div></div></div></section>
     ${me.role === "admin" ? `<section class="panel"><div class="panel-head"><h2>What changed on Meta</h2><p>Last 14 days, from Meta's own history: Ads Manager, this dashboard and Meta's automatic changes</p></div><div class="panel-body" id="activity"><p class="muted">Loading…</p></div></section>` : ""}`;
   $("perf").innerHTML = alerts + cap + figures + charts + ads + extra;
+  renderAds();
   wirePacing();
   loadAccountBreakdown();
   if (me.role === "admin") loadActivity();
@@ -83,6 +114,119 @@ function render(data) {
     format: (v) => money(v, { exact: true }), axisFormat: (v) => `$${Math.round(v / 100)}` });
   columnChart({ el: $("c-leads"), series: data.series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true,
     format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
+}
+
+function adsShown() {
+  const q = table.q.trim().toLowerCase();
+  const col = COLUMNS.find((c) => c.key === table.sort);
+  const sign = table.dir === "asc" ? 1 : -1;
+  return data.ads.filter(FILTERS[table.filter][1]).filter((a) => !q || (a.name || "").toLowerCase().includes(q)).sort((a, b) => {
+    const x = col.value(a), y = col.value(b);
+    if (x == null || y == null) return x == null && y == null ? 0 : x == null ? 1 : -1; // no value: always last
+    return (x < y ? -1 : x > y ? 1 : 0) * sign || b.spend_cents - a.spend_cents;
+  });
+}
+
+function costCell(cents, n) {
+  if (!n) return "—";
+  const v = money(cents / n, { exact: true });
+  return n < EARLY ? `<span class="early" title="Only ${n} so far: too early to judge">${v}</span>` : v;
+}
+
+function adRow(a) {
+  return `<tr>
+    <td><a class="ad-cell" href="/ad.html?id=${encodeURIComponent(a.id)}">${a.thumbnail_url ? `<img src="${esc(a.thumbnail_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="ph"></span>'}<b>${esc(a.name)}</b></a></td>
+    <td>${statusPill(a.effective_status)}</td>
+    <td class="num">${money(a.spend_cents, { exact: true })}</td>
+    <td class="num">${count(a.impressions)}</td>
+    <td class="num">${pct(a.link_clicks, a.impressions)}</td>
+    <td class="num">${count(a.leads)}</td>
+    <td class="num">${costCell(a.spend_cents, a.leads)}</td>
+    <td class="num">${count(a.qualified)}</td>
+    <td class="num">${costCell(a.spend_cents, a.qualified)}</td>
+  </tr>`;
+}
+
+function totalRow(list) {
+  const sum = (k) => list.reduce((s, a) => s + (a[k] || 0), 0);
+  const [spend, imp, clicks, leads, qual] = ["spend_cents", "impressions", "link_clicks", "leads", "qualified"].map(sum);
+  return `<tr><th scope="row" colspan="2">Total · ${list.length} ad${list.length === 1 ? "" : "s"}</th>
+    <td class="num">${money(spend, { exact: true })}</td><td class="num">${count(imp)}</td><td class="num">${pct(clicks, imp)}</td>
+    <td class="num">${count(leads)}</td><td class="num">${per(spend, leads)}</td><td class="num">${count(qual)}</td><td class="num">${per(spend, qual)}</td></tr>`;
+}
+
+function headCell(c) {
+  const on = c.key === table.sort;
+  const sort = on ? (table.dir === "asc" ? "ascending" : "descending") : "none";
+  return `<th class="${c.text ? "" : "num"}" aria-sort="${sort}"${c.title ? ` title="${esc(c.title)}"` : ""}><button type="button" class="th-sort" data-sort="${c.key}">${esc(c.label)}<span class="arrow" aria-hidden="true">${on ? (table.dir === "asc" ? "↑" : "↓") : "↕"}</span></button></th>`;
+}
+
+function renderAds() {
+  const box = document.getElementById("ads-panel");
+  if (!box) return;
+  const list = adsShown();
+  const counts = Object.fromEntries(Object.entries(FILTERS).map(([k, [, fn]]) => [k, data.ads.filter(fn).length]));
+  const body = list.length
+    ? `<div class="scroll-x"><table class="table middle results-table">
+        <thead><tr>${COLUMNS.map(headCell).join("")}</tr></thead>
+        <tbody>${list.map(adRow).join("")}</tbody>
+        ${list.length > 1 ? `<tfoot>${totalRow(list)}</tfoot>` : ""}</table></div>`
+    : `<div class="empty-inline"><p class="muted">${table.q ? `No ad called “${esc(table.q)}”` : `No ads ${{ spent: "spent money", running: "are running", all: "" }[table.filter]} in this period`.replace("  ", " ")}.</p>
+        <button type="button" class="btn btn-quiet btn-small" data-clear>Show all ads</button></div>`;
+  const head = box.querySelector(".results-bar");
+  const bar = `<div class="panel-head wrap results-bar"><h2>Ads</h2>
+      <div class="segmented" id="ad-filter" role="group" aria-label="Show ads">${Object.entries(FILTERS).map(([k, [l]]) =>
+        `<button type="button" data-filter="${k}" aria-pressed="${k === table.filter}">${esc(l)} <span class="n">${counts[k]}</span></button>`).join("")}</div>
+      <div class="search">${icon("search")}<label class="sr-only" for="ad-q">Find an ad</label><input class="input" id="ad-q" type="search" placeholder="Find an ad" autocomplete="off"></div>
+    </div>`;
+  if (!head) box.innerHTML = bar + '<div class="panel-body" id="ads-body"></div>';
+  else box.querySelectorAll("#ad-filter button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.filter === table.filter));
+    b.querySelector(".n").textContent = counts[b.dataset.filter];
+  });
+  document.getElementById("ads-body").innerHTML = body;
+}
+
+function wireAds() {
+  document.addEventListener("click", (e) => {
+    const f = e.target.closest("#ad-filter [data-filter]");
+    if (f) { table.filter = f.dataset.filter; saveTable(); renderAds(); return; }
+    const s = e.target.closest(".results-table [data-sort]");
+    if (s) {
+      const col = COLUMNS.find((c) => c.key === s.dataset.sort);
+      if (table.sort === col.key) table.dir = table.dir === "asc" ? "desc" : "asc";
+      else { table.sort = col.key; table.dir = col.text || col.low ? "asc" : "desc"; }
+      saveTable(); renderAds();
+      document.querySelector(`.results-table [data-sort="${col.key}"]`)?.focus();
+      return;
+    }
+    if (e.target.closest("#ads-panel [data-clear]")) {
+      table.filter = "all"; table.q = "";
+      const q = document.getElementById("ad-q"); if (q) q.value = "";
+      saveTable(); renderAds();
+    }
+  });
+  document.addEventListener("input", (e) => {
+    if (e.target.id !== "ad-q") return;
+    table.q = e.target.value; renderAds();
+  });
+}
+
+// One campaign or all of them; only offered when there is more than one.
+function campaignPicker() {
+  const el = $("campaign-pick");
+  const list = data.campaigns || [];
+  if (list.length < 2 && !campaign) { el.hidden = true; return; }
+  el.hidden = false;
+  $("campaign").innerHTML = `<option value="">All campaigns</option>` + list.map((c) =>
+    `<option value="${esc(c.id)}" ${c.id === campaign ? "selected" : ""}>${esc(c.name)}${c.effective_status === "ACTIVE" ? "" : " (off)"}</option>`).join("");
+}
+
+function syncUrl() {
+  const u = new URL(location.href);
+  u.searchParams.set("range", range);
+  if (campaign) u.searchParams.set("campaign", campaign); else u.searchParams.delete("campaign");
+  history.replaceState(null, "", u);
 }
 
 // This month: spend so far, where it lands at this pace, the spending limit and the target.
@@ -139,7 +283,8 @@ let accBy = "placement";
 async function loadAccountBreakdown() {
   if (me.role !== "admin") { const el = document.getElementById("acc-spend"); if (el) el.closest(".panel").remove(); return; }
   try {
-    const d = await api(`/api/insights/breakdown?level=account&by=${accBy}&range=${range}`);
+    const scope = campaign ? `level=campaign&id=${encodeURIComponent(campaign)}` : "level=account";
+    const d = await api(`/api/insights/breakdown?${scope}&by=${accBy}&range=${range}`);
     const total = d.items.reduce((s, i) => s + i.spend_cents, 0);
     barList($("acc-spend"), d.items, { key: "spend_cents", format: (v) => (total ? `${Math.round((v / total) * 100)}%` : "—"), extra: (i) => money(i.spend_cents) });
     barList($("acc-leads"), d.items, { key: "leads", format: (v) => count(v), extra: (i) => (i.leads ? `${per(i.spend_cents, i.leads)} per lead` : "no leads") });
@@ -160,7 +305,16 @@ async function loadActivity() {
 
 async function load() {
   document.querySelectorAll("#range button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.range === range)));
-  try { render(await api(`/api/performance?range=${range}`)); } catch (err) { toast(err.message, "bad"); }
+  syncUrl();
+  try {
+    data = await api(`/api/performance?range=${range}${campaign ? `&campaign=${encodeURIComponent(campaign)}` : ""}`);
+  } catch (err) {
+    if (campaign) { campaign = ""; return load(); }
+    toast(err.message, "bad"); return;
+  }
+  if (campaign && !data.campaigns.some((c) => c.id === campaign)) { campaign = ""; return load(); }
+  campaignPicker();
+  render();
 }
 
 me = await boot({ page: "performance" });
@@ -172,6 +326,8 @@ if (me) {
     document.querySelectorAll("#acc-by button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
     loadAccountBreakdown();
   });
+  wireAds();
+  $("campaign").addEventListener("change", () => { campaign = $("campaign").value; load(); });
   $("range").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-range]");
     if (!b) return;

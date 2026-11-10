@@ -527,3 +527,4 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-09 · 2.1 Desk schedules built; Desk results now reach Telegram/email; QA 72 PASS · next: 2.2 alerts engine
 - 2026-11-09 · 2.2 alerts engine built; QA 78 PASS · next: 2.3 pacing and forecast
 - 2026-11-09 · 2.3 pacing built; Phase 2 code complete (2.1 schedules, 2.2 alerts, 2.3 pacing); 120 unit tests, QA 81 PASS; committed, not pushed · next: Eugene pushes + Update, switches on schedules, links Telegram; then Phase 3 (experiments)
+- 2026-11-09 · Results: ads table sorts by any column (kept per browser), filters Spent money / Running / All, Find an ad, total row, cost from fewer than 3 leads in grey, names open the ad; figures show the change vs the same number of days before; campaign picker (when there's more than one, ?campaign= in the URL); Telegram kept, unused (email covers everything); 122 unit tests, QA 93 PASS · next: Phase 3 (3.1 experiments tracker)

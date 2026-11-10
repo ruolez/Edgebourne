@@ -441,6 +441,53 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   await page.screenshot({ path: `${OUT}/flow-pacing.png` });
   await page.evaluate(() => fetch('/api/performance/target', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dollars: '' }) }));
 
+  // Results: the ads table filters, sorts, searches and totals; figures compare with the period before.
+  await page.evaluate(() => localStorage.removeItem('ebads-results'));
+  await page.goto(BASE + '/performance.html?range=7');
+  await page.waitForSelector('.results-table tbody tr');
+  const cells = (col) => page.$$eval('.results-table tbody tr', (rows, c) => rows.map((r) => r.children[c].textContent.trim()), col);
+  const dollars = (t) => (t === '—' ? null : Number(t.replace(/[$,]/g, '')));
+  const spentRows = await cells(2);
+  check('Results lists only ads that spent money by default, biggest spend first',
+    spentRows.length > 0 && spentRows.every((t) => dollars(t) > 0) && spentRows.map(dollars).every((v, i, a) => !i || a[i - 1] >= v)
+    && Number(await page.textContent('#ad-filter [data-filter="spent"] .n')) === spentRows.length, spentRows.join(' '));
+  const total = dollars((await page.textContent('.results-table tfoot td.num')).trim());
+  check('the total row adds up the ads shown', Math.abs(total - spentRows.map(dollars).reduce((a, b) => a + b, 0)) < 0.01, String(total));
+  check('each figure says how it compares with the days before', (await page.locator('.figures:not(.pace) .delta').count()) >= 4, (await page.textContent('.figures:not(.pace) .figure.hero .delta')) || '');
+  await page.click('.results-table [data-sort="cpl"]');
+  let cpl = (await cells(6)).map(dollars);
+  const known = cpl.filter((v) => v !== null);
+  check('Cost per lead sorts cheapest first, ads without leads last',
+    known.every((v, i) => !i || known[i - 1] <= v) && cpl.slice(known.length).every((v) => v === null)
+    && (await page.getAttribute('.results-table th:nth-child(7)', 'aria-sort')) === 'ascending', cpl.join(' '));
+  await page.click('.results-table [data-sort="cpl"]');
+  cpl = (await cells(6)).map(dollars).filter((v) => v !== null);
+  check('a second click turns the order around', cpl.every((v, i) => !i || cpl[i - 1] >= v) && (await page.getAttribute('.results-table th:nth-child(7)', 'aria-sort')) === 'descending');
+  await page.reload();
+  await page.waitForSelector('.results-table tbody tr');
+  check('the chosen order is kept after a reload', (await page.getAttribute('.results-table th:nth-child(7)', 'aria-sort')) === 'descending');
+  await page.fill('#ad-q', 'order portal');
+  const found = await cells(0);
+  check('Find an ad narrows the table to matching names', found.length > 0 && found.every((t) => /order portal/i.test(t)), found.join(' | '));
+  await page.fill('#ad-q', 'zzz no such ad');
+  check('no match says so and offers every ad', /No ad called/.test(await page.textContent('#ads-panel')) && await page.isVisible('#ads-panel [data-clear]'));
+  await page.click('#ads-panel [data-clear]');
+  check('Show all ads brings every ad back', (await page.locator('.results-table tbody tr').count()) === Number(await page.textContent('#ad-filter [data-filter="all"] .n'))
+    && (await page.inputValue('#ad-q')) === '');
+  await page.click('#ad-filter [data-filter="running"]');
+  const st = await cells(1);
+  check('Running shows only ads that are on', st.length > 0 && st.every((t) => t === 'Running'), st.join(' '));
+  await page.click('#ad-filter [data-filter="spent"]');
+  check('with one campaign there is no campaign picker', await page.isHidden('#campaign-pick'));
+  const one = await page.evaluate(async () => {
+    const all = await (await fetch('/api/performance?range=7')).json();
+    const c = await (await fetch('/api/performance?range=7&campaign=' + all.campaigns[0].id)).json();
+    const none = await (await fetch('/api/performance?range=7&campaign=999')).json();
+    return [all.totals.spend_cents, c.totals.spend_cents, none.totals.spend_cents, none.ads.length];
+  });
+  check('a campaign narrows the numbers to that campaign', one[0] === one[1] && one[2] === 0 && one[3] === 0, one.join(' '));
+  await page.screenshot({ path: `${OUT}/flow-results.png`, fullPage: true });
+
   // 5. Claude page: decisions first, then each ad's story, then every run (dev copy of the real Desk).
   require('child_process').execSync('docker cp dev/seed_desk.py edgebourne-ads-backend:/tmp/seed_desk.py && docker exec edgebourne-ads-backend sh -c "cd /app && python /tmp/seed_desk.py"', { cwd: __dirname + '/..' });
   await page.goto(BASE + '/desk.html', { waitUntil: 'networkidle' });
