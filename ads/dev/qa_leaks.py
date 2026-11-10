@@ -90,8 +90,7 @@ def walk(client, forbidden, other, label):
 def session_for(client, user_id, account=None):
     with client.session_transaction() as s:
         s["user_id"] = user_id
-        if account:
-            s["account_id"] = account
+    client.set_cookie("ebads_account", str(account or 1))
 
 
 out = {"account2": A2}

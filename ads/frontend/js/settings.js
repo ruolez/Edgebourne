@@ -37,6 +37,16 @@ function renderMeta() {
   });
 }
 
+async function loadReports() {
+  try {
+    const r = await api("/api/reports/settings");
+    $("rep-target").value = r.target_cents ? r.target_cents / 100 : "";
+    $("rep-email").value = r.email;
+    $("rep-state").innerHTML = r.email === "off" ? '<span class="pill">Not emailed</span>' : `<span class="pill ok">${r.email === "weekly" ? "Weekly" : "Monthly"}</span>`;
+    $("rep-clients").textContent = r.clients.length ? `Goes to ${r.clients.join(", ")}, with a link that works for 90 days.` : "No clients on this account yet: add them on the Team page (role Client).";
+  } catch (err) { /* panel stays as is */ }
+}
+
 // Tracking health: what Meta's dataset has received, and what this console has sent it.
 const TR_STATE = { ok: ["ok", "Healthy"], weak: ["warn", "Something to fix"], quiet: ["bad", "Gone quiet"], not_set_up: ["", "Not set up"] };
 
@@ -200,6 +210,7 @@ async function load() {
   renderAuto();
   renderMetaTests();
   loadTracking();
+  loadReports();
   if ((me.accounts || []).length > 1) {
     $("acct-note").hidden = false;
     $("acct-note").innerHTML = `You're setting up <b>${esc(me.account.name)}</b>: its Meta connection, lead stages, alerts, lead replies and targets. Email, Telegram and Meta's app keys are shared by every account. An account without its own System User token uses Edge Bourne's.`;
@@ -339,6 +350,14 @@ if (me) {
     toast(`The latest now comes from Meta ${every(s.auto_refresh_minutes).toLowerCase()}`); renderAuto();
   }); });
   $("tr-fresh").addEventListener("click", () => loadTracking(true));
+  $("rep-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    fieldError(e.target, null);
+    try {
+      await api("/api/reports/settings", { method: "PUT", body: { target_dollars: $("rep-target").value, email: $("rep-email").value } });
+      toast("Report settings saved"); loadReports();
+    } catch (err) { if (err.body && err.body.field) fieldError(e.target, err.body.field, err.message); else toast(err.message, "bad"); }
+  });
   $("mt-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const on = $("mt-on").checked;

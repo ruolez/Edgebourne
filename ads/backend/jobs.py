@@ -46,7 +46,8 @@ def _loop():
         for name, job in (("lead replies", lambda: __import__("replies").process_pending()),
                           ("Desk schedules", lambda: __import__("schedules").run()),
                           ("lead reminders", lambda: __import__("reminders").run()),
-                          ("lead stages to Meta", crm_events.process_pending)):
+                          ("lead stages to Meta", crm_events.process_pending),
+                          ("client report emails", lambda: __import__("reports_api").send_due())):
             try:
                 job()
             except Exception:

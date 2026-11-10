@@ -22,7 +22,10 @@ def account_for(user):
         return account_ctx.DEFAULT
     if user["role"] != "admin":
         return user.get("account_id") or account_ctx.DEFAULT
-    wanted = session.get("account_id") or account_ctx.DEFAULT
+    try:
+        wanted = int(request.cookies.get(COOKIE) or account_ctx.DEFAULT)
+    except ValueError:
+        wanted = account_ctx.DEFAULT
     return wanted if any(a["id"] == wanted for a in active_accounts()) else account_ctx.DEFAULT
 
 
@@ -48,6 +51,19 @@ def choose_for_request():
         account_ctx.set_current(account_for(user))
         if user and user["role"] == "client" and request.method not in ("GET", "HEAD") and not CLIENT_MAY.match(path):
             return api_error("Your access is read-only. Ask Edge Bourne to make this change.", 403)
+
+
+# The admin's chosen account lives in its own cookie, set only by switching: the session cookie is
+# re-sent by every response, so a request that started before a switch could undo it. The value is
+# only a choice; account_for() checks the person may use it (admins only, active accounts only).
+COOKIE = "ebads_account"
+
+
+def _with_choice(resp, account_id):
+    import config
+    resp.set_cookie(COOKIE, str(account_id), max_age=60 * 60 * 24 * 365, httponly=True, samesite="Lax",
+                    secure=config.APP_BASE_URL.startswith("https://"))
+    return resp
 
 
 # What a client (read-only) may still do: sign out, their own password and notification settings.
@@ -82,8 +98,7 @@ def create():
         db.execute("""INSERT INTO reply_templates (account_id, name, subject, body, position)
                       SELECT %s, name, subject, body, position FROM reply_templates WHERE account_id = 1 ORDER BY position LIMIT 1""", (new,))
     log_activity("account.created", subject=str(new), details={"name": name})
-    session["account_id"] = new
-    return jsonify({"id": new, "name": name}), 201
+    return _with_choice(jsonify({"id": new, "name": name}), new), 201
 
 
 @bp.patch("/<int:account_id>")
@@ -102,5 +117,4 @@ def switch():
     wanted = (request.get_json(silent=True) or {}).get("id")
     if not any(a["id"] == wanted for a in active_accounts()):
         return api_error("No such account", 404)
-    session["account_id"] = wanted
-    return jsonify({"current": wanted, "name": name_of(wanted)})
+    return _with_choice(jsonify({"current": wanted, "name": name_of(wanted)}), wanted)

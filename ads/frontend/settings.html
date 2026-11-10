@@ -60,6 +60,16 @@
             <div id="al-recent"></div>
           </form>
         </section>
+        <section class="panel" id="reports-panel">
+          <div class="panel-head"><h2>Client reports</h2><p id="rep-state"></p></div>
+          <form class="panel-body stack tight" id="rep-form" novalidate>
+            <div class="field"><label for="rep-target">Target cost per qualified lead</label><span class="money-input">$<input class="input" id="rep-target" name="target" inputmode="decimal" placeholder="60" autocomplete="off"></span><span class="hint">The report's first sentence measures against it.</span></div>
+            <div class="field"><label for="rep-email">Email the report to this account's clients</label><select class="input" id="rep-email" name="email">
+              <option value="off">Off</option><option value="weekly">Every Monday (last week)</option><option value="monthly">On the 1st (last month)</option></select>
+              <span class="hint" id="rep-clients"></span></div>
+            <div class="row"><button class="btn btn-primary" type="submit">Save</button><a class="btn btn-quiet" href="/report.html">Open the report</a></div>
+          </form>
+        </section>
         <section class="panel">
           <div class="panel-head"><h2>Meta A/B tests</h2><p id="mt-state"></p></div>
           <form class="panel-body stack" id="mt-form" novalidate>

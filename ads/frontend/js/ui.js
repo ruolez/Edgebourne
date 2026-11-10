@@ -262,8 +262,10 @@ export async function boot({ page, admin = false }) {
     { id: "leads", href: "/leads.html", label: "Leads", icon: "leads", badge: "leads" },
     { id: "ads", href: "/ads.html", label: "Ads", icon: "ads" },
     { id: "performance", href: "/performance.html", label: "Results", icon: "chart" },
+    ...(me.role === "client" ? [{ id: "report", href: "/report.html", label: "Reports", icon: "table" }] : []),
   ];
   const extra = isAdmin ? [
+    { id: "report", href: "/report.html", label: "Reports", icon: "table" },
     { id: "experiments", href: "/experiments.html", label: "Tests", icon: "tests" },
     { id: "desk", href: "/desk.html", label: "Claude", icon: "spark", badge: "claude" },
     { id: "research", href: "/research.html", label: "Research", icon: "research" },
@@ -298,7 +300,7 @@ export async function boot({ page, admin = false }) {
     </div>`;
 
   const app = document.querySelector(".app");
-  const titles = { home: "Today", leads: "Leads", ads: "Ads", ad: "Ad", "new-ad": "New ad", performance: "Results", experiments: "Tests", desk: "Claude", research: "Research", team: "Team", settings: "Settings", account: "Your account" };
+  const titles = { home: "Today", leads: "Leads", ads: "Ads", ad: "Ad", "new-ad": "New ad", performance: "Results", report: "Reports", experiments: "Tests", desk: "Claude", research: "Research", team: "Team", settings: "Settings", account: "Your account" };
   const top = document.createElement("header");
   top.className = "topbar";
   top.innerHTML = `<a class="brand" href="/home.html"><img src="/img/favicon.svg" alt="Edge Bourne"><span>${esc(titles[page] || "Edge Bourne Ads")}</span></a>

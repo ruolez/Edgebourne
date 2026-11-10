@@ -1,0 +1,205 @@
+"""Client reports (roadmap 7.3): one account's week or month in the five-part order, for admins and
+clients in the console, as a signed link anyone with it can open (90 days), and by email."""
+import json
+from datetime import date, datetime, timedelta, timezone
+
+from flask import Blueprint, jsonify, request
+
+import account_ctx
+import config
+import db
+import report_logic as rl
+import settings_store
+from auth import admin_required, current_user, login_required
+from util import api_error, log_activity
+
+bp = Blueprint("reports", __name__, url_prefix="/api/reports")
+KINDS = ("week", "month")
+
+
+def today():
+    from experiments import account_today
+    return account_today()
+
+
+def totals(start, end):
+    t = db.query("""SELECT COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
+                           COALESCE(SUM(link_clicks),0) AS link_clicks, COALESCE(SUM(leads),0) AS leads, COALESCE(SUM(video_3s),0) AS video_3s
+                    FROM ad_daily WHERE day BETWEEN %s AND %s""", (start, end), one=True)
+    stages = db.query("""SELECT COUNT(*) AS inbox,
+                                COUNT(*) FILTER (WHERE first_contacted_at IS NOT NULL OR status <> 'new') AS contacted,
+                                COUNT(*) FILTER (WHERE status IN ('qualified', 'won')) AS qualified,
+                                COUNT(*) FILTER (WHERE status = 'won') AS won,
+                                percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM first_contacted_at - created_time) / 60)
+                                    FILTER (WHERE first_contacted_at IS NOT NULL) AS median_minutes
+                         FROM leads WHERE NOT is_test AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s""",
+                      (config.ACCOUNT_TZ, start, end), one=True)
+    return {**{k: int(v) for k, v in t.items()}, "inbox": int(stages["inbox"]), "contacted": int(stages["contacted"]),
+            "qualified": int(stages["qualified"]), "won": int(stages["won"]),
+            "median_minutes": round(float(stages["median_minutes"])) if stages["median_minutes"] is not None else None}
+
+
+def build(kind, start=None):
+    t = today()
+    s, e = rl.period(kind, t, start)
+    ps, pe = rl.previous(s, e, kind)
+    now, before = totals(s, e), totals(ps, pe)
+    target = settings_store.get("kpi_target_cents")
+    target = int(target) if target else None
+    ads = db.query("""SELECT a.id, COALESCE(a.name, MAX(d.ad_name)) AS name, SUM(d.spend_cents) AS spend_cents, SUM(d.leads) AS leads,
+                             SUM(d.impressions) AS impressions, SUM(d.link_clicks) AS link_clicks, SUM(d.video_3s) AS video_3s
+                      FROM ad_daily d LEFT JOIN ads a ON a.id = d.ad_id WHERE d.day BETWEEN %s AND %s
+                      GROUP BY a.id, a.name HAVING SUM(d.spend_cents) > 0 ORDER BY 3 DESC LIMIT 6""", (s, e))
+    ads = [{"name": a["name"], "spend_cents": int(a["spend_cents"]), "leads": int(a["leads"]),
+            "cpl_cents": round(int(a["spend_cents"]) / int(a["leads"])) if a["leads"] else None,
+            "ctr": round(100 * int(a["link_clicks"]) / int(a["impressions"]), 2) if a["impressions"] else None,
+            "hook": round(100 * int(a["video_3s"]) / int(a["impressions"]), 1) if a["impressions"] and a["video_3s"] else None} for a in ads]
+    changes = db.query("""SELECT m.created_at, m.level, m.entity_name, m.action, m.old_value, m.new_value
+                          FROM meta_changes m WHERE m.ok AND (m.created_at AT TIME ZONE %s)::date BETWEEN %s AND %s
+                          ORDER BY m.created_at""", (config.ACCOUNT_TZ, s, e))
+    import experiments_api
+    tests = [experiments_api.summary(r) for r in db.query(
+        f"SELECT {experiments_api.COLS} FROM experiments WHERE status = 'running' OR (closed_at AT TIME ZONE %s)::date BETWEEN %s AND %s",
+        (config.ACCOUNT_TZ, s, e))]
+    pending = db.query("""SELECT p.title FROM desk_proposals p WHERE p.status = 'pending' ORDER BY p.id DESC LIMIT 5""")
+    ideas = None
+    try:
+        import concepts
+        import concepts_api
+        rows = db.query("""SELECT ad_id AS id, SUM(spend_cents) AS spend_cents, SUM(impressions) AS impressions, SUM(leads) AS leads,
+                                  SUM(video_3s) AS video_3s, SUM(thruplays) AS thruplays FROM ad_daily WHERE day BETWEEN %s AND %s GROUP BY ad_id""", (s, e))
+        rows = [{k: (int(v) if k != "id" else v) for k, v in r.items()} | {"qualified": 0} for r in rows]
+        g = concepts.group(rows, concepts_api.tags_for([r["id"] for r in rows]), "hook", target)
+        ideas = {"best": g["best"], "sure": g["best_confidence"], "clear": g["best_is_clear"],
+                 "groups": [{"value": x["value"], "ads": x["ads"], "leads": x["leads"], "cpl_cents": x["cpl_cents"]} for x in g["groups"]]}
+    except Exception:
+        ideas = None
+    import accounts_api
+    return {
+        "account": accounts_api.name_of(account_ctx.current()), "kind": kind, "start": s.isoformat(), "end": e.isoformat(),
+        "previous": {"start": ps.isoformat(), "end": pe.isoformat()}, "complete": rl.complete(e, t),
+        "headline": rl.headline(now, before, target), "target_cents": target, "now": now, "before": before,
+        "funnel": rl.funnel(now["leads"], now["contacted"], now["qualified"], now["won"]),
+        "ads": ads, "ideas": ideas,
+        "changes": [{**c, "created_at": c["created_at"].isoformat()} for c in changes],
+        "tests": [{"name": x["name"], "status": x["status"], "note": x["judgement"]["note"] if x["status"] == "running" else (x["verdict"] or "")} for x in tests],
+        "needs": [p["title"] for p in pending],
+        "footnotes": rl.footnotes(s, e),
+    }
+
+
+def share_token(kind, start, account_id):
+    exp = (today() + timedelta(days=rl.SHARE_DAYS)).isoformat()
+    return rl.sign(config.SECRET_KEY, {"a": account_id, "k": kind, "s": start, "exp": exp}), exp
+
+
+def _args():
+    kind = request.args.get("kind", "week")
+    if kind not in KINDS:
+        return None, None, api_error("Pick week or month", 400)
+    start = None
+    if request.args.get("start"):
+        try:
+            start = date.fromisoformat(request.args["start"])
+        except ValueError:
+            return None, None, api_error("Use a date like 2026-11-02", 400)
+    return kind, start, None
+
+
+@bp.get("")
+@login_required
+def get_report():
+    kind, start, err = _args()
+    if err:
+        return err
+    if current_user()["role"] == "member":
+        return api_error("Reports are for admins and clients", 403)
+    return jsonify(build(kind, start))
+
+
+@bp.post("/share")
+@admin_required
+def share():
+    data = request.get_json(silent=True) or {}
+    kind = data.get("kind") if data.get("kind") in KINDS else "week"
+    try:
+        start = date.fromisoformat(data["start"]) if data.get("start") else None
+    except ValueError:
+        return api_error("Use a date like 2026-11-02", 400)
+    s, _ = rl.period(kind, today(), start)
+    token, exp = share_token(kind, s.isoformat(), account_ctx.current())
+    log_activity("report.shared", details={"kind": kind, "start": s.isoformat(), "expires": exp})
+    return jsonify({"url": f"{config.APP_BASE_URL.rstrip('/')}/report.html?t={token}", "expires": exp})
+
+
+@bp.get("/shared")
+def shared():
+    """Anyone with the link: no sign-in, read-only, one account, one period."""
+    payload = rl.verify(config.SECRET_KEY, request.args.get("t", ""), today())
+    if not payload:
+        return api_error("This report link isn't valid or has expired. Ask for a new one.", 404)
+    with account_ctx.use(payload["a"]):
+        return jsonify({**build(payload["k"], date.fromisoformat(payload["s"])), "shared_until": payload["exp"]})
+
+
+@bp.get("/settings")
+@admin_required
+def get_settings():
+    t = settings_store.get("kpi_target_cents")
+    return jsonify({"target_cents": int(t) if t else None, "email": settings_store.get("report_email") or "off",
+                    "clients": [u["email"] for u in db.query("SELECT email FROM users WHERE role = 'client' AND is_active AND account_id = %s",
+                                                             (account_ctx.current(),))]})
+
+
+@bp.put("/settings")
+@admin_required
+def put_settings():
+    data = request.get_json(silent=True) or {}
+    if "target_dollars" in data:
+        raw = str(data.get("target_dollars") or "").strip().replace("$", "")
+        if raw:
+            try:
+                cents = round(float(raw) * 100)
+                assert cents > 0
+            except (ValueError, AssertionError):
+                return api_error("Type the target in dollars, like 60", 400, field="target")
+            settings_store.set("kpi_target_cents", str(cents))
+        else:
+            settings_store.set("kpi_target_cents", None)
+    if "email" in data:
+        if data["email"] not in ("off", "weekly", "monthly"):
+            return api_error("Pick off, weekly or monthly", 400, field="email")
+        settings_store.set("report_email", None if data["email"] == "off" else data["email"])
+    log_activity("settings.reports", details={k: data.get(k) for k in ("target_dollars", "email")})
+    return get_settings()
+
+
+def send_due(now=None):
+    """Worker, per account: on Monday (weekly) or the 1st (monthly) after 8 AM, email the account's
+    clients a link to the period that just ended. Once per period."""
+    import mailer
+    from zoneinfo import ZoneInfo
+    mode = settings_store.get("report_email")
+    if not mode or not mailer.configured():
+        return 0
+    local = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(config.ACCOUNT_TZ))
+    if local.hour < 8 or (mode == "weekly" and local.weekday() != 0) or (mode == "monthly" and local.day != 1):
+        return 0
+    kind = "week" if mode == "weekly" else "month"
+    s, e = rl.period(kind, local.date())
+    key = f"{kind}:{s.isoformat()}"
+    if settings_store.get("report_last_sent") == key:
+        return 0
+    settings_store.set("report_last_sent", key)
+    people = db.query("SELECT email, name FROM users WHERE role = 'client' AND is_active AND account_id = %s", (account_ctx.current(),))
+    if not people:
+        return 0
+    report = build(kind, s)
+    token, _ = share_token(kind, s.isoformat(), account_ctx.current())
+    link = f"{config.APP_BASE_URL.rstrip('/')}/report.html?t={token}"
+    label = f"{'Week' if kind == 'week' else 'Month'} of {s.strftime('%b %-d')}"
+    for p in people:
+        mailer.send(p["email"], f"{report['account']}: your ads report, {label}",
+                    f"Hi {p['name'].split()[0]},\n\n{report['headline']}\n\nThe full report: {link}\n(The link works for {rl.SHARE_DAYS} days.)")
+    log_activity("report.emailed", details={"period": key, "to": len(people)})
+    return len(people)

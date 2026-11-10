@@ -26,6 +26,7 @@ ACCOUNT_KEYS = {
     "crm_send_enabled", "last_refresh_at", "last_performance_sync", "last_campaign_sync", "today_snapshot", "account_snapshot",
     "tracking_snapshot", "meta_advice", "meta_benchmarks", "monthly_target_cents", "meta_ab_tests", "alert_rules",
     "reply_auto", "reply_auto_template_id", "reply_auto_user_id", "reply_booking_link", "reminder_digest_date",
+    "kpi_target_cents", "report_email", "report_last_sent",
 }
 INHERITED = {"meta_system_token"}
 

@@ -1061,15 +1061,58 @@ db.execute(\\"UPDATE accounts SET archived_at = now() WHERE name = 'QA Studio'\\
   await cp.fill('#email', 'client-qa@burdanova.test');
   await cp.fill('#password', 'client-pass-123');
   await Promise.all([cp.waitForURL('**/home.html**'), cp.click('button[type=submit]')]);
-  const nav = await cp.$$eval('.rail .nav a', (a) => a.map((x) => x.textContent.trim()));
-  check('a client signs in to their own account with the read-only menu', nav.join() === 'Today,Leads,Ads,Results' && /Burdanova QA/.test(await cp.textContent('.rail')), nav.join());
+  const nav = await cp.$$eval('.rail .nav a .label', (a) => a.map((x) => x.textContent.trim()));
+  check('a client signs in to their own account with the read-only menu', nav.join() === 'Today,Leads,Ads,Results,Reports' && /Burdanova QA/.test(await cp.textContent('.rail')), nav.join());
   await cp.goto(BASE + '/leads.html');
   await cp.waitForSelector('.lead-row');
   await cp.click('.lead-row');
   await cp.waitForSelector('#stages');
   check("a client sees their leads but not the controls that change them", /ACCT2MARK Lead Person/.test(await cp.textContent('#list'))
     && !(await cp.isVisible('#note-form')) && (await cp.locator('#stages button:visible').count()) <= 1);
+  await cp.goto(BASE + '/report.html');
+  await cp.waitForSelector('.r-head');
+  check("a client opens their own account's report, without the share button", /Burdanova QA/.test(await cp.textContent('.r-head')) && await cp.isHidden('#share'));
   await cctx.close();
+
+  // Client reports: the five parts, a share link without sign-in, the print layout, the scheduled email.
+  await page.goto(BASE + '/report.html');
+  await page.waitForSelector('.r-head');
+  const rep = await page.textContent('#report');
+  check('the report reads in the five parts, business result first, with its footnotes',
+    /1\. What happened.*Cost per (qualified )?lead.*2\. Why.*3\. What we did.*4\. What's next.*5\. What we need from you/s.test(rep) && /attribution setting/.test(rep), rep.slice(0, 160));
+  check('the first sentence measures against the target per qualified lead', /against the \$60\.00 target/.test(await page.textContent('.r-headline')));
+  await page.click('#kind [data-kind="month"]');
+  await page.waitForFunction(() => /Month/.test(document.querySelector('.r-kicker')?.textContent || ''));
+  check('a month report covers the last complete month', /Oct 1 – Oct 31, 2026/.test(await page.textContent('.r-head')));
+  const shareUrl = await page.evaluate(async () => (await (await fetch('/api/reports/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"kind":"week"}' })).json()).url);
+  const anonCtx = await browser.newContext();
+  const anon = await anonCtx.newPage();
+  await anon.goto(BASE + '/report.html?' + shareUrl.split('?')[1]);
+  await anon.waitForSelector('.r-head');
+  check('a share link opens the report without signing in, with no menu', /Edge Bourne/.test(await anon.textContent('.r-head')) && (await anon.locator('.rail').count()) === 0 && /This link works until/.test(await anon.textContent('.r-foot')));
+  const rSeen = errors.length;
+  await anon.goto(BASE + '/report.html?' + shareUrl.split('?')[1].replace(/.$/, (c) => (c === 'a' ? 'b' : 'a')));
+  await anon.waitForSelector('#report .note');
+  errors.splice(rSeen);
+  check('a changed link is refused', /isn't valid or has expired/.test(await anon.textContent('#report')));
+  await anon.emulateMedia({ media: 'print' });
+  await anonCtx.close();
+  await page.emulateMedia({ media: 'print' });
+  check('the PDF (print) layout hides the menu and buttons', await page.isHidden('#pdf') && await page.isHidden('.rail'));
+  await page.emulateMedia({ media: 'screen' });
+  const mailBefore = JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/mail/_sent').read().decode())"`)).length;
+  const sent = sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "
+import account_ctx, db, settings_store, reports_api
+from datetime import datetime, timezone
+a2 = db.query(\\"SELECT id FROM accounts WHERE name = 'Burdanova QA'\\", one=True)['id']
+with account_ctx.use(a2):
+    settings_store.set('report_email', 'weekly'); settings_store.set('report_last_sent', None)
+    monday = datetime(2026, 11, 16, 17, 0, tzinfo=timezone.utc)
+    print(reports_api.send_due(monday), reports_api.send_due(monday))
+    settings_store.set('report_email', None)"`).trim();
+  const mails = JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/mail/_sent').read().decode())"`)).slice(mailBefore);
+  const m = mails.find((x) => /client-qa@burdanova\.test/.test(JSON.stringify(x)));
+  check("on Monday the account's clients get the report by email once, with a link that works", sent === '1 0' && !!m && /report\.html\?t=/.test(JSON.stringify(m)) && /Burdanova QA/.test(JSON.stringify(m)), `${sent} ${JSON.stringify(m || {}).slice(0, 160)}`);
 
 
   // Ad blockers hide elements whose class or id looks like an ad (EasyList: .ad-cell, .adset, #ads-panel …).
