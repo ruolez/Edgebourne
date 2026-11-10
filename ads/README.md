@@ -50,15 +50,31 @@ Screenshots (light/dark, desktop/phone, fails on console errors): `node ads/qa/s
 
 ## Pages
 
+Navigation (Nov 2026, "Signal"): sidebar groups **Work** (Today, Inbox, Leads) and **Run** (Ads, Insights,
+Claude) plus Settings; ⌘K / Ctrl+K or `/` opens a search-and-jump palette (`js/palette.js`); `g` then
+t / i / l / a / n / c / s jumps to a section. Every page has breadcrumbs; sections with sub-pages show
+tabs under them (Ads · Lead forms; Results · Compare · Tests · Reports; Claude · Research; Settings ·
+Team). Phones: five tabs (Today, Leads, Ads, Inbox, More). The frame lives in `js/ui.js` (`boot`,
+`setCrumbs`, one map `PAGE_SECTION` / `SECTIONS` / `SUBNAV`).
+
 | Page | What it's for |
 |---|---|
-| Home | Needs attention (Meta-stopped ads, ads on but never shown, leads waiting > 1 h, Claude's pending proposals, spending limit, Mac offline), today's spend so far (live, cached 5 min), yesterday, last 7 days, newest leads, Claude, recent changes |
-| Leads | Inbox with the lead clock, stages, owner, notes |
-| Ads | Campaign → ad set → ad cards with media, results for 7/14/30 complete days, on/off switches, budget editing |
-| Ad (`ad.html?id=`) | Tabs. **Overview**: Meta's real previews per placement (`/{ad}/previews`, iframe from facebook.com), results, words, where it runs (with Meta's audience-size estimate), pending proposals, leads. **Polish**: the preset audit passes and "Make a new version". **Audience**: spend and leads by placement, age, gender, device, region, hour. **Video**: watch funnel, hook and hold rate, Meta's quality / engagement / conversion rankings, frequency, CPM. **Comments** on the ad's post. **History**: dashboard changes and decided proposals |
-| New ad | Copies an existing ad's story spec (Page, Instagram identity, lead-form button), new image or video (upload or library) and words; created **off** |
-| Performance | Totals, charts, per-ad table |
-| Desk / Research | Directions for Claude; research adds Ad Library search links |
+| Today (`home.html`) | Needs attention, call these first, money, ads strip, Claude, the latest from the Inbox, Meta's advice |
+| Inbox (`inbox.html`) | One feed per person with read state: Meta approvals and rejections (with the reason), issues, learning limited, changes made outside the console, new leads, Claude's proposals, money and tracking alerts |
+| Leads | Inbox with the lead clock, stages, owner, notes; filter by campaign or ad (`?campaign=` / `?ad=`) |
+| Ads (`ads.html`, `js/listing.js`) | The manager: Ads / Ad sets / Campaigns in one table (`js/manager.js`), built-in views (Delivering, In review, Needs attention, Learning, Off, Tests) and saved views, ranges incl. this/last month with "vs before", column sets, a 14-day delivery track per ad, selection → bulk bar (compare, on/off, budget, archive; previewed line by line), a quick-look drawer with the timeline; state in the URL |
+| Campaign / Ad set (`campaign.html?id=`, `adset.html?id=`, `js/entity.js`) | Figures vs before, daily charts, learning progress and who sees it (ad sets), the ad sets / ads inside, History |
+| Ad (`ad.html?id=`, `js/creative.js`) | Tabs. **Overview**: Meta's real previews per placement, results, words, where it runs, pending proposals, leads. **Polish**, **Audience**, **Video**, **Comments**. **History**: "Status from Meta" (review, delivery, issues) plus dashboard changes and decided proposals |
+| Compare (`compare.html?ids=`) | 2–6 ads side by side: creatives, every metric with the best marked and vs before, a verdict only with enough data, tags, a line per ad |
+| New ad / ad set / campaign | Builders; everything is created **off** |
+| Insights → Results, Tests, Reports | Totals, charts, per-ad table; experiments; client reports |
+| Claude / Research | Directions for Claude; research adds Ad Library search links |
+
+Status history (`backend/status_history.py`, table `status_events`): every sync compares what Meta
+says with what was stored and records the change (poll, webhook, console or first sighting); alerts
+for approvals, rejections, learning limited and outside changes come from those changes. Meta's
+ad-account webhooks (Settings → Meta → Instant status updates, `docs/META-APP-SETUP.md` part I) make
+it near-instant; polling stays as the safety net.
 
 Polish (`backend/polish.py`): eleven preset passes (hook, headline, primary text, call to
 action, message & intent, visual design, AI signal, placements, motion & sound, policy,
@@ -140,7 +156,10 @@ secrets can't be read (paste them again in Settings).
 
 ## Design
 
-Tokens at the top of `frontend/css/app.css` (light and dark). The lead clock (time a new lead
-has waited: amber under an hour, rust after a day) is the one loud element. Violet is reserved
-for anything Claude does (phase 3). Chart colours were checked with the dataviz validator.
-Fonts: Bricolage Grotesque (display) and Mulish (UI), self-hosted.
+"Signal" (chosen 2026-11-10, `.superdesign/design-system.md`, mockups in `.superdesign/redesign/`):
+graphite neutrals, one signal green that means delivering, Geist + Geist Mono (numbers),
+borders-only depth, light and dark. Stylesheets: `css/tokens.css` (tokens; the older names such as
+`--seal` stay as aliases), `css/app.css` (components), `css/shell.css` (frame, manager, Inbox,
+compare, palette). Violet is reserved for anything Claude does. Never name a class, id or file with
+an ad-like token (ad-, ads-, adset, banner, sponsor, promo, `/ads.js`): ad blockers hide or block
+them, and QA checks both.

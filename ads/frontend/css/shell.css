@@ -505,3 +505,5 @@ body.has-bulk .content { padding-bottom: 96px; }
   .settings-nav a:hover { background: var(--surface-2); color: var(--ink); }
 }
 .settings-nav a { color: var(--ink-2); }
+/* The breadcrumb line (desktop) and the top bar back arrow (phones) replace the old per-page "‹ Ads" links. */
+.page-head > a.crumb { display: none; }
