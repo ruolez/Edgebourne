@@ -16,6 +16,7 @@ from flask import Blueprint, jsonify, request
 import account_ctx
 import account_info
 import money_rules
+import ranges
 import db
 import insights
 import meta_client
@@ -155,13 +156,17 @@ def can_touch(user, campaign_id):
     return ids is None or campaign_id in ids
 
 
+BULK_ID = __import__("contextvars").ContextVar("bulk_id", default=None)  # set while a bulk change runs
+
+
 def record(user, level, row, action, old, new, ok, error=None, proposal_id=None, entity_id=None):
     db.execute(
         """INSERT INTO meta_changes (user_id, level, entity_id, entity_name, campaign_id, action, old_value,
-                                     new_value, ok, error, proposal_id)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                     new_value, ok, error, proposal_id, bulk_id)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
         (user["id"] if user else None, level, entity_id or row["id"], row.get("name"), row.get("campaign_id"),
-         action, None if old is None else str(old), None if new is None else str(new), ok, error, proposal_id))
+         action, None if old is None else str(old), None if new is None else str(new), ok, error, proposal_id,
+         BULK_ID.get()))
     log_activity(f"meta.{action}" + ("" if ok else "_failed"), subject=entity_id or row["id"],
                  details={"level": level, "name": row.get("name"), "old": old, "new": new, "error": error})
 
@@ -169,6 +174,8 @@ def record(user, level, row, action, old, new, ok, error=None, proposal_id=None,
 def resync_later():
     """Re-read the structure in the background, in the same account (a plain thread doesn't
     inherit context variables, so it would otherwise run in account 1)."""
+    if BULK_ID.get():
+        return  # a bulk change resyncs once at the end
     import contextvars
 
     def run():
@@ -297,59 +304,94 @@ def _sum(items):
     return {k: sum(i["m"].get(k, 0) for i in items) for k in keys}
 
 
-@bp.get("/ads")
-@login_required
-def tree():
-    user = current_user()
-    days = RANGES.get(request.args.get("range", "7"), 7)
-    end = account_info.today() - timedelta(days=1)
-    start = end - timedelta(days=days - 1)
-    cw, cp = _scope(user, "id")
-    aw, ap = _scope(user, "campaign_id")
-    campaigns = db.query(f"SELECT * FROM campaigns WHERE {cw} ORDER BY effective_status = 'ACTIVE' DESC, name", cp)
-    adsets = db.query(f"SELECT * FROM adsets WHERE {aw} ORDER BY name", ap)
-    hidden = ("DELETED",) if request.args.get("archived") == "1" else ("DELETED", "ARCHIVED")
-    ads = db.query(f"""SELECT id, name, campaign_id, adset_id, status, effective_status, image_url, thumbnail_url,
-                              title, object_type, review_feedback, issues, created_time
-                       FROM ads WHERE {aw} AND NOT (COALESCE(effective_status, '') = ANY(%s)) ORDER BY name""",
-                   ap + [list(hidden)])
-    archived = db.query(f"SELECT COUNT(*) AS n FROM ads WHERE {aw} AND effective_status = 'ARCHIVED'", ap, one=True)["n"]
-    metrics = _metrics(aw, ap, start, end)
-    lifetime = {r["ad_id"]: int(r["impressions"]) for r in db.query(
-        f"SELECT ad_id, SUM(impressions) AS impressions FROM ad_daily WHERE {aw} GROUP BY ad_id", ap)}
-    quality = {r["ad_id"]: int(r["n"]) for r in db.query(
+def window_from(args):
+    """(key, start, end) from ?range=7|14|30|mtd|lastmonth|custom&from=&to= (complete days only)."""
+    key = args.get("range", "7")
+    start, end = ranges.window(key, account_info.today(), args.get("from"), args.get("to"))
+    return key, start, end
+
+
+def _quality(aw, ap, start, end):
+    return {r["ad_id"]: int(r["n"]) for r in db.query(
         f"""SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND status IN ('qualified','won')
             AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {aw} GROUP BY ad_id""",
         [account_info.tz_name(), start, end] + ap)}
+
+
+def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, archived=False):
+    """Campaign → ad set → ad with each level's results for the window (and the window before, when
+    prev=(start, end) is given), limited to what the person may see."""
+    days = (end - start).days + 1
+    cw, cp = _scope(user, "id")
+    aw, ap = _scope(user, "campaign_id")
+    if campaign_id:
+        cw, cp = f"{cw} AND id = %s", cp + [campaign_id]
+        aw, ap = f"{aw} AND campaign_id = %s", ap + [campaign_id]
+    sw, sp = (f"{aw} AND id = %s", ap + [adset_id]) if adset_id else (aw, ap)
+    xw, xp = (f"{aw} AND adset_id = %s", ap + [adset_id]) if adset_id else (aw, ap)
+    campaigns = db.query(f"SELECT * FROM campaigns WHERE {cw} ORDER BY effective_status = 'ACTIVE' DESC, name", cp)
+    adsets = db.query(f"SELECT * FROM adsets WHERE {sw} ORDER BY name", sp)
+    hidden = ("DELETED",) if archived else ("DELETED", "ARCHIVED")
+    ads = db.query(f"""SELECT id, name, campaign_id, adset_id, status, configured_status, effective_status, image_url,
+                              thumbnail_url, title, object_type, review_feedback, issues, created_time, updated_time
+                       FROM ads WHERE {xw} AND NOT (COALESCE(effective_status, '') = ANY(%s)) ORDER BY name""",
+                   xp + [list(hidden)])
+    archived_n = db.query(f"SELECT COUNT(*) AS n FROM ads WHERE {xw} AND effective_status = 'ARCHIVED'", xp, one=True)["n"]
+    metrics = _metrics(xw, xp, start, end)
+    quality = _quality(xw, xp, start, end)
+    if prev:
+        metrics_prev, quality_prev = _metrics(xw, xp, *prev), _quality(xw, xp, *prev)
+    lifetime = {r["ad_id"]: int(r["impressions"]) for r in db.query(
+        f"SELECT ad_id, SUM(impressions) AS impressions FROM ad_daily WHERE {xw} GROUP BY ad_id", xp)}
     pending = {r["eid"]: int(r["n"]) for r in db.query(
         """SELECT COALESCE(entity_id, payload->>'template_ad_id') AS eid, COUNT(*) AS n FROM desk_proposals
            WHERE status = 'pending' AND COALESCE(entity_id, payload->>'template_ad_id') IS NOT NULL GROUP BY 1""")}
     daily = {}
     for r in db.query(f"""SELECT ad_id, day, spend_cents, leads FROM ad_daily
-                          WHERE day BETWEEN %s AND %s AND {aw} ORDER BY day""", [start, end] + ap):
+                          WHERE day BETWEEN %s AND %s AND {xw} ORDER BY day""", [start, end] + xp):
         daily.setdefault(r["ad_id"], {})[r["day"].isoformat()] = (int(r["spend_cents"]), int(r["leads"]))
     days_list = [(start + timedelta(days=i)).isoformat() for i in range(days)]
     for ad in ads:
         ad["m"] = {**metrics.get(ad["id"], {}), "qualified": quality.get(ad["id"], 0)}
+        if prev:
+            ad["prev"] = {**metrics_prev.get(ad["id"], {}), "qualified": quality_prev.get(ad["id"], 0)}
         d = daily.get(ad["id"], {})
         ad["spark"] = [{"day": k, "spend_cents": d.get(k, (0, 0))[0], "leads": d.get(k, (0, 0))[1]} for k in days_list]
         ad["lifetime_impressions"] = lifetime.get(ad["id"], 0)
         ad["pending_proposals"] = pending.get(ad["id"], 0)
     # Totals count every ad's spend, archived and deleted ones included (they spent real money).
-    every = db.query(f"SELECT id, adset_id FROM ads WHERE {aw}", ap)
-    every_m = [{"adset_id": a["adset_id"], "m": {**metrics.get(a["id"], {}), "qualified": quality.get(a["id"], 0)}} for a in every]
+    every = db.query(f"SELECT id, adset_id FROM ads WHERE {xw}", xp)
+    every_m = [{"adset_id": a["adset_id"], "m": {**metrics.get(a["id"], {}), "qualified": quality.get(a["id"], 0)},
+                "p": {**metrics_prev.get(a["id"], {}), "qualified": quality_prev.get(a["id"], 0)} if prev else {}} for a in every]
     for s in adsets:
         s["ads"] = [a for a in ads if a["adset_id"] == s["id"]]
-        s["m"] = _sum([a for a in every_m if a["adset_id"] == s["id"]])
+        mine = [a for a in every_m if a["adset_id"] == s["id"]]
+        s["m"] = _sum(mine)
+        if prev:
+            s["prev"] = _sum([{"m": a["p"]} for a in mine])
         s["pending_proposals"] = pending.get(s["id"], 0)
     for c in campaigns:
         c["adsets"] = [s for s in adsets if s["campaign_id"] == c["id"]]
         c["m"] = _sum(c["adsets"])
+        if prev:
+            c["prev"] = _sum([{"m": s["prev"]} for s in c["adsets"]])
         c["pending_proposals"] = pending.get(c["id"], 0)
         c["can_control"] = can_touch(user, c["id"]) and user["role"] != "client"
-    return jsonify({"range": {"start": start.isoformat(), "end": end.isoformat(), "days": days},
-                    "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync"),
-                    "archived": archived})
+    out = {"range": {"start": start.isoformat(), "end": end.isoformat(), "days": days, "label": ranges.label(start, end)},
+           "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync"), "archived": archived_n}
+    if prev:
+        out["prev_range"] = {"start": prev[0].isoformat(), "end": prev[1].isoformat(), "label": ranges.label(*prev)}
+    return out
+
+
+@bp.get("/ads")
+@login_required
+def tree():
+    key, start, end = window_from(request.args)
+    prev = ranges.previous(start, end) if request.args.get("vs") == "prev" else None
+    out = tree_data(current_user(), start, end, prev=prev, archived=request.args.get("archived") == "1")
+    out["range"]["key"] = key
+    return jsonify(out)
 
 
 @bp.get("/ads/ad/<ad_id>")

@@ -1081,6 +1081,9 @@ db.execute(\\"UPDATE accounts SET archived_at = now() WHERE name = 'QA Studio'\\
   await cp.waitForSelector('.rail .nav a .label');
   const nav = await cp.$$eval('.rail .nav a .label', (a) => a.map((x) => x.textContent.trim()));
   check('a client signs in to their own account with the read-only menu', nav.join() === 'Today,Leads,Ads,Results,Reports' && /Burdanova QA/.test(await cp.textContent('.rail')), nav.join());
+  const clientBulk = await cp.evaluate(async () => (await fetch('/api/ads/bulk/preview', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ebads' },
+    body: JSON.stringify({ action: 'status', level: 'ad', ids: ['x'], value: 'PAUSED' }) })).status);
+  check('a client can\'t make bulk changes', clientBulk === 403, String(clientBulk));
   await cp.goto(BASE + '/leads.html');
   await cp.waitForSelector('.lead-row');
   await cp.click('.lead-row');
@@ -1295,6 +1298,38 @@ with account_ctx.use(a2):
   await page.waitForSelector('.st-tl');
   const n2Timeline = await page.locator('.st-tl').innerText();
   check('an on/off made from the console is marked as made here, by whom', n2Timeline.includes('This console') && n2Timeline.includes('by Eugene'), n2Timeline.replace(/\n+/g, ' | ').slice(0, 300));
+  // 8.4 APIs for the new screens: ranges with the window before, campaign/ad set pages, compare, search, saved views, bulk.
+  const C1 = '120252638288040312';
+  const t14 = (await call('GET', '/api/ads?range=14&vs=prev')).body;
+  check('the Ads tree takes a range and adds the window before', t14.range.days === 14 && !!t14.prev_range && !!t14.campaigns[0].prev);
+  const camp = await call('GET', `/api/campaigns/${C1}?range=mtd`);
+  check('a campaign has its own page data: breadcrumbs, ad sets, timeline, daily series', camp.status === 200 && camp.body.crumbs.length === 1
+    && camp.body.entity.adsets.length >= 1 && Array.isArray(camp.body.timeline) && camp.body.series.length >= 1);
+  const cmp = await call('GET', '/api/compare?ids=120252672232030312,120252672233160312,120252672230740312&range=14&vs=prev');
+  check('compare lines up 3 ads metric by metric and won\'t name a winner too early', cmp.status === 200 && cmp.body.items.length === 3
+    && cmp.body.rows.some((r) => r.key === 'cpl_cents') && cmp.body.verdict.ready === false && cmp.body.verdict.need_spend_cents > 0);
+  check('compare needs at least 2 ads', (await call('GET', '/api/compare?ids=120252672232030312')).status === 400);
+  const found = (await call('GET', '/api/search?q=weekly')).body.items;
+  check('search finds ads by name and links to them', found.some((i) => i.type === 'ad' && i.href.startsWith('/ad.html?id=')));
+  const view = await call('POST', '/api/views', { page: 'ads', name: 'QA live', query: '?view=on&range=14' });
+  const views = (await call('GET', '/api/views?page=ads')).body.views;
+  check('a saved view keeps its filter and comes back in the list', view.status === 201 && views.some((v) => v.id === view.body.id && v.query === 'view=on&range=14'));
+  await call('DELETE', `/api/views/${view.body.id}`);
+  const bp = await call('POST', '/api/ads/bulk/preview', { action: 'budget_pct', level: 'campaign', ids: [C1], value: 30 });
+  const bpNo = await call('POST', '/api/ads/bulk/apply', { plan_token: bp.body.plan_token });
+  check('a bulk budget step over +20% is refused until confirmed knowingly', bp.status === 200 && bp.body.totals.big && bpNo.status === 409);
+  const bad = await call('POST', '/api/ads/bulk/apply', { plan_token: bp.body.plan_token.replace(/.$/, 'x'), accept_big: true });
+  check('a changed or forged bulk plan is refused', bad.status === 409);
+  const offIds = ['120252672232030312', '120252672233160312'];
+  const offPrev = await call('POST', '/api/ads/bulk/preview', { action: 'status', level: 'ad', ids: offIds, value: 'PAUSED' });
+  const offDone = await call('POST', '/api/ads/bulk/apply', { plan_token: offPrev.body.plan_token });
+  const onPrev = await call('POST', '/api/ads/bulk/preview', { action: 'status', level: 'ad', ids: offIds, value: 'ACTIVE' });
+  const onNo = await call('POST', '/api/ads/bulk/apply', { plan_token: onPrev.body.plan_token });
+  const onDone = await call('POST', '/api/ads/bulk/apply', { plan_token: onPrev.body.plan_token, confirm_total_cents: onPrev.body.totals.daily_cents });
+  check('bulk off, then on only after the daily total is echoed (each budget counted once)', offDone.body.done === 2 && onPrev.body.totals.budgets.length === 1
+    && onNo.status === 409 && onDone.body.done === 2);
+  const tagged = sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query('SELECT COUNT(DISTINCT bulk_id) AS n, COUNT(*) AS c FROM meta_changes WHERE bulk_id IN (%s, %s)', ('${offDone.body.bulk_id}', '${onDone.body.bulk_id}'), one=True))"`);
+  check('every bulk write is logged in meta_changes under its bulk id', /'n': 2, 'c': 4/.test(tagged), tagged.trim());
   // Phones: no page wider than the screen.
   const phonePage = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
   await phonePage.goto(BASE + '/login.html');
