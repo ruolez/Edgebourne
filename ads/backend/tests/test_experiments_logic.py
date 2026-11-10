@@ -39,7 +39,8 @@ class JudgeTests(unittest.TestCase):
 
     def test_a_small_difference_is_not_called(self):
         j = ex.judge("cpl", [arm("A", 10000, 10), arm("B", 10000, 12)], target_cents=1000, days_run=7)
-        self.assertEqual((j["state"], j["leader"]), ("even", "B"))
+        self.assertEqual((j["state"], j["leader"], j["note"]),
+                         ("even", "B", "No clear difference yet: B is 17% cheaper so far, which could easily be chance."))
 
     def test_without_a_target_the_pooled_cost_sets_the_spend_bar(self):
         # pooled $50 a lead → each arm needs $100 spent

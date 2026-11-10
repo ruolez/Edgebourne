@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, fieldError, onRefresh, toast, when } from "./ui.js";
+import { boot, confirmDialog, esc, fieldError, onRefresh, toast, when } from "./ui.js";
 import { count, dayLabel, money } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -7,6 +7,7 @@ let me;
 let items = [];
 let metrics = {};
 let choices = null;
+let metaEnabled = false;
 let show = "running";
 try { show = localStorage.getItem("ebads-tests") || "running"; } catch (e) {}
 
@@ -59,6 +60,26 @@ function verdictLine(t) {
   return `<p class="verdict closed"><b>${t.status === "done" ? "Finished" : "Stopped"}${esc(closed)}.</b> ${esc(t.verdict || (t.winner ? `${t.winner} won.` : "No winner."))}</p>`;
 }
 
+const STUDY_STATE = { scheduled: ["", "Starts"], running: ["ok", "Running on Meta"], ended: ["", "Ended"] };
+
+function metaBlock(t) {
+  const m = t.meta;
+  if (!m) return "";
+  const [cls, word] = STUDY_STATE[m.state];
+  const span = `${dayLabel(m.start_day)} – ${dayLabel(m.end_day)}`;
+  const cost = m.daily_budget_cents ? ` · test budget ${money(m.daily_budget_cents, { exact: true })} a day, up to ${money(m.total_cents)}` : " · ad sets spend their own budgets";
+  const when_ = m.state === "scheduled" ? `${word} ${dayLabel(m.start_day)}` : m.ended_early_at ? "Ended early" : word;
+  return `<div class="on-meta">
+    <div class="on-meta-head"><span class="pill ${cls}">${esc(when_)}</span><b>A/B test on Meta</b><span class="muted small">${esc(span)}${esc(cost)}</span></div>
+    <p class="flush">${esc(m.verdict.note)} <span class="muted small">${m.fetched_at ? `Checked ${esc(when(m.fetched_at))}.` : "Not checked yet."}</span></p>
+    <div class="row">
+      <button type="button" class="btn btn-quiet btn-small" data-meta-refresh="${t.id}">Check Meta now</button>
+      ${m.state === "running" ? `<button type="button" class="btn btn-quiet btn-small" data-meta-end="${t.id}">End it now on Meta</button>` : ""}
+      ${m.state === "scheduled" ? '<span class="muted small">To cancel before it starts, delete it in Ads Manager → Experiments.</span>' : ""}
+    </div>
+  </div>`;
+}
+
 function testCard(t) {
   return `<article class="panel test" id="t-${t.id}" data-test="${t.id}" tabindex="-1">
     <header class="test-head">
@@ -69,9 +90,12 @@ function testCard(t) {
     ${armRows(t)}
     ${verdictLine(t)}
     ${t.notes ? `<p class="muted small flush test-notes">${esc(t.notes)}</p>` : ""}
+    ${metaBlock(t)}
     <div class="row test-actions">
       ${t.status === "running" ? `<button type="button" class="btn" data-finish="${t.id}">Finish…</button>` : `<button type="button" class="btn btn-quiet" data-reopen="${t.id}">Reopen</button>`}
       <button type="button" class="btn btn-quiet" data-edit="${t.id}">Edit</button>
+      ${!t.meta && t.status === "running" ? (metaEnabled ? `<button type="button" class="btn btn-quiet" data-meta="${t.id}">Run on Meta…</button>`
+        : '<span class="muted small meta-off">Run on Meta: <a href="/settings.html#mt-form">off in Settings</a></span>') : ""}
     </div>
   </article>`;
 }
@@ -95,7 +119,7 @@ function render() {
 async function load() {
   try {
     const d = await api("/api/experiments");
-    items = d.items; metrics = d.metrics;
+    items = d.items; metrics = d.metrics; metaEnabled = d.meta_enabled;
   } catch (err) { toast(err.message, "bad"); return; }
   const focus = Number(location.hash.slice(1));
   const hit = focus && items.find((t) => t.id === focus);
@@ -215,6 +239,76 @@ async function openForm(t = null) {
   form.name.focus();
 }
 
+// ---------------------------------------------------------------- run on Meta
+
+const isoPlus = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+
+function openMeta(t) {
+  const ads = t.arms.every((a) => a.ad_ids.length === 1 && !a.adset_ids.length);
+  const dlg = document.createElement("dialog");
+  dlg.className = "test-dialog";
+  dlg.innerHTML = `<form novalidate>
+    <h2>Run “${esc(t.name)}” on Meta</h2>
+    <p class="muted flush">Meta splits the people into ${t.arms.length} groups that don't overlap and shows each group one ${ads ? "ad" : "ad set"}. It's the cleanest way to compare, and Meta reports its own winner here next to ours.</p>
+    <div class="row two">
+      <div class="field"><label for="m-start">Starts</label><input class="input" type="date" id="m-start" name="start_day" value="${isoPlus(1)}" min="${isoPlus(1)}"></div>
+      <div class="field"><label for="m-end">Ends</label><input class="input" type="date" id="m-end" name="end_day" value="${isoPlus(8)}"></div>
+    </div>
+    ${ads ? `<div class="field"><label for="m-budget">Test budget per day</label>
+      <span class="money-input">$<input class="input" id="m-budget" name="budget" inputmode="decimal" placeholder="10" autocomplete="off"></span>
+      <span class="hint">Spent on top of the campaign's budget while the test runs.</span></div>` : ""}
+    <div class="note" id="m-plan" role="status">Pick the dates${ads ? " and a daily budget" : ""} to see what it does and costs.</div>
+    <div class="row end"><button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn btn-primary" type="submit" id="m-go" disabled>Create on Meta</button></div>
+  </form>`;
+  document.body.appendChild(dlg);
+  const form = dlg.querySelector("form");
+  let plan = null;
+  let seq = 0;
+  const body = () => ({ start_day: form.start_day.value, end_day: form.end_day.value,
+    daily_budget_cents: ads && form.budget.value.trim() ? Math.round(Number(form.budget.value) * 100) : null });
+  const check = async () => {
+    const mine = ++seq;
+    plan = null;
+    $("m-go").disabled = true;
+    fieldError(form, null);
+    if (ads && !(Number(form.budget.value) > 0)) { $("m-plan").className = "note"; $("m-plan").textContent = "Type a daily budget in dollars, like 10."; return; }
+    try {
+      const p = await api(`/api/experiments/${t.id}/meta/plan`, { method: "POST", body: body() });
+      if (mine !== seq) return;
+      plan = p;
+      $("m-plan").className = "note warn";
+      $("m-plan").textContent = p.summary;
+      $("m-go").disabled = false;
+      $("m-go").textContent = p.total_cents ? `Create on Meta · up to ${money(p.total_cents)}` : "Create on Meta";
+    } catch (err) {
+      if (mine !== seq) return;
+      $("m-plan").className = "note";
+      $("m-plan").textContent = err.message;
+    }
+  };
+  let timer;
+  form.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(check, 250); });
+  form.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) dlg.close(); });
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!plan) return;
+    $("m-go").disabled = true;
+    try {
+      await api(`/api/experiments/${t.id}/meta`, { method: "POST", body: { ...body(), confirm_total_cents: plan.total_cents } });
+      dlg.close();
+      toast("Created on Meta. It starts on the day you picked.");
+      load();
+    } catch (err) {
+      $("m-plan").className = "note bad"; $("m-plan").textContent = err.message; $("m-go").disabled = false;
+    }
+  });
+  dlg.addEventListener("close", () => dlg.remove());
+  dlg.showModal();
+  if (!ads) check();
+  (ads ? form.budget : form.end_day).focus();
+}
+
 // ---------------------------------------------------------------- finish
 
 function openFinish(t) {
@@ -266,6 +360,16 @@ if (me) {
     const byId = (attr) => items.find((t) => t.id === Number(e.target.closest(`[${attr}]`)?.getAttribute(attr)));
     if (e.target.closest("[data-edit]")) openForm(byId("data-edit"));
     else if (e.target.closest("[data-finish]")) openFinish(byId("data-finish"));
+    else if (e.target.closest("[data-meta]")) openMeta(byId("data-meta"));
+    else if (e.target.closest("[data-meta-refresh]")) {
+      try { await api(`/api/experiments/${byId("data-meta-refresh").id}/meta/refresh`, { method: "POST" }); toast("Checked Meta"); load(); }
+      catch (err) { toast(err.message, "bad"); }
+    } else if (e.target.closest("[data-meta-end]")) {
+      const t = byId("data-meta-end");
+      if (!(await confirmDialog({ title: "End the Meta test now?", body: "<p>Meta stops the test within a minute and keeps its results. Nothing is deleted, and the ads themselves keep their on/off state.</p>", confirm: "End it" }))) return;
+      try { await api(`/api/experiments/${t.id}/meta/end`, { method: "POST" }); toast("Ended on Meta"); load(); }
+      catch (err) { toast(err.message, "bad"); }
+    }
     else if (e.target.closest("[data-reopen]")) {
       try { await api(`/api/experiments/${byId("data-reopen").id}`, { method: "PATCH", body: { status: "running" } }); toast("Running again"); load(); }
       catch (err) { toast(err.message, "bad"); }

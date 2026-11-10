@@ -131,7 +131,8 @@ def judge(metric, arms, target_cents=None, days_run=0):
         out["note"] = f"{lead['label']} looks better ({better}, {c}% sure), but not enough to call it. Keep it running."
     else:
         out["state"] = "even"
-        out["note"] = f"No clear difference yet: {lead['label']} is {better}, but only {c}% sure."
+        out["note"] = (f"No clear difference yet: {lead['label']} is {better} so far, which could easily be chance."
+                       if c < 50 else f"No clear difference yet: {lead['label']} is {better}, but only {c}% sure.")
     return out
 
 

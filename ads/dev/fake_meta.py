@@ -181,6 +181,15 @@ def tg_api(tok, method):
     return jsonify({"ok": False, "error_code": 404, "description": f"fake: {method} not implemented"}), 404
 
 
+BUSINESS = "9990001"
+STUDIES = {}
+
+
+@app.route("/fake/_studies")
+def fake_studies():
+    return jsonify(STUDIES)
+
+
 @app.route("/v24.0/<path:path>", methods=["GET", "POST"])
 def graph(path):
     a = {**request.args.to_dict(), **request.form.to_dict()}
@@ -191,7 +200,8 @@ def graph(path):
             return jsonify({"id": "1", "name": "ads-console (fake)"})
         if parts == [act]:
             return jsonify({"name": "Edge Bourne Consulting", "currency": "USD", "timezone_name": "America/Los_Angeles",
-                            "spend_cap": "15000", "amount_spent": "4120", "account_status": 1})
+                            "spend_cap": "15000", "amount_spent": "4120", "account_status": 1,
+                            "business": {"id": BUSINESS, "name": "Edge Bourne"}})
         if parts == [act, "campaigns"]:
             return jsonify({"data": [CAMPAIGN]})
         if parts == [act, "adsets"]:
@@ -237,6 +247,16 @@ def graph(path):
                                            {"name": "email", "values": ["tgqa@example.com"]}]})
         if parts == [PAGE]:
             return jsonify({"id": PAGE, "name": "Edge Bourne Consulting", "access_token": "fake-page-token"})
+        if len(parts) == 2 and parts[0] in STUDIES and parts[1] == "objectives":
+            st = STUDIES[parts[0]]
+            cells = [c.get("ads") or c.get("adsets") for c in st["cells"]]
+            ids_ = [x[0] for x in cells]
+            res = ({"high_performer_ids": [ids_[-1]], "winner_ad_object_id": None, "winner_confidence": None,
+                    "confidence_by_ad_object_id": {i: round(0.9 if i == ids_[-1] else 0.1 / (len(ids_) - 1), 2) for i in ids_}}
+                   if st["type"] == "SPLIT_TEST_V2" else {"winner_ad_object_id": ids_[0], "winner_confidence": 0.82})
+            return jsonify({"data": [{"id": parts[0] + "1", "name": "Cost per result", "results": [json.dumps(res)]}]})
+        if len(parts) == 1 and parts[0] in STUDIES:
+            return jsonify(STUDIES[parts[0]])
         if parts == [act, "adimages"]:
             return jsonify({"data": list(IMAGES.values())})
         if parts == [act, "advideos"]:
@@ -304,6 +324,27 @@ def graph(path):
                 return jsonify({"error": {"message": "Invalid parameter (fake): lead_id", "code": 100}}), 400
             CRM_EVENTS.extend({**e, "test_event_code": a.get("test_event_code")} for e in events)
             return jsonify({"events_received": len(events), "messages": [], "fbtrace_id": "fake"})
+        if len(parts) == 2 and parts[0] == BUSINESS and parts[1] == "ad_studies":
+            # Shaped like Meta's ad study rules (split testing guide): fake only checks what we rely on.
+            cells = json.loads(a.get("cells") or "[]")
+            kind = a.get("type")
+            missing = [k for k in ("name", "type", "start_time", "end_time") if not a.get(k)]
+            if missing or kind not in ("SPLIT_TEST", "SPLIT_TEST_V2") or len(cells) < 2:
+                return jsonify({"error": {"message": f"Invalid parameter (fake): {missing or kind or 'cells'}", "code": 100}}), 400
+            if sum(c["treatment_percentage"] for c in cells) > 100:
+                return jsonify({"error": {"message": "Treatment percentages over 100 (fake)", "code": 100}}), 400
+            if kind == "SPLIT_TEST_V2" and (not json.loads(a.get("creative_test_config") or "{}").get("daily_budget")
+                                            or a.get("cooldown_start_time") != a["start_time"] or a.get("observation_end_time") != a["end_time"]
+                                            or any(len(c.get("ads") or []) != 1 for c in cells) or sum(c["treatment_percentage"] for c in cells) != 100):
+                return jsonify({"error": {"message": "Creative test settings are invalid (fake)", "code": 100}}), 400
+            sid = str(next(ids))
+            STUDIES[sid] = {"id": sid, "name": a["name"], "type": kind, "start_time": int(a["start_time"]),
+                            "end_time": int(a["end_time"]), "cells": cells, "description": a.get("description")}
+            return jsonify({"id": sid})
+        if len(parts) == 1 and parts[0] in STUDIES:
+            if "end_time" in a:
+                STUDIES[parts[0]]["end_time"] = int(a["end_time"])
+            return jsonify({"success": True})
         if len(parts) == 2 and parts[1] == "copies" and parts[0] in ADS:
             src = ADS[parts[0]]
             aid = str(next(ids))

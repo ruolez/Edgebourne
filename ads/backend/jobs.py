@@ -99,6 +99,11 @@ def _loop():
                         alerts.run()
                     except Exception:
                         log.exception("alert rules failed")
+                    try:
+                        import meta_tests
+                        meta_tests.sync_running()
+                    except Exception:
+                        log.exception("reading Meta A/B tests failed")
         except Exception:
             log.exception("worker pass failed")
         finally:

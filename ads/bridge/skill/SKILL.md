@@ -108,7 +108,10 @@ files; `cat`, `tail` and pipes are not allowed.
    "target_cents": 6000 (optional, cost metrics)}`. Approving it only starts tracking; nothing
    changes on Meta. A payload that doesn't validate (unknown ids, fewer than two arms) is
    stored as `other`. The page says "too early" until each arm has spent 2× the target with
-   ≥ 3 results over ≥ 3 full days, and calls a winner only at 95% confidence.
+   ≥ 3 results over ≥ 3 full days, and calls a winner only at 95% confidence. A test may also
+   run on Meta as an A/B test (`meta` in the snapshot: dates, test budget, Meta's own verdict);
+   only Eugene starts those, from the Tests page. Never create one with
+   `ads_experiment_abtest_create_test`; propose the experiment instead.
 7. `desk done <id> --summary "<one or two sentences>"`. If you can't finish (Meta down, no
    data, a tool refused), `desk fail <id> --error "<what happened and what would fix it>"`
    rather than stopping silently.

@@ -72,6 +72,7 @@ def get_settings():
         "alerts": {"rules": alerts.saved_rules(), "recent": alerts.recent(15)},
         "auto_refresh_minutes": refresh_api.auto_minutes(settings_store.get("auto_refresh_minutes")),
         "auto_refresh_choices": list(refresh_api.AUTO_CHOICES),
+        "meta_ab_tests": settings_store.get("meta_ab_tests") == "on",
     })
 
 
@@ -94,6 +95,16 @@ def _save(fields, data):
 def save_meta():
     changed = _save(META_FIELDS, request.get_json(silent=True) or {})
     log_activity("settings.meta", details={"changed": changed})
+    return get_settings()
+
+
+@bp.put("/meta-tests")
+@admin_required
+def save_meta_tests():
+    """The switch for creating A/B tests on Meta from the Tests page (off by default)."""
+    on = bool((request.get_json(silent=True) or {}).get("on"))
+    settings_store.set("meta_ab_tests", "on" if on else None)
+    log_activity("settings.meta_ab_tests", details={"on": on})
     return get_settings()
 
 

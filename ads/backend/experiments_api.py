@@ -1,18 +1,21 @@
 """Experiments page API (admins): list, create, edit and close tests; the numbers come
 from ad_daily and the leads inbox for the test's own dates."""
 import json
-from datetime import date
+from datetime import date, datetime
 
 from flask import Blueprint, jsonify, request
 
 import db
 import experiments as ex
+import meta_client
+import meta_tests as mt
+import settings_store
 from auth import admin_required, current_user
 from util import api_error, log_activity
 
 bp = Blueprint("experiments", __name__, url_prefix="/api/experiments")
 
-COLS = "id, name, hypothesis, metric, arms, start_day, end_day, target_cents, status, winner, verdict, notes, proposal_id, created_at, closed_at"
+COLS = "id, name, hypothesis, metric, arms, start_day, end_day, target_cents, status, winner, verdict, notes, proposal_id, created_at, closed_at, meta_study"
 
 
 def _day(raw, field, required=False):
@@ -125,14 +128,28 @@ def summary(exp):
     for k in ("created_at", "closed_at"):
         out[k] = exp[k].isoformat() if exp.get(k) else None
     out["metric_label"] = ex.METRICS[exp["metric"]]["label"]
+    out["meta"] = meta_view(exp)
+    out.pop("meta_study", None)
     return out
+
+
+def meta_view(exp):
+    s = exp.get("meta_study")
+    if not s:
+        return None
+    from datetime import datetime
+    return {"id": s["id"], "kind": s["kind"], "start_day": s["start_day"], "end_day": s["end_day"],
+            "daily_budget_cents": s.get("daily_budget_cents"), "total_cents": s.get("total_cents"),
+            "state": mt.study_state(s, datetime.now().timestamp()), "fetched_at": s.get("fetched_at"),
+            "ended_early_at": s.get("ended_early_at"), "verdict": mt.meta_verdict(s.get("results") or {}, exp["arms"])}
 
 
 @bp.get("")
 @admin_required
 def listing():
     rows = db.query(f"SELECT {COLS} FROM experiments ORDER BY (status = 'running') DESC, start_day DESC, id DESC")
-    return jsonify({"items": [summary(r) for r in rows], "metrics": {k: v["label"] for k, v in ex.METRICS.items()}})
+    return jsonify({"items": [summary(r) for r in rows], "metrics": {k: v["label"] for k, v in ex.METRICS.items()},
+                    "meta_enabled": mt.enabled()})
 
 
 @bp.get("/choices")
@@ -188,6 +205,8 @@ def edit(exp_id):
         return api_error("Pick one of the arms as the winner", 400, field="winner")
     if not fields:
         return jsonify(summary(exp))
+    if "arms" in fields and exp.get("meta_study") and fields["arms"] != exp["arms"]:
+        return api_error("This test runs on Meta, so its arms can't change", 409, field="arms")
     if "arms" in fields:
         fields["arms"] = json.dumps(fields["arms"])
     if fields.get("status") == "running":
@@ -197,4 +216,127 @@ def edit(exp_id):
         sets.append("closed_at = " + ("NULL" if fields["status"] == "running" else "COALESCE(closed_at, now())"))
     db.execute(f"UPDATE experiments SET {', '.join(sets)}, updated_at = now() WHERE id = %s", list(fields.values()) + [exp_id])
     log_activity("experiment.updated", subject=str(exp_id), details={k: str(v)[:200] for k, v in fields.items() if k != "arms"})
+    return jsonify(summary(load(exp_id)))
+
+
+# ---------------------------------------------------------------- on Meta (roadmap 3.2)
+
+def _budget_cap(exp):
+    """Twice the daily budget of the campaign the arms run in (None when unknown)."""
+    ids = [i for a in exp["arms"] for i in a.get("ad_ids") or []]
+    row = db.query("""SELECT MAX(c.daily_budget_cents) AS b FROM ads a JOIN campaigns c ON c.id = a.campaign_id
+                      WHERE a.id = ANY(%s)""", (ids,), one=True) if ids else None
+    return 2 * row["b"] if row and row["b"] else None
+
+
+def _plan(exp, data):
+    start, err = _day(data.get("start_day"), "start_day", required=True)
+    if err:
+        raise mt.PlanError(*err)
+    end, err = _day(data.get("end_day"), "end_day")
+    if err:
+        raise mt.PlanError(*err)
+    try:
+        budget = int(data["daily_budget_cents"]) if data.get("daily_budget_cents") not in (None, "") else None
+    except (TypeError, ValueError):
+        raise mt.PlanError("Type the daily budget in dollars, like 10", "budget")
+    return mt.plan(exp, start, end, budget, ex.account_today(), _tz(), _budget_cap(exp))
+
+
+def _tz():
+    import config
+    return config.ACCOUNT_TZ
+
+
+@bp.post("/<int:exp_id>/meta/plan")
+@admin_required
+def meta_plan(exp_id):
+    """What running this test on Meta would do and cost. Reads nothing from Meta, writes nothing."""
+    exp = load(exp_id)
+    if not exp:
+        return api_error("Test not found", 404)
+    try:
+        p = _plan(exp, request.get_json(silent=True) or {})
+    except mt.PlanError as e:
+        return api_error(str(e), 400, field=e.field)
+    return jsonify({k: p[k] for k in ("kind", "days", "total_cents", "summary")} | {"enabled": mt.enabled()})
+
+
+@bp.post("/<int:exp_id>/meta")
+@admin_required
+def meta_create(exp_id):
+    """Create the A/B test on Meta. Needs the Settings switch on and the cost confirmed as shown."""
+    if not mt.enabled():
+        return api_error("Meta A/B tests are switched off. An admin turns them on in Settings → Meta A/B tests.", 403)
+    exp = load(exp_id)
+    if not exp:
+        return api_error("Test not found", 404)
+    if exp["status"] != "running":
+        return api_error("Only a running test can go on Meta", 409)
+    if exp.get("meta_study"):
+        return api_error("This test is already on Meta", 409)
+    data = request.get_json(silent=True) or {}
+    try:
+        p = _plan(exp, data)
+    except mt.PlanError as e:
+        return api_error(str(e), 400, field=e.field)
+    if p["total_cents"] != (data.get("confirm_total_cents") if p["total_cents"] is not None else None):
+        return api_error("The cost changed since you looked. Check it again and confirm.", 409)
+    import ads_api
+    user = current_user()
+    row = {"id": str(exp_id), "name": exp["name"], "campaign_id": None}
+    try:
+        study = meta_client.post(f"{mt.business_id()}/ad_studies", data=mt.graph_form(p["payload"]))
+    except (meta_client.MetaError, mt.PlanError) as exc:
+        ads_api.record(user, "study", row, "create", None, p["summary"], False, str(exc))
+        return api_error(f"Meta refused: {exc}", 400)
+    payload = p["payload"]
+    stored = {"id": study["id"], "type": payload["type"], "kind": p["kind"], "start_time": payload["start_time"],
+              "end_time": payload["end_time"], "start_day": data["start_day"], "end_day": data["end_day"],
+              "daily_budget_cents": (payload.get("creative_test_config") or {}).get("daily_budget"),
+              "total_cents": p["total_cents"], "created_at": datetime.now().astimezone().isoformat(), "results": {}}
+    db.execute("UPDATE experiments SET meta_study = %s, updated_at = now() WHERE id = %s", (json.dumps(stored), exp_id))
+    ads_api.record(user, "study", {**row, "id": study["id"]}, "create", None, p["summary"], True)
+    return jsonify(summary(load(exp_id))), 201
+
+
+@bp.post("/<int:exp_id>/meta/refresh")
+@admin_required
+def meta_refresh(exp_id):
+    exp = load(exp_id)
+    if not exp or not exp.get("meta_study"):
+        return api_error("This test isn't on Meta", 404)
+    try:
+        fresh = mt.fetch(exp["meta_study"])
+    except meta_client.MetaError as exc:
+        return api_error(f"Meta didn't answer: {exc}", 400)
+    db.execute("UPDATE experiments SET meta_study = %s WHERE id = %s", (json.dumps(fresh), exp_id))
+    return jsonify(summary(load(exp_id)))
+
+
+@bp.post("/<int:exp_id>/meta/end")
+@admin_required
+def meta_end(exp_id):
+    """End a running Meta test now (moves its end time; nothing is deleted)."""
+    exp = load(exp_id)
+    if not exp or not exp.get("meta_study"):
+        return api_error("This test isn't on Meta", 404)
+    s = exp["meta_study"]
+    now = int(datetime.now().timestamp())
+    state = mt.study_state(s, now)
+    if state == "scheduled":
+        return api_error("It hasn't started yet. To cancel it, delete it in Ads Manager → Experiments.", 409)
+    if state == "ended":
+        return api_error("It has already ended", 409)
+    import ads_api
+    user = current_user()
+    end = now + 60
+    try:
+        meta_client.post(s["id"], data={"end_time": end})
+    except meta_client.MetaError as exc:
+        ads_api.record(user, "study", {"id": s["id"], "name": exp["name"]}, "end", s["end_time"], end, False, str(exc))
+        return api_error(f"Meta refused: {exc}", 400)
+    s = {**s, "end_time": end, "ended_early_at": datetime.now().astimezone().isoformat()}
+    db.execute("UPDATE experiments SET meta_study = %s WHERE id = %s", (json.dumps(s), exp_id))
+    ads_api.record(user, "study", {"id": s["id"], "name": exp["name"]}, "end", None, "ended early", True)
     return jsonify(summary(load(exp_id)))

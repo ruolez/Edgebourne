@@ -589,6 +589,70 @@ print(r['id'])"`).trim();
   await page.screenshot({ path: `${OUT}/flow-tests.png`, fullPage: true });
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute('DELETE FROM experiments')"`);
 
+  // Meta A/B tests: off by default; once allowed in Settings, a test runs on Meta after its cost is confirmed.
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,settings_store;db.execute('DELETE FROM experiments');settings_store.set('meta_ab_tests',None)"`);
+  const fakeStudies = () => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/fake/_studies').read().decode())"`));
+  const studiesBefore = Object.keys(fakeStudies()).length;
+  const mtId = await page.evaluate(async () => (await (await fetch('/api/experiments', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'QA on Meta', metric: 'cpl', start_day: new Date(Date.now() - 6 * 864e5).toISOString().slice(0, 10),
+      arms: [{ label: 'A', ad_ids: ['120252672229040312'] }, { label: 'B', ad_ids: ['120252672230740312'] }] }) })).json()).id);
+  await page.goto(BASE + '/experiments.html');
+  await page.waitForSelector('.test');
+  check('Meta A/B tests start switched off', /Run on Meta: off in Settings/.test(await page.textContent('.test')) && await page.locator('[data-meta]').count() === 0);
+  const offSeen = errors.length;
+  const refused = await page.evaluate(async (id) => (await fetch(`/api/experiments/${id}/meta`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ start_day: '2030-01-02', end_day: '2030-01-09', daily_budget_cents: 1000, confirm_total_cents: 7000 }) })).status, mtId);
+  errors.splice(offSeen);
+  check('while off, the server refuses to create one', refused === 403 && Object.keys(fakeStudies()).length === studiesBefore);
+  await page.goto(BASE + '/settings.html');
+  await page.waitForSelector('#mt-state .pill');
+  await page.check('#mt-on');
+  await page.click('#mt-form button[type=submit]');
+  await page.waitForSelector('dialog.confirm');
+  check('turning them on asks first', /Allow A\/B tests on Meta/.test(await page.textContent('dialog.confirm')));
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => /On/.test(document.getElementById('mt-state').textContent));
+  await page.goto(BASE + '/experiments.html');
+  await page.click('.test [data-meta]');
+  await page.waitForSelector('dialog.test-dialog #m-budget');
+  const metaSeen = errors.length;
+  await page.fill('#m-budget', '500');
+  await page.waitForFunction(() => /twice the campaign's daily budget/.test(document.getElementById('m-plan').textContent));
+  check('a test budget over twice the campaign budget is refused before anything is sent', await page.isDisabled('#m-go'));
+  errors.splice(metaSeen); // the refused plan logs an expected 400
+  await page.fill('#m-budget', '10');
+  await page.waitForFunction(() => !document.getElementById('m-go').disabled);
+  check('the dialog says what it does and what it costs', /up to \$70\.00 in total/.test(await page.textContent('#m-plan')) && /up to \$70/.test(await page.textContent('#m-go')));
+  await page.click('#m-go');
+  await page.waitForSelector('.test .on-meta');
+  const studies = Object.values(fakeStudies()).slice(studiesBefore);
+  check('Meta gets one ad-against-ad test with the budget in cents, starting tomorrow at the earliest',
+    studies.length === 1 && studies[0].type === 'SPLIT_TEST_V2' && studies[0].cells.map((c) => c.ads[0]).join() === '120252672229040312,120252672230740312'
+    && studies[0].start_time > Date.now() / 1000, JSON.stringify(studies[0] && studies[0].cells));
+  check('the test shows it is booked on Meta', /Starts .*A\/B test on Meta.*test budget \$10\.00 a day, up to \$70/s.test(await page.textContent('.test .on-meta')));
+  await page.click('.test [data-meta-refresh]');
+  await page.waitForFunction(() => /high performer/.test(document.querySelector('.test .on-meta')?.textContent || ''));
+  check("Meta's own result reads back in the arms' names", /Meta marks B as the high performer \(A 10%, B 90%\)/.test(await page.textContent('.test .on-meta')));
+  check('a booked test cannot change its arms', await page.evaluate(async (id) => (await fetch(`/api/experiments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ arms: [{ label: 'A', ad_ids: ['120252672229400312'] }, { label: 'B', ad_ids: ['120252672230740312'] }] }) })).status, mtId) === 409);
+  errors.splice(metaSeen); // that refusal logs an expected 409
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "
+import db, json, time
+r = db.query('SELECT meta_study FROM experiments WHERE id = ${mtId}', one=True)['meta_study']
+r['start_time'] = int(time.time()) - 3600
+db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.dumps(r),))"`);
+  await page.reload();
+  await page.waitForSelector('.test [data-meta-end]');
+  await page.click('.test [data-meta-end]');
+  await page.waitForSelector('dialog.confirm');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => /Ended early/.test(document.querySelector('.test .on-meta')?.textContent || ''));
+  const ended = Object.values(fakeStudies()).slice(studiesBefore)[0];
+  check('ending it early moves its end on Meta to now, deleting nothing', ended && ended.end_time <= Date.now() / 1000 + 120 && Object.keys(fakeStudies()).length === studiesBefore + 1);
+  check('both writes are in the change log', sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query(\\"SELECT string_agg(action, ',' ORDER BY id) AS a FROM meta_changes WHERE level = 'study' AND ok AND created_at > now() - interval '5 minutes'\\", one=True)['a'])"`).trim().endsWith('create,end'));
+  await page.screenshot({ path: `${OUT}/flow-meta-test.png`, fullPage: true });
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,settings_store;db.execute('DELETE FROM experiments');settings_store.set('meta_ab_tests',None)"`);
+
   await browser.close();
   console.log(results.join('\n'));
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');

@@ -1218,3 +1218,7 @@ fieldset.field legend { padding: 0; margin-bottom: 6px; }
   .arms-table .arm-need:empty { display: none; }
   .test .scroll-x { overflow: visible; }
 }
+.on-meta { margin: 12px 24px 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-s); display: flex; flex-direction: column; gap: 8px; }
+.on-meta-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.meta-off a { color: var(--focus); font-weight: 700; }
+@media (max-width: 720px) { .on-meta { margin-left: 18px; margin-right: 18px; } }

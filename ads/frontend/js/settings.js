@@ -37,6 +37,11 @@ function renderMeta() {
   });
 }
 
+function renderMetaTests() {
+  $("mt-on").checked = !!s.meta_ab_tests;
+  $("mt-state").innerHTML = s.meta_ab_tests ? '<span class="pill ok">On</span>' : '<span class="pill">Off</span>';
+}
+
 function renderCrm() {
   const c = s.crm;
   const on = s.meta.crm_send_enabled === "1";
@@ -161,6 +166,7 @@ async function load() {
   renderMeta();
   renderCrm();
   renderAuto();
+  renderMetaTests();
   renderTelegram();
   renderAlerts();
   if (editing === null) renderReplies();
@@ -197,6 +203,7 @@ const ACTIONS = {
   "team.updated": "Changed a teammate's access",
   "team.password_reset": "Reset a teammate's password",
   "settings.crm_test": "Sent a test lead stage to Meta",
+  "settings.meta_ab_tests": "Changed whether A/B tests can be created on Meta",
   "settings.telegram": "Changed the Telegram bot",
   "settings.replies": "Changed the lead reply settings",
   "settings.reply_template": "Changed a lead reply template",
@@ -294,6 +301,17 @@ if (me) {
     s = await api("/api/settings/refresh", { method: "PUT", body: { minutes: Number($("auto-minutes").value) } });
     toast(`The latest now comes from Meta ${every(s.auto_refresh_minutes).toLowerCase()}`); renderAuto();
   }); });
+  $("mt-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const on = $("mt-on").checked;
+    if (on && !s.meta_ab_tests && !(await confirmDialog({ title: "Allow A/B tests on Meta?",
+      body: "<p>Admins can then create A/B tests on Meta from the Tests page. Each test shows its dates and cost and needs its own yes before anything is created. Ad tests spend a test budget on top of the campaign's.</p>",
+      confirm: "Allow" }))) { $("mt-on").checked = false; return; }
+    run(e.submitter, async () => {
+      s = await api("/api/settings/meta-tests", { method: "PUT", body: { on } });
+      toast(on ? "Meta A/B tests are on" : "Meta A/B tests are off"); renderMetaTests();
+    });
+  });
   $("crm-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     s = await api("/api/settings/meta", { method: "PUT", body: { meta_dataset_id: $("meta_dataset_id").value, crm_send_enabled: $("crm_send_enabled").checked ? "1" : "" } });
     toast($("crm_send_enabled").checked ? "Lead stages now go to Meta" : "Lead stages are no longer sent"); load();
