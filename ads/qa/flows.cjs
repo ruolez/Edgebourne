@@ -800,6 +800,24 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   check('publishing turns on the ads, then the ad set, then the campaign last', order === 'ad,ad,adset,campaign' && Object.values(fake('_campaigns')).slice(-1)[0].status === 'ACTIVE', order);
   await page.screenshot({ path: `${OUT}/flow-new-campaign.png`, fullPage: true });
 
+  // Meta's automatic changes on an ad: read in plain words, warn on the rewriting ones, switch one with a new creative.
+  await page.goto(BASE + '/ad.html?id=120252672230740312');
+  await page.waitForSelector('.enh-list');
+  check("the ad page lists Meta's automatic changes in plain words", /Image touch-ups.*Video filters.*Text improvements.*Relevant comments/s.test(await page.textContent('#enh')));
+  check('features that change the words or pictures are flagged when on', /On, and they change your words or pictures: Video filters/.test(await page.textContent('#enh')));
+  const crBefore = Object.keys(fake('_creatives')).length;
+  const statusBefore = await page.textContent('#ad-status');
+  await page.click('[data-enh="video_filtering"]');
+  await page.waitForSelector('dialog.confirm');
+  check('switching one asks first and says Meta reviews the ad again', /reviews the ad again/.test(await page.textContent('dialog.confirm')));
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => !/Video filters\. For brand/.test(document.getElementById('enh').textContent) && document.querySelector('[data-enh="video_filtering"]')?.getAttribute('aria-checked') === 'false');
+  const newCr = Object.values(fake('_creatives')).slice(crBefore);
+  const spec = newCr[0] && newCr[0].degrees_of_freedom_spec.creative_features_spec;
+  check('a new creative carries the change and keeps every other setting', newCr.length === 1 && spec.video_filtering.enroll_status === 'OPT_OUT'
+    && spec.image_touchups.enroll_status === 'OPT_IN' && spec.text_optimizations.enroll_status === 'OPT_OUT', JSON.stringify(spec));
+  check("the ad's on/off state is untouched", (await page.textContent('#ad-status')) === statusBefore);
+
   await browser.close();
   console.log(results.join('\n'));
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');

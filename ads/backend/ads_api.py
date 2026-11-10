@@ -17,7 +17,7 @@ import db
 import insights
 import meta_client
 import settings_store
-from auth import current_user, login_required, visible_campaign_ids
+from auth import admin_required, current_user, login_required, visible_campaign_ids
 from util import api_error, log_activity
 
 log = logging.getLogger(__name__)
@@ -784,3 +784,63 @@ def sync_now():
     except meta_client.MetaError as exc:
         return api_error(str(exc), 400)
     return jsonify(out)
+
+
+# ---------------------------------------------------------------- Meta's automatic changes (roadmap 4.4)
+
+def _creative_of(user, ad_id):
+    ad = db.query("SELECT id, name, campaign_id, creative_id, effective_status FROM ads WHERE id = %s", (ad_id,), one=True)
+    if not ad or not can_touch(user, ad["campaign_id"]):
+        return None, None
+    return ad, meta_client.get(ad["creative_id"], fields="name,object_story_spec,degrees_of_freedom_spec")
+
+
+@bp.get("/ads/ad/<ad_id>/enhancements")
+@login_required
+def enhancements(ad_id):
+    import creative_features as cf
+    try:
+        ad, cr = _creative_of(current_user(), ad_id)
+    except meta_client.MetaError as exc:
+        return api_error(f"Couldn't read the creative: {exc}", 400)
+    if not ad:
+        return api_error("Ad not found", 404)
+    feats = cf.read(cr.get("degrees_of_freedom_spec"))
+    return jsonify({"features": feats, "against_advice": cf.against_advice(feats),
+                    "can_change": bool(cr.get("object_story_spec")) and current_user()["role"] == "admin"})
+
+
+@bp.post("/ads/ad/<ad_id>/enhancements")
+@admin_required
+def change_enhancement(ad_id):
+    """Switch one feature: a new creative with the same story and the new setting, put on the ad."""
+    import creative_features as cf
+    data = request.get_json(silent=True) or {}
+    key, on = str(data.get("key") or ""), bool(data.get("on"))
+    user = current_user()
+    try:
+        ad, cr = _creative_of(user, ad_id)
+    except meta_client.MetaError as exc:
+        return api_error(f"Couldn't read the creative: {exc}", 400)
+    if not ad:
+        return api_error("Ad not found", 404)
+    known = {f["key"] for f in cf.read(cr.get("degrees_of_freedom_spec"))} | set(cf.FEATURES)
+    if key not in known:
+        return api_error("Unknown feature", 400)
+    if not cr.get("object_story_spec"):
+        return api_error("This ad's creative can't be copied here; change it in Ads Manager", 409)
+    dof = cf.with_change(cr.get("degrees_of_freedom_spec"), key, on)
+    label = cf.FEATURES.get(key, (cf.human(key),))[0]
+    row = {"id": ad["id"], "name": ad["name"], "campaign_id": ad["campaign_id"]}
+    try:
+        new = meta_client.post(f"act_{_account()}/adcreatives", data={
+            "name": f"{ad['name']} · {label} {'on' if on else 'off'}"[:200],
+            "object_story_spec": json.dumps(cr["object_story_spec"]), "degrees_of_freedom_spec": json.dumps(dof)})
+        meta_client.post(ad["id"], data={"creative": json.dumps({"creative_id": new["id"]})})
+    except meta_client.MetaError as exc:
+        record(user, "ad", row, "enhancement", None, f"{label} {'on' if on else 'off'}", False, str(exc))
+        return api_error(f"Meta refused: {exc}", 400)
+    db.execute("UPDATE ads SET creative_id = %s WHERE id = %s", (new["id"], ad["id"]))
+    record(user, "ad", row, "enhancement", ad["creative_id"], f"{label} {'on' if on else 'off'} (creative {new['id']})", True)
+    resync_later()
+    return enhancements(ad_id)

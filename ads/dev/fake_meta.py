@@ -63,7 +63,10 @@ for i, (name, (title, body)) in enumerate(TEXTS.items()):
                       "video_id": vid, "thumbnail_url": pic, "effective_object_story_id": f"{PAGE}_12209837790354{i}159",
                       "object_story_spec": {"page_id": PAGE, "video_data": {"video_id": vid, "image_url": pic, "message": body,
                                                                            "title": title, "call_to_action": cta()}},
-                      "degrees_of_freedom_spec": {"creative_features_spec": {"standard_enhancements": {"enroll_status": "OPT_OUT"}}}}
+                      "degrees_of_freedom_spec": {"creative_features_spec": {
+                          "standard_enhancements": {"enroll_status": "OPT_OUT"}, "inline_comment": {"enroll_status": "OPT_OUT"},
+                          "text_optimizations": {"enroll_status": "OPT_OUT"}, "image_touchups": {"enroll_status": "OPT_IN"},
+                          "video_filtering": {"enroll_status": "OPT_IN" if i == 2 else "OPT_OUT"}}}}
     ADS[aid] = {"id": aid, "name": name, "campaign_id": CAMPAIGN["id"], "adset_id": ADSET["id"], "status": "ACTIVE",
                 "effective_status": "ACTIVE", "creative_id": cid,
                 "created_time": (TODAY - timedelta(days=9)).isoformat() + "T13:30:00-0800"}
@@ -379,7 +382,8 @@ def graph(path):
                               "title": media.get("title") or media.get("name"), "body": media.get("message"),
                               "call_to_action_type": (media.get("call_to_action") or {}).get("type"),
                               "video_id": media.get("video_id"), "image_url": PIC if "link_data" in spec else None,
-                              "thumbnail_url": PIC, "object_story_spec": spec}
+                              "thumbnail_url": PIC, "object_story_spec": spec,
+                              "degrees_of_freedom_spec": json.loads(a.get("degrees_of_freedom_spec") or "{}")}
             return jsonify({"id": cid})
         if parts == [act, "campaigns"]:
             if a.get("status") != "PAUSED" or a.get("objective") != "OUTCOME_LEADS" or not a.get("name"):
@@ -472,6 +476,11 @@ def graph(path):
             for key in ("status", "daily_budget", "name"):
                 if key in a:
                     obj[key] = a[key]
+            if "creative" in a and parts[0] in ADS:
+                cid = json.loads(a["creative"])["creative_id"]
+                if cid not in CREATIVES:
+                    return jsonify({"error": {"message": "Unknown creative (fake)", "code": 100}}), 400
+                obj["creative_id"] = cid
             if "status" in a:
                 obj["effective_status"] = a["status"] if parts[0] not in ADS else effective(obj)
             return jsonify({"success": True})

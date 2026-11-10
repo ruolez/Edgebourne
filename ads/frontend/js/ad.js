@@ -147,6 +147,10 @@ function renderOverview() {
             </dl>
           </div>
         </section>
+        <section class="panel" id="enh-panel">
+          <div class="panel-head"><h2>Meta's automatic changes</h2><p>Advantage+ creative</p></div>
+          <div class="panel-body" id="enh"><p class="muted flush">Reading from Meta…</p></div>
+        </section>
         <section class="panel">
           <div class="panel-head"><h2>Leads from this ad</h2></div>
           <div class="panel-body">${leadsHtml}</div>
@@ -158,12 +162,47 @@ function renderOverview() {
   columnChart({ el: $("c-leads"), series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true, height: 160,
     format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
   loadPreview();
+  loadEnhancements();
   const eb = $("edit-budget");
   if (eb) eb.addEventListener("click", () => editBudget({ level: budgetLevel, id: budgetLevel === "adset" ? ad.adset_id : ad.campaign_id, name: budgetLevel === "adset" ? ad.adset_name : ad.campaign_name, current: budgetCents }, load));
   if (ad.adset_id) api(`/api/insights/adset/${encodeURIComponent(ad.adset_id)}/estimate`).then((e) => {
     if (e.lower && e.upper && $("estimate")) $("estimate").innerHTML = `<br><span class="muted small">Meta estimates ${count(e.lower)}–${count(e.upper)} people could see ads from this ad set.</span>`;
   }).catch(() => {});
 }
+
+// ---------------------------------------------------------------- Meta's automatic changes
+
+function enhancementsHtml(d) {
+  if (!d.features.length) return '<p class="muted flush">The creative doesn\'t list any. Meta applies its defaults; check Advanced preview in Ads Manager.</p>';
+  const warn = d.against_advice.length ? `<p class="note warn">On, and they change your words or pictures: ${esc(d.against_advice.join(", "))}. For brand copy the usual advice is to switch them off.</p>` : "";
+  return `${warn}<ul class="enh-list">${d.features.map((f) => `<li>
+      <div class="enh-text"><b>${esc(f.label)}</b><span class="muted small">${esc(f.about)}${f.advice === "fine" ? " Harmless: it doesn't change what the ad says." : ""}</span></div>
+      ${d.can_change ? switchHtml(f.on, `data-enh="${esc(f.key)}" data-label="${esc(f.label)}"`, `${f.label} on or off`) : `<span class="pill ${f.on ? "ok" : ""}">${f.on ? "On" : "Off"}</span>`}
+    </li>`).join("")}</ul>
+    ${d.can_change ? '<p class="muted small flush">Switching one makes a copy of the creative with the new setting and puts it on this ad. Meta reviews the ad again (usually minutes to a few hours); results so far stay with the ad.</p>' : ""}`;
+}
+
+async function loadEnhancements() {
+  const box = $("enh");
+  if (!box) return;
+  try { box.innerHTML = enhancementsHtml(await api(`/api/ads/ad/${encodeURIComponent(adId)}/enhancements`)); }
+  catch (err) { box.innerHTML = `<p class="muted flush">${esc(err.message)}</p>`; }
+}
+
+document.addEventListener("click", async (e) => {
+  const sw = e.target.closest("[data-enh]");
+  if (!sw) return;
+  const on = sw.getAttribute("aria-checked") !== "true";
+  const yes = await confirmDialog({ title: `Turn ${on ? "on" : "off"} “${sw.dataset.label}”?`,
+    body: "<p>Makes a copy of the creative with this setting and puts it on the ad. Meta reviews the ad again before it delivers with the change.</p>",
+    confirm: on ? "Turn on" : "Turn off" });
+  if (!yes) return;
+  sw.disabled = true;
+  try {
+    $("enh").innerHTML = enhancementsHtml(await api(`/api/ads/ad/${encodeURIComponent(adId)}/enhancements`, { method: "POST", body: { key: sw.dataset.enh, on } }));
+    toast(`${sw.dataset.label} is ${on ? "on" : "off"}. Meta reviews the ad again.`);
+  } catch (err) { toast(err.message, "bad"); sw.disabled = false; }
+});
 
 // ---------------------------------------------------------------- polish
 
