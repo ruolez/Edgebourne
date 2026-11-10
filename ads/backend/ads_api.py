@@ -71,13 +71,15 @@ def proposal_action(p, entity):
     return None
 
 
-def build_story_spec(template, media, body, title, cta_type=None):
+def build_story_spec(template, media, body, title, cta_type=None, form_id=None):
     """A new object_story_spec from an existing ad's: same Page, Instagram identity and
-    button (lead form), new media and words."""
+    button (lead form, or `form_id` instead), new media and words."""
     old_media = template.get("video_data") or template.get("link_data") or {}
     cta = json.loads(json.dumps(old_media.get("call_to_action") or {}))
     if cta_type:
         cta["type"] = cta_type
+    if form_id:
+        cta.setdefault("value", {})["lead_gen_form_id"] = form_id
     spec = {k: template[k] for k in ("page_id", "instagram_user_id", "instagram_actor_id") if template.get(k)}
     if media["kind"] == "video":
         data = {"video_id": media["video_id"], "message": body, "title": title}
@@ -604,6 +606,9 @@ def prepare_creative(user, data):
     title = (data.get("title") or "").strip()[:255]
     media = dict(data.get("media") or {})
     cta = data.get("cta_type") or None
+    form_id = str(data.get("form_id") or "").strip() or None
+    if form_id and not form_id.isdigit():
+        return None, ("Unknown lead form", 400)
     if not name or not body or not title:
         return None, ("Give the ad a name, primary text and a headline", 400)
     if media.get("kind") not in ("image", "video", "same") or (media["kind"] != "same" and not (media.get("hash") or media.get("video_id"))):
@@ -627,7 +632,7 @@ def prepare_creative(user, data):
             return None, ("Meta is still processing that video. Try again in a minute.", 409)
         media["thumbnail_url"] = state["thumbnail_url"]
     return {"name": name, "adset": adset, "template": template,
-            "spec": build_story_spec(story, media, body, title, cta),
+            "spec": build_story_spec(story, media, body, title, cta, form_id),
             "dof": tpl.get("degrees_of_freedom_spec")}, None
 
 

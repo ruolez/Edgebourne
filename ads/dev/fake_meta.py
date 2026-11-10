@@ -182,7 +182,28 @@ def tg_api(tok, method):
 
 
 BUSINESS = "9990001"
+FORMS = {"1132280359202136": {
+    "id": "1132280359202136", "name": "EB | Free AI workflow review", "status": "ACTIVE", "leads_count": 41,
+    "created_time": "2026-11-07T20:00:00+0000", "locale": "EN_US", "is_optimized_for_quality": False,
+    "questions": [{"type": "FULL_NAME", "key": "full_name"}, {"type": "EMAIL", "key": "email"}, {"type": "PHONE", "key": "phone_number"},
+                  {"type": "CUSTOM", "key": "what_kind_of_business_do_you_run?", "label": "What kind of business do you run?",
+                   "options": [{"value": "Trades", "key": "a"}, {"value": "Retail", "key": "b"}, {"value": "Professional services", "key": "c"}, {"value": "Other", "key": "d"}]}],
+    "privacy_policy_url": "https://edgebourne.com/privacy",
+    "context_card": {"title": "Free AI workflow review", "style": "LIST_STYLE", "content": ["20 minutes, by phone", "One thing to fix first"]},
+    "thank_you_page": {"title": "Thanks! We'll call you today.", "body": "Eugene from Edge Bourne will call.", "button_type": "VIEW_WEBSITE",
+                       "button_text": "Visit our website", "website_url": "https://edgebourne.com"},
+    "follow_up_action_url": "https://edgebourne.com"}}
 STUDIES = {}
+
+
+@app.route("/fake/_creatives")
+def fake_creatives():
+    return jsonify(CREATIVES)
+
+
+@app.route("/fake/_forms")
+def fake_forms():
+    return jsonify(FORMS)
 
 
 @app.route("/fake/_studies")
@@ -233,7 +254,9 @@ def graph(path):
                 {"id": "c2", "message": "We still do invoices in Excel lol", "created_time": TODAY.isoformat() + "T16:40:00+0000",
                  "from": {"name": "Maria L."}, "like_count": 3, "comment_count": 1}], "summary": {"total_count": 2}})
         if parts == [PAGE, "leadgen_forms"]:
-            return jsonify({"data": [{"id": "1132280359202136", "name": "EB | Free AI workflow review"}]})
+            return jsonify({"data": [{k: f.get(k) for k in ("id", "name", "status", "leads_count", "created_time")} for f in FORMS.values()]})
+        if len(parts) == 1 and parts[0] in FORMS:
+            return jsonify(FORMS[parts[0]])
         if len(parts) == 2 and parts[1] == "leads":
             return jsonify({"data": []})
         if len(parts) == 1 and parts[0].startswith("7700") and len(parts[0]) == 16:
@@ -324,6 +347,24 @@ def graph(path):
                 return jsonify({"error": {"message": "Invalid parameter (fake): lead_id", "code": 100}}), 400
             CRM_EVENTS.extend({**e, "test_event_code": a.get("test_event_code")} for e in events)
             return jsonify({"events_received": len(events), "messages": [], "fbtrace_id": "fake"})
+        if parts == [PAGE, "leadgen_forms"]:
+            # Shaped like Meta's Page leadgen_forms edge; the fake checks what the builder relies on.
+            try:
+                qs = json.loads(a.get("questions") or "[]")
+                pp = json.loads(a.get("privacy_policy") or "{}")
+                ty = json.loads(a.get("thank_you_page") or "{}")
+                card = json.loads(a.get("context_card") or "{}")
+            except ValueError:
+                return jsonify({"error": {"message": "Invalid JSON (fake)", "code": 100}}), 400
+            keys = [q.get("key") for q in qs]
+            if not a.get("name") or not qs or len(set(keys)) != len(keys) or not pp.get("url") or not ty.get("button_type") or not ty.get("title"):
+                return jsonify({"error": {"message": "Invalid parameter (fake): form", "code": 100}}), 400
+            fid = str(next(ids))
+            FORMS[fid] = {"id": fid, "name": a["name"], "status": "ACTIVE", "leads_count": 0, "created_time": TODAY.isoformat() + "T12:00:00+0000",
+                          "questions": qs, "privacy_policy_url": pp["url"], "thank_you_page": ty, "context_card": card,
+                          "follow_up_action_url": a.get("follow_up_action_url"), "locale": a.get("locale"),
+                          "is_optimized_for_quality": a.get("is_optimized_for_quality") == "true"}
+            return jsonify({"id": fid})
         if len(parts) == 2 and parts[0] == BUSINESS and parts[1] == "ad_studies":
             # Shaped like Meta's ad study rules (split testing guide): fake only checks what we rely on.
             cells = json.loads(a.get("cells") or "[]")

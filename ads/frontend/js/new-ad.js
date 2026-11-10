@@ -122,6 +122,16 @@ async function loadLibrary() {
   } catch (err) { $("library").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
+// The lead form: the starting ad's by default, or one built on the Lead forms page.
+async function loadForms() {
+  let list;
+  try { list = (await api("/api/forms")).items.filter((f) => f.status !== "ARCHIVED"); } catch (err) { return; }
+  const want = new URLSearchParams(location.search).get("form");
+  $("form").innerHTML = '<option value="">Same as the starting ad</option>' +
+    list.map((f) => `<option value="${esc(f.id)}" ${f.id === want ? "selected" : ""}>${esc(f.name)}</option>`).join("");
+  $("form-pick").hidden = false;
+}
+
 const me = await boot({ page: "ads" });
 if (me) {
   $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
@@ -140,6 +150,7 @@ if (me) {
     counter($("title"), $("title-count"));
     fillFromTemplate();
     $("template").addEventListener("change", fillFromTemplate);
+    if (me.role === "admin") loadForms();
     $("adset").addEventListener("change", () => { $("adset").dataset.touched = "1"; });
     ["body", "title"].forEach((id) => $(id).addEventListener("input", (e) => { if (e.isTrusted) $(id).dataset.fromTemplate = "0"; }));
 
@@ -185,7 +196,7 @@ if (me) {
       try {
         const r = await api("/api/ads/new", { method: "POST", body: {
           adset_id: $("adset").value, template_ad_id: $("template").value, name,
-          body: $("body").value, title: $("title").value, cta_type: $("cta").value,
+          body: $("body").value, title: $("title").value, cta_type: $("cta").value, form_id: $("form").value || null,
           media: media.kind === "same" ? { kind: "same" } : { kind: media.kind, hash: media.hash, video_id: media.video_id },
         } });
         location.href = `/ad.html?id=${encodeURIComponent(r.id)}&created=1`;

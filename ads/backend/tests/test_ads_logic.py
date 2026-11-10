@@ -72,6 +72,12 @@ class BuildStorySpecTests(unittest.TestCase):
         self.assertEqual(spec["link_data"], {"image_hash": "h1", "message": "B", "name": "T", "link": "http://fb.me/",
                                              "call_to_action": {"type": "SIGN_UP", "value": FORM_CTA["value"]}})
 
+    def test_a_chosen_form_replaces_the_templates_form_and_keeps_the_rest_of_the_button(self):
+        spec = ads_api.build_story_spec(VIDEO_TEMPLATE, {"kind": "video", "video_id": "v2"}, "B", "T", form_id="555")
+        self.assertEqual(spec["video_data"]["call_to_action"],
+                         {**FORM_CTA, "value": {**FORM_CTA["value"], "lead_gen_form_id": "555"}})
+        self.assertNotEqual(FORM_CTA["value"].get("lead_gen_form_id"), "555")
+
     def test_template_is_not_modified(self):
         before = repr(VIDEO_TEMPLATE)
         ads_api.build_story_spec(VIDEO_TEMPLATE, {"kind": "image", "hash": "h"}, "B", "T", "SIGN_UP")

@@ -653,6 +653,59 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   await page.screenshot({ path: `${OUT}/flow-meta-test.png`, fullPage: true });
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,settings_store;db.execute('DELETE FROM experiments');settings_store.set('meta_ab_tests',None)"`);
 
+  // Lead forms: build one with a live check and phone preview, create it on the Page, use it in a new ad.
+  const fake = (p) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/fake/${p}').read().decode())"`));
+  await page.goto(BASE + '/ads.html');
+  await Promise.all([page.waitForURL('**/forms.html'), page.click('#forms-link')]);
+  await page.waitForSelector('#list table');
+  check('Lead forms lists the Page forms with their leads', /EB \| Free AI workflow review/.test(await page.textContent('#list')));
+  await page.click('#new-form');
+  await page.waitForSelector('#form-edit');
+  await page.fill('#f-name', 'QA intro call form');
+  await page.fill('#f-intro', 'Get a free 20-minute intro call');
+  await page.fill('#f-bullets', 'We look at how you work today\nYou leave with one thing to fix first');
+  check('the phone preview shows the intro as it is typed', /Get a free 20-minute intro call/.test(await page.textContent('#phone')) && /one thing to fix first/.test(await page.textContent('#phone')));
+  await page.click('#q-add');
+  await page.fill('#q-label-0', 'What is your yearly income?');
+  await page.fill('#q-opts-0', 'Under 50k\nOver 50k');
+  await page.waitForFunction(() => /Meta would stop ads/.test(document.getElementById('f-check').textContent));
+  check('a prohibited question is caught before creating, with the reason', /financial details/.test(await page.textContent('#f-check')) && await page.isDisabled('#f-create'));
+  await page.fill('#q-label-0', 'How many people work at your company?');
+  await page.fill('#q-opts-0', '1-5\n6-20\n21 or more');
+  await page.check('#form-edit input[name="type"][value="intent"]');
+  await page.waitForFunction(() => /Ready/.test(document.getElementById('f-check').textContent));
+  check('a serious-leads form adds the review step to the preview', await page.locator('#steps [data-show-step="review"]').count() === 1);
+  await page.click('#steps [data-show-step="questions"]');
+  check('the preview lists the prefilled fields and the answers to pick', /Contact information.*Maria Lopez.*How many people work at your company\?.*6-20/s.test(await page.textContent('#phone')));
+  const formsBefore = Object.keys(fake('_forms')).length;
+  await page.click('#f-create');
+  await page.waitForSelector('dialog.confirm');
+  check('creating says a form cannot change afterwards', /doesn't allow changes afterwards/.test(await page.textContent('dialog.confirm')));
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForSelector('#list tr.flash');
+  const newForms = Object.values(fake('_forms')).slice(formsBefore);
+  check('Meta gets the form: prefilled fields, the question with its answers, the review step, the privacy page',
+    newForms.length === 1 && newForms[0].questions.map((q) => q.type).join() === 'FULL_NAME,EMAIL,PHONE,CUSTOM'
+    && newForms[0].questions[3].options.map((o) => o.value).join('|') === '1-5|6-20|21 or more'
+    && newForms[0].is_optimized_for_quality === true && newForms[0].privacy_policy_url === 'https://edgebourne.com/privacy', JSON.stringify(newForms[0] && newForms[0].questions));
+  const formSeen = errors.length;
+  const sneaky = await page.evaluate(async () => { const r = await fetch('/api/forms', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'x', intro_title: 'y', custom: [{ label: 'Have you ever been arrested?', options: [] }] }) }); return [r.status, (await r.json()).policy.length]; });
+  errors.splice(formSeen);
+  check('the server refuses a prohibited question too', sneaky[0] === 400 && sneaky[1] === 1 && Object.keys(fake('_forms')).length === formsBefore + 1);
+  await page.locator('[data-copy="1132280359202136"]').click();
+  await page.waitForSelector('#form-edit');
+  check('Copy into a new form starts from the old one', (await page.inputValue('#f-intro')) === 'Free AI workflow review' && (await page.inputValue('#q-label-0')) === 'What kind of business do you run?'
+    && (await page.inputValue('#f-name')) === 'EB | Free AI workflow review (copy)');
+  await page.goto(BASE + `/new-ad.html?form=${newForms[0].id}`);
+  await page.waitForSelector('#form-pick:not([hidden])');
+  check('New ad can use the new form', (await page.inputValue('#form')) === newForms[0].id);
+  const creativesBefore = Object.keys(fake('_creatives')).length;
+  const adMade = await page.evaluate(async (formId) => (await (await fetch('/api/ads/new', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ adset_id: '120252672227950312', template_ad_id: '120252672229040312', name: 'QA form ad', body: 'B', title: 'T', media: { kind: 'same' }, form_id: formId }) })).json()).id, newForms[0].id);
+  const cr = Object.values(fake('_creatives')).slice(creativesBefore)[0];
+  check("a new ad's button opens the chosen form", !!adMade && cr && cr.object_story_spec.video_data.call_to_action.value.lead_gen_form_id === newForms[0].id, JSON.stringify(cr && cr.object_story_spec.video_data.call_to_action));
+
   await browser.close();
   console.log(results.join('\n'));
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');
