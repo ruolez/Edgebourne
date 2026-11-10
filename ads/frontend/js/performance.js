@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { boot, esc, icon, onRefresh, toast, when } from "./ui.js";
 import { barList, columnChart } from "./charts.js";
-import { count, dayLabel, money, pct, per } from "./format.js";
+import { STATUS as FORMAT_STATUS, count, dayLabel, money, pct, per } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
@@ -15,7 +15,7 @@ let campaign = qs.get("campaign") || "";
 // The ads table: which ads, in what order. Kept per browser.
 const FILTERS = {
   spent: ["Spent money", (a) => a.spend_cents > 0],
-  running: ["Running", (a) => a.effective_status === "ACTIVE"],
+  running: ["Delivering", (a) => a.effective_status === "ACTIVE"],
   all: ["All", (a) => a.effective_status !== "DELETED" || a.spend_cents > 0],
 };
 const COLUMNS = [
@@ -36,12 +36,7 @@ if (!FILTERS[table.filter]) table.filter = "spent";
 if (!COLUMNS.some((c) => c.key === table.sort)) { table.sort = "spend"; table.dir = "desc"; }
 const saveTable = () => { try { localStorage.setItem("ebads-results", JSON.stringify({ filter: table.filter, sort: table.sort, dir: table.dir })); } catch (e) {} };
 
-const STATUS = {
-  ACTIVE: ["ok", "Running"], PAUSED: ["", "Paused"], CAMPAIGN_PAUSED: ["", "Campaign paused"],
-  ADSET_PAUSED: ["", "Ad set paused"], IN_PROCESS: ["warn", "In review"], PENDING_REVIEW: ["warn", "In review"],
-  DISAPPROVED: ["bad", "Rejected"], WITH_ISSUES: ["bad", "Has issues"], ARCHIVED: ["", "Archived"],
-  DELETED: ["", "Deleted"], PENDING_BILLING_INFO: ["bad", "Needs billing"],
-};
+const STATUS = FORMAT_STATUS;
 const statusPill = (s) => { const [k, l] = STATUS[s] || ["", (s || "Unknown").toLowerCase()]; return `<span class="pill ${k}">${esc(l)}</span>`; };
 
 function yesterdayLine(y) {

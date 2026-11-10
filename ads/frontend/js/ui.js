@@ -34,6 +34,8 @@ const ICONS = {
   made: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
   moon: '<path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   logout: '<path d="M14 4.5h4.5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H14M10 16l4-4-4-4M14 12H4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  inbox: '<path d="M3.5 13.5h5l1.5 2.5h4l1.5-2.5h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M6.2 5.5h11.6l2.7 8V18a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 18v-4.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
+  compare: '<rect x="3.5" y="4.5" width="7" height="15" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13.5" y="4.5" width="7" height="15" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
   user: '<circle cx="12" cy="8.5" r="3.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 20c1-3.6 4-5.5 7.5-5.5s6.5 1.9 7.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
 };
 // The service worker makes the console installable and shows push notifications.
@@ -188,6 +190,7 @@ async function frameStatus() {
     clockSkew = st.server_now ? st.server_now - Date.now() / 1000 : 0;
     setNewCount(st.new_leads || 0);
     document.querySelectorAll("[data-claude-count]").forEach((el) => { el.hidden = !st.proposals; el.textContent = st.proposals || ""; });
+    document.querySelectorAll("[data-inbox-count]").forEach((el) => { el.hidden = !st.inbox_unread; el.textContent = st.inbox_unread > 99 ? "99+" : st.inbox_unread || ""; });
     const cap = st.cap;
     const card = document.getElementById("cap-card");
     if (card && cap && cap.limit_cents) {
@@ -204,7 +207,7 @@ async function frameStatus() {
 }
 
 function refreshButton() {
-  return `<button type="button" class="refresh" data-refresh title="Get the latest from Meta">${icon("refresh")}<span class="r-text"><b>Refresh</b><small data-updated>…</small></span></button>`;
+  return `<button type="button" class="refresh" data-refresh title="Get the latest from Meta">${icon("refresh")}<span class="r-text"><b>Refresh</b> <small data-updated>…</small></span></button>`;
 }
 
 // Agency mode: which ad account the console shows. Admins switch; others see their own.
@@ -247,6 +250,59 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("[data-acct-add]")) addAccount().catch((err) => toast(err.message, "bad"));
 });
 
+// The frame's map: every page belongs to one section of the sidebar; some sections have sub-pages
+// shown as tabs under the breadcrumb line.
+const PAGE_SECTION = {
+  home: "today", inbox: "inbox", leads: "leads",
+  ads: "ads", ad: "ads", "new-ad": "ads", "new-adset": "ads", "new-campaign": "ads", forms: "ads", campaign: "ads", adset: "ads",
+  performance: "insights", compare: "insights", experiments: "insights", report: "insights",
+  desk: "claude", research: "claude", settings: "settings", team: "settings", account: "account",
+};
+const PAGE_TITLE = {
+  home: "Today", inbox: "Inbox", leads: "Leads", ads: "Ads", ad: "Ad", "new-ad": "New ad", "new-adset": "New ad set",
+  "new-campaign": "New campaign", forms: "Lead forms", campaign: "Campaign", adset: "Ad set", performance: "Results",
+  compare: "Compare", experiments: "Tests", report: "Reports", desk: "Claude", research: "Research", settings: "Settings",
+  team: "Team", account: "Your account",
+};
+const SECTIONS = {
+  today: { href: "/home.html", label: "Today", icon: "sun" },
+  inbox: { href: "/inbox.html", label: "Inbox", icon: "inbox", badge: "inbox" },
+  leads: { href: "/leads.html", label: "Leads", icon: "leads", badge: "leads" },
+  ads: { href: "/ads.html", label: "Ads", icon: "ads" },
+  insights: { href: "/performance.html", label: "Insights", icon: "chart" },
+  claude: { href: "/desk.html", label: "Claude", icon: "spark", badge: "claude", admin: true },
+  settings: { href: "/settings.html", label: "Settings", icon: "settings", admin: true },
+  account: { href: "/account.html", label: "Your account", icon: "user" },
+};
+// Section tabs: [page, label, who] (who: "admin" = admins only, "all" = everyone signed in).
+const SUBNAV = {
+  ads: [["ads", "Ads", "all"], ["forms", "Lead forms", "admin"]],
+  insights: [["performance", "Results", "all"], ["experiments", "Tests", "admin"], ["report", "Reports", "all"]],
+  claude: [["desk", "Claude", "admin"], ["research", "Research", "admin"]],
+  settings: [["settings", "Settings", "admin"], ["team", "Team", "admin"]],
+};
+const PAGE_HREF = { ads: "/ads.html", forms: "/forms.html", performance: "/performance.html", compare: "/compare.html",
+  experiments: "/experiments.html", report: "/report.html", desk: "/desk.html", research: "/research.html",
+  settings: "/settings.html", team: "/team.html" };
+
+let frame = { page: null, section: null };
+
+// Breadcrumbs: [{label, href}], the last one is the page itself. Pages that load names later call this.
+export function setCrumbs(items) {
+  const nav = document.querySelector(".crumbs");
+  if (nav) {
+    nav.innerHTML = items.map((c, i) => i === items.length - 1
+      ? `<span aria-current="page">${esc(c.label)}</span>`
+      : `<a href="${esc(c.href)}">${esc(c.label)}</a><span class="sep" aria-hidden="true">/</span>`).join("");
+  }
+  const up = document.querySelector(".topbar .crumb-up");
+  const parent = items.length > 1 ? items[items.length - 2] : null;
+  const root = !frame.page || Object.values(SUBNAV).some((tabs) => tabs.some(([p]) => p === frame.page)) || ["home", "inbox", "leads", "account"].includes(frame.page);
+  if (up) { up.hidden = !parent || root; if (parent) up.href = parent.href; }
+  const title = document.querySelector(".topbar .brand span");
+  if (title && items.length) title.firstChild.textContent = items[items.length - 1].label;
+}
+
 export async function boot({ page, admin = false }) {
   let me;
   try { me = await api("/api/auth/me"); } catch (e) { return null; }
@@ -273,41 +329,33 @@ export async function boot({ page, admin = false }) {
   setCurrency(me.account.currency);
   window.ebadsMe = me;
   const isAdmin = me.role === "admin";
+  const section = PAGE_SECTION[page] || page;
+  frame = { page, section };
   const roleLabel = me.owner ? "Admin" : isAdmin ? `Admin · ${me.account.name}` : me.role === "client" ? "Client" : "Team member";
   const showAcct = (me.accounts || []).length > 1 || !me.owner;
-  const main = [
-    { id: "home", href: "/home.html", label: "Today", icon: "sun" },
-    { id: "leads", href: "/leads.html", label: "Leads", icon: "leads", badge: "leads" },
-    { id: "ads", href: "/ads.html", label: "Ads", icon: "ads" },
-    { id: "performance", href: "/performance.html", label: "Results", icon: "chart" },
-    ...(me.role === "client" ? [{ id: "report", href: "/report.html", label: "Reports", icon: "table" }] : []),
-  ];
-  const extra = isAdmin ? [
-    { id: "report", href: "/report.html", label: "Reports", icon: "table" },
-    { id: "experiments", href: "/experiments.html", label: "Tests", icon: "tests" },
-    { id: "desk", href: "/desk.html", label: "Claude", icon: "spark", badge: "claude" },
-    { id: "research", href: "/research.html", label: "Research", icon: "research" },
-  ] : [];
-  const admin2 = isAdmin ? [
-    { id: "team", href: "/team.html", label: "Team", icon: "team" },
-    { id: "settings", href: "/settings.html", label: "Settings", icon: "settings" },
-  ] : [];
-  const badge = (b) => b === "leads" ? '<span class="count" data-new-count hidden></span>'
-    : b === "claude" ? '<span class="count claude" data-claude-count hidden></span>' : "";
-  const link = (l) => `<a href="${l.href}" ${l.id === page ? 'aria-current="page"' : ""}>${icon(l.icon)}<span class="label">${l.label}</span>${badge(l.badge)}</a>`;
+  const allowed = (key) => !SECTIONS[key].admin || isAdmin;
+  const groups = [["Work", ["today", "inbox", "leads"]], ["Run", ["ads", "insights", "claude"]]]
+    .map(([label, keys]) => [label, keys.filter(allowed)]);
+  const badge = (b) => b === "leads" ? '<span class="count bad" data-new-count hidden></span>'
+    : b === "claude" ? '<span class="count claude" data-claude-count hidden></span>'
+    : b === "inbox" ? '<span class="count" data-inbox-count hidden></span>' : "";
+  const cur = (key) => key === section ? 'aria-current="page"' : "";
+  const link = (key) => { const l = SECTIONS[key]; return `<a href="${l.href}" ${cur(key)}>${icon(l.icon)}<span class="label">${l.label}</span>${badge(l.badge)}</a>`; };
   const initials = me.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
   const rail = document.querySelector(".rail");
   rail.innerHTML = `
     <a class="brand" href="/home.html"><img src="/img/favicon.svg" alt=""><span>Edge Bourne Ads</span></a>
     ${accountSwitch(me, "rail")}
+    <button type="button" class="jump" data-palette>${icon("search")}<span>Search or jump to…</span><kbd>${mac ? "⌘" : "Ctrl "}K</kbd></button>
     <nav class="nav" aria-label="Main">
-      ${[...main, ...extra].map(link).join("")}
-      ${admin2.length ? `<div class="sep" role="separator"></div>${admin2.map(link).join("")}` : ""}
+      ${groups.map(([label, keys]) => `<div class="nav-group"><span class="nav-label">${label}</span>${keys.map(link).join("")}</div>`).join("")}
     </nav>
     <div class="rail-foot">
+      ${isAdmin ? `<a class="setlink" href="/settings.html" ${cur("settings")}>${icon("settings")}<span>Settings</span></a>` : ""}
       ${isAdmin ? '<a class="cap-card" id="cap-card" href="/performance.html" hidden></a>' : ""}
-      <a class="me" href="/account.html" ${page === "account" ? 'aria-current="page"' : ""}>
+      <a class="me" href="/account.html" ${cur("account")}>
         <span class="avatar" aria-hidden="true">${esc(initials)}</span>
         <span class="who"><b>${esc(me.name)}</b><small>${esc(roleLabel)}</small></span>
       </a>
@@ -317,20 +365,40 @@ export async function boot({ page, admin = false }) {
       </div>
     </div>`;
 
+  const main = document.querySelector(".main");
+  const line = document.createElement("div");
+  line.className = "topline";
+  line.innerHTML = `<nav class="crumbs" aria-label="Breadcrumb"></nav><span class="grow"></span>${refreshButton()}`;
+  main.prepend(line);
+  const tabsFor = (SUBNAV[section] || []).filter(([, , who]) => who === "all" || isAdmin);
+  if (tabsFor.length > 1 && tabsFor.some(([p]) => p === page)) {
+    const sub = document.createElement("nav");
+    sub.className = "subnav";
+    sub.setAttribute("aria-label", SECTIONS[section].label);
+    sub.innerHTML = tabsFor.map(([p, label]) => `<a href="${PAGE_HREF[p]}" ${p === page ? 'aria-current="page"' : ""}>${label}</a>`).join("");
+    line.after(sub);
+  }
+
   const app = document.querySelector(".app");
-  const titles = { home: "Today", leads: "Leads", ads: "Ads", ad: "Ad", "new-ad": "New ad", performance: "Results", report: "Reports", experiments: "Tests", desk: "Claude", research: "Research", team: "Team", settings: "Settings", account: "Your account" };
   const top = document.createElement("header");
   top.className = "topbar";
-  top.innerHTML = `<a class="brand" href="/home.html"><img src="/img/favicon.svg" alt="Edge Bourne"><span>${esc(titles[page] || "Edge Bourne Ads")}${showAcct ? `<small class="top-acct">${esc(me.account.name)}</small>` : ""}</span></a>
-    <button type="button" class="icon-btn" data-refresh>${icon("refresh")}</button>
+  top.innerHTML = `<a class="crumb-up" href="${SECTIONS[section]?.href || "/home.html"}" aria-label="Back" hidden>${icon("back")}</a>
+    <a class="brand" href="/home.html"><img src="/img/favicon.svg" alt="Edge Bourne"><span>${esc(PAGE_TITLE[page] || "Edge Bourne Ads")}${showAcct ? `<small class="top-acct">${esc(me.account.name)}</small>` : ""}</span></a>
+    <button type="button" class="icon-btn" data-palette aria-label="Search">${icon("search")}</button>
+    <button type="button" class="icon-btn" data-refresh aria-label="Refresh">${icon("refresh")}</button>
     <a class="icon-btn" href="/account.html" aria-label="Your account"><span class="avatar">${esc(initials)}</span></a>`;
   app.prepend(top);
+  const sectionCrumb = SECTIONS[section] ? { label: SECTIONS[section].label, href: SECTIONS[section].href } : null;
+  const own = PAGE_TITLE[page];
+  setCrumbs(sectionCrumb && own && own !== sectionCrumb.label ? [sectionCrumb, { label: own, href: location.pathname }] : [sectionCrumb || { label: own || "", href: location.pathname }]);
 
-  const inMore = [...extra, ...admin2].some((l) => l.id === page) || page === "account";
+  const tabKeys = ["today", "leads", "ads", "inbox"];
+  const moreKeys = ["insights", "claude", "settings"].filter(allowed);
+  const inMore = !tabKeys.includes(section);
   const tabs = document.createElement("nav");
   tabs.className = "tabbar";
   tabs.setAttribute("aria-label", "Main");
-  tabs.innerHTML = `${main.map((l) => `<a href="${l.href}" ${l.id === page || (l.id === "ads" && (page === "ad" || page === "new-ad")) ? 'aria-current="page"' : ""}>${icon(l.icon)}<span>${l.label}</span>${l.badge === "leads" ? '<span class="count" data-new-count hidden></span>' : ""}</a>`).join("")}
+  tabs.innerHTML = `${tabKeys.map((k) => { const l = SECTIONS[k]; return `<a href="${l.href}" ${cur(k)}>${icon(l.icon)}<span>${l.label}</span>${badge(l.badge)}</a>`; }).join("")}
     <button type="button" data-more ${inMore ? 'aria-current="page"' : ""}>${icon("menu")}<span>More</span></button>`;
   app.append(tabs);
 
@@ -338,8 +406,9 @@ export async function boot({ page, admin = false }) {
   sheet.className = "sheet";
   sheet.setAttribute("aria-label", "More");
   sheet.innerHTML = `<div class="grab"></div>${accountSwitch(me, "sheet")}<nav>
-      ${[...extra, ...admin2].map((l) => `<a href="${l.href}" ${l.id === page ? 'aria-current="page"' : ""}>${icon(l.icon)}${l.label}${badge(l.badge)}</a>`).join("")}
-      <a href="/account.html" ${page === "account" ? 'aria-current="page"' : ""}>${icon("user")}Your account</a>
+      ${moreKeys.map((k) => { const l = SECTIONS[k]; return `<a href="${l.href}" ${cur(k)}>${icon(l.icon)}${l.label}${badge(l.badge)}</a>`; }).join("")}
+      ${(SUBNAV.insights).filter(([p, , who]) => p !== "performance" && (who === "all" || isAdmin)).map(([p, label]) => `<a href="${PAGE_HREF[p]}" ${p === page ? 'aria-current="page"' : ""}>${icon(p === "compare" ? "compare" : p === "experiments" ? "tests" : "table")}${label}</a>`).join("")}
+      <a href="/account.html" ${cur("account")}>${icon("user")}Your account</a>
       <div class="sep"></div>
       <button type="button" class="item" data-theme-btn>${icon("moon")}<span>${themeLabel(currentTheme())}</span></button>
       <button type="button" class="item" data-signout>${icon("logout")}Sign out</button>
@@ -348,17 +417,8 @@ export async function boot({ page, admin = false }) {
   tabs.querySelector("[data-more]").addEventListener("click", () => sheet.showModal());
   sheet.addEventListener("click", (e) => { if (e.target === sheet) sheet.close(); });
 
-  // Refresh: in the page header on desktop, in the top bar on phones.
-  const head = document.querySelector(".page-head");
-  if (head && !head.querySelector(".refresh")) {
-    const spacer = head.querySelector(".spacer");
-    const tmp = document.createElement("div");
-    tmp.innerHTML = refreshButton();
-    if (spacer) spacer.after(tmp.firstElementChild);
-    else { const sp = document.createElement("span"); sp.className = "spacer"; head.append(sp, tmp.firstElementChild); }
-  }
   document.querySelectorAll("[data-refresh]").forEach((b) => b.addEventListener("click", doRefresh));
-
+  document.querySelectorAll("[data-palette]").forEach((b) => b.addEventListener("click", () => openPalette()));
   document.querySelectorAll("[data-theme-btn]").forEach((b) => b.addEventListener("click", () => {
     const next = THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length];
     applyTheme(next);
@@ -371,6 +431,7 @@ export async function boot({ page, admin = false }) {
     await api("/api/auth/logout", { method: "POST" });
     location.href = "/login.html";
   }));
+  shortcuts(isAdmin);
 
   banners(me);
   catchUp();
@@ -378,6 +439,30 @@ export async function boot({ page, admin = false }) {
   setInterval(catchUp, 60000);
   document.addEventListener("visibilitychange", catchUp);
   return me;
+}
+
+// ⌘K / Ctrl+K or "/" opens the palette; "g" then a letter jumps to a section.
+const JUMPS = { t: "/home.html", i: "/inbox.html", l: "/leads.html", a: "/ads.html", n: "/performance.html", c: "/desk.html", s: "/settings.html" };
+function typing(el) { return el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)); }
+function shortcuts(isAdmin) {
+  let g = 0;
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
+    if (typing(e.target) || e.metaKey || e.ctrlKey || e.altKey || document.querySelector("dialog[open]")) return;
+    if (e.key === "/") { e.preventDefault(); openPalette(); return; }
+    if (e.key === "g") { g = Date.now(); return; }
+    if (g && Date.now() - g < 1200 && JUMPS[e.key]) {
+      if (!isAdmin && (e.key === "c" || e.key === "s")) return;
+      e.preventDefault(); location.href = JUMPS[e.key];
+    }
+    g = 0;
+  });
+}
+
+let paletteMod = null;
+export async function openPalette(query = "") {
+  paletteMod = paletteMod || await import("./palette.js");
+  paletteMod.open({ query, me: window.ebadsMe, pages: { SECTIONS, PAGE_HREF, PAGE_TITLE } });
 }
 
 // Things an admin must know on every page: the background worker stopped, or Meta refused the token.

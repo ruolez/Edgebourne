@@ -1,0 +1,79 @@
+/* Edge Bourne Ads console, "Signal" (chosen 2026-11-10). Graphite neutrals, one signal green that
+   means "on air", Geist with Geist Mono for numbers, borders-only depth. Components read only tokens.
+   Older token names (--seal, --pine, --rust, …) are kept as aliases so every screen follows. */
+@font-face { font-family: "Geist"; src: url("/fonts/geist-var.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url("/fonts/geist-mono-var.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+
+:root {
+  --canvas: #F6F6F4;
+  --fog: var(--canvas);          /* page */
+  --surface: #FFFFFF;            /* cards, tables */
+  --surface-2: #EEEEEB;          /* inset fields, subtle fills */
+  --ink: #141619;
+  --ink-2: #474C54;
+  --ink-3: #6B7079;              /* 4.6:1 on the canvas: fine for 12px metadata */
+  --line: rgba(20, 22, 25, .09);
+  --line-strong: rgba(20, 22, 25, .17);
+  --signal: #16A34A;             /* delivering / on air: the one accent */
+  --signal-ink: #0F8A4C;
+  --signal-soft: #E7F6EC;
+  --seal: #141619;               /* primary action = ink */
+  --seal-deep: #000000;
+  --seal-soft: #ECECE8;          /* neutral selection */
+  --on-seal: #FFFFFF;
+  --rail: #141619;
+  --rail-ink: #ECEDEE;
+  --rail-ink-2: #9EA3AB;
+  --rail-active: #23262B;
+  --amber: #D99A0B;
+  --amber-ink: #8A5B00;
+  --amber-soft: #FCF3DC;
+  --rust: #C8372D;
+  --rust-ink: #A42B22;
+  --rust-soft: #FBE9E7;
+  --pine: #0F8A4C;
+  --pine-soft: #E7F6EC;
+  --on-pine: #FFFFFF;
+  --info: #3B5BDB;
+  --info-soft: #E9EDFC;
+  --violet: #6A4FD8;             /* Claude only */
+  --violet-soft: #EFEBFC;
+  --focus: #3B5BDB;
+  --lift: 0 0 0 1px var(--line);
+  --shadow-pop: 0 0 0 1px rgba(20, 22, 25, .08), 0 16px 40px -12px rgba(20, 22, 25, .35);
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --font-ui: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-num: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: var(--font-ui);
+  --ease: cubic-bezier(.23, 1, .32, 1);
+  --rail-w: 232px;
+  --chart-spend: #5B6170; --chart-leads: #16A34A; --grid: rgba(20, 22, 25, .07);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: #0E0F11; --surface: #16181B; --surface-2: #1D2024; --ink: #ECEDEE; --ink-2: #B4B9C0; --ink-3: #8A9099;
+    --line: rgba(255, 255, 255, .08); --line-strong: rgba(255, 255, 255, .15);
+    --signal: #22C55E; --signal-ink: #4ADE80; --signal-soft: #12261A;
+    --seal: #ECEDEE; --seal-deep: #FFFFFF; --seal-soft: #23262B; --on-seal: #0E0F11; --rail: #0B0C0E; --rail-active: #1D2024;
+    --amber: #F2B53A; --amber-ink: #F2C56B; --amber-soft: #2A2110; --rust: #F07065; --rust-ink: #F48C82; --rust-soft: #2C1513;
+    --pine: #4ADE80; --pine-soft: #12261A; --on-pine: #0E0F11; --info: #8DA2F7; --info-soft: #161C33;
+    --violet: #A895F5; --violet-soft: #1E1934; --focus: #8DA2F7;
+    --shadow-pop: 0 0 0 1px rgba(255, 255, 255, .1), 0 16px 40px -12px rgba(0, 0, 0, .7);
+    --chart-spend: #9EA3AB; --chart-leads: #22C55E; --grid: rgba(255, 255, 255, .07);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --canvas: #0E0F11; --surface: #16181B; --surface-2: #1D2024; --ink: #ECEDEE; --ink-2: #B4B9C0; --ink-3: #8A9099;
+  --line: rgba(255, 255, 255, .08); --line-strong: rgba(255, 255, 255, .15);
+  --signal: #22C55E; --signal-ink: #4ADE80; --signal-soft: #12261A;
+  --seal: #ECEDEE; --seal-deep: #FFFFFF; --seal-soft: #23262B; --on-seal: #0E0F11; --rail: #0B0C0E; --rail-active: #1D2024;
+  --amber: #F2B53A; --amber-ink: #F2C56B; --amber-soft: #2A2110; --rust: #F07065; --rust-ink: #F48C82; --rust-soft: #2C1513;
+  --pine: #4ADE80; --pine-soft: #12261A; --on-pine: #0E0F11; --info: #8DA2F7; --info-soft: #161C33;
+  --violet: #A895F5; --violet-soft: #1E1934; --focus: #8DA2F7;
+  --shadow-pop: 0 0 0 1px rgba(255, 255, 255, .1), 0 16px 40px -12px rgba(0, 0, 0, .7);
+  --chart-spend: #9EA3AB; --chart-leads: #22C55E; --grid: rgba(255, 255, 255, .07);
+  color-scheme: dark;
+}

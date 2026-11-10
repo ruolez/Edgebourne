@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { boot, confirmDialog, esc, fieldError, icon, toast } from "./ui.js";
-import { CTA_LABELS, money } from "./format.js";
+import { STATUS as FORMAT_STATUS, CTA_LABELS, money } from "./format.js";
 import { placesHtml, placesWidget } from "./places.js";
 
 const CLIENT_KEY = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -13,8 +13,7 @@ let media = [];
 let ads = [];
 
 const STEP_NAMES = { goal: "Goal", budget: "Budget", adset: "Who sees it", form: "Lead form", ads: "Ads" };
-const STATUS = { ACTIVE: ["ok", "On"], PAUSED: ["", "Off"], CAMPAIGN_PAUSED: ["", "Off (campaign off)"], ADSET_PAUSED: ["", "Off (ad set off)"],
-  IN_PROCESS: ["warn", "In review"], PENDING_REVIEW: ["warn", "In review"], DISAPPROVED: ["bad", "Rejected"], WITH_ISSUES: ["bad", "Has issues"] };
+const STATUS = FORMAT_STATUS;
 const pill = (s) => { const [c, l] = STATUS[s] || ["", s ? s.toLowerCase().replace(/_/g, " ") : "Syncing…"]; return `<span class="pill ${c}">${esc(l)}</span>`; };
 
 // ---------------------------------------------------------------- ads step
@@ -204,7 +203,7 @@ function buildView(b) {
 
 // ---------------------------------------------------------------- start
 
-const me = await boot({ page: "ads", admin: true });
+const me = await boot({ page: "new-campaign", admin: true });
 if (me) {
   $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
   const buildId = new URLSearchParams(location.search).get("build");

@@ -22,11 +22,15 @@ export const CTA_LABELS = {
   APPLY_NOW: "Apply now", SUBSCRIBE: "Subscribe", DOWNLOAD: "Download", CONTACT_US: "Contact us",
 };
 
-// Meta's effective_status → [pill class, words people use].
+// Meta's effective_status → [pill class, words people use]. The one status vocabulary of the console.
 export const STATUS = {
-  ACTIVE: ["ok", "On"], PAUSED: ["", "Off"], CAMPAIGN_PAUSED: ["", "Off (campaign is off)"],
+  ACTIVE: ["ok", "Delivering"], PAUSED: ["", "Off"], CAMPAIGN_PAUSED: ["", "Off (campaign is off)"],
   ADSET_PAUSED: ["", "Off (ad set is off)"], IN_PROCESS: ["warn", "In review"], PENDING_REVIEW: ["warn", "In review"],
-  DISAPPROVED: ["bad", "Rejected"], WITH_ISSUES: ["bad", "Has issues"], ARCHIVED: ["", "Archived"],
-  PENDING_BILLING_INFO: ["bad", "Needs billing"], DELETED: ["", "Deleted"],
+  PREAPPROVED: ["ok", "Approved, starts on schedule"], DISAPPROVED: ["bad", "Rejected"], WITH_ISSUES: ["bad", "Has issues"],
+  ARCHIVED: ["", "Archived"], PENDING_BILLING_INFO: ["bad", "Needs billing"], DELETED: ["", "Deleted"],
 };
+export const REVIEW_STATES = ["IN_PROCESS", "PENDING_REVIEW"];
+export const PROBLEM_STATES = ["DISAPPROVED", "WITH_ISSUES", "PENDING_BILLING_INFO"];
+// An ad set's learning phase, in words: LEARNING / SUCCESS / FAIL (Ads Manager's "Learning limited").
+export const LEARNING = { LEARNING: ["info", "Learning"], FAIL: ["warn", "Learning limited"] };
 export const statusOf = (s) => STATUS[s] || ["", (s || "Unknown").replace(/_/g, " ").toLowerCase()];

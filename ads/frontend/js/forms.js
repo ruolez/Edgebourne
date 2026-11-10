@@ -225,7 +225,7 @@ async function create(e) {
   }
 }
 
-const me = await boot({ page: "ads", admin: true });
+const me = await boot({ page: "forms", admin: true });
 if (me) {
   $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
   await loadList();

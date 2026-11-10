@@ -134,7 +134,7 @@ async function loadForms() {
   $("form-pick").hidden = false;
 }
 
-const me = await boot({ page: "ads" });
+const me = await boot({ page: "new-ad" });
 if (me && me.role === "client") location.replace("/ads.html");
 else if (me) {
   $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;

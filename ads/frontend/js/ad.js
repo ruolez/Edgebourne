@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, icon, onRefresh, previewSkeleton, shortWait, showPreviewFrame, switchHtml, toast, when } from "./ui.js";
+import { boot, confirmDialog, esc, icon, onRefresh, previewSkeleton, setCrumbs, shortWait, showPreviewFrame, switchHtml, toast, when } from "./ui.js";
 import { CTA_LABELS, count, money, pct, per, statusOf } from "./format.js";
 import { barList, columnChart } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
@@ -45,7 +45,11 @@ function reviewNotes(ad) {
 function renderHead() {
   const { ad } = data;
   document.title = `${ad.name} | Edge Bourne Ads`;
-  $("crumb").innerHTML = `${icon("back")}<span>${esc(ad.campaign_name || "Ads")}</span>`;
+  $("crumb").hidden = true;
+  setCrumbs([{ label: "Ads", href: "/ads.html" },
+    ...(ad.campaign_id ? [{ label: ad.campaign_name || "Campaign", href: `/ads.html?campaign=${encodeURIComponent(ad.campaign_id)}` }] : []),
+    ...(ad.adset_id ? [{ label: ad.adset_name || "Ad set", href: `/ads.html?campaign=${encodeURIComponent(ad.campaign_id)}` }] : []),
+    { label: ad.name, href: location.pathname + location.search }]);
   $("cr-title").textContent = ad.name;
   const [cls, label] = statusOf(ad.effective_status);
   $("cr-status").innerHTML = `<span class="pill ${cls}">${esc(label)}</span>`;
@@ -502,7 +506,7 @@ async function load() {
   }
 }
 
-me = await boot({ page: "ads" });
+me = await boot({ page: "ad" });
 if (me) {
   document.addEventListener("click", async (e) => {
     const t = e.target.closest("#cr-tabs [data-tab]");

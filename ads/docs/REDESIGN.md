@@ -251,3 +251,28 @@ Each phase ships separately and follows ROADMAP §4: tests first, fake Meta, QA,
 - **Backend:** `ads/backend/{insights.py, sync.py, alerts.py, webhooks.py, ads_api.py, performance_api.py, jobs.py, notify.py, money_rules.py}`; new `status_history.py`, `ranges.py`, `compare.py`, `bulk.py`, `timeline.py`, `entities_api.py`, migrations 023–025.
 - **Frontend:** `ads/frontend/js/{ui.js, format.js, ads.js, performance.js, home.js, ad.js, charts.js, controls.js}`, `css/app.css` → split; new `shell.js, urlstate.js, table.js, views.js, palette.js, peek.js, tray.js, bulkbar.js, status.js`, new pages `campaign/adset/compare/inbox.html`.
 - **Dev:** `ads/dev/fake_meta.py`, `ads/qa/flows.cjs`, `ads/qa/shots.cjs`, `ads/nginx/ads.conf`, `ads/docs/{ROADMAP.md, META-APP-SETUP.md}`.
+
+---
+
+## Feature inventory (written before 8.5; tick at 8.8)
+
+Every action on every current page and where it lives after the redesign. Nothing is dropped.
+
+| Now | Action | New home |
+|---|---|---|
+| Today | Needs attention list, call/email lead, Money card, Ads strip, Claude card, Changes, Meta's advice + benchmarks, Apply advice, Ask Claude, New ad | Today (queue: attention, approvals, Claude decisions, leads; Money + advice kept; Changes → Inbox) [ ] |
+| Leads | Stage filter, search, show test leads, list/detail, call, email reply + templates, stage, owner, notes, history | Leads (same) + filter by ad / campaign [ ] |
+| Ads | Range, filter on/off/attention, archived, sort, cards/table, on/off + budget at 3 levels, New ad set, Lead forms, New campaign, New ad | Ads manager table (levels, views, bulk, peek) + cards option; New ▾ menu; Lead forms tab [ ] |
+| Ad | Back link, tabs Overview/Polish/Audience/Video/Comments/History, preview, Claude suggests, results, words, where it runs, tags, Meta's automatic changes, leads, toggle, duplicate, new from this, polish, archive, delete, comments reply/hide, approve proposals | Ad page (breadcrumbs, same tabs, History = merged timeline, Compare button) [ ] |
+| Results | Range, campaign picker, alerts, pacing + monthly target, figures, charts + day table, ads table, by idea, who and where, what changed on Meta | Insights → Results (ads table → link to manager with range/vs) [ ] |
+| Reports | Week/month, shared view, PDF, share link | Insights → Reports [ ] |
+| Tests | Running/Finished/All, arms, verdict, A/B on Meta, new/edit/finish/reopen/run/end | Insights → Tests [ ] |
+| Claude | Mac status, Ask composer, Waiting / By ad / All runs / Schedules, approve/decline, cancel/re-run, Mac key | Claude (tabs + Research) [ ] |
+| Research | Ad Library search, Ask Claude to research, swipe file, watched Pages, research runs | Claude → Research [ ] |
+| Lead forms | Builder, list, copy, use in a new ad | Ads → Lead forms tab [ ] |
+| New ad / New ad set / New campaign | Wizards | Same pages, reached from New ▾ and from campaign/ad set pages [ ] |
+| Team | Members, roles, campaigns, passwords | Settings → Team [ ] |
+| Settings | 14 sections | Settings with a left sub-nav (This account / Console), + Instant status updates [ ] |
+| Account | Password, appearance, lead alerts, Telegram, device install, push | Account menu at the bottom of the rail [ ] |
+| Frame | Badges, account switcher, refresh + auto catch-up, spending-limit card, system banners, theme, sign out | Signal shell (+ Inbox badge, ⌘K, breadcrumbs) [ ] |
+| New | Compare, Inbox, campaign page, ad set page, saved views, bulk bar, peek, period compare | 8.6 / 8.7 [ ] |

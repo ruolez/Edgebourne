@@ -92,7 +92,7 @@ async function loadTemplate() {
   } catch (err) { toast(err.message, "bad"); }
 }
 
-const me = await boot({ page: "ads", admin: true });
+const me = await boot({ page: "new-adset", admin: true });
 if (me) {
   $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
   try { opts = await api("/api/adsets/new/options"); } catch (err) { toast(err.message, "bad"); }

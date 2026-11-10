@@ -125,15 +125,15 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   // Refresh: on every page, pulls from Meta, then the page reloads its data and the label updates.
   require('child_process').execSync(`docker exec -w /app edgebourne-ads-backend python -c "import settings_store,time;settings_store.set('last_refresh_at',str(time.time()-600))"`); // outside the 60 s throttle
   await page.goto(BASE + '/ads.html');
-  await page.waitForSelector('.page-head [data-refresh]');
-  await page.click('.page-head [data-refresh]');
-  await page.waitForFunction(() => /Updated just now/.test(document.querySelector('.page-head [data-updated]')?.textContent || ''), null, { timeout: 60000 });
-  check('Refresh pulls from Meta and shows when', true, await page.textContent('.page-head [data-updated]'));
+  await page.waitForSelector('.topline [data-refresh]');
+  await page.click('.topline [data-refresh]');
+  await page.waitForFunction(() => /Updated just now/.test(document.querySelector('.topline [data-updated]')?.textContent || ''), null, { timeout: 60000 });
+  check('Refresh pulls from Meta and shows when', true, await page.textContent('.topline [data-updated]'));
   const again = await page.evaluate(() => fetch('/api/refresh', { method: 'POST' }).then((r) => r.json()));
   check('a second Refresh within a minute does not hit Meta again', again.ran === false);
   for (const p of ['leads', 'performance', 'desk', 'research', 'settings', 'team', 'account']) {
     await page.goto(`${BASE}/${p}.html`, { waitUntil: 'networkidle' });
-    check(`Refresh is on ${p}`, await page.isVisible('.page-head [data-refresh]'));
+    check(`Refresh is on ${p}`, await page.isVisible('.topline [data-refresh]'));
   }
 
   // Archive and delete: only for an ad that is off; delete needs the name typed.
@@ -213,7 +213,7 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   await page.waitForFunction(() => document.querySelector('#auto-state')?.textContent === 'Every 5 minutes');
   check('Settings sets the automatic refresh interval', true);
   await page.goto(BASE + '/ads.html', { waitUntil: 'networkidle' });
-  check('the Refresh button says how often it updates by itself', /every 5 min/.test(await page.getAttribute('.page-head [data-refresh]', 'title')));
+  check('the Refresh button says how often it updates by itself', /every 5 min/.test(await page.getAttribute('.topline [data-refresh]', 'title')));
   const stampPull = () => require('child_process').execSync(`docker exec edgebourne-ads-backend sh -c "cd /app && python -c \\"import settings_store,time;settings_store.set('last_refresh_at',str(time.time()))\\""`);
   let adsLoads = 0;
   const countAds = (r) => { if (/\/api\/ads\?range=/.test(r.url())) adsLoads++; };
@@ -493,7 +493,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
     && (await page.inputValue('#cr-q')) === '');
   await page.click('#cr-filter [data-filter="running"]');
   const st = await cells(1);
-  check('Running shows only ads that are on', st.length > 0 && st.every((t) => t === 'Running'), st.join(' '));
+  check('Delivering shows only ads that are on', st.length > 0 && st.every((t) => t === 'Delivering'), st.join(' '));
   await page.click('#cr-filter [data-filter="spent"]');
   check('with one campaign there is no campaign picker', await page.isHidden('#campaign-pick'));
   const one = await page.evaluate(async () => {
@@ -1080,7 +1080,7 @@ db.execute(\\"UPDATE accounts SET archived_at = now() WHERE name = 'QA Studio'\\
   await Promise.all([cp.waitForURL('**/home.html**'), cp.click('button[type=submit]')]);
   await cp.waitForSelector('.rail .nav a .label');
   const nav = await cp.$$eval('.rail .nav a .label', (a) => a.map((x) => x.textContent.trim()));
-  check('a client signs in to their own account with the read-only menu', nav.join() === 'Today,Leads,Ads,Results,Reports' && /Burdanova QA/.test(await cp.textContent('.rail')), nav.join());
+  check('a client signs in to their own account with the read-only menu', nav.join() === 'Today,Inbox,Leads,Ads,Insights' && /Burdanova QA/.test(await cp.textContent('.rail')), nav.join());
   const clientBulk = await cp.evaluate(async () => (await fetch('/api/ads/bulk/preview', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ebads' },
     body: JSON.stringify({ action: 'status', level: 'ad', ids: ['x'], value: 'PAUSED' }) })).status);
   check('a client can\'t make bulk changes', clientBulk === 403, String(clientBulk));
@@ -1330,6 +1330,33 @@ with account_ctx.use(a2):
     && onNo.status === 409 && onDone.body.done === 2);
   const tagged = sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query('SELECT COUNT(DISTINCT bulk_id) AS n, COUNT(*) AS c FROM meta_changes WHERE bulk_id IN (%s, %s)', ('${offDone.body.bulk_id}', '${onDone.body.bulk_id}'), one=True))"`);
   check('every bulk write is logged in meta_changes under its bulk id', /'n': 2, 'c': 4/.test(tagged), tagged.trim());
+  // 8.5 Signal shell: every page sits in the right section, has breadcrumbs, and ⌘K finds an ad.
+  const sections = { 'home': 'Today', 'inbox': 'Inbox', 'leads': 'Leads', 'ads': 'Ads', 'ad.html?id=120252672230740312': 'Ads', 'new-ad': 'Ads',
+    'forms': 'Ads', 'new-campaign': 'Ads', 'performance': 'Insights', 'report': 'Insights', 'experiments': 'Insights', 'desk': 'Claude', 'research': 'Claude' };
+  const wrongNav = [];
+  for (const [p, want] of Object.entries(sections)) {
+    await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
+    await page.waitForSelector('.crumbs *');
+    const got = await page.evaluate(() => document.querySelector('.rail .nav a[aria-current="page"] .label')?.textContent);
+    if (got !== want) wrongNav.push(`${p}: ${got}`);
+  }
+  check('every page highlights its own section in the sidebar', wrongNav.length === 0, wrongNav.join(' | '));
+  await page.goto(BASE + '/ad.html?id=120252672230740312');
+  await page.waitForFunction(() => document.querySelectorAll('.crumbs a').length >= 2);
+  const crumbText = await page.textContent('.crumbs');
+  check('the ad page shows Ads › campaign › ad set › ad', /Ads.*Free intro call.*SoCal.*N3/.test(crumbText), crumbText);
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
+  await page.waitForSelector('dialog.palette[open]');
+  await page.keyboard.type('weekly');
+  await page.waitForSelector('dialog.palette .pal-item:has-text("N4 - Weekly report")');
+  await page.keyboard.press('ArrowDown');
+  const target = await page.evaluate(() => document.querySelector('dialog.palette .pal-item[aria-selected="true"] .pal-t')?.textContent);
+  await page.keyboard.press('ArrowUp');
+  await Promise.all([page.waitForURL('**/ad.html?id=**'), page.keyboard.press('Enter')]);
+  check('⌘K finds an ad by name and Enter opens it', /ad\.html\?id=/.test(page.url()), `${target} → ${page.url()}`);
+  await page.goto(BASE + '/inbox.html');
+  await page.waitForSelector('.ib-item, .ib-empty');
+  check('the Inbox page lists items with read state and filters', (await page.locator('#ib-filters [data-f]').count()) === 7 && (await page.locator('.ib-item').count()) > 0);
   // Phones: no page wider than the screen.
   const phonePage = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
   await phonePage.goto(BASE + '/login.html');
