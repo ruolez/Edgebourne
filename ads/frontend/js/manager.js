@@ -4,6 +4,7 @@
 // avoid "ad"-like tokens: ad blockers hide those.
 import { api } from "./api.js";
 import { confirmDialog, esc, icon, switchHtml, toast, when } from "./ui.js";
+import { columnChart } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
 import { LEARNING, PROBLEM_STATES, REVIEW_STATES, count, money, pct, per, statusOf } from "./format.js";
 
@@ -96,17 +97,17 @@ const C = {
   ctr: num("ctr", "Click rate", (r) => -(rate(r.m.link_clicks, r.m.impressions) || 0), (r) => pct(r.m.link_clicks, r.m.impressions)),
   hook: num("hook", "Hook rate", (r) => -(rate(r.m.video_3s, r.m.impressions) || 0), (r) => (r.object_type === "VIDEO" || r.level !== "ad" ? pct(r.m.video_3s, r.m.impressions) : "—"), { title: "3-second views ÷ impressions" }),
   hold: num("hold", "Hold", (r) => -(rate(r.m.thruplays, r.m.video_3s) || 0), (r) => pct(r.m.thruplays, r.m.video_3s), { title: "ThruPlays ÷ 3-second views" }),
-  impressions: num("impressions", "Views", (r) => r.m.impressions || 0, (r) => count(r.m.impressions)),
-  reach: num("reach", "People", (r) => r.m.reach || 0, (r) => count(r.m.reach)),
+  impressions: num("impressions", "Views", (r) => r.m.impressions || 0, (r) => count(r.m.impressions), { title: "Times it was shown (impressions)" }),
+  reach: num("reach", "People", (r) => r.m.reach || 0, (r) => count(r.m.reach), { title: "Different people who saw it at least once" }),
   freq: num("freq", "Times each", (r) => rate(r.m.impressions, r.m.reach) || 0, (r) => (r.m.reach ? (r.m.impressions / r.m.reach).toFixed(2) : "—")),
   cpm: num("cpm", "Per 1,000", (r) => rate(r.m.spend_cents * 1000, r.m.impressions) ?? Infinity, (r) => (r.m.impressions ? money((r.m.spend_cents * 1000) / r.m.impressions, { exact: true }) : "—")),
   on: { key: "on", label: "On", cell: (r) => (r.can_control && ["ACTIVE", "PAUSED"].includes(r.status) ? switchHtml(isOn(r.status), `data-toggle="${r.level}:${r.id}" data-name="${esc(r.name)}"`, `${r.name} on or off`) : ""), cls: "c-on" },
   spark: { key: "spark", label: "Leads / day", cell: (r) => sparkline(r.spark), cls: "c-sp" },
 };
 export const COLUMN_SETS = {
-  results: ["Results", { ad: ["name", "status", "spend", "leads", "cpl", "vs", "qualified", "ctr", "hook", "on", "spark"],
-    adset: ["name", "status", "budget", "spend", "leads", "cpl", "vs", "qualified", "on"],
-    campaign: ["name", "status", "budget", "spend", "leads", "cpl", "vs", "qualified", "on"] }],
+  results: ["Results", { ad: ["name", "status", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified", "ctr", "hook", "on", "spark"],
+    adset: ["name", "status", "budget", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified", "on"],
+    campaign: ["name", "status", "budget", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified", "on"] }],
   delivery: ["Delivery", { ad: ["name", "status", "spend", "impressions", "reach", "freq", "cpm", "ctr", "on"],
     adset: ["name", "status", "budget", "spend", "impressions", "reach", "freq", "cpm", "on"],
     campaign: ["name", "status", "budget", "spend", "impressions", "reach", "freq", "cpm", "on"] }],
@@ -155,7 +156,7 @@ export function listHtml({ rows, selected, sort, dir }) {
     <input type="checkbox" class="tbl-cb" data-pick="${esc(r.id)}" aria-label="Select ${esc(r.name)}" ${selected.has(r.id) ? "checked" : ""}>
     ${r.level === "ad" ? thumb(r) : ""}
     <span class="pl-b"><a href="${href(r)}" class="tbl-link">${esc(r.name)}</a><span class="pl-st">${statusCell(r)}</span>
-      <small class="tnum">${money(r.m.spend_cents, { exact: true })} · ${count(r.m.leads)} leads · ${per(r.m.spend_cents, r.m.leads)}${r.prev && cpl(r.prev) && cpl(r.m) ? ` ${delta(cpl(r.m), cpl(r.prev), true)}` : ""}</small></span>
+      <small class="tnum">${money(r.m.spend_cents, { exact: true })} · ${count(r.m.impressions)} views · ${count(r.m.leads)} leads · ${per(r.m.spend_cents, r.m.leads)}${r.prev && cpl(r.prev) && cpl(r.m) ? ` ${delta(cpl(r.m), cpl(r.prev), true)}` : ""}</small></span>
     ${C.on.cell(r)}</li>`).join("")}</ul>`;
 }
 
@@ -186,6 +187,7 @@ export function figuresHtml(m, prev, target) {
   const qcpl = m.qualified ? m.spend_cents / m.qualified : null;
   return `<div class="figs">
     ${f("Spent", money(m.spend_cents, { exact: true }), prev ? delta(m.spend_cents, prev.spend_cents, null).replace(/d-(good|bad)/, "d-mute") : "")}
+    ${f("Views", count(m.impressions), `${prev ? delta(m.impressions, prev.impressions, false) : ""}<span class="fig-s">${count(m.reach)} ${m.reach === 1 ? "person" : "people"} reached</span>`)}
     ${f("Leads", count(m.leads), prev ? delta(m.leads, prev.leads, false) : "")}
     ${f("Cost per lead", per(m.spend_cents, m.leads), prev ? delta(cpl(m), cpl(prev), true) : "")}
     ${f("Qualified", count(m.qualified), prev ? delta(m.qualified, prev.qualified, false) : "")}
@@ -296,7 +298,72 @@ export function wire(root, ctx) {
 // ---------------------------------------------------------------- peek drawer
 
 let drawer = null;
-export async function peek(r, { onClose, canCompare } = {}) {
+const RANK_TONE = { ABOVE_AVERAGE: "ok", AVERAGE: "mute", BELOW_AVERAGE_35: "warn", BELOW_AVERAGE_20: "bad", BELOW_AVERAGE_10: "bad" };
+
+// Everything we know about one row, without leaving the list: the period's figures against the period
+// before, the rest of the numbers, a daily chart, Meta's own rankings and watch funnel (ads), who it's
+// shown to and learning (ad sets), the words, and the timeline.
+function moreNumbers(r) {
+  const m = r.m || {};
+  const cell = (label, value, title = "") => `<div ${title ? `title="${esc(title)}"` : ""}><dt>${label}</dt><dd>${value}</dd></div>`;
+  const video = r.level !== "ad" || r.object_type === "VIDEO";
+  return `<dl class="pk-grid">
+    ${cell("Times each person saw it", m.reach ? (m.impressions / m.reach).toFixed(2) : "—", "Views ÷ people reached (frequency)")}
+    ${cell("Link clicks", count(m.link_clicks))}
+    ${cell("Click rate", pct(m.link_clicks, m.impressions), "Link clicks ÷ views")}
+    ${cell("Cost per click", per(m.spend_cents, m.link_clicks))}
+    ${cell("Cost per 1,000 views", m.impressions ? money((m.spend_cents * 1000) / m.impressions, { exact: true }) : "—", "CPM")}
+    ${cell("Leads per 1,000 views", m.impressions ? ((m.leads * 1000) / m.impressions).toFixed(2) : "—")}
+    ${video ? cell("Hook rate", pct(m.video_3s, m.impressions), "3-second views ÷ views") : ""}
+    ${video ? cell("Hold rate", pct(m.thruplays, m.video_3s), "ThruPlays ÷ 3-second views") : ""}
+    ${video ? cell("ThruPlays", count(m.thruplays), "Watched 15 s or to the end") : ""}
+    ${cell("Lead rate", pct(m.leads, m.link_clicks), "Leads ÷ link clicks")}
+    ${r.level === "ad" ? cell("Views since it started", count(r.lifetime_impressions)) : ""}
+    ${r.level === "ad" && r.created_time ? cell("Created", esc(when(r.created_time))) : ""}
+  </dl>`;
+}
+
+function context(r) {
+  const parts = [];
+  if (r.level === "ad") {
+    if (r.title) parts.push(`<div class="pk-words"><span class="pk-lbl">Headline</span><p>${esc(r.title)}</p></div>`);
+    const s = r.adset;
+    if (s) parts.push(`<div class="pk-where"><span class="pk-lbl">Runs in</span><p><a href="${href(s)}">${esc(s.name)}</a> · <a href="${href(r.campaign)}">${esc(r.campaign.name)}</a></p>
+      ${s.targeting_summary ? `<p class="muted small">${esc(s.targeting_summary)}</p>` : ""}</div>`);
+  }
+  if (r.level === "adset") {
+    const learn = LEARNING[r.learning_stage];
+    parts.push(`<div class="pk-where"><span class="pk-lbl">Who sees it</span><p>${esc(r.targeting_summary || "—")}</p>
+      ${learn || r.learning_stage === "SUCCESS" ? `<p class="small">${learn ? `<span class="st st-${learn[0]}">${learn[1]}</span>` : '<span class="st st-ok">Finished learning</span>'}</p>` : ""}
+      <p><a href="${href(r.campaign)}">${esc(r.campaign.name)}</a></p></div>`);
+  }
+  if (r.level === "campaign") {
+    parts.push(`<div class="pk-where"><span class="pk-lbl">Inside</span><p>${count((r.adsets || []).length)} ad sets · ${count((r.adsets || []).reduce((n, s) => n + (s.ads || []).length, 0))} ads${r.objective ? ` · goal: ${esc(r.objective.replace("OUTCOME_", "").toLowerCase())}` : ""}</p></div>`);
+  }
+  const fb = r.review_feedback && (r.review_feedback.global || r.review_feedback);
+  if (fb && typeof fb === "object" && Object.keys(fb).length) parts.unshift(`<div class="note bad">${Object.values(fb).map((t) => esc(String(t))).join("<br>")}</div>`);
+  return parts.join("");
+}
+
+async function diagnostics(r) {
+  const box = drawer.querySelector(".pk-diag");
+  if (r.level !== "ad") { box.remove(); return; }
+  try {
+    const d = await api(`/api/insights/ad/${encodeURIComponent(r.id)}/diagnostics`);
+    const ranks = [["quality_ranking", "Quality"], ["engagement_rate_ranking", "Engagement"], ["conversion_rate_ranking", "Conversion"]];
+    const f = d.funnel || {};
+    const steps = r.object_type === "VIDEO" && f.impressions ? [["Views", f.impressions], ["3 seconds", f.video_3s], ["25%", f.p25], ["50%", f.p50], ["75%", f.p75], ["To the end", f.p100]] : [];
+    const top = Math.max(...steps.map(([, v]) => v), 1);
+    box.innerHTML = `<h3 class="pk-h">How Meta rates it <small>last 30 days, against ads competing for the same people</small></h3>
+      <dl class="pk-ranks">${ranks.map(([k, label]) => { const v = d.rankings[k] || {}; return `<div><dt>${label}</dt><dd><span class="st st-${RANK_TONE[v.value] || "mute"}">${esc(v.label || "Not enough data yet")}</span></dd></div>`; }).join("")}</dl>
+      ${d.avg_watch_seconds ? `<p class="small muted">Average watch: <b>${d.avg_watch_seconds} s</b></p>` : ""}
+      ${steps.length ? `<h3 class="pk-h">Who watched how far <small>since it started</small></h3><ul class="pk-funnel">${steps.map(([label, v]) => `<li><span>${label}</span><span class="pk-bar"><i data-w="${((v / top) * 100).toFixed(1)}"></i></span><b class="tnum">${count(v)}</b><small class="tnum">${f.impressions ? `${((v / f.impressions) * 100).toFixed(1)}%` : ""}</small></li>`).join("")}</ul>` : ""}
+      ${d.error ? `<p class="muted small">Meta didn't answer for the rankings: ${esc(d.error)}</p>` : ""}`;
+    box.querySelectorAll("[data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
+  } catch (err) { box.innerHTML = ""; }
+}
+
+export async function peek(r, { onClose } = {}) {
   if (!drawer) {
     drawer = document.createElement("aside");
     drawer.className = "pk";
@@ -307,14 +374,22 @@ export async function peek(r, { onClose, canCompare } = {}) {
   }
   drawer._onClose = onClose;
   const m = r.m || {};
-  drawer.innerHTML = `<div class="pk-head">${r.level === "ad" ? thumb(r) : ""}<div><p class="pk-kicker">${esc(LEVEL_WORDS[r.level][0].replace(/^./, (c) => c.toUpperCase()))}${r.level === "ad" && r.adset ? ` · ${esc(r.adset.name)}` : ""}</p>
+  const word = LEVEL_WORDS[r.level][0].replace(/^./, (c) => c.toUpperCase());
+  drawer.innerHTML = `<div class="pk-head">${r.level === "ad" ? thumb(r) : ""}<div><p class="pk-kicker">${esc(word)}</p>
       <h2>${esc(r.name)}</h2><p>${statusCell(r)}</p></div><button type="button" class="icon-btn pk-x" aria-label="Close">${icon("back")}</button></div>
-    ${figuresHtml(m, r.prev, null).replace('class="figs"', 'class="figs pk-figs"')}
     <div class="row pk-actions"><a class="btn btn-primary btn-small" href="${href(r)}">Open ${esc(LEVEL_WORDS[r.level][0])}</a>
       ${r.can_control && ["ACTIVE", "PAUSED"].includes(r.status) ? `<span class="pk-sw">${switchHtml(isOn(r.status), `data-toggle="${r.level}:${r.id}" data-name="${esc(r.name)}"`, `${r.name} on or off`)} ${isOn(r.status) ? "On" : "Off"}</span>` : ""}
-      ${r.level !== "ad" && r.daily_budget_cents ? budgetCell(r) : ""}</div>
+      ${r.level !== "ad" && r.daily_budget_cents ? budgetCell(r) : ""}
+      ${r.level === "ad" ? `<a class="btn btn-small" href="/leads.html?ad=${encodeURIComponent(r.id)}">Its leads</a>` : ""}</div>
+    ${context(r)}
+    <h3 class="pk-h">This period ${r.prev ? "<small>against the same days before</small>" : ""}</h3>
+    ${figuresHtml(m, r.prev, null).replace('class="figs"', 'class="figs pk-figs"')}
+    ${moreNumbers(r)}
+    ${(r.spark || []).length ? `<h3 class="pk-h">Day by day</h3><div class="pk-charts"><p class="pk-cap">Spent</p><div class="chart" id="pk-spend"></div><p class="pk-cap">Leads</p><div class="chart" id="pk-leads"></div></div>` : ""}
+    <div class="pk-diag"><p class="muted small">Asking Meta how it rates this ad…</p></div>
     <h3 class="pk-h">What happened</h3><ol class="pk-tl"><li class="muted">Loading…</li></ol>`;
   drawer.classList.add("open");
+  drawer.scrollTop = 0;
   drawer.querySelector(".pk-x").addEventListener("click", closePeek);
   drawer.onclick = (e) => {
     const t = e.target.closest("[data-toggle]");
@@ -322,11 +397,18 @@ export async function peek(r, { onClose, canCompare } = {}) {
     const b = e.target.closest("[data-budget]");
     if (b) { const [level, id] = b.dataset.budget.split(":"); editBudget({ level, id, name: b.dataset.name, current: Number(b.dataset.current) }, () => { closePeek(); onClose && onClose(true); }); }
   };
+  if ((r.spark || []).length) {
+    columnChart({ el: drawer.querySelector("#pk-spend"), series: r.spark, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 120,
+      format: (v) => money(v, { exact: true }), axisFormat: (v) => `$${Math.round(v / 100)}` });
+    columnChart({ el: drawer.querySelector("#pk-leads"), series: r.spark, key: "leads", color: "var(--chart-leads)", title: "Leads per day", height: 120, integer: true,
+      format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
+  }
+  diagnostics(r);
   try {
     const tl = await api(`/api/timeline/${r.level}/${encodeURIComponent(r.id)}`);
-    const items = tl.items.slice(0, 6);
+    const items = tl.items.slice(0, 8);
     drawer.querySelector(".pk-tl").innerHTML = items.length ? items.map((i) => `<li class="tl-${i.tone || "n"}"><span class="tl-dot"></span><span class="tl-w">${esc(when(i.at))}</span><span class="tl-t"><b>${esc(i.title)}</b>${i.by ? `<small>${esc(i.by)}</small>` : ""}</span></li>`).join("")
-      : '<li class="muted">Nothing recorded yet.</li>';
+      : '<li class="muted">Nothing recorded yet: status changes show here from the next refresh.</li>';
   } catch (err) { drawer.querySelector(".pk-tl").innerHTML = `<li class="muted">${esc(err.message)}</li>`; }
 }
 
