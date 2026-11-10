@@ -3,6 +3,7 @@ from flask import Blueprint, jsonify, request
 import crm_events
 import db
 import jobs
+import leads
 import mailer
 import reminders
 import replies
@@ -84,12 +85,7 @@ def get_lead(lead_id):
         "ORDER BY a.at",
         (str(lead_id),),
     )
-    lead["assignable"] = db.query(
-        """SELECT DISTINCT u.id, u.name FROM users u
-           LEFT JOIN campaign_members cm ON cm.user_id = u.id
-           WHERE u.is_active AND (u.role = 'admin' OR cm.campaign_id = %s) ORDER BY u.name""",
-        (lead["campaign_id"],),
-    )
+    lead["assignable"] = leads.staff_for(lead["campaign_id"])
     lead["meta_stages"] = crm_events.for_lead(lead_id) if crm_events.enabled() else None
     lead["replies"] = replies.for_lead(lead_id)
     return jsonify(lead)
@@ -118,6 +114,8 @@ def update_lead(lead_id):
     if not lead:
         return api_error("This lead doesn't exist or isn't in your campaigns", 404)
     data = request.get_json(silent=True) or {}
+    if user["role"] == "client" and set(data) - {"status"}:
+        return api_error("Clients can move a lead's stage, nothing else", 403)
     if "status" in data:
         status = data["status"]
         if status not in STATUSES:
@@ -125,10 +123,8 @@ def update_lead(lead_id):
         _set_status(lead, status)
     if "owner_id" in data:
         owner = data["owner_id"]
-        if owner is not None:
-            ok = db.query("SELECT 1 FROM users WHERE id = %s AND is_active", (owner,), one=True)
-            if not ok:
-                return api_error("That teammate isn't active", 400)
+        if owner is not None and owner not in {u["id"] for u in leads.staff_for(lead["campaign_id"])}:
+            return api_error("Pick someone who works on this lead's campaign", 400)
         db.execute("UPDATE leads SET owner_id = %s WHERE id = %s", (owner, lead_id))
         log_activity("lead.owner", subject=str(lead_id), details={"owner_id": owner})
     return get_lead(lead_id)

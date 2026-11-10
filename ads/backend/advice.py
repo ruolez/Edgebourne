@@ -61,6 +61,9 @@ def normalize(rec, budgets=None):
            "budget": None}
     if key == "SCALE_GOOD_CAMPAIGN":
         out["budget"] = budget_step(rec, budgets or {})
+        if out["budget"]["to"] is None and out["can_apply"]:
+            out["can_apply"] = False
+            out["note"] = "Meta didn't give an amount the console can show you first, so apply it in Ads Manager."
     return out
 
 
@@ -69,10 +72,8 @@ def budget_step(rec, budgets):
     extra = (rec.get("recommendation_data") or {}).get("additional_budget") or (rec.get("recommendation_content") or {}).get("additional_budget")
     ids = [str(i) for i in rec.get("object_ids") or []]
     current = next((budgets[i] for i in ids if budgets.get(i)), None)
-    try:
-        add = int(extra) if extra is not None else None
-    except (TypeError, ValueError):
-        add = None
+    import money_rules
+    add = money_rules.recommendation_amount(extra)  # whole cents only; anything else isn't guessed
     if not add or not current:
         return {"from": current, "add": add, "to": None, "pct": None, "big": None}
     pct = add / current

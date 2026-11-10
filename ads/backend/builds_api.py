@@ -55,8 +55,16 @@ def check(spec, forms=None):
     forms = forms if forms is not None else forms_by_id()
     tpl = templates()
     errs = cb.problems(spec, set(forms), set(tpl), running_daily_cents())
-    if not spec["adset"]["template_adset_id"] or not db.query("SELECT 1 FROM adsets WHERE id = %s", (spec["adset"]["template_adset_id"],), one=True):
-        errs.append(("adset", "Pick the ad set it starts from"))
+    import money_rules
+    cap = money_rules.ceiling(settings_store.get("max_daily_budget_cents"))
+    if spec["daily_budget_cents"] and spec["daily_budget_cents"] > cap:
+        errs.append(("budget", f"That's above this account's ceiling of {cb.dollars(cap)} a day "
+                               "(Settings → Targets → highest daily budget)."))
+    tid = spec["adset"]["template_adset_id"]
+    if tid and not db.query("SELECT 1 FROM adsets WHERE id = %s", (tid,), one=True):
+        errs.append(("adset", "That ad set isn't there any more: pick another, or start from scratch"))
+    if not settings_store.get("meta_page_id"):
+        errs.append(("goal", "Add this account's Facebook Page in Settings → Meta first"))
     out = {"problems": [{"step": s, "message": m} for s, m in errs]}
     if not errs:
         out["review"] = cb.review(spec, forms.get(spec["form_id"], ""), {k: v["name"] for k, v in tpl.items()})
@@ -84,17 +92,47 @@ def save(build_id, made, status, error=None):
                (json.dumps(made), status, error, build_id))
 
 
+def find_made(level, name, parent=None):
+    """A paused campaign / ad set with this exact name made in the last two days: after Meta didn't
+    answer, the earlier try may have created it. Adopted instead of making a second one."""
+    account = settings_store.get("meta_ad_account_id")
+    edge = "campaigns" if level == "campaign" else "adsets"
+    found = [x for x in meta_client.paged(f"act_{account}/{edge}", fields="id,name,campaign_id,status,created_time", limit=100)
+             if x.get("name") == name and x.get("status") == "PAUSED" and (parent is None or x.get("campaign_id") == parent)]
+    found.sort(key=lambda x: x.get("created_time") or "", reverse=True)
+    return found[0]["id"] if found else None
+
+
 def run(build_id, user):
-    """Create whatever is still missing, in order. Stops at the first refusal; what exists stays (paused)."""
+    """Create whatever is still missing, in order. Stops at the first refusal; what exists stays (paused).
+    One run per build at a time (an advisory lock), so two clicks can't make two campaigns."""
+    conn = db.connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(%s)", (880000000 + build_id,))
+            if not cur.fetchone()[0]:
+                return False
+        return _run(build_id, user)
+    finally:
+        conn.close()  # releases the lock
+
+
+def _run(build_id, user):
     import ads_api
     import insights
     b = load(build_id)
+    if b["status"] not in ("draft", "partial"):
+        return True
     spec, made = b["spec"], dict(b["made"] or {})
     made.setdefault("ads", {})
     account = settings_store.get("meta_ad_account_id")
     for step in cb.next_steps(made, len(spec["ads"])):
         try:
-            if step == "campaign":
+            if step == "campaign" and b["status"] == "partial" and find_made("campaign", spec["name"]):
+                made["campaign_id"] = find_made("campaign", spec["name"])
+            elif step == "adset" and b["status"] == "partial" and find_made("adset", spec["adset"]["name"], made.get("campaign_id")):
+                made["adset_id"] = find_made("adset", spec["adset"]["name"], made.get("campaign_id"))
+            elif step == "campaign":
                 body = cb.campaign_payload(spec)
                 res = meta_client.post(f"act_{account}/campaigns", data={k: json.dumps(v) if isinstance(v, (list, dict)) else v for k, v in body.items()})
                 made["campaign_id"] = res["id"]
@@ -103,7 +141,7 @@ def run(build_id, user):
                 insights.sync_structure()
             elif step == "adset":
                 s = spec["adset"]
-                tpl = adsets_api.template(s["template_adset_id"])
+                tpl = adsets_api.template(s["template_adset_id"]) if s["template_adset_id"] else {}  # {}: lead-form defaults
                 body = ab.payload(s, tpl, {"id": made["campaign_id"], "daily_budget_cents": spec["daily_budget_cents"]},
                                   settings_store.get("meta_page_id"))
                 res = meta_client.post(f"act_{account}/adsets", data={k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in body.items()})
@@ -114,15 +152,21 @@ def run(build_id, user):
             else:
                 i = int(step.split(":")[1])
                 ad = spec["ads"][i]
-                ad_id, err = ads_api.create_ad_from(user, {**ad, "adset_id": made["adset_id"], "form_id": spec["form_id"]})
+                ad_id, err = ads_api.create_ad_from(user, {**ad, "adset_id": made["adset_id"], "form_id": spec["form_id"]}, sync=False)
                 if err:
                     raise meta_client.MetaError(err[0])
                 made["ads"][str(i)] = ad_id
         except meta_client.MetaError as exc:
             what = {"campaign": "the campaign", "adset": "the ad set"}.get(step, f"ad {int(step.split(':')[1]) + 1}")
-            save(build_id, made, "partial", f"Meta refused {what}: {exc}")
+            save(build_id, made, "partial", (f"Meta didn't answer while creating {what}. It may exist already: "
+                                             "Finish creating looks for it before making another." if exc.unknown
+                                             else f"Meta refused {what}: {exc}"))
             return False
         save(build_id, made, "partial")
+    try:
+        insights.sync_structure()
+    except meta_client.MetaError:
+        pass
     save(build_id, made, "created")
     log_activity("build.created", subject=str(build_id), details={"made": made})
     return True
@@ -148,13 +192,23 @@ def check_only():
 @bp.post("")
 @admin_required
 def create():
-    spec = clean(request.get_json(silent=True) or {})
+    raw = request.get_json(silent=True) or {}
+    key = str(raw.get("client_key") or "")[:64] or None
+    if key:  # the same click sent twice (double click, a retry after a timeout): the same build
+        same = db.query("SELECT id FROM campaign_builds WHERE client_key = %s", (key,), one=True)
+        if same:
+            return jsonify(view(load(same["id"])))
+    spec = clean(raw)
     result = check(spec)
     if result["problems"]:
         p = result["problems"][0]
         return jsonify({"error": p["message"], "field": p["step"], **result}), 400
     user = current_user()
-    b = db.execute("INSERT INTO campaign_builds (spec, created_by) VALUES (%s, %s) RETURNING id", (json.dumps(spec), user["id"]), returning=True)
+    b = db.execute("INSERT INTO campaign_builds (spec, created_by, client_key) VALUES (%s, %s, %s) "
+                   "ON CONFLICT DO NOTHING RETURNING id", (json.dumps(spec), user["id"], key), returning=True)
+    if not b:
+        b = db.query("SELECT id FROM campaign_builds WHERE client_key = %s", (key,), one=True)
+        return jsonify(view(load(b["id"])))
     run(b["id"], user)
     return jsonify(view(load(b["id"]))), 201
 
@@ -198,6 +252,13 @@ def publish(build_id):
     budget = b["spec"]["daily_budget_cents"]
     if not typed_matches((request.get_json(silent=True) or {}).get("typed"), budget):
         return api_error(f"Type the daily budget, {cb.dollars(budget)}, to publish", 400, field="typed")
+    try:  # the typed amount must be what Meta will actually spend (someone may have changed it in Ads Manager)
+        live = ads_api.fresh_budget(b["made"]["campaign_id"]) if b["spec"]["daily_budget_cents"] else None
+    except meta_client.MetaError as exc:
+        return api_error(f"Couldn't read the budget from Meta: {exc}", 400)
+    if live and live != budget:
+        return api_error(f"The campaign's budget on Meta is {cb.dollars(live)} a day now, not {cb.dollars(budget)}. "
+                         "Change it back in Ads Manager, or check it, before publishing.", 409)
     user = current_user()
     for level, eid in cb.publish_order(b["made"]):
         row = ads_api.entity(level, eid)

@@ -110,6 +110,34 @@ review, competitor research or new ad ideas. Claude runs on Eugene's Mac, not on
   `tasks/<id>/status|report|proposals`, `snapshot` (performance + inbox lead quality, no
   contact details), `history`. A task the Mac stops reporting on for 30 minutes is marked failed.
 
+## Backups and restore
+
+The installer backs the console's database (`ebads`) up before every Update and every night at
+3:20 (`/usr/local/sbin/edgebourne-backup`, files `ads-console-<date>.sql.gz` in the backup
+directory, the last 14 kept). A failed dump is not kept and the nightly job reports a failure,
+so it never rotates the good backups out. To also copy them off the server, put
+`BACKUP_COPY_TO="user@host:/path/"` in `/etc/default/edgebourne-backup` (root needs an SSH key
+for that host).
+
+Media uploads are streamed to Meta and deleted, so the database is the only thing to restore.
+
+**Restore** (same server or a new one, with the stack installed and running):
+
+```sh
+docker stop edgebourne-ads-backend
+docker exec edgebourne-postgres psql -U edgebourne -d postgres -c "DROP DATABASE ebads"
+docker exec edgebourne-postgres psql -U edgebourne -d postgres -c "CREATE DATABASE ebads"
+gunzip -c ads-console-<date>.sql.gz | docker exec -i edgebourne-postgres psql -U edgebourne -d ebads
+docker start edgebourne-ads-backend
+```
+
+Messages like `role "ebads_app" does not exist` during the restore are expected on a new server:
+roles aren't part of a dump. The backend recreates `ebads_app` and its grants every time it
+starts (`db.APP_ROLE_SQL`), so it works once started. Restoring a backup taken before an Update
+also brings back that version's data; run the matching code (or Update again) afterwards.
+`SECRET_KEY` in `.env` must be the one the backup was made with, or the stored Meta and email
+secrets can't be read (paste them again in Settings).
+
 ## Design
 
 Tokens at the top of `frontend/css/app.css` (light and dark). The lead clock (time a new lead

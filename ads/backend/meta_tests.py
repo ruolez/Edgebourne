@@ -165,6 +165,8 @@ def sync_running(max_age_minutes=30):
     now = datetime.now().astimezone()
     for r in rows:
         s = r["meta_study"]
+        if not s.get("id"):
+            continue  # being created right now
         last = s.get("fetched_at")
         if last and now - datetime.fromisoformat(last) < timedelta(minutes=max_age_minutes):
             continue

@@ -13,6 +13,9 @@ from datetime import date, timedelta
 
 from flask import Blueprint, jsonify, request
 
+import account_ctx
+import account_info
+import money_rules
 import db
 import insights
 import meta_client
@@ -43,16 +46,6 @@ MAX_VIDEO = 250 * 1024 * 1024
 
 # ---------------------------------------------------------------- pure helpers
 
-def parse_dollars(text):
-    """'$24/day', '24', '$1,250.50 per day' -> cents; None when there's no amount."""
-    if text is None:
-        return None
-    m = re.search(r"\$?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)", str(text))
-    if not m:
-        return None
-    return int(round(float(m.group(1).replace(",", "")) * 100))
-
-
 def proposal_action(p, entity):
     """What approving a proposal does on Meta: ("status", "PAUSED"), ("budget", cents)
     or None when it isn't something the dashboard can apply by itself."""
@@ -66,8 +59,10 @@ def proposal_action(p, entity):
         value = {"OFF": "PAUSED", "PAUSE": "PAUSED", "ON": "ACTIVE", "RESUME": "ACTIVE"}.get(value, value)
         return ("status", value) if value in ("ACTIVE", "PAUSED") else None
     if p["kind"] == "budget" and entity.get("daily_budget_cents"):
-        cents = parse_dollars(p.get("proposed_value"))
-        return ("budget", cents) if cents and cents >= 100 else None
+        cents = payload.get("proposed_cents")
+        if not isinstance(cents, int) or isinstance(cents, bool):
+            cents = money_rules.parse_budget_text(p.get("proposed_value"))
+        return ("budget", cents) if cents else ("unclear", p.get("proposed_value"))
     return None
 
 
@@ -171,12 +166,17 @@ def record(user, level, row, action, old, new, ok, error=None, proposal_id=None,
 
 
 def resync_later():
+    """Re-read the structure in the background, in the same account (a plain thread doesn't
+    inherit context variables, so it would otherwise run in account 1)."""
+    import contextvars
+
     def run():
         try:
             insights.sync_structure()
         except Exception as exc:
             log.info("resync after change failed: %s", exc)
-    threading.Thread(target=run, daemon=True).start()
+    ctx = contextvars.copy_context()
+    threading.Thread(target=ctx.run, args=(run,), daemon=True).start()
 
 
 def refresh_entity(level, entity_id):
@@ -186,6 +186,50 @@ def refresh_entity(level, entity_id):
                    (fresh.get("status"), fresh.get("effective_status"), entity_id))
     except meta_client.MetaError:
         pass
+
+
+# ---------------------------------------------------------------- fresh reads (audit A1, A20)
+
+def _cents_of(value):
+    try:
+        return int(value) if value not in (None, "", "0") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def fresh_budget(entity_id):
+    """The daily budget Meta has right now for a campaign or ad set (None when it has none)."""
+    return _cents_of(meta_client.get(entity_id, fields="daily_budget").get("daily_budget"))
+
+
+def spend_context(level, row):
+    """What turning this on can spend a day, read fresh from Meta: {daily_cents, where}. The budget
+    lives on the ad set or on the campaign (or on each ad set of a campaign without one)."""
+    if level == "ad":
+        node = meta_client.get(row["id"], fields="adset_id,campaign_id")
+        chain = [("adset", node.get("adset_id")), ("campaign", node.get("campaign_id"))]
+    elif level == "adset":
+        node = meta_client.get(row["id"], fields="campaign_id")
+        chain = [("adset", row["id"]), ("campaign", node.get("campaign_id"))]
+    else:
+        chain = [("campaign", row["id"])]
+    for lvl, eid in chain:
+        if not eid:
+            continue
+        cents = fresh_budget(eid)
+        if cents:
+            name = (entity(lvl, eid) or {}).get("name") or eid
+            return {"daily_cents": cents, "where": f"{'the ad set' if lvl == 'adset' else 'the campaign'} “{name}”"}
+    if level == "campaign":
+        total = sum(_cents_of(a.get("daily_budget")) or 0 for a in meta_client.paged(
+            f"{row['id']}/adsets", fields="daily_budget,status", limit=100) if a.get("status") == "ACTIVE")
+        if total:
+            return {"daily_cents": total, "where": "its ad sets together"}
+    return {"daily_cents": None, "where": None}
+
+
+def ceiling():
+    return money_rules.ceiling(settings_store.get("max_daily_budget_cents"))
 
 
 # ---------------------------------------------------------------- changes (shared with proposals)
@@ -242,7 +286,7 @@ def _sum(items):
 def tree():
     user = current_user()
     days = RANGES.get(request.args.get("range", "7"), 7)
-    end = date.today() - timedelta(days=1)
+    end = account_info.today() - timedelta(days=1)
     start = end - timedelta(days=days - 1)
     cw, cp = _scope(user, "id")
     aw, ap = _scope(user, "campaign_id")
@@ -259,7 +303,8 @@ def tree():
         f"SELECT ad_id, SUM(impressions) AS impressions FROM ad_daily WHERE {aw} GROUP BY ad_id", ap)}
     quality = {r["ad_id"]: int(r["n"]) for r in db.query(
         f"""SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND status IN ('qualified','won')
-            AND created_time::date BETWEEN %s AND %s AND {aw} GROUP BY ad_id""", [start, end] + ap)}
+            AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {aw} GROUP BY ad_id""",
+        [account_info.tz_name(), start, end] + ap)}
     pending = {r["eid"]: int(r["n"]) for r in db.query(
         """SELECT COALESCE(entity_id, payload->>'template_ad_id') AS eid, COUNT(*) AS n FROM desk_proposals
            WHERE status = 'pending' AND COALESCE(entity_id, payload->>'template_ad_id') IS NOT NULL GROUP BY 1""")}
@@ -274,9 +319,12 @@ def tree():
         ad["spark"] = [{"day": k, "spend_cents": d.get(k, (0, 0))[0], "leads": d.get(k, (0, 0))[1]} for k in days_list]
         ad["lifetime_impressions"] = lifetime.get(ad["id"], 0)
         ad["pending_proposals"] = pending.get(ad["id"], 0)
+    # Totals count every ad's spend, archived and deleted ones included (they spent real money).
+    every = db.query(f"SELECT id, adset_id FROM ads WHERE {aw}", ap)
+    every_m = [{"adset_id": a["adset_id"], "m": {**metrics.get(a["id"], {}), "qualified": quality.get(a["id"], 0)}} for a in every]
     for s in adsets:
         s["ads"] = [a for a in ads if a["adset_id"] == s["id"]]
-        s["m"] = _sum(s["ads"])
+        s["m"] = _sum([a for a in every_m if a["adset_id"] == s["id"]])
         s["pending_proposals"] = pending.get(s["id"], 0)
     for c in campaigns:
         c["adsets"] = [s for s in adsets if s["campaign_id"] == c["id"]]
@@ -299,7 +347,7 @@ def ad_detail(ad_id):
                      WHERE a.id = %s""", (ad_id,), one=True)
     if not ad or not can_touch(user, ad["campaign_id"]):
         return api_error("Ad not found", 404)
-    end = date.today() - timedelta(days=1)
+    end = account_info.today() - timedelta(days=1)
     start = end - timedelta(days=29)
     rows = {r["day"].isoformat(): r for r in db.query(
         "SELECT day, spend_cents, impressions, link_clicks, leads FROM ad_daily WHERE ad_id = %s AND day BETWEEN %s AND %s",
@@ -368,13 +416,49 @@ def set_status(level, entity_id):
     row, err = _target(level, entity_id)
     if err:
         return err
-    status = ((request.get_json(silent=True) or {}).get("status") or "").upper()
+    data = request.get_json(silent=True) or {}
+    status = (data.get("status") or "").upper()
     if status not in ("ACTIVE", "PAUSED"):
         return api_error("status must be ACTIVE or PAUSED", 400)
+    if status == "ACTIVE":
+        problem = turn_on_problem(level, row, data.get("confirm_daily_cents"))
+        if problem:
+            return api_error(problem[0], problem[1], **(problem[2] if len(problem) > 2 else {}))
     error = apply_status(current_user(), level, row, status)
     if error:
         return api_error(f"Meta refused: {error}", 400)
     return jsonify(entity(level, entity_id))
+
+
+def turn_on_problem(level, row, confirmed):
+    """Turning something on spends money: the person must have seen today's daily spend (read fresh
+    now). Returns (message, status, extra) or None."""
+    try:
+        ctx = spend_context(level, row)
+    except meta_client.MetaError as exc:
+        return (f"Couldn't read the budget from Meta, so it wasn't turned on: {exc}", 400)
+    if ctx["daily_cents"] is None:
+        return None  # a lifetime budget or none Meta reports: nothing to confirm in dollars a day
+    try:
+        confirmed = int(confirmed)
+    except (TypeError, ValueError):
+        confirmed = None
+    if confirmed != ctx["daily_cents"]:
+        return ("Confirm the daily budget first", 409, {"spend": ctx})
+    return None
+
+
+@bp.get("/ads/<level>/<entity_id>/spend")
+@login_required
+def spend(level, entity_id):
+    """For the turn-on confirmation: what it can spend a day, fresh from Meta."""
+    row, err = _target(level, entity_id)
+    if err:
+        return err
+    try:
+        return jsonify(spend_context(level, row))
+    except meta_client.MetaError as exc:
+        return api_error(f"Couldn't read the budget from Meta: {exc}", 400)
 
 
 @bp.post("/ads/ad/<ad_id>/archive")
@@ -416,12 +500,25 @@ def set_budget(level, entity_id):
     row, err = _target(level, entity_id)
     if err:
         return err
+    data = request.get_json(silent=True) or {}
     try:
-        cents = int((request.get_json(silent=True) or {}).get("daily_budget_cents"))
+        cents = int(data.get("daily_budget_cents"))
     except (TypeError, ValueError):
         return api_error("Enter the new daily budget in dollars", 400, field="budget")
-    if cents < 100:
-        return api_error("The daily budget must be at least $1", 400, field="budget")
+    try:
+        live = fresh_budget(entity_id)
+    except meta_client.MetaError as exc:
+        return api_error(f"Couldn't read the budget from Meta: {exc}", 400)
+    if live and live != row["daily_budget_cents"]:
+        db.execute(f"UPDATE {LEVELS[level]} SET daily_budget_cents = %s WHERE id = %s", (live, entity_id))
+        row = {**row, "daily_budget_cents": live}
+        if data.get("from_cents") is not None and int(data["from_cents"]) != live:
+            return api_error(f"The budget changed on Meta since you looked: it's {live / 100:,.2f} a day now. "
+                             "Check the new amount again.", 409, field="budget")
+    change = money_rules.budget_change(row["daily_budget_cents"] or 0, cents, ceiling())
+    problem = money_rules.change_problem(change, bool(data.get("accept_big")))
+    if problem:
+        return api_error(problem, 409 if change["big"] and not change["over_cap"] else 400, field="budget")
     error = apply_budget(current_user(), level, row, cents)
     if error:
         return api_error(error if "level up" in error else f"Meta refused: {error}", 400)
@@ -441,16 +538,21 @@ def duplicate(ad_id):
         new_id = out.get("copied_ad_id") or (out.get("ad_object_ids") or [{}])[0].get("copied_id")
         if not new_id:
             raise meta_client.MetaError("Meta didn't return the new ad's id")
-        meta_client.post(new_id, name=name)
     except meta_client.MetaError as exc:
         record(user, "ad", row, "duplicate", row["name"], name, False, str(exc))
         return api_error(f"Meta refused: {exc}", 400)
     record(user, "ad", {**row, "name": name}, "duplicate", row["name"], name, True, entity_id=new_id)
+    renamed = True
+    try:  # the copy exists (paused) even if naming it fails: keep its id and say so
+        meta_client.post(new_id, name=name)
+    except meta_client.MetaError as exc:
+        renamed = False
+        record(user, "ad", {**row, "name": name}, "rename", f"{row['name']} - Copy", name, False, str(exc), entity_id=new_id)
     try:
         insights.sync_structure()
     except meta_client.MetaError:
         pass
-    return jsonify({"id": new_id}), 201
+    return jsonify({"id": new_id, "renamed": renamed}), 201
 
 
 # ---------------------------------------------------------------- media + new ads
@@ -534,6 +636,12 @@ def upload_file(f, actor=None):
             pass
     log_activity("meta.media_uploaded", subject=result.get("hash") or result.get("video_id"),
                  details={"kind": kind, "name": name}, actor=actor)
+    try:
+        from auth import current_user as _cu
+        record(_cu() if actor is None else None, "account", {"id": _account(), "name": name, "campaign_id": None},
+               "upload", None, f"{kind}: {name}", True, entity_id=result.get("hash") or result.get("video_id"))
+    except Exception:  # noqa: BLE001 - the upload worked; the log line is extra
+        log.info("upload not logged in meta_changes")
     return jsonify(result), 201
 
 
@@ -554,10 +662,34 @@ def _video_state(video_id):
             "thumbnail_url": best.get("uri") or v.get("picture")}
 
 
+_videos_seen = {}  # account id -> (unix time read, set of video ids in its library)
+
+
+def account_video(video_id):
+    """True when the id is a video in this account's own library (digits only). Without the check,
+    any signed-in person could make the console read any Graph node the System User can see."""
+    import time
+    if not str(video_id).isdigit():
+        return False
+    acct = account_ctx.current()
+    at, ids = _videos_seen.get(acct, (0.0, set()))
+    if video_id in ids:
+        return True
+    if time.time() - at < 20:  # just read: it isn't there
+        return False
+    ids = {v["id"] for v in meta_client.paged(f"act_{_account()}/advideos", fields="id", limit=200)}
+    _videos_seen[acct] = (time.time(), ids)
+    return video_id in ids
+
+
 @bp.get("/media/video/<video_id>")
 @login_required
 def video_status(video_id):
+    if not _may_create(current_user()) or current_user()["role"] == "client":
+        return api_error("No campaigns are assigned to you", 403)
     try:
+        if not account_video(video_id):
+            return api_error("That video isn't in this account's media library", 404)
         return jsonify(_video_state(video_id))
     except meta_client.MetaError as exc:
         return api_error(str(exc), 400)
@@ -593,13 +725,15 @@ def prepare_creative(user, data):
     errors propagate. Used to create the ad and to preview it before it exists."""
     adset_id = data.get("adset_id")
     template = db.query("SELECT id, name, adset_id, creative_id, campaign_id FROM ads WHERE id = %s",
-                        (data.get("template_ad_id"),), one=True)
+                        (data.get("template_ad_id"),), one=True) if data.get("template_ad_id") else None
+    if data.get("template_ad_id") and not template:
+        return None, ("The ad it starts from isn't there any more. Pick another.", 400)
     if template and not adset_id:
         adset_id = template["adset_id"]
     adset = db.query("SELECT id, name, campaign_id FROM adsets WHERE id = %s", (adset_id,), one=True)
-    if not adset or not template:
-        return None, ("Pick the ad set and the ad to start from", 400)
-    if not can_touch(user, adset["campaign_id"]) or not can_touch(user, template["campaign_id"]):
+    if not adset:
+        return None, ("Pick the ad set", 400)
+    if not can_touch(user, adset["campaign_id"]) or (template and not can_touch(user, template["campaign_id"])):
         return None, ("This campaign isn't assigned to you", 403)
     name = (data.get("name") or "").strip()[:200]
     body = (data.get("body") or "").strip()
@@ -615,10 +749,23 @@ def prepare_creative(user, data):
         return None, ("Choose an image or video", 400)
     if cta and cta not in CTA_TYPES:
         return None, ("Unknown button", 400)
-    try:
-        tpl = meta_client.get(template["creative_id"], fields="object_story_spec,degrees_of_freedom_spec")
-    except meta_client.MetaError:
-        tpl = meta_client.get(template["creative_id"], fields="object_story_spec")
+    if template:
+        try:
+            tpl = meta_client.get(template["creative_id"], fields="object_story_spec,degrees_of_freedom_spec")
+        except meta_client.MetaError:
+            tpl = meta_client.get(template["creative_id"], fields="object_story_spec")
+    else:
+        # From scratch (a new account's first ads): the account's Page, the chosen lead form, no
+        # Advantage+ creative changes (the skill's advice for a first test).
+        page = settings_store.get("meta_page_id")
+        if not page:
+            return None, ("Add this account's Facebook Page in Settings → Meta first", 400)
+        if not form_id:
+            return None, ("Pick the lead form the button opens", 400)
+        if media["kind"] == "same":
+            return None, ("Choose an image or video", 400)
+        cta = cta or "SIGN_UP"
+        tpl = {"object_story_spec": {"page_id": page}}
     story = tpl.get("object_story_spec")
     if not story:
         return None, ("That ad can't be used as a starting point (it has no single image or video). Pick another.", 400)
@@ -627,6 +774,8 @@ def prepare_creative(user, data):
         if not media:
             return None, ("Couldn't find the starting ad's image or video", 400)
     elif media["kind"] == "video":
+        if not account_video(str(media["video_id"])):
+            return None, ("That video isn't in this account's media library", 400)
         state = _video_state(media["video_id"])
         if not state["ready"]:
             return None, ("Meta is still processing that video. Try again in a minute.", 409)
@@ -636,7 +785,7 @@ def prepare_creative(user, data):
             "dof": tpl.get("degrees_of_freedom_spec")}, None
 
 
-def create_ad_from(user, data, proposal_id=None):
+def create_ad_from(user, data, proposal_id=None, sync=True):
     """Create an ad (always switched off). Returns (ad_id, None) or (None, (message, http_status))."""
     row = {"id": data.get("template_ad_id"), "name": (data.get("name") or "").strip()[:200], "campaign_id": None}
     try:
@@ -644,7 +793,7 @@ def create_ad_from(user, data, proposal_id=None):
         if err:
             return None, err
         name = ctx["name"]
-        row = {"id": ctx["template"]["id"], "name": name, "campaign_id": ctx["adset"]["campaign_id"]}
+        row = {"id": (ctx["template"] or ctx["adset"])["id"], "name": name, "campaign_id": ctx["adset"]["campaign_id"]}
         payload = {"name": f"{name} creative", "object_story_spec": json.dumps(ctx["spec"])}
         if ctx["dof"]:
             payload["degrees_of_freedom_spec"] = json.dumps(ctx["dof"])
@@ -657,11 +806,13 @@ def create_ad_from(user, data, proposal_id=None):
         return None, (f"Meta refused: {exc}", 400)
     record(user, "ad", {**row, "id": ad["id"]}, "create", None, name, True, proposal_id=proposal_id)
     import concepts_api
-    concepts_api.copy_tags(ctx["template"]["id"], ad["id"])
-    try:
-        insights.sync_structure()
-    except meta_client.MetaError:
-        pass
+    if ctx["template"]:
+        concepts_api.copy_tags(ctx["template"]["id"], ad["id"])
+    if sync:
+        try:
+            insights.sync_structure()
+        except meta_client.MetaError:
+            pass
     return ad["id"], None
 
 
@@ -676,6 +827,51 @@ def create_ad():
 
 # ---------------------------------------------------------------- proposals
 
+def proposal_target(p):
+    tid = p.get("entity_id") or (p.get("payload") or {}).get("template_ad_id")
+    return find_entity(tid) if tid else (None, None)
+
+
+def proposal_plan(p):
+    """What approving does, read fresh from Meta, for the confirmation (audit A1, A20)."""
+    if p["kind"] in ("experiment", "tags"):
+        return {"kind": p["kind"]}
+    level, row = proposal_target(p)
+    action = proposal_action(p, row)
+    if not action:
+        return {"kind": "record"}
+    kind, value = action
+    if kind == "create":
+        return {"kind": "create"}
+    if kind == "unclear":
+        return {"kind": "unclear", "problem": f"Claude's new budget isn't one clear amount (“{value or ''}”), so it "
+                                              "can't be applied as is. Decline it, or change the budget yourself on the Ads page."}
+    if kind == "status":
+        out = {"kind": "status", "to": value, "name": row["name"], "level": level}
+        if value == "ACTIVE":
+            out["spend"] = spend_context(level, row)
+        return out
+    live = fresh_budget(row["id"]) or row["daily_budget_cents"]
+    change = money_rules.budget_change(live, value, ceiling())
+    return {"kind": "budget", "name": row["name"], "level": level, **change,
+            "problem": money_rules.change_problem(change, True)}
+
+
+@bp.get("/proposals/<int:proposal_id>/check")
+@login_required
+def check_proposal(proposal_id):
+    p = db.query("SELECT * FROM desk_proposals WHERE id = %s", (proposal_id,), one=True)
+    if not p:
+        return api_error("Proposal not found", 404)
+    level, row = proposal_target(p)
+    if row and not can_touch(current_user(), row["campaign_id"]):
+        return api_error("Proposal not found", 404)
+    try:
+        return jsonify(proposal_plan(p))
+    except meta_client.MetaError as exc:
+        return api_error(f"Couldn't read the live budget from Meta: {exc}", 400)
+
+
 @bp.post("/proposals/<int:proposal_id>/<decision>")
 @login_required
 def decide(proposal_id, decision):
@@ -687,40 +883,75 @@ def decide(proposal_id, decision):
         return api_error("Proposal not found", 404)
     if p["status"] != "pending":
         return api_error("This proposal was already decided", 409)
-    if p["kind"] == "experiment" and decision == "approve":
+    level, row = proposal_target(p)
+    if row and not can_touch(user, row["campaign_id"]):
+        return api_error("This campaign isn't assigned to you", 403)
+    if not row and user["role"] != "admin" and p["kind"] not in ("tags",):
+        return api_error("Only admins can decide account-wide proposals", 403)
+    if decision == "decline":
+        done = db.execute("""UPDATE desk_proposals SET status = 'declined', decided_by = %s, decided_at = now()
+                             WHERE id = %s AND status = 'pending' RETURNING id""", (user["id"], proposal_id), returning=True)
+        if not done:
+            return api_error("This proposal was already decided", 409)
+        log_activity("proposal.declined", subject=str(proposal_id), details={"title": p["title"]})
+        return jsonify({"status": "declined"})
+    # Claimed before anything reaches Meta: a double click or a second tab gets a 409, not a second ad.
+    claimed = db.execute("UPDATE desk_proposals SET status = 'applying' WHERE id = %s AND status = 'pending' RETURNING id",
+                         (proposal_id,), returning=True)
+    if not claimed:
+        return api_error("This proposal is already being applied or was decided", 409)
+    try:
+        return _approve(user, p, level, row, request.get_json(silent=True) or {})
+    finally:
+        # Refused before anything was sent (a check failed): it stays waiting for a decision.
+        db.execute("UPDATE desk_proposals SET status = 'pending' WHERE id = %s AND status = 'applying'", (proposal_id,))
+
+
+def _approve(user, p, level, row, data):
+    proposal_id = p["id"]
+    if p["kind"] == "experiment":
         return approve_experiment(user, p)
-    if p["kind"] == "tags" and decision == "approve":
+    if p["kind"] == "tags":
         import concepts_api
         pl = p.get("payload") or {}
-        row = db.query("SELECT campaign_id FROM ads WHERE id = %s", (pl.get("ad_id"),), one=True)
-        if not row or not can_touch(user, row["campaign_id"]):
+        ad = db.query("SELECT campaign_id FROM ads WHERE id = %s", (pl.get("ad_id"),), one=True)
+        if not ad or not can_touch(user, ad["campaign_id"]):
             return api_error("Ad not found", 404)
         concepts_api.save_tags(pl["ad_id"], pl.get("tags") or {}, "claude")
         db.execute("UPDATE desk_proposals SET status = 'applied', decided_by = %s, decided_at = now() WHERE id = %s", (user["id"], p["id"]))
         log_activity("proposal.applied", subject=str(p["id"]), details={"title": p["title"], "tags": pl.get("tags")})
         return jsonify({"status": "applied", "applied": True})
-    tid = p.get("entity_id") or (p.get("payload") or {}).get("template_ad_id")
-    level, row = find_entity(tid) if tid else (None, None)
-    if row and not can_touch(user, row["campaign_id"]):
-        return api_error("This campaign isn't assigned to you", 403)
-    if not row and user["role"] != "admin":
-        return api_error("Only admins can decide account-wide proposals", 403)
 
     def close(status):
         db.execute("UPDATE desk_proposals SET status = %s, decided_by = %s, decided_at = now() WHERE id = %s",
                    (status, user["id"], proposal_id))
         log_activity(f"proposal.{status}", subject=str(proposal_id), details={"title": p["title"]})
 
-    if decision == "decline":
-        close("declined")
-        return jsonify({"status": "declined"})
     action = proposal_action(p, row)
     if not action:
         close("approved")
         return jsonify({"status": "approved", "applied": False,
                         "note": "Recorded. This one isn't a simple on/off or budget change, so nothing was changed on Meta."})
     kind, value = action
+    if kind == "unclear":
+        return api_error(proposal_plan(p)["problem"], 400)
     new_id = None
+    try:
+        if kind == "status" and value == "ACTIVE":
+            problem = turn_on_problem(level, row, data.get("confirm_daily_cents"))
+            if problem:
+                return api_error(problem[0], problem[1], **(problem[2] if len(problem) > 2 else {}))
+        if kind == "budget":
+            live = fresh_budget(row["id"]) or row["daily_budget_cents"]
+            if data.get("from_cents") is None or int(data["from_cents"]) != live or int(data.get("to_cents") or 0) != value:
+                return api_error(f"Check the amounts again: the budget on Meta is {live / 100:,.2f} a day now.", 409,
+                                 plan=proposal_plan(p))
+            row = {**row, "daily_budget_cents": live}
+            problem = money_rules.change_problem(money_rules.budget_change(live, value, ceiling()), bool(data.get("accept_big")))
+            if problem:
+                return api_error(problem, 409)
+    except meta_client.MetaError as exc:
+        return api_error(f"Couldn't read the live budget from Meta, so nothing was changed: {exc}", 400)
     if kind == "create":
         new_id, err = create_ad_from(user, value, proposal_id)
         error = err[0] if err else None
@@ -804,6 +1035,8 @@ def _creative_of(user, ad_id):
     ad = db.query("SELECT id, name, campaign_id, creative_id, effective_status FROM ads WHERE id = %s", (ad_id,), one=True)
     if not ad or not can_touch(user, ad["campaign_id"]):
         return None, None
+    if not ad["creative_id"]:
+        return ad, None
     return ad, meta_client.get(ad["creative_id"], fields="name,object_story_spec,degrees_of_freedom_spec")
 
 
@@ -817,6 +1050,9 @@ def enhancements(ad_id):
         return api_error(f"Couldn't read the creative: {exc}", 400)
     if not ad:
         return api_error("Ad not found", 404)
+    if cr is None:
+        return jsonify({"features": [], "against_advice": [], "can_change": False,
+                        "note": "This ad has no creative Meta can show yet."})
     feats = cf.read(cr.get("degrees_of_freedom_spec"))
     return jsonify({"features": feats, "against_advice": cf.against_advice(feats),
                     "can_change": bool(cr.get("object_story_spec")) and current_user()["role"] == "admin"})
@@ -836,6 +1072,8 @@ def change_enhancement(ad_id):
         return api_error(f"Couldn't read the creative: {exc}", 400)
     if not ad:
         return api_error("Ad not found", 404)
+    if cr is None:
+        return api_error("This ad has no creative Meta can show yet", 409)
     known = {f["key"] for f in cf.read(cr.get("degrees_of_freedom_spec"))} | set(cf.FEATURES)
     if key not in known:
         return api_error("Unknown feature", 400)

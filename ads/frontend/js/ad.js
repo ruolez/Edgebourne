@@ -56,7 +56,8 @@ function renderHead() {
     <button class="btn btn-claude" type="button" data-goto="polish">${icon("spark")}<span>Polish</span></button>
     ${me.role === "admin" && !["ACTIVE", "ARCHIVED", "DELETED"].includes(ad.status) ? '<button class="btn" type="button" id="archive">Archive</button>' : ""}
     ${me.role === "admin" && !["ACTIVE", "DELETED"].includes(ad.status) ? '<button class="btn btn-danger-text" type="button" id="delete">Delete</button>' : ""}`;
-  const tabs = TABS.filter(([id]) => id !== "video" || ad.object_type === "VIDEO");
+  // Clients look, they don't ask Claude for changes: no Polish tab for them.
+  const tabs = TABS.filter(([id]) => (id !== "video" || ad.object_type === "VIDEO") && (id !== "polish" || ad.can_control));
   $("cr-tabs").innerHTML = tabs.map(([id, l]) => `<button type="button" role="tab" data-tab="${id}" aria-selected="${id === tab}">${esc(l)}${id === "comments" && data.comment_total ? ` <span class="n">${data.comment_total}</span>` : ""}</button>`).join("");
 }
 
@@ -125,7 +126,7 @@ function renderOverview() {
           </div>
         </section>
         <section class="panel">
-          <div class="panel-head"><h2>Words</h2><span class="spacer"></span><button class="btn btn-small" type="button" data-goto="polish">Improve the words</button></div>
+          <div class="panel-head"><h2>Words</h2><span class="spacer"></span>${ad.can_control ? '<button class="btn btn-small" type="button" data-goto="polish">Improve the words</button>' : ""}</div>
           <div class="panel-body">
             <dl class="facts">
               <div><dt>Headline</dt><dd>${esc(ad.title || "—")} <span class="muted small">(${(ad.title || "").length} characters)</span></dd></div>
@@ -143,7 +144,7 @@ function renderOverview() {
               <div><dt>Ad set</dt><dd>${esc(ad.adset_name || "—")}</dd></div>
               <div><dt>Audience</dt><dd>${esc(ad.targeting_summary || "—")}<span id="estimate"></span></dd></div>
               <div><dt>Budget</dt><dd>${budgetCents ? `${money(budgetCents, { exact: true })}/day, shared by the ${budgetLevel === "campaign" ? "whole campaign" : "ad set"} <button class="link-btn" type="button" id="edit-budget">Change</button>` : "—"}</dd></div>
-              <div><dt>Ad ID</dt><dd><a href="https://adsmanager.facebook.com/adsmanager/manage/ads?selected_ad_ids=${encodeURIComponent(ad.id)}" target="_blank" rel="noopener noreferrer">${esc(ad.id)} ${icon("external")}</a></dd></div>
+              <div><dt>Ad ID</dt><dd><a href="https://adsmanager.facebook.com/adsmanager/manage/ads?${window.ebadsMe && window.ebadsMe.account.ad_account_id ? `act=${encodeURIComponent(window.ebadsMe.account.ad_account_id)}&` : ""}selected_ad_ids=${encodeURIComponent(ad.id)}" target="_blank" rel="noopener noreferrer">${esc(ad.id)} ${icon("external")}</a></dd></div>
             </dl>
           </div>
         </section>

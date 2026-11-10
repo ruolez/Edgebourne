@@ -104,8 +104,8 @@ def _mail(row, sender):
 def send_now(lead, sender, subject, body, template_id=None):
     """A reply someone wrote on the lead page. Raises mailer.MailError; the row says failed."""
     row = db.execute(
-        "INSERT INTO lead_replies (lead_id, user_id, template_id, to_email, subject, body, attempts) "
-        "VALUES (%s, %s, %s, %s, %s, %s, 1) RETURNING *",
+        "INSERT INTO lead_replies (lead_id, user_id, template_id, to_email, subject, body, attempts, status) "
+        "VALUES (%s, %s, %s, %s, %s, %s, 1, 'sending') RETURNING *",
         (lead["id"], sender["id"], template_id, lead["email"].strip(), subject, body), returning=True)
     try:
         _mail(row, sender)
@@ -119,11 +119,17 @@ def send_now(lead, sender, subject, body, template_id=None):
 
 
 def auto_sender():
+    """Who automatic replies are signed by: the admin who turned them on for this account. Only
+    Edge Bourne's own account falls back to the first admin; a client's leads must never get an
+    email signed by someone the account didn't choose."""
+    import account_ctx
     uid = settings_store.get("reply_auto_user_id")
     row = None
     if uid:
         row = db.query("SELECT id, name, email FROM users WHERE id = %s AND is_active", (int(uid),), one=True)
-    return row or db.query("SELECT id, name, email FROM users WHERE role = 'admin' AND is_active ORDER BY id LIMIT 1", one=True)
+    if row or account_ctx.current() != account_ctx.DEFAULT:
+        return row
+    return db.query("SELECT id, name, email FROM users WHERE role = 'admin' AND is_active ORDER BY id LIMIT 1", one=True)
 
 
 def queue_auto(lead):
@@ -148,7 +154,10 @@ def process_pending(now=None):
     rows = db.query("SELECT r.*, u.name AS sender_name, u.email AS sender_email FROM lead_replies r "
                     "LEFT JOIN users u ON u.id = r.user_id "
                     "WHERE r.status = 'pending' AND r.next_attempt_at <= %s ORDER BY r.id LIMIT 20", (now,))
+    notify.settle_interrupted("lead_replies", "error")
     for row in rows:
+        if not notify.claim("lead_replies", row["id"]):
+            continue
         try:
             _mail(row, {"name": row["sender_name"], "email": row["sender_email"]})
         except mailer.MailError as exc:

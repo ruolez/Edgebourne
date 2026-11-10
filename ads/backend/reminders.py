@@ -9,6 +9,7 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import account_info
 import config
 import db
 import mailer
@@ -75,7 +76,7 @@ def run(now=None):
     now = now or datetime.now(timezone.utc)
     queued = 0
     for lead in db.query(LEADS_SQL + " AND l.created_time > %s", (now - TOO_OLD,)):
-        url = f"{config.APP_BASE_URL}/leads.html#lead={lead['id']}"
+        url = notify.link(f"/leads.html#lead={lead['id']}")
         kinds = due(lead, now)
         admins = notify.admin_ids()
         for kind in kinds:
@@ -87,7 +88,7 @@ def run(now=None):
                 notify.queue(uid, channel, "reminder", title, lines, url, "Open the lead", ref=str(lead["id"]),
                              dedupe_key=f"reminder:{kind}:{lead['id']}:{uid}")
                 queued += 1
-    local = now.astimezone(ZoneInfo(config.ACCOUNT_TZ))
+    local = now.astimezone(account_info.tz())
     last = settings_store.get("reminder_digest_date")
     if last is None:  # first run: start tomorrow rather than send a list the moment it's switched on
         settings_store.set("reminder_digest_date", local.date().isoformat())
@@ -97,7 +98,7 @@ def run(now=None):
         if waiting:
             title, lines = digest_text(waiting, now)
             for uid, channel in notify.reach(notify.admin_ids()):
-                notify.queue(uid, channel, "digest", title, lines, f"{config.APP_BASE_URL}/leads.html", "Open the leads",
+                notify.queue(uid, channel, "digest", title, lines, notify.link("/leads.html"), "Open the leads",
                              dedupe_key=f"digest:{local.date().isoformat()}:{uid}")
                 queued += 1
     return queued

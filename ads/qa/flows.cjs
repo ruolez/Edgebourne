@@ -1,6 +1,11 @@
 // Local E2E of the Ads controls against the fake Meta server (docker-compose.dev.yml).
 // node ads/qa/flows.cjs <out-dir>
-const { chromium } = require('/Users/ruolez/Desktop/Dev/meta-ads/creatives/2026-11-07-new5/src/node_modules/playwright-core');
+// Playwright: $PLAYWRIGHT_CORE, else the first intact copy on this Mac (the render pipeline's copy lost
+// its package files on 2026-11-10; any 1.64 drives the Chromium 1248 below).
+const PW = [process.env.PLAYWRIGHT_CORE, '/Users/ruolez/Desktop/Dev/meta-ads/creatives/2026-11-07-new5/src/node_modules/playwright-core',
+  ...require('fs').readdirSync(process.env.HOME + '/.npm/_npx').map((d) => `${process.env.HOME}/.npm/_npx/${d}/node_modules/playwright-core`)]
+  .filter(Boolean).find((p) => require('fs').existsSync(p + '/package.json') && /"version": "1\.6[4-9]/.test(require('fs').readFileSync(p + '/package.json', 'utf8')));
+const { chromium } = require(PW);
 const EXE = process.env.HOME + '/Library/Caches/ms-playwright/chromium-1248/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const BASE = process.env.BASE || 'http://ads.localhost:8090';
 const OUT = process.argv[2] || 'qa/out';
@@ -11,6 +16,11 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
 (async () => {
   require('fs').mkdirSync(OUT, { recursive: true });
   const browser = await chromium.launch({ executablePath: EXE, headless: true });
+  // The console's own fetches carry X-Requested-With (api.js); the server refuses writes without it.
+  // QA's direct fetch() calls go through the same door.
+  const asConsole = () => { const f = window.fetch; window.fetch = (u, o = {}) => f(u, { ...o, headers: { 'X-Requested-With': 'ebads', ...(o.headers || {}) } }); };
+  const origNewContext = browser.newContext.bind(browser);
+  browser.newContext = async (opts) => { const ctx = await origNewContext(opts); await ctx.addInitScript(asConsole); return ctx; };
   const page = await (await browser.newContext({ viewport: { width: 1360, height: 900 } })).newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -393,16 +403,23 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   await page.waitForSelector('#al-rules li');
   check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 13);
   await page.fill('[data-rule="no_leads"][data-key="days"]', '4');
-  await page.fill('[data-rule="cpl_high"][data-key="target_cents"]', '15');
   await page.click('#al-form button[type=submit]');
+  await page.waitForTimeout(500);
+  // Targets live in one place now (audit A19): the cost-per-lead target is in Targets, the alert reads it.
+  await page.fill('#t-lead', '15');
+  await page.click('#tg-targets button[type=submit]');
   await page.waitForTimeout(500);
   await page.reload();
   await page.waitForSelector('#al-rules li');
-  check('alert thresholds are saved', (await page.inputValue('[data-rule="no_leads"][data-key="days"]')) === '4' && (await page.inputValue('[data-rule="cpl_high"][data-key="target_cents"]')) === '15');
+  check('alert thresholds are saved', (await page.inputValue('[data-rule="no_leads"][data-key="days"]')) === '4' && (await page.inputValue('#t-lead')) === '15');
+  check('the cost-per-lead alert names the target from Targets', /Target \$15\.00 per lead/.test(await page.textContent('#al-rules')));
   await page.fill('[data-rule="no_leads"][data-key="days"]', '3');
-  await page.fill('[data-rule="cpl_high"][data-key="target_cents"]', '');
   await page.click('#al-form button[type=submit]');
+  await page.waitForTimeout(400);
+  await page.fill('#t-lead', '');
+  await page.click('#tg-targets button[type=submit]');
   await page.waitForTimeout(500);
+  check('without a cost-per-lead target the alert uses the qualified-lead target', /uses \$60\.00 per qualified lead/.test(await page.textContent('#al-rules')));
   const tgBeforeAlert = tgSent().length;
   const runAlerts = () => sh(`docker exec -w /app edgebourne-ads-backend python -c "import alerts;print(alerts.run())"`);
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"DELETE FROM alerts WHERE entity_id = 'qa-rejected'\\");db.execute(\\"INSERT INTO ads (id, name, campaign_id, status, effective_status, created_time) VALUES ('qa-rejected', 'QA rejected ad', '120252638288040312', 'ACTIVE', 'DISAPPROVED', now()) ON CONFLICT (id) DO UPDATE SET effective_status = 'DISAPPROVED'\\")"`);
@@ -1061,6 +1078,7 @@ db.execute(\\"UPDATE accounts SET archived_at = now() WHERE name = 'QA Studio'\\
   await cp.fill('#email', 'client-qa@burdanova.test');
   await cp.fill('#password', 'client-pass-123');
   await Promise.all([cp.waitForURL('**/home.html**'), cp.click('button[type=submit]')]);
+  await cp.waitForSelector('.rail .nav a .label');
   const nav = await cp.$$eval('.rail .nav a .label', (a) => a.map((x) => x.textContent.trim()));
   check('a client signs in to their own account with the read-only menu', nav.join() === 'Today,Leads,Ads,Results,Reports' && /Burdanova QA/.test(await cp.textContent('.rail')), nav.join());
   await cp.goto(BASE + '/leads.html');
@@ -1126,6 +1144,117 @@ with account_ctx.use(a2):
   }
   check('no class or id an ad blocker would hide', risky.length === 0, [...new Set(risky)].slice(0, 6).join(' | '));
 
+  {
+  const a2Seen = errors.length;
+  // Audit 2 (2026-11-10): money checks on the server, one apply per click, accounts in links, closed
+  // accounts and links, client access, console-wide settings, health, the cross-site guard, phonePage width.
+  const call = (method, url, body, headers) => page.evaluate(async ([m, u, b, h]) => {
+    const r = await fetch(u, { method: m, headers: { 'Content-Type': 'application/json', ...(h || {}) }, body: b === undefined ? undefined : JSON.stringify(b) });
+    let j = null; try { j = await r.json(); } catch (e) { /* not JSON */ }
+    return { status: r.status, body: j };
+  }, [method, url, body, headers]);
+  const CAMP = '120252638288040312';
+  const seeded = JSON.parse(sh('docker cp dev/qa_audit2.py edgebourne-ads-backend:/app/qa_audit2.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_audit2.py; docker exec edgebourne-ads-backend rm -f /app/qa_audit2.py').trim().split('\n').pop());
+  const want = Math.round(seeded.live * 1.2 / 100) * 100;
+  const budgetPlan = await call('GET', `/api/proposals/${seeded.budget}/check`);
+  check("a budget proposal is read for its new amount (not the first number) against Meta's live budget",
+    budgetPlan.status === 200 && budgetPlan.body.from === seeded.live && budgetPlan.body.to === want, JSON.stringify(budgetPlan.body));
+  await page.goto(BASE + '/desk.html#waiting');
+  await page.waitForSelector(`[data-proposal="${seeded.budget}"] [data-approve]`);
+  await page.click(`[data-proposal="${seeded.budget}"] [data-approve]`);
+  await page.waitForSelector('dialog.confirm .big-change');
+  const dlg = (await page.textContent('dialog.confirm .big-change')).replace(/\s+/g, ' ');
+  check('approving shows the live budget → the new one in dollars', dlg.includes(`$${(seeded.live / 100).toFixed(2)}`) && dlg.includes(`$${(want / 100).toFixed(2)}`), dlg);
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForTimeout(1500);
+  const budgetAfter = Number(sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "import meta_client;print(meta_client.get('${CAMP}', fields='daily_budget')['daily_budget'])"`).trim());
+  check('and Meta gets exactly that amount', budgetAfter === want, `${budgetAfter}`);
+  const unclear = await call('POST', `/api/proposals/${seeded.unclear}/approve`, {});
+  check("an unclear amount from Claude is refused, not guessed", unclear.status === 400 && /isn't one clear amount/.test(unclear.body.error), JSON.stringify(unclear.body));
+  const twiceStatus = await page.evaluate(async (id) => (await Promise.all([1, 2].map(() => fetch(`/api/proposals/${id}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })))).map((r) => r.status).sort(), seeded.double);
+  check('approving twice at once applies once (the second is refused)', twiceStatus.join() === '200,409', twiceStatus.join());
+  await call('POST', '/api/ads/ad/120252672229400312/status', { status: 'ACTIVE', confirm_daily_cents: (await call('GET', '/api/ads/ad/120252672229400312/spend')).body.daily_cents });
+  const unconfirmed = await call('POST', '/api/ads/ad/120252672229400312/status', { status: 'ACTIVE' });
+  const offFirst = await call('POST', '/api/ads/ad/120252672230740312/status', { status: 'PAUSED' });
+  const onBlind = await call('POST', '/api/ads/ad/120252672230740312/status', { status: 'ACTIVE' });
+  const spendCtx = await call('GET', '/api/ads/ad/120252672230740312/spend');
+  const onSeen = await call('POST', '/api/ads/ad/120252672230740312/status', { status: 'ACTIVE', confirm_daily_cents: spendCtx.body.daily_cents });
+  check('turning on needs the daily spend seen first (read fresh from Meta)', offFirst.status === 200 && onBlind.status === 409 && spendCtx.body.daily_cents > 0 && onSeen.status === 200,
+    `${offFirst.status} ${onBlind.status} ${JSON.stringify(spendCtx.body)} ${onSeen.status} ${unconfirmed.status}`);
+  const huge = await call('POST', `/api/ads/campaign/${CAMP}/budget`, { daily_budget_cents: 50000, from_cents: budgetAfter, accept_big: true });
+  check("a budget above the account's ceiling is refused even when confirmed", huge.status === 400 && /ceiling/.test(huge.body.error), JSON.stringify(huge.body));
+  const jump = await call('POST', `/api/ads/campaign/${CAMP}/budget`, { daily_budget_cents: budgetAfter * 2, from_cents: budgetAfter });
+  check('more than +20% needs a knowing yes', jump.status === 409 && /\+20%/.test(jump.body.error), JSON.stringify(jump.body));
+  const csrf = await call('POST', '/api/refresh', undefined, { 'Content-Type': 'text/plain', 'X-Requested-With': 'elsewhere' });
+  check("a write that didn't come from the console is refused (cross-site guard)", csrf.status === 403, `${csrf.status}`);
+  const health = await call('GET', '/api/health');
+  check('health says the database and the worker are fine', health.status === 200 && health.body.status === 'ok', JSON.stringify(health.body));
+  // Account 2: console-wide keys refused there; an alert link opens in its account.
+  await page.goto(BASE + `/leads.html?acct=${leak.account2}`);
+  await page.waitForSelector('#acct-rail');
+  check('a link from an alert switches to the account it names', (await page.inputValue('#acct-rail')) === String(leak.account2) && !/acct=/.test(page.url()), page.url());
+  const sharedKeys = await call('PUT', '/api/settings/meta', { meta_app_secret: 'x'.repeat(32) });
+  check("Meta's app keys can't be changed from another account's Settings", sharedKeys.status === 403, JSON.stringify(sharedKeys.body));
+  await page.goto(BASE + '/settings.html');
+  await page.waitForSelector('#console-note:not([hidden])');
+  check('Settings marks the console-wide part and locks it outside Edge Bourne', await page.isDisabled('#smtp-form button[type=submit]'));
+  // Client access: off by default, on in Settings, only the stage.
+  const lead2 = seeded.lead2;
+  const cl = await (await browser.newContext({ viewport: { width: 1360, height: 900 } })).newPage();
+  await cl.goto(BASE + '/login.html');
+  await cl.fill('#email', 'client-qa@burdanova.test'); await cl.fill('#password', 'client-pass-123');
+  await Promise.all([cl.waitForURL('**/home.html**'), cl.click('button[type=submit]')]);
+  const clientCall = (method, url, body) => cl.evaluate(async ([m, u, b]) => (await fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).status, [method, url, body]);
+  const stageBefore = await clientCall('PATCH', `/api/leads/${lead2}`, { status: 'contacted' });
+  await call('PUT', '/api/settings/client-access', { update_leads: true });
+  const granted = await clientCall('PATCH', `/api/leads/${lead2}`, { status: 'contacted' });
+  const ownerStatus = await clientCall('PATCH', `/api/leads/${lead2}`, { owner_id: 1 });
+  await call('PUT', '/api/settings/client-access', { update_leads: false });
+  check('clients move lead stages only when the account allows it, and nothing else', `${stageBefore} ${granted} ${ownerStatus}` === '403 200 403', `${stageBefore} ${granted} ${ownerStatus}`);
+  // Share links stop on demand and when the account closes; the client loses access while it's closed.
+  const link2 = (await call('POST', '/api/reports/share', { kind: 'week' })).body.url;
+  const anon2 = await (await browser.newContext()).newPage();
+  const openLink = async () => anon2.evaluate(async (u) => (await fetch('/api/reports/shared?' + u.split('?')[1])).status, link2);
+  await anon2.goto(BASE + '/login.html');
+  const okBefore = await openLink();
+  await call('POST', '/api/reports/revoke', {});
+  const okAfter = await openLink();
+  check('"Stop all shared links" stops the old ones', okBefore === 200 && okAfter === 404, `${okBefore} ${okAfter}`);
+  const link3 = (await call('POST', '/api/reports/share', { kind: 'week' })).body.url;
+  await call('PATCH', `/api/accounts/${leak.account2}`, { archived: true });
+  const closedLink = await anon2.evaluate(async (u) => (await fetch('/api/reports/shared?' + u.split('?')[1])).status, link3);
+  const closedClient = await clientCall('GET', '/api/leads');
+  await call('PATCH', `/api/accounts/${leak.account2}`, { archived: false });
+  const reopened = await anon2.evaluate(async (u) => (await fetch('/api/reports/shared?' + u.split('?')[1])).status, link3);
+  check('closing an account stops its links and its people, reopening brings them back', `${closedLink} ${closedClient} ${reopened}` === '404 403 200', `${closedLink} ${closedClient} ${reopened}`);
+  await call('POST', '/api/accounts/switch', { id: 1 });
+  check('admins of one account and members stay in their account (leak test)', leak.leaks_member_and_account_admin.length === 0
+    && Object.values(leak.account_admin_limits).every((s) => s === 403) && leak.cross_account_writes.length === 0, JSON.stringify(leak.account_admin_limits) + leak.cross_account_writes.join(' | '));
+  check('background work started from one account stays in that account', leak.resync_thread_account.join() === String(leak.account2) && leak.account2_assignments_seen_from_1 === 0);
+  // A new ad from nothing: the account's Page, the chosen form, an image from the library.
+  const libItem = (await call('GET', '/api/media')).body.items.find((i) => i.kind === 'image' || (i.kind === 'video' && i.ready));
+  const crBefore = Object.keys(fake('_creatives')).length;
+  const scratch = await call('POST', '/api/ads/new', { adset_id: '120252672227950312', name: 'QA scratch ad', body: 'New words', title: 'New headline',
+    media: libItem.kind === 'image' ? { kind: 'image', hash: libItem.hash } : { kind: 'video', video_id: libItem.video_id }, form_id: '1132280359202136' });
+  const scr = Object.values(fake('_creatives')).slice(crBefore)[0];
+  check('a new ad can start from nothing: the Page, the chosen form, its own image or video', scratch.status === 201 && scr && scr.object_story_spec.page_id
+    && (scr.object_story_spec.link_data || scr.object_story_spec.video_data).call_to_action.value.lead_gen_form_id === '1132280359202136', JSON.stringify(scr && scr.object_story_spec).slice(0, 200));
+  // Phones: no page wider than the screen.
+  const phonePage = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
+  await phonePage.goto(BASE + '/login.html');
+  await phonePage.fill('#email', 'eugene@edgebourne.com'); await phonePage.fill('#password', 'localdev-pass-123');
+  await Promise.all([phonePage.waitForURL('**/home.html**'), phonePage.click('button[type=submit]')]);
+  const tooWide = [];
+  for (const p of ['/home.html', '/leads.html', '/ads.html', '/ad.html?id=120252672229400312', '/performance.html', '/report.html', '/desk.html', '/team.html', '/settings.html', '/new-campaign.html']) {
+    await phonePage.goto(BASE + p); await phonePage.waitForTimeout(1500);
+    const sw = await phonePage.evaluate(() => document.documentElement.scrollWidth);
+    if (sw > 391) tooWide.push(`${p} ${sw}px`);
+  }
+  check('on a 390px phone no page is wider than the screen', tooWide.length === 0, tooWide.join(' | '));
+  // The refusals above are the point of these checks; the browser logs each as a failed load. Real page errors stay.
+  errors.splice(a2Seen, errors.length - a2Seen, ...errors.slice(a2Seen).filter((e) => !/Failed to load resource: the server responded with a status of 4\d\d/.test(e)));
+
+  }
   await browser.close();
   console.log(results.join('\n'));
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');

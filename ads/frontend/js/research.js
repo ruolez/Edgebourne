@@ -110,7 +110,10 @@ function wireSwipes() {
 
 const me = await boot({ page: "research", admin: true });
 if (me) {
-  $("quick").innerHTML = QUICK.map((q) => `<button type="button" class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join("");
+  // Edge Bourne's own searches; another account starts with none (type one, or ask Claude to watch Pages).
+  const quick = (window.ebadsMe && window.ebadsMe.account.id !== 1) ? [] : QUICK;
+  $("quick").hidden = !quick.length;
+  $("quick").innerHTML = quick.map((q) => `<button type="button" class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join("");
   $("quick").addEventListener("click", (e) => { const b = e.target.closest("[data-q]"); if (b) { $("q").value = b.dataset.q; $("lib-form").requestSubmit(); } });
   $("lib-form").addEventListener("submit", (e) => {
     e.preventDefault();

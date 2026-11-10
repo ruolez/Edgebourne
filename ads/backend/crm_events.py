@@ -53,6 +53,7 @@ def build_event(meta_lead_id, stage, event_time):
     return {
         "event_name": EVENT_NAMES[stage],
         "event_time": int(event_time.timestamp()),
+        "event_id": f"{lead_id}:{stage}",  # Meta drops a repeat (a resend after a timeout)
         "action_source": "system_generated",
         "user_data": {"lead_id": int(lead_id)},
         "custom_data": {"event_source": "crm", "lead_event_source": SOURCE_NAME},

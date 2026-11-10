@@ -7,6 +7,7 @@ from datetime import date, timedelta
 
 from flask import Blueprint, jsonify, request
 
+import account_info
 import db
 import insights
 import meta_client
@@ -95,7 +96,7 @@ def time_params(range_key):
     if range_key == "lifetime":
         return {"date_preset": "maximum"}, "lifetime"
     days = {"7": 7, "14": 14, "30": 30}.get(range_key, 7)
-    end = date.today() - timedelta(days=1)
+    end = account_info.today() - timedelta(days=1)
     start = end - timedelta(days=days - 1)
     return {"time_range": json.dumps({"since": start.isoformat(), "until": end.isoformat()})}, f"{start}..{end}"
 
@@ -224,12 +225,18 @@ def reply_comment(ad_id, comment_id):
     text, problem = cm.clean_reply((request.get_json(silent=True) or {}).get("message"))
     if problem:
         return api_error(problem, 400, field="message")
-    try:
-        made = meta_client.post(f"{comment_id}/comments", token=meta_client.page_token(), data={"message": text})
-    except meta_client.MetaError as exc:
-        ads_api.record(current_user(), "ad", row, "comment_reply", comment_id, text[:200], False, str(exc))
-        return api_error(f"Facebook refused the reply: {exc}", 400)
-    ads_api.record(current_user(), "ad", row, "comment_reply", comment_id, text[:200], True)
+    with db.try_lock(f"reply:{comment_id}") as mine:
+        if not mine:
+            return api_error("This reply is already being posted", 409)
+        if db.query("""SELECT 1 FROM meta_changes WHERE action = 'comment_reply' AND ok AND old_value = %s AND new_value = %s
+                       AND created_at > now() - interval '2 minutes'""", (comment_id, text[:200]), one=True):
+            return api_error("You already posted this reply a moment ago", 409)
+        try:
+            made = meta_client.post(f"{comment_id}/comments", token=meta_client.page_token(), data={"message": text})
+        except meta_client.MetaError as exc:
+            ads_api.record(current_user(), "ad", row, "comment_reply", comment_id, text[:200], False, str(exc))
+            return api_error(f"Facebook refused the reply: {exc}", 400)
+        ads_api.record(current_user(), "ad", row, "comment_reply", comment_id, text[:200], True)
     db.execute("DELETE FROM meta_cache WHERE key = %s", (f"comments:{row['story_id']}",))
     return jsonify({"id": made.get("id")})
 
@@ -278,7 +285,7 @@ def activity():
     """Meta's own change history for the account: edits from Ads Manager, the
     dashboard, Claude or Meta's automatic changes, side by side."""
     days = max(1, min(90, int(request.args.get("days", "14") or 14)))
-    since = (date.today() - timedelta(days=days)).isoformat()
+    since = (account_info.today() - timedelta(days=days)).isoformat()
 
     def fetch():
         rows = meta_client.get(f"act_{settings_store.get('meta_ad_account_id')}/activities", since=since, limit=100,

@@ -11,15 +11,6 @@ CAMPAIGN = {"id": "c1", "daily_budget_cents": 2000}
 AD = {"id": "a1", "daily_budget_cents": None}
 
 
-class ParseDollarsTests(unittest.TestCase):
-    def test_reads_the_amounts_people_write(self):
-        cases = {"$24/day": 2400, "24": 2400, "$1,250.50 per day": 125050, "about $19.99": 1999, "$0.5": 50}
-        self.assertEqual({k: ads_api.parse_dollars(k) for k in cases}, cases)
-
-    def test_no_amount_gives_none(self):
-        self.assertEqual([ads_api.parse_dollars(v) for v in (None, "", "keep it")], [None, None, None])
-
-
 class ProposalActionTests(unittest.TestCase):
     def prop(self, **kw):
         return {"kind": "status", "entity_id": "a1", "proposed_value": "PAUSED", **kw}
@@ -34,9 +25,21 @@ class ProposalActionTests(unittest.TestCase):
         self.assertEqual((ads_api.proposal_action(p, CAMPAIGN), ads_api.proposal_action(p, AD)), (("budget", 2400), None))
 
     def test_things_the_dashboard_cannot_apply_return_none(self):
-        cases = [self.prop(kind="creative"), self.prop(proposed_value="ARCHIVED"), self.prop(entity_id=None),
-                 self.prop(kind="budget", proposed_value="$0.50/day")]
-        self.assertEqual([ads_api.proposal_action(p, CAMPAIGN) for p in cases], [None] * 4)
+        cases = [self.prop(kind="creative"), self.prop(proposed_value="ARCHIVED"), self.prop(entity_id=None)]
+        self.assertEqual([ads_api.proposal_action(p, CAMPAIGN) for p in cases], [None] * 3)
+
+    def test_budget_reads_the_new_amount_not_the_first_number(self):
+        values = ["+20% to $24/day", "from $20 to $24", "$20 → $24"]
+        self.assertEqual([ads_api.proposal_action(self.prop(kind="budget", proposed_value=v), CAMPAIGN) for v in values],
+                         [("budget", 2400)] * 3)
+
+    def test_an_unclear_budget_is_flagged_not_applied(self):
+        p = self.prop(kind="budget", proposed_value="Raise 2x or more")
+        self.assertEqual(ads_api.proposal_action(p, CAMPAIGN), ("unclear", "Raise 2x or more"))
+
+    def test_a_structured_amount_wins_over_the_words(self):
+        p = self.prop(kind="budget", proposed_value="+20% to $24/day", payload={"proposed_cents": 2300})
+        self.assertEqual(ads_api.proposal_action(p, CAMPAIGN), ("budget", 2300))
 
     def test_no_entity_means_no_action(self):
         self.assertIsNone(ads_api.proposal_action(self.prop(), None))

@@ -35,6 +35,17 @@ def lead_alert(lead):
     return f"New{test} lead: {lead.get('full_name') or 'Someone'}", lines
 
 
+def link(path, account_id=None):
+    """A console link that opens in the right account: `acct=` makes the page switch to it first."""
+    import account_ctx
+    import config
+    acct = account_ctx.current() if account_id is None else account_id
+    path = path or "/home.html"
+    base, _, frag = path.partition("#")
+    sep = "&" if "?" in base else "?"
+    return f"{config.APP_BASE_URL.rstrip('/')}{base}{sep}acct={acct}" + (f"#{frag}" if frag else "")
+
+
 def telegram_people(user_ids):
     """Of these people, the ones Telegram alerts can reach right now."""
     if not user_ids or not telegram.token():
@@ -101,10 +112,29 @@ def push_error():
     return push.PushError
 
 
+INTERRUPTED = "Interrupted while sending (the server restarted); not sent again so nobody gets it twice"
+
+
+def claim(table, row_id):
+    """Mark a row 'sending' before it goes out, so a restart mid-send can't send it twice.
+    False when another pass already took it."""
+    return db.execute(f"UPDATE {table} SET status = 'sending' WHERE id = %s AND status = 'pending' RETURNING id",
+                      (row_id,), returning=True) is not None
+
+
+def settle_interrupted(table, error_column="last_error"):
+    """Rows left 'sending' by a killed worker: failed (at most once), never resent."""
+    db.execute(f"UPDATE {table} SET status = 'failed', {error_column} = %s "
+               "WHERE status = 'sending' AND next_attempt_at < now() - interval '15 minutes'", (INTERRUPTED,))
+
+
 def process_pending(now=None):
     now = now or datetime.now(timezone.utc)
+    settle_interrupted("notifications")
     rows = db.query("SELECT * FROM notifications WHERE status = 'pending' AND next_attempt_at <= %s ORDER BY id LIMIT 50", (now,))
     for row in rows:
+        if not claim("notifications", row["id"]):
+            continue
         try:
             _deliver(row)
         except (telegram.TelegramError, mailer.MailError, push_error()) as exc:

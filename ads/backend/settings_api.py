@@ -16,7 +16,7 @@ import notify
 import telegram
 import refresh_api
 import replies
-from auth import admin_required, current_user
+from auth import admin_required, current_user, is_owner, owner_required
 from util import api_error, log_activity
 
 bp = Blueprint("settings", __name__, url_prefix="/api/settings")
@@ -24,6 +24,14 @@ bp = Blueprint("settings", __name__, url_prefix="/api/settings")
 META_FIELDS = ("meta_app_id", "meta_app_secret", "meta_system_token", "meta_verify_token",
                "meta_page_id", "meta_ad_account_id", "meta_graph_version", "meta_dataset_id",
                "crm_send_enabled")
+# Shared by every account (audit A9): only the console's owner changes them, from Edge Bourne's
+# own Settings, so pasting a client's app secret can't stop every account's leads.
+CONSOLE_META = ("meta_app_id", "meta_app_secret", "meta_verify_token", "meta_graph_version")
+
+
+def console_editable(user=None):
+    import account_ctx
+    return is_owner(user or current_user()) and account_ctx.current() == account_ctx.DEFAULT
 SMTP_FIELDS = ("smtp_host", "smtp_port", "smtp_security", "smtp_username", "smtp_password",
                "smtp_from_email", "smtp_from_name")
 
@@ -51,7 +59,16 @@ def _smtp_in_use():
 def get_settings():
     pending = db.query("SELECT COUNT(*) AS n, MAX(error) AS last_error FROM webhook_events "
                        "WHERE processed_at IS NULL", one=True)
+    import account_ctx
+    import accounts_api
+    import targets
+    me = current_user()
     return jsonify({
+        "account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current()),
+                    "own_token": bool(settings_store.own("meta_system_token")),
+                    "clients_update_leads": accounts_api.clients_update_leads()},
+        "owner": is_owner(me), "console_editable": console_editable(me),
+        "targets": targets.view(),
         "meta": _section(META_FIELDS),
         "smtp": _section(SMTP_FIELDS),
         "smtp_in_use": _smtp_in_use(),
@@ -90,10 +107,50 @@ def _save(fields, data):
     return changed
 
 
+def used_elsewhere(data):
+    """(field, message) when another account already uses this ad account or Page: two accounts on
+    the same Meta assets would fight over the same rows and leads."""
+    import account_ctx
+    import accounts_api
+    me = account_ctx.current()
+    for key, what in (("meta_ad_account_id", "ad account"), ("meta_page_id", "Page")):
+        value = str(data.get(key) or "").strip().removeprefix("act_")
+        if not value:
+            continue
+        with account_ctx.all_accounts():
+            rows = db.query("SELECT key FROM settings WHERE (key = %s OR key LIKE %s) AND value = %s",
+                            (key, f"{key}@%", value))
+        for r in rows:
+            other = int(r["key"].split("@")[1]) if "@" in r["key"] else account_ctx.DEFAULT
+            if other != me and not accounts_api.closed(other):
+                return key, f"Another account ({accounts_api.name_of(other)}) already uses this {what}."
+    return None
+
+
 @bp.put("/meta")
 @admin_required
 def save_meta():
-    changed = _save(META_FIELDS, request.get_json(silent=True) or {})
+    data = request.get_json(silent=True) or {}
+    shared = [k for k in CONSOLE_META if k in data and not (k in settings_store.SECRET_KEYS and not str(data[k] or "").strip())
+              and str(data[k] or "").strip() != (settings_store.get(k) or "")]
+    if shared and not console_editable():
+        return api_error("The Meta app keys are shared by every account: the console's owner changes them in "
+                         "Edge Bourne's Settings.", 403, field=shared[0])
+    taken = used_elsewhere(data)
+    if taken:
+        return api_error(taken[1], 409, field=taken[0])
+    acct_id = str(data.get("meta_ad_account_id") or "").strip().removeprefix("act_")
+    if acct_id and acct_id != (settings_store.own("meta_ad_account_id") or ""):
+        import account_info
+        try:
+            currency = meta_client.get(f"act_{acct_id}", fields="currency").get("currency")
+        except meta_client.MetaError:
+            currency = None  # can't check now; the first sync refuses it if it's one we can't handle
+        problem = account_info.currency_problem(currency)
+        if problem:
+            return api_error(problem, 400, field="meta_ad_account_id")
+        data["meta_ad_account_id"] = acct_id
+    changed = _save(META_FIELDS, data)
     log_activity("settings.meta", details={"changed": changed})
     return get_settings()
 
@@ -109,7 +166,7 @@ def save_meta_tests():
 
 
 @bp.put("/refresh")
-@admin_required
+@owner_required
 def save_refresh():
     raw = (request.get_json(silent=True) or {}).get("minutes")
     try:
@@ -125,7 +182,7 @@ def save_refresh():
 
 
 @bp.put("/telegram")
-@admin_required
+@owner_required
 def save_telegram():
     data = request.get_json(silent=True) or {}
     if data.get("remove"):
@@ -226,6 +283,47 @@ def preview_template():
     return jsonify({"subject": replies.fill(data.get("subject"), v), "body": replies.fill(data.get("body"), v)})
 
 
+@bp.put("/targets")
+@admin_required
+def save_targets():
+    """Settings → Targets: cost per qualified lead, cost per lead, highest daily budget (dollars in)."""
+    data = request.get_json(silent=True) or {}
+    import money_rules
+    for field, key, low in (("qualified", "kpi_target_cents", 100), ("lead", "lead_target_cents", 100),
+                            ("max_daily", "max_daily_budget_cents", 100)):
+        if field not in data:
+            continue
+        raw = str(data.get(field) or "").strip().replace("$", "").replace(",", "")
+        if not raw:
+            settings_store.set(key, None)
+            continue
+        try:
+            cents = round(float(raw) * 100)
+        except ValueError:
+            return api_error("Type an amount, like 60", 400, field=field)
+        if cents < low:
+            return api_error("Use at least 1.00", 400, field=field)
+        settings_store.set(key, str(cents))
+    if "lead" in data:  # the old place for it (the alert rule) no longer counts
+        rules = json.loads(settings_store.get("alert_rules") or "{}")
+        if (rules.get("cpl_high") or {}).get("target_cents"):
+            rules["cpl_high"]["target_cents"] = None
+            settings_store.set("alert_rules", json.dumps(rules))
+    log_activity("settings.targets", details={k: data.get(k) for k in ("qualified", "lead", "max_daily")})
+    _ = money_rules
+    return get_settings()
+
+
+@bp.put("/client-access")
+@admin_required
+def save_client_access():
+    """Settings → Client reports: may this account's clients move leads and add notes?"""
+    on = bool((request.get_json(silent=True) or {}).get("update_leads"))
+    settings_store.set("client_lead_updates", "on" if on else None)
+    log_activity("settings.client_access", details={"update_leads": on})
+    return get_settings()
+
+
 @bp.put("/alerts")
 @admin_required
 def save_alerts():
@@ -237,7 +335,7 @@ def save_alerts():
 
 
 @bp.put("/smtp")
-@admin_required
+@owner_required
 def save_smtp():
     data = request.get_json(silent=True) or {}
     if "smtp_port" in data and str(data["smtp_port"]).strip() and not str(data["smtp_port"]).isdigit():
@@ -269,6 +367,10 @@ def test_meta():
                                   fields="name,account_status,currency")
     except meta_client.MetaError as exc:
         return api_error(str(exc), 400)
+    import account_info
+    problem = account_info.currency_problem(account.get("currency"))
+    if problem:
+        return api_error(problem, 400)
     return jsonify({
         "system_user": who.get("name"),
         "page": page.get("name"),
@@ -305,6 +407,9 @@ def connect_page():
         return api_error(str(exc), 400)
     settings_store.set("meta_page_subscribed", "1")
     log_activity("settings.page_connected", subject=page_id)
+    import ads_api
+    ads_api.record(current_user(), "account", {"id": page_id, "name": "Page leadgen webhooks", "campaign_id": None},
+                   "subscribe", None, "leadgen", True)
     return jsonify({"ok": True, "apps": apps.get("data", [])})
 
 

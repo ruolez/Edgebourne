@@ -56,8 +56,9 @@ def attention(user, scope_ids):
         items.append({"level": "claude", "text": f"Claude has {len(mine)} proposal{'s' if len(mine) != 1 else ''} waiting for your decision.",
                       "href": "/desk.html" if user["role"] == "admin" else "/ads.html", "action": "Review"})
     if user["role"] == "admin":
-        if not settings_store.get("meta_system_token"):
-            items.append({"level": "bad", "text": "Meta isn't connected yet.", "href": "/settings.html", "action": "Open Settings"})
+        if not settings_store.get("meta_system_token") or not settings_store.get("meta_ad_account_id"):
+            items.append({"level": "bad", "text": "This account isn't connected to Meta yet: add its ad account and Page.",
+                          "href": "/settings.html#meta", "action": "Open Settings"})
         failed = db.query("SELECT COUNT(*) AS n FROM crm_events WHERE status = 'failed' "
                           "AND created_at > now() - interval '14 days'", one=True)["n"]
         if failed:
@@ -65,8 +66,8 @@ def attention(user, scope_ids):
                           "href": "/settings.html", "action": "Open Settings"})
         queued = db.query("SELECT COUNT(*) AS n FROM desk_tasks WHERE status = 'queued'", one=True)["n"]
         if queued and not bridge_status()["online"]:
-            items.append({"level": "warn", "text": f"{queued} Desk request{'s' if queued != 1 else ''} waiting: your Mac is offline.",
-                          "href": "/desk.html", "action": "Open Desk"})
+            items.append({"level": "warn", "text": f"{queued} request{'s' if queued != 1 else ''} for Claude waiting: your Mac is offline.",
+                          "href": "/desk.html", "action": "Open Claude"})
     return items
 
 

@@ -147,6 +147,7 @@ def window(exp, today):
 
 
 def arm_numbers(arm, start, end):
+    import account_info
     ads, sets = arm.get("ad_ids") or [], arm.get("adset_ids") or []
     row = db.query(
         """SELECT COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
@@ -156,24 +157,23 @@ def arm_numbers(arm, start, end):
         (start, end, ads, sets), one=True)
     q = db.query(
         """SELECT COUNT(*) FILTER (WHERE status IN ('qualified','won')) AS qualified FROM leads
-           WHERE NOT is_test AND created_time::date BETWEEN %s AND %s AND (ad_id = ANY(%s) OR adset_id = ANY(%s))""",
-        (start, end, ads, sets), one=True)
+           WHERE NOT is_test AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s
+             AND (ad_id = ANY(%s) OR adset_id = ANY(%s))""",
+        (account_info.tz_name(), start, end, ads, sets), one=True)
     return {**{k: int(v) for k, v in row.items()}, "qualified": int(q["qualified"] or 0)}
 
 
 def default_target(metric):
-    """The cost-per-lead target from Settings → Alerts, for a cost-per-lead test."""
+    """The account's cost-per-lead target (Settings → Targets), for a cost-per-lead test."""
     if metric != "cpl":
         return None
-    import alerts
-    return alerts.saved_rules()["cpl_high"]["target_cents"]
+    import targets
+    return targets.lead_own()
 
 
 def account_today():
-    from datetime import datetime, timezone
-    from zoneinfo import ZoneInfo
-    import config
-    return datetime.now(timezone.utc).astimezone(ZoneInfo(config.ACCOUNT_TZ)).date()
+    import account_info
+    return account_info.today()
 
 
 def with_results(exp, today=None):

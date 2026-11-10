@@ -21,6 +21,19 @@ def period(kind, today, start=None):
     return monday, monday + timedelta(days=6)
 
 
+def email_due(mode, local, last_sent):
+    """(kind, start, end, key) of the report to email now, or None. Due from 8 AM the day after the
+    week or month ends, and on any later day until it went out (a worker down on Monday catches up)."""
+    if mode not in ("weekly", "monthly"):
+        return None
+    kind = "week" if mode == "weekly" else "month"
+    s, e = period(kind, local.date())
+    key = f"{kind}:{s.isoformat()}"
+    if key == last_sent or (local.date() == e + timedelta(days=1) and local.hour < 8):
+        return None
+    return kind, s, e, key
+
+
 def previous(start, end, kind):
     if kind == "month":
         return period("month", start, start=(start - timedelta(days=1)))

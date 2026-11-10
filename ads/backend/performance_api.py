@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from flask import Blueprint, jsonify, request
 
 import config
+import account_info
 import db
 import insights
 import pacing
@@ -60,7 +61,7 @@ def campaign_choices(user, start, end):
 def overview_data(user, days, campaign_id=None):
     """Everything the Performance page shows; also the AI desk's snapshot. `campaign_id`
     narrows it to one campaign the person can see."""
-    (start, end), (prev_start, prev_end) = periods(date.today(), days)
+    (start, end), (prev_start, prev_end) = periods(account_info.today(), days)
     where, params = _scope_sql(user, "d.campaign_id")
     if campaign_id:
         where, params = f"({where}) AND d.campaign_id = %s", params + [campaign_id]
@@ -90,9 +91,9 @@ def overview_data(user, days, campaign_id=None):
                    COUNT(*) FILTER (WHERE l.status IN ('qualified','won')) AS qualified,
                    COUNT(*) FILTER (WHERE l.status = 'won') AS won
             FROM leads l
-            WHERE NOT l.is_test AND l.created_time::date BETWEEN %s AND %s AND {lwhere}
+            WHERE NOT l.is_test AND (l.created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {lwhere}
             GROUP BY l.ad_id""",
-        [start, end] + lparams,
+        [account_info.tz_name(), start, end] + lparams,
     )
     q_by_ad = {r["ad_id"]: r for r in quality}
 
@@ -102,8 +103,8 @@ def overview_data(user, days, campaign_id=None):
         [prev_start, prev_end] + params, one=True)
     before_q = db.query(
         f"""SELECT COUNT(*) FILTER (WHERE l.status IN ('qualified','won')) AS qualified FROM leads l
-            WHERE NOT l.is_test AND l.created_time::date BETWEEN %s AND %s AND {lwhere}""",
-        [prev_start, prev_end] + lparams, one=True)
+            WHERE NOT l.is_test AND (l.created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {lwhere}""",
+        [account_info.tz_name(), prev_start, prev_end] + lparams, one=True)
 
     per_ad = db.query(
         f"""SELECT a.id, a.campaign_id, COALESCE(a.name, MAX(d.ad_name)) AS name, a.effective_status, a.thumbnail_url,
@@ -156,7 +157,7 @@ def pacing_data(scope_ids=None):
     monthly target and the spending limit, which are account-wide)."""
     from datetime import datetime, timezone
     from zoneinfo import ZoneInfo
-    today = datetime.now(timezone.utc).astimezone(ZoneInfo(config.ACCOUNT_TZ)).date()
+    today = datetime.now(timezone.utc).astimezone(account_info.tz()).date()
     where, params = ("TRUE", []) if scope_ids is None else ("campaign_id = ANY(%s)", [scope_ids])
     month_days = [(r["day"], int(r["c"])) for r in db.query(
         f"SELECT day, SUM(spend_cents) AS c FROM ad_daily WHERE day >= %s AND day < %s AND {where} GROUP BY day",
@@ -189,7 +190,7 @@ def overview():
         if ids is not None and campaign_id not in ids:
             return api_error("Not found", 404)
     out = overview_data(user, days, campaign_id)
-    (start, end), _ = periods(date.today(), days)
+    (start, end), _ = periods(account_info.today(), days)
     out["campaigns"] = campaign_choices(user, start, end)
     out["campaign"] = campaign_id
     out["pacing"] = pacing_data(visible_campaign_ids(user))

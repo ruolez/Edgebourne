@@ -59,7 +59,18 @@ def create_app(run_migrations=True):
 
     @app.get("/api/health")
     def health():
-        return jsonify({"status": "ok"})
+        """For the installer and monitoring: the database answers and the background worker ran
+        lately (503 otherwise, so a stopped worker doesn't go unnoticed)."""
+        import time
+        import jobs
+        import settings_store
+        try:
+            db.query("SELECT 1")
+        except Exception:
+            return jsonify({"status": "error", "database": "down"}), 503
+        stale = jobs.worker_expected() and jobs.worker_stale(settings_store.get("worker_last_pass"), time.time())
+        body = {"status": "stale" if stale else "ok", "worker_last_pass": settings_store.get("worker_last_pass")}
+        return jsonify(body), 503 if stale else 200
 
     # Background jobs start in each gunicorn worker (gunicorn.conf.py post_fork),
     # because threads started before the fork do not survive it.

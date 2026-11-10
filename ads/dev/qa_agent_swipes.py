@@ -10,7 +10,7 @@ old = settings_store.get("agent_key_hash")
 settings_store.set("agent_key_hash", desk_api.key_hash("qa-agent-key"))
 try:
     c = app.test_client()
-    h = {"Authorization": "Bearer qa-agent-key"}
+    h = {"Authorization": "Bearer qa-agent-key", "X-Bridge-Host": "qa", "X-Bridge-Version": "1.6"}
     watched = c.get("/api/agent/watched", headers=h).get_json()
     first = c.post("/api/agent/swipes", headers=h, json={"swipes": [
         {"library_id": "4440001112223", "page_name": "Acme Business Software", "body": "One app for quotes and invoices.",

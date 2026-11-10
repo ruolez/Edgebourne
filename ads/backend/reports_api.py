@@ -1,17 +1,21 @@
 """Client reports (roadmap 7.3): one account's week or month in the five-part order, for admins and
 clients in the console, as a signed link anyone with it can open (90 days), and by email."""
 import json
+import logging
 from datetime import date, datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
 
 import account_ctx
+import account_info
 import config
 import db
 import report_logic as rl
 import settings_store
 from auth import admin_required, current_user, login_required
 from util import api_error, log_activity
+
+log = logging.getLogger(__name__)
 
 bp = Blueprint("reports", __name__, url_prefix="/api/reports")
 KINDS = ("week", "month")
@@ -33,13 +37,13 @@ def totals(start, end):
                                 percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM first_contacted_at - created_time) / 60)
                                     FILTER (WHERE first_contacted_at IS NOT NULL) AS median_minutes
                          FROM leads WHERE NOT is_test AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s""",
-                      (config.ACCOUNT_TZ, start, end), one=True)
+                      (account_info.tz_name(), start, end), one=True)
     return {**{k: int(v) for k, v in t.items()}, "inbox": int(stages["inbox"]), "contacted": int(stages["contacted"]),
             "qualified": int(stages["qualified"]), "won": int(stages["won"]),
             "median_minutes": round(float(stages["median_minutes"])) if stages["median_minutes"] is not None else None}
 
 
-def build(kind, start=None):
+def build(kind, start=None, for_admin=False):
     t = today()
     s, e = rl.period(kind, t, start)
     ps, pe = rl.previous(s, e, kind)
@@ -56,11 +60,11 @@ def build(kind, start=None):
             "hook": round(100 * int(a["video_3s"]) / int(a["impressions"]), 1) if a["impressions"] and a["video_3s"] else None} for a in ads]
     changes = db.query("""SELECT m.created_at, m.level, m.entity_name, m.action, m.old_value, m.new_value
                           FROM meta_changes m WHERE m.ok AND (m.created_at AT TIME ZONE %s)::date BETWEEN %s AND %s
-                          ORDER BY m.created_at""", (config.ACCOUNT_TZ, s, e))
+                          ORDER BY m.created_at""", (account_info.tz_name(), s, e))
     import experiments_api
     tests = [experiments_api.summary(r) for r in db.query(
         f"SELECT {experiments_api.COLS} FROM experiments WHERE status = 'running' OR (closed_at AT TIME ZONE %s)::date BETWEEN %s AND %s",
-        (config.ACCOUNT_TZ, s, e))]
+        (account_info.tz_name(), s, e))]
     pending = db.query("""SELECT p.title FROM desk_proposals p WHERE p.status = 'pending' ORDER BY p.id DESC LIMIT 5""")
     ideas = None
     try:
@@ -76,21 +80,31 @@ def build(kind, start=None):
         ideas = None
     import accounts_api
     return {
-        "account": accounts_api.name_of(account_ctx.current()), "kind": kind, "start": s.isoformat(), "end": e.isoformat(),
+        "account": accounts_api.name_of(account_ctx.current()), "currency": account_info.currency(), "kind": kind, "start": s.isoformat(), "end": e.isoformat(),
         "previous": {"start": ps.isoformat(), "end": pe.isoformat()}, "complete": rl.complete(e, t),
         "headline": rl.headline(now, before, target), "target_cents": target, "now": now, "before": before,
         "funnel": rl.funnel(now["leads"], now["contacted"], now["qualified"], now["won"]),
         "ads": ads, "ideas": ideas,
         "changes": [{**c, "created_at": c["created_at"].isoformat()} for c in changes],
         "tests": [{"name": x["name"], "status": x["status"], "note": x["judgement"]["note"] if x["status"] == "running" else (x["verdict"] or "")} for x in tests],
-        "needs": [p["title"] for p in pending],
+        # Claude's pending ideas are internal: clients and share links don't see their titles.
+        "needs": [p["title"] for p in pending] if for_admin else [],
         "footnotes": rl.footnotes(s, e),
     }
 
 
+def link_epoch(account_id):
+    """Bumped by "Stop all shared links": a link carries the epoch it was made in."""
+    try:
+        return int(settings_store.get("report_link_epoch", account_id=account_id) or 0)
+    except ValueError:
+        return 0
+
+
 def share_token(kind, start, account_id):
     exp = (today() + timedelta(days=rl.SHARE_DAYS)).isoformat()
-    return rl.sign(config.SECRET_KEY, {"a": account_id, "k": kind, "s": start, "exp": exp}), exp
+    return rl.sign(config.SECRET_KEY, {"a": account_id, "k": kind, "s": start, "exp": exp,
+                                       "e": link_epoch(account_id)}), exp
 
 
 def _args():
@@ -114,7 +128,7 @@ def get_report():
         return err
     if current_user()["role"] == "member":
         return api_error("Reports are for admins and clients", 403)
-    return jsonify(build(kind, start))
+    return jsonify(build(kind, start, for_admin=current_user()["role"] == "admin"))
 
 
 @bp.post("/share")
@@ -136,10 +150,21 @@ def share():
 def shared():
     """Anyone with the link: no sign-in, read-only, one account, one period."""
     payload = rl.verify(config.SECRET_KEY, request.args.get("t", ""), today())
-    if not payload:
+    import accounts_api
+    if (not payload or accounts_api.closed(payload["a"])
+            or payload.get("e", 0) != link_epoch(payload["a"])):
         return api_error("This report link isn't valid or has expired. Ask for a new one.", 404)
     with account_ctx.use(payload["a"]):
         return jsonify({**build(payload["k"], date.fromisoformat(payload["s"])), "shared_until": payload["exp"]})
+
+
+@bp.post("/revoke")
+@admin_required
+def revoke():
+    """Every link made so far for this account stops working; new ones work."""
+    settings_store.set("report_link_epoch", str(link_epoch(account_ctx.current()) + 1))
+    log_activity("report.links_revoked")
+    return jsonify({"ok": True})
 
 
 @bp.get("/settings")
@@ -175,31 +200,51 @@ def put_settings():
 
 
 def send_due(now=None):
-    """Worker, per account: on Monday (weekly) or the 1st (monthly) after 8 AM, email the account's
-    clients a link to the period that just ended. Once per period."""
+    """Worker, per account: from 8 AM on Monday (weekly) or the 1st (monthly), email the account's
+    clients a link to the period that just ended. Once per period and person; a failed send is
+    tried again an hour later, a missed day is caught up."""
+    import json as _json
     import mailer
-    from zoneinfo import ZoneInfo
     mode = settings_store.get("report_email")
     if not mode or not mailer.configured():
         return 0
-    local = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(config.ACCOUNT_TZ))
-    if local.hour < 8 or (mode == "weekly" and local.weekday() != 0) or (mode == "monthly" and local.day != 1):
+    local = (now or datetime.now(timezone.utc)).astimezone(account_info.tz())
+    due = rl.email_due(mode, local, settings_store.get("report_last_sent"))
+    if not due:
         return 0
-    kind = "week" if mode == "weekly" else "month"
-    s, e = rl.period(kind, local.date())
-    key = f"{kind}:{s.isoformat()}"
-    if settings_store.get("report_last_sent") == key:
+    kind, s, _e, key = due
+    try:
+        state = _json.loads(settings_store.get("report_sent_to") or "{}")
+    except ValueError:
+        state = {}
+    if state.get("key") != key:
+        state = {"key": key, "to": [], "retry_at": 0}
+    if state.get("retry_at", 0) > local.timestamp():
         return 0
-    settings_store.set("report_last_sent", key)
-    people = db.query("SELECT email, name FROM users WHERE role = 'client' AND is_active AND account_id = %s", (account_ctx.current(),))
-    if not people:
-        return 0
-    report = build(kind, s)
-    token, _ = share_token(kind, s.isoformat(), account_ctx.current())
-    link = f"{config.APP_BASE_URL.rstrip('/')}/report.html?t={token}"
-    label = f"{'Week' if kind == 'week' else 'Month'} of {s.strftime('%b %-d')}"
-    for p in people:
-        mailer.send(p["email"], f"{report['account']}: your ads report, {label}",
-                    f"Hi {p['name'].split()[0]},\n\n{report['headline']}\n\nThe full report: {link}\n(The link works for {rl.SHARE_DAYS} days.)")
-    log_activity("report.emailed", details={"period": key, "to": len(people)})
-    return len(people)
+    people = db.query("SELECT email, name FROM users WHERE role = 'client' AND is_active AND account_id = %s",
+                      (account_ctx.current(),))
+    todo = [p for p in people if p["email"] not in state["to"]]
+    sent = 0
+    if todo:
+        report = build(kind, s)
+        token, _ = share_token(kind, s.isoformat(), account_ctx.current())
+        link = f"{config.APP_BASE_URL.rstrip('/')}/report.html?t={token}"
+        label = f"{'Week' if kind == 'week' else 'Month'} of {s.strftime('%b %-d')}"
+        for p in todo:
+            try:
+                mailer.send(p["email"], f"{report['account']}: your ads report, {label}",
+                            f"Hi {p['name'].split()[0]},\n\n{report['headline']}\n\nThe full report: {link}\n"
+                            f"(The link works for {rl.SHARE_DAYS} days.)")
+            except mailer.MailError as exc:
+                state["retry_at"] = local.timestamp() + 3600
+                log.info("report email to %s not sent: %s", p["email"], exc)
+                continue
+            state["to"].append(p["email"])
+            sent += 1
+    if len(state["to"]) >= len(people):
+        settings_store.set("report_last_sent", key)
+        state = {}
+    settings_store.set("report_sent_to", _json.dumps(state) if state else None)
+    if sent:
+        log_activity("report.emailed", details={"period": key, "to": sent})
+    return sent

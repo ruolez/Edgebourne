@@ -2,6 +2,7 @@
 import { api } from "./api.js";
 import { confirmDialog, esc, toast, when } from "./ui.js";
 import { renderMarkdown } from "./markdown.js";
+import { money } from "./format.js";
 
 export const KIND_LABELS = { question: "Question", review: "Review results", research: "Research competitors", creative: "New ad ideas", polish: "Polish", render: "New version" };
 const STATUS = {
@@ -11,7 +12,7 @@ const STATUS = {
 export const ACTIVE = new Set(["queued", "claimed", "running"]);
 const DECIDED = {
   applied: ["ok", "Approved and applied"], approved: ["ok", "Approved"], declined: ["", "Declined"],
-  failed: ["bad", "Approved, but Meta refused"], expired: ["", "Expired"],
+  failed: ["bad", "Approved, but Meta refused"], expired: ["", "Expired"], applying: ["claude", "Being applied on Meta…"],
 };
 
 const SCORE_WORDS = { 5: "Ready", 4: "Small polish", 3: "Worth fixing", 2: "Hurting results", 1: "Blocking" };
@@ -119,6 +120,44 @@ export function taskCard(t, openReports = new Set(), opts = {}) {
   </article>`;
 }
 
+// The confirmation for approving a proposal, from the server's fresh read of Meta (audit A1, A20):
+// a budget shows today's live budget → the new one in dollars; turning on shows the daily spend.
+function approvalDialog(card, plan) {
+  const title = `Approve “${card.dataset.title}”?`;
+  if (plan.kind === "unclear") { toast(plan.problem, "bad"); return null; }
+  if (plan.kind === "budget") {
+    if (plan.problem && !plan.big) { toast(plan.problem, "bad"); return null; }
+    const pct = plan.pct == null ? "" : ` (${plan.pct > 0 ? "+" : ""}${plan.pct}%)`;
+    return {
+      dialog: {
+        title, claude: true, danger: !!plan.big, confirm: plan.big ? "Change it anyway" : "Change the budget",
+        body: `<p>Daily budget of <b>${esc(plan.name)}</b> on Meta, read just now:</p>
+          <p class="big-change"><del>${money(plan.from, { exact: true })}</del> → <ins>${money(plan.to, { exact: true })}</ins> a day${pct}</p>
+          <p class="muted small">About ${money(plan.to * 30)} a month. Meta may spend up to 75% more on a busy day and evens it out over the week.</p>
+          ${plan.big ? '<p class="note warn"><b>More than +20% in one step.</b> Meta may restart learning and results can wobble for a few days. The rule here is +20% at most, three days apart.</p>' : ""}`,
+      },
+      body: { from_cents: plan.from, to_cents: plan.to, accept_big: !!plan.big },
+    };
+  }
+  if (plan.kind === "status" && plan.to === "ACTIVE") {
+    const daily = plan.spend && plan.spend.daily_cents;
+    return {
+      dialog: {
+        title, claude: true, confirm: "Turn it on",
+        body: `<p><b>${esc(plan.name)}</b> starts delivering${daily ? ` and spends up to <b>${money(daily, { exact: true })} a day</b> from ${esc(plan.spend.where)}` : ""}.</p>`,
+      },
+      body: daily ? { confirm_daily_cents: daily } : {},
+    };
+  }
+  const words = { status: "It's switched off on Meta right away. Nothing is deleted.", create: "The new ad is created switched off; nothing spends until you turn it on.",
+    experiment: "It starts tracking on the Tests page. Nothing changes on Meta.", tags: "The labels are saved. Nothing changes on Meta.",
+    record: "Recorded as approved. Nothing changes on Meta." };
+  return {
+    dialog: { title, claude: true, confirm: "Approve", body: `<p>${esc(card.dataset.change || "")}</p><p class="muted">${words[plan.kind] || ""}</p>` },
+    body: {},
+  };
+}
+
 // Click handling for task lists and proposal cards; onChange reloads the page data.
 export function wireTaskActions(root, onChange, openReports) {
   root.addEventListener("click", async (e) => {
@@ -150,13 +189,25 @@ export function wireTaskActions(root, onChange, openReports) {
       if (approve || decline) {
         const card = (approve || decline).closest("[data-proposal]");
         const id = card.dataset.proposal;
-        const yes = await confirmDialog(approve ? {
-          title: `Approve “${card.dataset.title}”?`,
-          body: `<p>${esc(card.dataset.change || "")}</p><p class="muted">On/off, budget and new-ad proposals are applied on Meta as soon as you approve (new ads are created switched off). Anything else is recorded as approved.</p>`,
-          confirm: "Approve", claude: true,
-        } : { title: `Decline “${card.dataset.title}”?`, body: "<p>Nothing changes on Meta.</p>", confirm: "Decline" });
-        if (!yes) return;
-        const r = await api(`/api/proposals/${id}/${approve ? "approve" : "decline"}`, { method: "POST" });
+        if (decline) {
+          const yes = await confirmDialog({ title: `Decline “${card.dataset.title}”?`, body: "<p>Nothing changes on Meta.</p>", confirm: "Decline" });
+          if (!yes) return;
+          await api(`/api/proposals/${id}/decline`, { method: "POST" });
+          toast("Declined");
+          onChange();
+          return;
+        }
+        approve.disabled = true;
+        let plan;
+        try { plan = await api(`/api/proposals/${id}/check`); }
+        catch (err) { approve.disabled = false; throw err; }
+        const ask = approvalDialog(card, plan);
+        if (!ask) { approve.disabled = false; return; }
+        const yes = await confirmDialog(ask.dialog);
+        if (!yes) { approve.disabled = false; return; }
+        let r;
+        try { r = await api(`/api/proposals/${id}/approve`, { method: "POST", body: ask.body }); }
+        catch (err) { approve.disabled = false; throw err; }
         if (r.experiment_id) { toast("Tracking it. Opening the test…"); location.href = `/experiments.html#${r.experiment_id}`; return; }
         if (r.ad_id) { toast("Ad created (off). Opening it…"); location.href = `/ad.html?id=${encodeURIComponent(r.ad_id)}&created=1`; return; }
         toast(r.status === "applied" ? "Approved and applied on Meta" : r.status === "approved" ? (r.note || "Approved") : "Declined");

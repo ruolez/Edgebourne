@@ -110,7 +110,7 @@ def recipients_for(lead):
 def render_email(lead):
     name = lead["full_name"] or "Someone"
     business = lead["business_type"] or "business not given"
-    link = f"{config.APP_BASE_URL}/leads.html#lead={lead['id']}"
+    link = __import__("notify").link(f"/leads.html#lead={lead['id']}")
     test = " (test lead)" if lead["is_test"] else ""
     subject = f"New lead{test}: {name}, {business}"
     lines = [
@@ -148,24 +148,40 @@ def render_email(lead):
     return subject, "\n".join(lines), body_html
 
 
-def recipient_ids(lead):
-    rows = db.query(
-        """SELECT DISTINCT u.id FROM users u
-           LEFT JOIN campaign_members cm ON cm.user_id = u.id
-           WHERE u.is_active AND (u.role = 'admin' OR cm.campaign_id = %s)""",
-        (lead["campaign_id"],),
+def staff_for(campaign_id):
+    """Who works on this campaign: the console's owners, this account's admins and the members
+    assigned to it (campaign_members is per account under row-level security)."""
+    import account_ctx
+    return db.query(
+        """SELECT DISTINCT u.id, u.name FROM users u
+           LEFT JOIN campaign_members cm ON cm.user_id = u.id AND cm.campaign_id = %s
+           WHERE u.is_active AND ((u.role = 'admin' AND (u.account_id IS NULL OR u.account_id = %s))
+                                  OR cm.campaign_id IS NOT NULL)
+           ORDER BY u.name""",
+        (campaign_id, account_ctx.current()),
     )
-    return [r["id"] for r in rows]
+
+
+def recipient_ids(lead):
+    return [r["id"] for r in staff_for(lead["campaign_id"])]
 
 
 def alert_phones(lead):
-    """Telegram for everyone who would get the lead email and linked their chat."""
+    """A phone alert for everyone who gets the lead email: Telegram when they linked it, otherwise
+    a push to each of their devices with notifications on. The email goes out as well."""
     import notify
+    import push
     title, lines = notify.lead_alert(lead)
-    url = f"{config.APP_BASE_URL}/leads.html#lead={lead['id']}"
-    for uid in notify.telegram_people(recipient_ids(lead)):
-        notify.queue(uid, "telegram", "lead", title, lines, url, "Open the lead", ref=str(lead["id"]),
-                     dedupe_key=f"lead:{lead['id']}:telegram:{uid}")
+    url = notify.link(f"/leads.html#lead={lead['id']}")
+    ids = recipient_ids(lead)
+    by_tg = set(notify.telegram_people(ids))
+    by_push = push.has_devices(ids)
+    wanted = {r["id"] for r in db.query("SELECT id FROM users WHERE id = ANY(%s) AND notify_new_leads", (ids,))} if ids else set()
+    for uid in ids:
+        channel = "telegram" if uid in by_tg else "push" if uid in by_push and uid in wanted else None
+        if channel:
+            notify.queue(uid, channel, "lead", title, lines, url, "Open the lead", ref=str(lead["id"]),
+                         dedupe_key=f"lead:{lead['id']}:{channel}:{uid}")
 
 
 def notify(lead_id):

@@ -43,8 +43,11 @@ def problems(spec, known_forms, known_templates, current_daily_cents=None):
         out.append(("ads", f"Start with at most {MAX_ADS} ads"))
     names = [a.get("name", "").strip().lower() for a in ads]
     for i, a in enumerate(ads, 1):
-        if a.get("template_ad_id") not in known_templates:
+        # From scratch (no ad to start from) the ad needs its own image or video; "same" means the template's.
+        if a.get("template_ad_id") and a["template_ad_id"] not in known_templates:
             out.append(("ads", f"Ad {i}: pick the ad it starts from"))
+        if not a.get("template_ad_id") and (a.get("media") or {}).get("kind") == "same":
+            out.append(("ads", f"Ad {i}: choose its image or video (it doesn't start from another ad)"))
         if not (a.get("name") or "").strip() or not (a.get("title") or "").strip() or not (a.get("body") or "").strip():
             out.append(("ads", f"Ad {i}: give it a name, primary text and a headline"))
         if a.get("cta_type") and a["cta_type"] not in CTA_FOR_FORMS:

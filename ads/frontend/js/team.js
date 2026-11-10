@@ -17,12 +17,12 @@ function render() {
     <tbody>${data.members.map((m) => `
       <tr class="${m.is_active ? "" : "muted"}">
         <td><b>${esc(m.name)}</b><br><span class="muted">${esc(m.email)}</span></td>
-        <td>${m.is_active ? (m.role === "admin" ? '<span class="pill ok">Admin</span>' : m.role === "client" ? '<span class="pill claude">Client (read-only)</span>' : '<span class="pill">Team member</span>') : '<span class="pill bad">Deactivated</span>'}</td>
+        <td>${m.is_active ? (m.access === "admin" ? '<span class="pill ok">Admin, every account</span>' : m.access === "account_admin" ? '<span class="pill ok">Admin of this account</span>' : m.role === "client" ? `<span class="pill claude">Client${me.account.clients_update_leads ? "" : " (read-only)"}</span>` : '<span class="pill">Team member</span>') : '<span class="pill bad">Deactivated</span>'}</td>
         <td>${m.role === "admin" ? '<span class="muted">All campaigns</span>' : m.role === "client" ? '<span class="muted">This whole account</span>' : campaignNames(m.campaign_ids)}</td>
         <td>${m.last_login_at ? when(m.last_login_at) : '<span class="muted">Never</span>'}</td>
         <td class="row end">
-          <button class="btn" data-edit="${m.id}">Edit</button>
-          ${m.id === me.id ? "" : `<button class="btn btn-quiet" data-reset="${m.id}">Reset password</button>
+          ${m.access === "admin" && !data.owner ? "" : `<button class="btn" data-edit="${m.id}">Edit</button>`}
+          ${m.id === me.id || (m.access === "admin" && !data.owner) ? "" : `<button class="btn btn-quiet" data-reset="${m.id}">Reset password</button>
           <button class="btn btn-quiet ${m.is_active ? "btn-danger" : ""}" data-active="${m.id}">${m.is_active ? "Deactivate" : "Reactivate"}</button>`}
         </td>
       </tr>`).join("")}</tbody>`;
@@ -43,7 +43,8 @@ function openDialog(member) {
   form.name.value = member ? member.name : "";
   form.email.value = member ? member.email : "";
   form.name.disabled = form.email.disabled = Boolean(member);
-  form.role.value = member ? member.role : "member";
+  form.role.querySelectorAll("[data-owner-only]").forEach((o) => { o.hidden = o.disabled = !data.owner; });
+  form.role.value = member ? member.access : "member";
   const chosen = new Set(member ? member.campaign_ids : []);
   $("m-campaigns").innerHTML = data.campaigns.length
     ? data.campaigns.map((c) => `<label class="check"><input type="checkbox" name="campaign" value="${esc(c.id)}" ${chosen.has(c.id) ? "checked" : ""}> ${esc(c.name)}</label>`).join("")

@@ -44,6 +44,7 @@ class BuildEventTest(unittest.TestCase):
         self.assertEqual((payload, reason), ({
             "event_name": "Qualified",
             "event_time": int(T0.timestamp()),
+            "event_id": "1234567890123456:qualified",
             "action_source": "system_generated",
             "user_data": {"lead_id": 1234567890123456},
             "custom_data": {"event_source": "crm", "lead_event_source": "Edge Bourne Ads Console"},

@@ -18,19 +18,23 @@ bp = Blueprint("webhooks", __name__, url_prefix="/webhooks")
 def verify():
     """Meta's subscription handshake when the callback URL is saved."""
     expected = settings_store.get("meta_verify_token")
+    import hmac
     if (request.args.get("hub.mode") == "subscribe" and expected
-            and request.args.get("hub.verify_token") == expected):
+            and hmac.compare_digest(str(request.args.get("hub.verify_token") or ""), expected)):
         return request.args.get("hub.challenge", ""), 200, {"Content-Type": "text/plain"}
     abort(403)
 
 
 def account_for_page(page_id):
-    """The account whose Facebook Page the lead came from (account 1 when no account claims it)."""
+    """The account whose Facebook Page the lead came from. A Page no account names goes to account 1
+    (Meta sometimes sends the Page's profile id rather than the id in Settings), logged so a client's
+    Page that was never connected shows up instead of vanishing."""
     import account_ctx
     if page_id:
-        for r in db.query("SELECT key, value FROM settings WHERE key = 'meta_page_id' OR key LIKE 'meta_page_id@%%'"):
+        for r in db.query("SELECT key, value FROM settings WHERE key = 'meta_page_id' OR key LIKE 'meta_page_id@%%' ORDER BY key"):
             if r["value"] == page_id:
                 return int(r["key"].split("@")[1]) if "@" in r["key"] else account_ctx.DEFAULT
+        log.warning("webhook for Page %s, which no account names: filed under account 1", page_id)
     return account_ctx.DEFAULT
 
 

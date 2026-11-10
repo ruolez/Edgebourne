@@ -509,7 +509,7 @@ def graph(path):
             return jsonify({"id": sid})
         if parts == [act, "ads"] and REFUSE_NEXT_AD:
             REFUSE_NEXT_AD.pop()
-            return jsonify({"error": {"message": "Ad account has hit a temporary limit (fake)", "code": 17}}), 400
+            return jsonify({"error": {"message": "The ad was refused (fake)", "code": 100}}), 400
         if parts == [act, "ads"]:
             aid = str(next(ids))
             parent = NEW_ADSETS.get(a["adset_id"]) or ADSET

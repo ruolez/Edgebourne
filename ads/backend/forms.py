@@ -105,7 +105,7 @@ def payload(spec):
         "name": spec["name"].strip(),
         "locale": "EN_US",
         "questions": questions,
-        "privacy_policy": {"url": spec.get("privacy_url") or DEFAULT_PRIVACY, "link_text": "Privacy policy"},
+        "privacy_policy": {"url": spec.get("privacy_url"), "link_text": "Privacy policy"},
         "context_card": {"title": spec["intro_title"].strip(), "style": "LIST_STYLE" if bullets else "PARAGRAPH_STYLE",
                          "content": bullets or [spec["intro_title"].strip()], "button_text": "Continue"},
         "thank_you_page": {"title": (spec.get("thanks_title") or "Thanks, you're all set").strip(),
@@ -136,7 +136,7 @@ def spec_from_meta(form):
         "custom": [{"label": q.get("label") or "", "options": [o.get("value") for o in q.get("options") or []]}
                    for q in qs if q.get("type") == "CUSTOM"][:MAX_CUSTOM],
         "higher_intent": bool(form.get("is_optimized_for_quality")),
-        "privacy_url": (form.get("privacy_policy_url") or (form.get("privacy_policy") or {}).get("url") or DEFAULT_PRIVACY),
+        "privacy_url": (form.get("privacy_policy_url") or (form.get("privacy_policy") or {}).get("url") or ""),
         "thanks_title": thanks.get("title") or "",
         "thanks_body": thanks.get("body") or "",
         "thanks_button": "website" if url and thanks.get("button_type") in (None, "VIEW_WEBSITE") else "none",

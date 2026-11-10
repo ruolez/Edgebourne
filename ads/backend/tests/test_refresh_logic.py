@@ -59,3 +59,21 @@ class AutoDueTests(unittest.TestCase):
 
     def test_a_pull_stamped_in_the_future_does_not_stop_automatic_refresh(self):
         self.assertTrue(refresh_api.auto_due(str(self.NOW + 3600), None, self.NOW, 15))
+
+
+class WorkerHealthTest(unittest.TestCase):
+    NOW = 1_800_000_000.0
+
+    def test_a_recent_pass_is_healthy(self):
+        import jobs
+        self.assertFalse(jobs.worker_stale("2027-01-15T07:59:00+00:00", jobs.synced_at("2027-01-15T08:00:00+00:00"), booted=0))
+
+    def test_no_pass_for_ten_minutes_is_stale(self):
+        import jobs
+        now = jobs.synced_at("2027-01-15T08:20:00+00:00")
+        self.assertEqual([jobs.worker_stale("2027-01-15T08:00:00+00:00", now, booted=0), jobs.worker_stale(None, now, booted=0)],
+                         [True, True])
+
+    def test_a_fresh_start_gets_grace(self):
+        import jobs
+        self.assertFalse(jobs.worker_stale(None, self.NOW, booted=self.NOW - 60))

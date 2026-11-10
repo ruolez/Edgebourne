@@ -6,6 +6,7 @@ import json
 from flask import Blueprint, jsonify, request
 
 import adset_build as ab
+import account_info
 import config
 import db
 import meta_client
@@ -24,6 +25,10 @@ def _account():
 
 
 def template(adset_id):
+    """The existing ad set a new one copies its setup from; {} = from scratch (Meta's lead-form
+    defaults: leads, on-ad form, the account's Page)."""
+    if not adset_id:
+        return {}
     if not db.query("SELECT 1 FROM adsets WHERE id = %s", (adset_id,), one=True):
         raise meta_client.MetaError("Pick an ad set to start from")
     return meta_client.get(adset_id, fields=TEMPLATE_FIELDS)
@@ -50,8 +55,8 @@ def clean(raw):
             return int(raw[k]) if raw.get(k) not in (None, "") else default
         except (TypeError, ValueError):
             return default
-    start = ab.iso_local(raw["start_day"], num("start_hour", 0), config.ACCOUNT_TZ) if raw.get("start_day") else None
-    end = ab.iso_local(raw["end_day"], num("end_hour", 23), config.ACCOUNT_TZ) if raw.get("end_day") else None
+    start = ab.iso_local(raw["start_day"], num("start_hour", 0), account_info.tz_name()) if raw.get("start_day") else None
+    end = ab.iso_local(raw["end_day"], num("end_hour", 23), account_info.tz_name()) if raw.get("end_day") else None
     return {"name": str(raw.get("name") or "")[:200], "locations": locs, "age_min": num("age_min", 18), "age_max": num("age_max", 65),
             "suggest_min": num("suggest_min"), "suggest_max": num("suggest_max"), "advantage": bool(raw.get("advantage")),
             "keep_hints": bool(raw.get("keep_hints")), "start": start, "end": end, "daily_budget_cents": num("daily_budget_cents")}
@@ -66,7 +71,7 @@ def options():
     sets = db.query("""SELECT id, name, campaign_id, effective_status, targeting_summary FROM adsets
                        WHERE COALESCE(effective_status, '') NOT IN ('DELETED', 'ARCHIVED')
                        ORDER BY (effective_status = 'ACTIVE') DESC, name""")
-    return jsonify({"campaigns": campaigns, "adsets": sets, "tz": config.ACCOUNT_TZ,
+    return jsonify({"campaigns": campaigns, "adsets": sets, "tz": account_info.tz_name(),
                     "city_radius": ab.CITY_RADIUS, "pin_radius": ab.PIN_RADIUS, "advantage_max_age_min": ab.ADVANTAGE_MAX_AGE_MIN})
 
 
@@ -137,6 +142,10 @@ def create():
     errs = ab.problems(spec, campaign["daily_budget_cents"])
     if errs:
         return api_error(errs[0][1], 400, field=errs[0][0])
+    import targets
+    if spec.get("daily_budget_cents") and campaign["daily_budget_cents"] is None and spec["daily_budget_cents"] > targets.ceiling():
+        return api_error(f"That's above this account's ceiling of {targets.ceiling() / 100:,.2f} a day "
+                         "(Settings → Targets → highest daily budget).", 400, field="budget")
     import ads_api
     import insights
     user = current_user()

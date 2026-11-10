@@ -117,9 +117,69 @@ for rule in app.url_map.iter_rules():
     for m in methods:
         session_for(cc, client["id"])
         status = cc.open(fill(rule, two), method=m, json={}).status_code
-        if status != 403 and not re.match(r"^/api/(auth/(logout|password|me)|me/push(/.*)?|accounts/switch)$", rule.rule):
+        if status != 403 and not re.match(r"^/api/(auth/(logout|password|me)|me/push(/.*)?)$", rule.rule):
             writes.append(f"{m} {rule.rule} → {status}")
+
+# Audit 2: a member and an admin limited to account 2, writes aimed at account 1's ids, background
+# threads, assignments and the cross-site guard.
+with account_ctx.all_accounts():
+    def user(email, role):
+        return db.query("SELECT id FROM users WHERE email = %s", (email,), one=True) or db.execute(
+            "INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (email, email.split("@")[0], generate_password_hash(secrets.token_hex(8)), role, A2), returning=True)
+    member = user("member-qa@burdanova.test", "member")
+    acct_admin = user("admin-qa@burdanova.test", "admin")
+    db.execute("INSERT INTO campaign_members (campaign_id, user_id, account_id) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+               (ids["campaign"], member["id"], A2))
+mc = app.test_client()
+session_for(mc, member["id"])
+l4, n4 = walk(mc, ACCT1_MARKS, one, "member of account 2")
+ac = app.test_client()
+session_for(ac, acct_admin["id"], 1)  # its cookie asks for account 1: it must not get it
+l5, n5 = walk(ac, ACCT1_MARKS, one, "admin of account 2 only")
+acct_admin_limits = {
+    "switch_to_1": ac.post("/api/accounts/switch", json={"id": 1}).status_code,
+    "all_accounts": ac.get("/api/accounts/all").status_code,
+    "add_account": ac.post("/api/accounts", json={"name": "Nope"}).status_code,
+    "console_meta_keys": ac.put("/api/settings/meta", json={"meta_app_secret": "x" * 32}).status_code,
+    "smtp": ac.put("/api/settings/smtp", json={"smtp_host": "evil.example"}).status_code,
+    "mac_key": ac.post("/api/desk/key", json={}).status_code,
+    "edit_owner": ac.patch(f"/api/team/{admin['id']}", json={"reset_password": True}).status_code,
+}
+cross = []
+session_for(c, admin["id"], A2)
+for method, url, body in (("POST", f"/api/ads/ad/{one['ad']}/status", {"status": "PAUSED"}),
+                          ("POST", f"/api/ads/campaign/{one['campaign']}/budget", {"daily_budget_cents": 2100}),
+                          ("POST", f"/api/ads/ad/{one['ad']}/archive", {}),
+                          ("POST", f"/api/ads/ad/{one['ad']}/duplicate", {}),
+                          ("PATCH", f"/api/leads/{one['lead']}", {"status": "won"}),
+                          ("POST", f"/api/leads/{one['lead']}/notes", {"body": "x"}),
+                          ("GET", f"/api/media/video/{one['ad']}%3Ffields%3Did", None)):
+    r = c.open(url, method=method, json=body)
+    if r.status_code < 400:
+        cross.append(f"{method} {url} → {r.status_code}")
+import ads_api
+import insights
+seen = []
+if True:
+    orig = insights.sync_structure
+    insights.sync_structure = lambda: seen.append(account_ctx.current())
+    try:
+        with account_ctx.use(A2):
+            ads_api.resync_later()
+        __import__("time").sleep(0.3)
+    finally:
+        insights.sync_structure = orig
+with account_ctx.use(1):
+    members_seen_from_1 = db.query("SELECT COUNT(*) AS n FROM campaign_members WHERE user_id = %s", (member["id"],), one=True)["n"]
+csrf = app.test_client()
+session_for(csrf, admin["id"], 1)
+csrf_status = csrf.post("/api/refresh", data="", content_type="text/plain").status_code
 out.update({"leaks": l1 + l2 + l3, "routes_checked": [n1, n2, n3], "admin_sees_account2_on_account2": sees_own,
             "client_sees_own_leads": client_sees_own, "client_switch_status": switch, "client_stays_on_own_account": still,
-            "client_writes_not_refused": writes})
+            "client_writes_not_refused": writes,
+            "member_and_account_admin_routes": [n4, n5], "leaks_member_and_account_admin": l4 + l5,
+            "account_admin_limits": acct_admin_limits, "cross_account_writes": cross,
+            "resync_thread_account": seen, "account2_assignments_seen_from_1": members_seen_from_1,
+            "csrf_without_header": csrf_status})
 print(json.dumps(out))

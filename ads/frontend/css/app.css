@@ -1394,7 +1394,8 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .acct-name { margin: -8px 8px 16px; font-weight: 700; font-size: 14px; color: var(--ink-2); }
 .acct-sheet, p.acct-sheet { padding: 12px 16px 0; margin: 0; }
 /* Clients see their account read-only: controls that change things are hidden (the server refuses them too). */
-.read-only #stages button:not([aria-pressed="true"]), .read-only #note-form, .read-only .c-actions, .read-only .c-reply,
+.read-only:not(.client-leads) #stages button:not([aria-pressed="true"]), .read-only:not(.client-leads) #note-form, .read-only .c-actions, .read-only .c-reply,
+.read-only [data-refresh], .read-only #owner,
 .read-only #cr-actions, .read-only #idea .row, .read-only [data-toggle], .read-only .budget-edit, .read-only .campaign-add,
 .read-only #new-ad, .read-only [data-reply-open], .read-only .reply-actions, .read-only #reply-open, .read-only [data-apply] { display: none !important; }
 .read-only #idea input { pointer-events: none; background: transparent; border-color: transparent; padding-left: 0; }
@@ -1431,3 +1432,44 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
   .r-figs div { background: #F1F4F3; }
 }
 .r-funnel tbody tr:last-child th, .r-ads tbody tr:last-child th { border-bottom: 0; }
+
+/* Audit 2: account name under the page title on phones; console-wide warnings on every page. */
+.top-acct { display: block; font-size: 12px; font-weight: 500; color: var(--ink-3); line-height: 1.2; }
+.topbar .brand span:has(.top-acct) { line-height: 1.15; }
+.sys-banners { display: grid; gap: 8px; margin: 0 0 16px; }
+.sys-banners .note { margin: 0; }
+.sys-banners a { color: inherit; text-decoration: underline; }
+.big-change { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; margin: 4px 0; }
+.big-change del { color: var(--ink-3); font-weight: 500; }
+.big-change ins { text-decoration: none; color: var(--ink); }
+.settings-nav { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; padding: 10px 14px; border-radius: var(--radius-s); background: var(--surface-2); position: sticky; top: 0; z-index: 2; }
+.settings-nav a { font-size: 14px; color: var(--seal-deep); text-decoration: none; padding: 6px 0; }
+.settings-nav a:hover { text-decoration: underline; }
+.group-title { font-size: 20px; margin: 12px 0 0; }
+.acct-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.acct-list li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.acct-list .spacer { flex: 1; }
+[hidden] { display: none !important; }
+
+/* Phone width (audit A18): nothing may make the page wider than the screen. Grid and flex children
+   default to min-width: auto and grow to their widest content, so wide tables and button strips
+   pushed whole pages sideways; they scroll inside their own box instead. */
+.content > *, .cr-layout > *, .today > *, .stack > * { min-width: 0; }
+.scroll-x, .format-scroll, .bench, .r-sec { max-width: 100%; overflow-x: auto; position: relative; }
+@media (max-width: 720px) {
+  #cr-tabs, .tabs { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  #cr-tabs > *, .tabs > * { flex: 0 0 auto; }
+  .segmented { max-width: 100%; overflow-x: auto; }
+  .r-sec table, .bench table { min-width: 100%; }
+}
+
+/* Touch (audit A23): small links and buttons get a hit area of at least 44px without changing how
+   they look; the on/off switch keeps its size and gains an invisible margin to tap. */
+@media (pointer: coarse) {
+  [data-sort], .link-btn, .card-head a, .swipe a, .watch a, .r-list a { position: relative; }
+  [data-sort]::before, .link-btn::before, .card-head a::before, .swipe a::before, .watch a::before {
+    content: ""; position: absolute; inset: 50% 50% auto auto; width: max(100%, 44px); height: 44px;
+    transform: translate(50%, -50%);
+  }
+  .switch::after { content: ""; position: absolute; inset: -9px -4px; }
+}

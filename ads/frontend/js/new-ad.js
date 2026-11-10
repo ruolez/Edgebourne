@@ -28,6 +28,7 @@ function fillFromTemplate() {
 
 function useSame() {
   const t = options.templates.find((x) => x.id === $("template").value);
+  if (!t) { media = null; showChosen(); pickTab("library"); return; }
   media = { kind: "same", name: `Same as “${t ? t.name : "the starting ad"}”`, url: t && t.image_url, ready: true };
   showChosen();
 }
@@ -81,6 +82,7 @@ function upload(file) {
   form.append("file", file);
   const xhr = new XMLHttpRequest();
   xhr.open("POST", "/api/media/upload");
+  xhr.setRequestHeader("X-Requested-With", "ebads");
   xhr.upload.addEventListener("progress", (e) => {
     if (!e.lengthComputable) return;
     const p = Math.round((e.loaded / e.total) * 100);
@@ -133,16 +135,19 @@ async function loadForms() {
 }
 
 const me = await boot({ page: "ads" });
-if (me) {
+if (me && me.role === "client") location.replace("/ads.html");
+else if (me) {
   $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
   $("drop-icon").innerHTML = icon("upload");
   if (me.role === "admin") $("claude-tip").hidden = false;
   try { options = await api("/api/ads/new/options"); } catch (err) { toast(err.message, "bad"); options = { adsets: [], templates: [], cta_types: [] }; }
-  if (!options.adsets.length || !options.templates.length) {
-    document.querySelector(".new-ad-layout").innerHTML = `<section class="panel empty"><h3>Nothing to build on yet</h3><p>A new ad copies the setup of an existing one (its lead form and button). Once your campaigns are synced from Meta, come back here.</p><a class="btn" href="/ads.html">Back to ads</a></section>`;
+  if (!options.adsets.length || (!options.templates.length && me.role !== "admin")) {
+    document.querySelector(".new-ad-layout").innerHTML = `<section class="panel empty"><h3>No ad set to put it in yet</h3><p>An ad goes inside an ad set.${me.role === "admin" ? " Start with a new campaign: it makes the ad set and its first ads." : " Ask an admin to set up the campaign first."}</p>${me.role === "admin" ? '<a class="btn btn-primary" href="/new-campaign.html">New campaign</a>' : '<a class="btn" href="/ads.html">Back to ads</a>'}</section>`;
   } else {
     $("aset-pick").innerHTML = options.adsets.map((s) => `<option value="${esc(s.id)}">${esc(s.name)} · ${esc(s.campaign_name)}</option>`).join("");
-    $("template").innerHTML = options.templates.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("");
+    // Admins can also start from nothing: the account's Page, the lead form they pick, their own media.
+    $("template").innerHTML = options.templates.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("")
+      + (me.role === "admin" ? '<option value="">Nothing: a new ad with its own words and media</option>' : "");
     $("cta").innerHTML = options.cta_types.map((c) => `<option value="${c}">${esc(CTA_LABELS[c] || c)}</option>`).join("");
     const wantSet = new URLSearchParams(location.search).get("adset");
     if (wantSet && options.adsets.some((s) => s.id === wantSet)) { $("aset-pick").value = wantSet; $("aset-pick").dataset.touched = "1"; }

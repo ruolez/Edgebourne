@@ -48,13 +48,49 @@ def _scope(conn):
         conn.account_id = acct
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def try_lock(name):
+    """A Postgres advisory lock held for the block: yields False when someone else holds it (a second
+    click on the same thing while Meta is still answering the first)."""
+    import zlib
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(%s)", (zlib.crc32(name.encode()) + 900000000,))
+            yield cur.fetchone()[0]
+    finally:
+        conn.close()
+
+
+_reused = __import__("contextvars").ContextVar("db_reused", default=None)
+
+
+@contextmanager
+def reusing():
+    """Outside a request (the worker), share one app connection for the block instead of opening one
+    per query: a sync writes hundreds of rows, on a Postgres with 50 connections shared with the website."""
+    if _reused.get() is not None:
+        yield
+        return
+    conn = connect_app()
+    token = _reused.set(conn)
+    try:
+        yield
+    finally:
+        _reused.reset(token)
+        conn.close()
+
+
 def get_db():
-    """Per-request connection inside Flask; a fresh one per call in workers."""
+    """Per-request connection inside Flask; the shared one inside reusing(); else None (one per call)."""
     if has_app_context():
         if "db" not in g:
             g.db = connect_app()
         return g.db
-    return None
+    return _reused.get()
 
 
 def close_db(_exc=None):
@@ -80,6 +116,8 @@ def _run(sql, params, fetch):
         return rows
     except Exception:
         conn.rollback()
+        if isinstance(conn, AppConnection):
+            conn.account_id = None  # the rollback undid set_config: point it again next time
         raise
     finally:
         if owned:
@@ -120,6 +158,27 @@ def ensure_database():
         conn.close()
 
 
+# Roles live outside the database, so pg_dump leaves this one out: a database restored on a new
+# server would have every table but no ebads_app, and every request would fail. Recreated on boot.
+APP_ROLE_SQL = f"""
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{APP_ROLE}') THEN
+        CREATE ROLE {APP_ROLE} NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
+END $$;
+DO $$ BEGIN
+    EXECUTE format('GRANT {APP_ROLE} TO %I', current_user);
+EXCEPTION WHEN insufficient_privilege OR invalid_grant_operation THEN
+    RAISE NOTICE 'could not grant {APP_ROLE} to %', current_user;
+END $$;
+GRANT USAGE ON SCHEMA public TO {APP_ROLE};
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {APP_ROLE};
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {APP_ROLE};
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {APP_ROLE};
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {APP_ROLE};
+"""
+
+
 def run_migrations():
     ensure_database()
     conn = connect()
@@ -139,6 +198,7 @@ def run_migrations():
                 with open(os.path.join(MIGRATIONS_DIR, fname)) as f:
                     cur.execute(f.read())
                 cur.execute("INSERT INTO schema_migrations (filename) VALUES (%s)", (fname,))
+            cur.execute(APP_ROLE_SQL)
             cur.execute("SELECT COUNT(*) FROM users")
             if cur.fetchone()[0] == 0:
                 if config.ADMIN_INITIAL_PASSWORD:

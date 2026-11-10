@@ -6,7 +6,8 @@ export class ApiError extends Error {
 export async function api(path, { method = "GET", body } = {}) {
   const res = await fetch(path, {
     method,
-    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+    // X-Requested-With: the server refuses writes without it (cross-site request guard).
+    headers: { "X-Requested-With": "ebads", ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: "same-origin",
   });

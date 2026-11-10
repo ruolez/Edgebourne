@@ -10,6 +10,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import account_info
 import config
 import db
 import notify
@@ -204,7 +205,7 @@ def saved_rules():
 
 def snapshot(now):
     import refresh_api
-    tz = ZoneInfo(config.ACCOUNT_TZ)
+    tz = account_info.tz()
     today = now.astimezone(tz).date()
     ads = db.query("SELECT id, name, campaign_id, effective_status, created_time FROM ads "
                    "WHERE effective_status NOT IN ('DELETED', 'ARCHIVED')")
@@ -228,7 +229,7 @@ def snapshot(now):
         "SELECT day, SUM(leads) AS n FROM ad_daily WHERE day >= %s AND day < %s GROUP BY day", (today - timedelta(days=3), today))}
     inbox = {r["day"]: int(r["n"]) for r in db.query(
         "SELECT (created_time AT TIME ZONE %s)::date AS day, COUNT(*) AS n FROM leads WHERE NOT is_test "
-        "AND created_time > now() - interval '4 days' GROUP BY 1", (config.ACCOUNT_TZ,))}
+        "AND created_time > now() - interval '4 days' GROUP BY 1", (account_info.tz_name(),))}
     updated = refresh_api.last_updated(settings_store.get("last_refresh_at"), settings_store.get("last_performance_sync"))
     return today, {
         "ads": ads, "ad_days": ad_days, "campaigns": camps, "camp_days": camp_days, "today_spend": today_spend,
@@ -256,7 +257,10 @@ def run(now=None):
     """Check every rule; raise the new alerts, tell the admins, close the ones that are gone."""
     now = now or datetime.now(timezone.utc)
     today, snap = snapshot(now)
-    found = evaluate(snap, saved_rules(), today)
+    import targets
+    rules = saved_rules()
+    rules["cpl_high"] = {**rules["cpl_high"], "target_cents": targets.lead()}  # Settings → Targets
+    found = evaluate(snap, rules, today)
     raised = []
     for a in found:
         row = db.execute(
@@ -276,7 +280,7 @@ def run(now=None):
             if a["level"] == "info":
                 continue  # shown on Home only
             for uid, channel in people:
-                notify.queue(uid, channel, "alert", a["title"], a["lines"], f"{config.APP_BASE_URL}{a['href'] or '/home.html'}",
+                notify.queue(uid, channel, "alert", a["title"], a["lines"], notify.link(a["href"] or "/home.html"),
                              "Open in the console", ref=str(alert_id), dedupe_key=f"alert:{alert_id}:{uid}")
     return [a["key"] for _, a in raised]
 

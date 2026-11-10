@@ -34,8 +34,10 @@ function syncCampaign() {
   const sets = opts.adsets.filter((s) => s.campaign_id === $("campaign").value);
   const all = sets.length ? sets : opts.adsets;
   const keep = $("template").value;
-  $("template").innerHTML = all.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
-  if (all.some((s) => s.id === keep)) $("template").value = keep;
+  const chosenScratch = $("template").options.length > 0 && keep === "";  // only when picked, not on first fill
+  $("template").innerHTML = all.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("")
+    + '<option value="">Nothing: start from scratch</option>';
+  if (all.some((s) => s.id === keep) || chosenScratch) $("template").value = keep;
 }
 
 function syncAdvantage() {
@@ -78,7 +80,8 @@ function changed() { summary(); estimateSoon(); }
 
 async function loadTemplate() {
   try {
-    const t = await api(`/api/adsets/template/${encodeURIComponent($("template").value)}`);
+    const t = $("template").value ? await api(`/api/adsets/template/${encodeURIComponent($("template").value)}`)
+      : { locations: [], hints: [], age_min: 25, age_max: 65, suggest_min: null, suggest_max: null, advantage: true, keep_hints: false };
     places.set(t.locations); hints = t.hints;
     $("age_min").value = t.age_min; $("age_max").value = t.age_max;
     $("suggest_min").value = t.suggest_min ?? ""; $("suggest_max").value = t.suggest_max ?? "";

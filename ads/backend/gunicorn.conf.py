@@ -6,8 +6,8 @@ threads = int(os.environ.get("GUNICORN_THREADS", "4"))
 timeout = 120
 preload_app = True  # migrations run once, in the master
 worker_tmp_dir = "/dev/shm"
-max_requests = 1000
-max_requests_jitter = 100
+max_requests = 0  # no recycling: the worker thread lives in this process (audit A8)
+max_requests_jitter = 0
 reload = os.environ.get("GUNICORN_RELOAD") == "1"
 if reload:
     preload_app = False

@@ -87,12 +87,10 @@ function render(d) {
     </section>`;
   }
 
-  const LEVEL = { campaign: "campaign", adset: "ad set", ad: "ad" };
+  const LEVEL = { campaign: "campaign", adset: "ad set", ad: "ad", study: "A/B test", form: "lead form", account: "account" };
   const changes = d.changes.length
     ? `<ul class="changes">${d.changes.slice(0, 4).map((c) => {
-        const [cls, ic, what] = c.action === "status" ? [c.new_value === "ACTIVE" ? "on" : "", "power", `<b>${c.new_value === "ACTIVE" ? "Turned on" : "Turned off"}</b> ${LEVEL[c.level]} “${esc(c.entity_name)}”`]
-          : c.action === "budget" ? ["", "chart", `<b>Budget</b> “${esc(c.entity_name)}”: ${money(Number(c.old_value), { exact: true })} → ${money(Number(c.new_value), { exact: true })}/day`]
-          : c.action === "duplicate" ? ["", "copy", `<b>Duplicated</b> “${esc(c.old_value)}”`] : ["made", "made", `<b>Created</b> “${esc(c.new_value)}”`];
+        const [cls, ic, what] = changeWords(c, LEVEL);
         return `<li class="ic ${cls}">${icon(ic)}<span>${what}${c.ok ? "" : ' <b class="bad-text">(Meta refused)</b>'}<small>${esc(when(c.created_at))}${c.user_name ? `, ${esc(c.user_name)}` : ""}</small></span></li>`;
       }).join("")}</ul>`
     : '<p class="muted flush">No changes made from the dashboard yet.</p>';
@@ -103,6 +101,32 @@ function render(d) {
   if (adviceCard) loadAdvice();
   if (!claudeCard) $("home").querySelector(".changes-card").classList.add("wide");
   $("home").querySelectorAll("[data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
+}
+
+// Today → Changes: each kind of change in its own words (audit A21).
+function changeWords(c, LEVEL) {
+  const name = esc(c.entity_name || "");
+  const lvl = LEVEL[c.level] || c.level || "";
+  const short = (v) => esc(String(v || "").slice(0, 80));
+  switch (c.action) {
+    case "status": return [c.new_value === "ACTIVE" ? "on" : "", "power", `<b>${c.new_value === "ACTIVE" ? "Turned on" : "Turned off"}</b> ${lvl} “${name}”`];
+    case "budget": return ["", "chart", `<b>Budget</b> “${name}”: ${money(Number(c.old_value), { exact: true })} → ${money(Number(c.new_value), { exact: true })}/day`];
+    case "duplicate": return ["", "copy", `<b>Duplicated</b> “${short(c.old_value)}”`];
+    case "create": return ["made", "made", `<b>Created</b> ${lvl} “${short(c.new_value)}”`];
+    case "archive": return ["", "made", `<b>Archived</b> ad “${name}”`];
+    case "delete": return ["", "made", `<b>Deleted</b> ad “${name}”`];
+    case "rename": return ["", "made", `<b>Renamed</b> “${short(c.old_value)}” → “${short(c.new_value)}”`];
+    case "comment_reply": return ["", "made", `<b>Replied</b> to a comment on “${name}”: “${short(c.new_value)}”`];
+    case "comment_hide": return ["", "made", `<b>Hid</b> a comment on “${name}”`];
+    case "comment_show": return ["", "made", `<b>Showed again</b> a comment on “${name}”`];
+    case "recommendation": return ["", "spark", `<b>Applied Meta's suggestion</b> “${short(c.new_value)}”`];
+    case "recommendation_check": return ["", "spark", `<b>Meta set a different amount</b> than shown: ${short(c.error)}`];
+    case "enhancement": return ["", "spark", `<b>Changed Meta's automatic changes</b> on “${name}”: ${short(String(c.new_value).replace(/ \(creative .*\)$/, ""))}`];
+    case "end": return ["", "tests", `<b>Ended the A/B test</b> “${name}”`];
+    case "upload": return ["", "image", `<b>Uploaded</b> ${short(c.new_value)} to the media library`];
+    case "subscribe": return ["", "made", "<b>Connected the Page</b> to receive leads"];
+    default: return ["made", "made", `<b>${esc((c.action || "Changed").replace(/_/g, " ").replace(/^./, (x) => x.toUpperCase()))}</b> ${lvl} “${name || short(c.new_value)}”`];
+  }
 }
 
 async function load() {
@@ -134,7 +158,7 @@ function adviceHtml(a) {
         <div class="advice-text"><span class="ttl"><b>${esc(r.label)}</b>${r.points ? `<span class="pill">+${r.points} points</span>` : ""}</span>
           ${r.lift ? `<p class="flush">${esc(r.lift)}</p>` : ""}${step}
           ${r.note ? `<p class="flush muted small">${esc(r.note)}</p>` : ""}</div>
-        <div class="advice-do">${r.can_apply ? `<button type="button" class="btn btn-small" data-apply="${esc(r.signature)}" data-label="${esc(r.label)}" data-big="${b && b.big ? "1" : ""}" data-step="${b && b.from ? `${money(b.from, { exact: true })} → ${money(b.to, { exact: true })} a day` : ""}" data-does="${esc(r.applies || "")}">Apply</button>` : ""}
+        <div class="advice-do">${r.can_apply ? `<button type="button" class="btn btn-small" data-apply="${esc(r.signature)}" data-label="${esc(r.label)}" data-big="${b && b.big ? "1" : ""}" data-step="${b && b.from && b.to ? `${money(b.from, { exact: true })} → ${money(b.to, { exact: true })} a day` : ""}" data-to="${b && b.to ? b.to : ""}" data-does="${esc(r.applies || "")}">Apply</button>` : ""}
           ${r.url ? `<a class="btn btn-quiet btn-small" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Ads Manager ${icon("external")}</a>` : ""}</div>
       </li>`;
     }).join("")}</ul>` : '<p class="muted flush">No suggestions from Meta right now.</p>';
@@ -171,7 +195,7 @@ document.addEventListener("click", async (e) => {
   if (!yes) return;
   b.disabled = true;
   try {
-    document.getElementById("advice").innerHTML = adviceHtml(await api("/api/advice/apply", { method: "POST", body: { signature: b.dataset.apply, accept_big: big } }));
+    document.getElementById("advice").innerHTML = adviceHtml(await api("/api/advice/apply", { method: "POST", body: { signature: b.dataset.apply, accept_big: big, confirm_to: b.dataset.to ? Number(b.dataset.to) : null } }));
     toast("Applied on Meta");
   } catch (err) { toast(err.message, "bad"); b.disabled = false; }
 });

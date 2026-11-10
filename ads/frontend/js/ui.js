@@ -1,5 +1,6 @@
 // Shared UI: app frame, icons, toasts, formatting.
 import { api } from "./api.js";
+import { setCurrency } from "./format.js";
 
 const ICONS = {
   leads: '<path d="M4 5h16v11H8l-4 4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
@@ -209,7 +210,7 @@ function refreshButton() {
 // Agency mode: which ad account the console shows. Admins switch; others see their own.
 function accountSwitch(me, where) {
   const list = me.accounts || [];
-  if (me.role !== "admin" || list.length < 1) {
+  if (!me.owner || list.length < 1) {
     return list.length > 1 || me.role === "client" ? `<p class="acct-name acct-${where}">${esc(me.account.name)}</p>` : "";
   }
   if (list.length === 1) {
@@ -254,9 +255,26 @@ export async function boot({ page, admin = false }) {
     location.href = "/account.html?first=1";
     return null;
   }
+  // A link from an alert names its account (?acct=): open it there, not in whichever one was last chosen.
+  const params = new URLSearchParams(location.search);
+  const wanted = Number(params.get("acct"));
+  if (wanted) {
+    params.delete("acct");
+    const clean = location.pathname + (params.toString() ? `?${params}` : "") + location.hash;
+    if (me.owner && wanted !== me.account.id && (me.accounts || []).some((a) => a.id === wanted)) {
+      try { await api("/api/accounts/switch", { method: "POST", body: { id: wanted } }); location.replace(clean); return null; }
+      catch (e) { /* stay where we are */ }
+    }
+    history.replaceState(null, "", clean);
+  }
   if (admin && me.role !== "admin") { location.href = "/home.html"; return null; }
   if (me.role === "client") document.documentElement.classList.add("read-only");
+  if (me.role === "client" && me.account.clients_update_leads) document.documentElement.classList.add("client-leads");
+  setCurrency(me.account.currency);
+  window.ebadsMe = me;
   const isAdmin = me.role === "admin";
+  const roleLabel = me.owner ? "Admin" : isAdmin ? `Admin · ${me.account.name}` : me.role === "client" ? "Client" : "Team member";
+  const showAcct = (me.accounts || []).length > 1 || !me.owner;
   const main = [
     { id: "home", href: "/home.html", label: "Today", icon: "sun" },
     { id: "leads", href: "/leads.html", label: "Leads", icon: "leads", badge: "leads" },
@@ -291,7 +309,7 @@ export async function boot({ page, admin = false }) {
       ${isAdmin ? '<a class="cap-card" id="cap-card" href="/performance.html" hidden></a>' : ""}
       <a class="me" href="/account.html" ${page === "account" ? 'aria-current="page"' : ""}>
         <span class="avatar" aria-hidden="true">${esc(initials)}</span>
-        <span class="who"><b>${esc(me.name)}</b><small>${isAdmin ? "Admin" : "Team member"}</small></span>
+        <span class="who"><b>${esc(me.name)}</b><small>${esc(roleLabel)}</small></span>
       </a>
       <div class="rail-actions">
         <button type="button" data-theme-btn>${themeLabel(currentTheme())}</button>
@@ -303,7 +321,7 @@ export async function boot({ page, admin = false }) {
   const titles = { home: "Today", leads: "Leads", ads: "Ads", ad: "Ad", "new-ad": "New ad", performance: "Results", report: "Reports", experiments: "Tests", desk: "Claude", research: "Research", team: "Team", settings: "Settings", account: "Your account" };
   const top = document.createElement("header");
   top.className = "topbar";
-  top.innerHTML = `<a class="brand" href="/home.html"><img src="/img/favicon.svg" alt="Edge Bourne"><span>${esc(titles[page] || "Edge Bourne Ads")}</span></a>
+  top.innerHTML = `<a class="brand" href="/home.html"><img src="/img/favicon.svg" alt="Edge Bourne"><span>${esc(titles[page] || "Edge Bourne Ads")}${showAcct ? `<small class="top-acct">${esc(me.account.name)}</small>` : ""}</span></a>
     <button type="button" class="icon-btn" data-refresh>${icon("refresh")}</button>
     <a class="icon-btn" href="/account.html" aria-label="Your account"><span class="avatar">${esc(initials)}</span></a>`;
   app.prepend(top);
@@ -354,11 +372,28 @@ export async function boot({ page, admin = false }) {
     location.href = "/login.html";
   }));
 
+  banners(me);
   catchUp();
   setInterval(paintUpdated, 30000);
   setInterval(catchUp, 60000);
   document.addEventListener("visibilitychange", catchUp);
   return me;
+}
+
+// Things an admin must know on every page: the background worker stopped, or Meta refused the token.
+function banners(me) {
+  const items = [];
+  if (me.worker_stale) items.push(`<b>The console's background work has stopped</b> (new leads, alerts and automatic refresh wait). Run Update on the server, or ask for help.`);
+  if (me.meta_token_error) items.push(`<b>Meta stopped accepting the access token</b> on ${esc(me.meta_token_error.slice(0, 10))}. Paste a new System User token in <a href="/settings.html#meta-form">Settings → Meta</a>.`);
+  if (me.bridge_outdated) items.push(`<b>The Mac helper is out of date</b> (version ${esc(me.bridge_outdated)}). Re-run <code>ads/bridge/install.sh</code> on the Mac so Claude works on the right account.`);
+  if (me.claude_sign_in_failed) items.push(`<b>Claude can't sign in on your Mac</b> (its sign-in expired), so Claude's runs fail. On the Mac run <code>claude setup-token</code> and store it again with <code>ads/bridge/install.sh</code>.`);
+  if (!items.length) return;
+  const box = document.createElement("div");
+  box.className = "sys-banners";
+  box.setAttribute("role", "alert");
+  box.innerHTML = items.map((t) => `<p class="note bad">${t}</p>`).join("");
+  const main = document.querySelector("main") || document.querySelector(".app");
+  main.prepend(box);
 }
 
 export function setNewCount(n) {

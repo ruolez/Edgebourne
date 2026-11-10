@@ -2,6 +2,7 @@
 import json
 from datetime import date, timedelta
 
+import account_info
 import db
 import meta_client
 import settings_store
@@ -106,7 +107,7 @@ def sync_structure():
 
 def sync_daily(days=30):
     account = settings_store.get("meta_ad_account_id")
-    until = date.today()
+    until = account_info.today()
     since = until - timedelta(days=days - 1)
     rows = 0
     for r in meta_client.paged(
@@ -150,10 +151,14 @@ def sync_account():
         "amount_spent_cents": int(a.get("amount_spent") or 0),
         "account_status": a.get("account_status"),
     }))
+    import account_info
+    problem = account_info.currency_problem(a.get("currency"))
+    if problem:
+        raise meta_client.MetaError(problem)
 
 
 def sync_all(days=30):
+    sync_account()  # first: the account's time zone and currency decide how the rest is read
     out = {**sync_structure(), "daily_rows": sync_daily(days)}
-    sync_account()
     settings_store.set("last_performance_sync", __import__("datetime").datetime.utcnow().isoformat() + "Z")
     return out

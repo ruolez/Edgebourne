@@ -65,7 +65,7 @@ function renderList() {
     const filtered = state.filter !== "open" || state.q;
     list.innerHTML = `<li class="empty">${filtered
       ? "<h3>Nothing matches</h3><p>Try another stage or clear the search.</p>"
-      : `<h3>No leads yet</h3><p>When someone asks for a free intro call, they show up here within a minute${state.me.role === "admin" ? " and you get an email" : ""}.</p>${state.me.role === "admin" ? '<a class="btn" href="/settings.html">Check the Meta connection</a>' : ""}`}</li>`;
+      : `<h3>No leads yet</h3><p>When someone fills in one of the ad's lead forms, they show up here within a minute${state.me.role === "admin" ? " and you get an email" : ""}.</p>${state.me.role === "admin" ? '<a class="btn" href="/settings.html">Check the Meta connection</a>' : ""}`}</li>`;
   } else {
     list.innerHTML = state.leads.map(rowHtml).join("");
   }
@@ -126,17 +126,17 @@ function detailHtml(lead) {
     </div>
     ${metaStages(lead)}
     <dl class="facts">
-      <dt>Owner</dt><dd><label class="sr-only" for="owner">Owner</label><select class="input" id="owner">${owners}</select></dd>
+      <dt>Owner</dt><dd>${state.me.role === "client" ? esc(lead.owner_name || "Nobody yet") : `<label class="sr-only" for="owner">Owner</label><select class="input" id="owner">${owners}</select>`}</dd>
       <dt>Asked</dt><dd>${when(lead.created_time)}</dd>
       <dt>Phone</dt><dd>${esc(phoneDisplay(lead.phone) || "—")}</dd>
       <dt>Email</dt><dd>${esc(lead.email || "—")}</dd>
-      <dt>Ad</dt><dd>${esc(lead.ad_name || "—")}</dd>
+      <dt>Ad</dt><dd>${lead.ad_id && lead.ad_name ? `<a href="/ad.html?id=${encodeURIComponent(lead.ad_id)}">${esc(lead.ad_name)}</a>` : esc(lead.ad_name || "—")}</dd>
       <dt>Campaign</dt><dd>${esc(lead.campaign_name || "—")}</dd>
     </dl>
     ${answers ? `<h3 class="section-title">Their answers</h3><dl class="facts">${answers}</dl>` : ""}
     ${emailsHtml(lead)}
     <h3 class="section-title">Notes</h3>
-    <ul class="notes">${lead.notes.map((n) => `<li><div class="meta">${esc(n.author || "Someone")}, ${when(n.created_at)}</div>${esc(n.body)}</li>`).join("") || '<li class="muted">No notes yet. Write down what you learned on the call.</li>'}</ul>
+    <ul class="notes">${lead.notes.map((n) => `<li><div class="meta">${esc(n.author || "Someone")}, ${when(n.created_at)}</div>${esc(n.body)}</li>`).join("") || `<li class="muted">${state.me.role === "client" && !state.me.account.clients_update_leads ? "No notes yet." : "No notes yet. Write down what you learned on the call."}</li>`}</ul>
     <form id="note-form" class="stack tight">
       <label class="sr-only" for="note">Add a note</label>
       <textarea class="input" id="note" name="body" placeholder="What did you learn on the call?"></textarea>
@@ -267,7 +267,7 @@ function renderDetail(lead) {
   });
   wireReply(lead);
   detail.querySelectorAll("[data-stage]").forEach((b) => b.addEventListener("click", () => patch(lead.id, { status: b.dataset.stage })));
-  $("owner").addEventListener("change", (e) => patch(lead.id, { owner_id: e.target.value ? Number(e.target.value) : null }));
+  $("owner")?.addEventListener("change", (e) => patch(lead.id, { owner_id: e.target.value ? Number(e.target.value) : null }));
   $("note-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const body = e.target.body.value.trim();

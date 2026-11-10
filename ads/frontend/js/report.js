@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { boot, esc, toast } from "./ui.js";
-import { count, dayLabel, money } from "./format.js";
+import { count, dayLabel, money, setCurrency } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -20,6 +20,7 @@ function changeLine(c) {
 }
 
 function reportHtml(r) {
+  setCurrency(r.currency);
   const range = `${dayLabel(r.start)} – ${dayLabel(r.end)}, ${r.end.slice(0, 4)}`;
   const n = r.now;
   const cpl = n.leads ? n.spend_cents / n.leads : null;

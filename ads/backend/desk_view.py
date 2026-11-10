@@ -11,7 +11,8 @@ RESULT_STATES = {
     "DELETED": ("deleted", "Deleted"), "DISAPPROVED": ("failed", "Rejected by Meta"),
 }
 DECIDED = {"pending": ("waiting", "Waiting for you"), "declined": ("declined", "Declined"),
-           "expired": ("expired", "Expired"), "failed": ("failed", "Meta refused it")}
+           "expired": ("expired", "Expired"), "failed": ("failed", "Meta refused it"),
+           "applying": ("working", "Being applied on Meta")}
 
 
 def _time(value):

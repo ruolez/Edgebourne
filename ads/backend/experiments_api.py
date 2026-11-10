@@ -5,6 +5,7 @@ from datetime import date, datetime
 
 from flask import Blueprint, jsonify, request
 
+import account_info
 import db
 import experiments as ex
 import meta_client
@@ -137,6 +138,8 @@ def meta_view(exp):
     s = exp.get("meta_study")
     if not s:
         return None
+    if not s.get("id"):
+        return {"creating": True}
     from datetime import datetime
     return {"id": s["id"], "kind": s["kind"], "start_day": s["start_day"], "end_day": s["end_day"],
             "daily_budget_cents": s.get("daily_budget_cents"), "total_cents": s.get("total_cents"),
@@ -222,11 +225,15 @@ def edit(exp_id):
 # ---------------------------------------------------------------- on Meta (roadmap 3.2)
 
 def _budget_cap(exp):
-    """Twice the daily budget of the campaign the arms run in (None when unknown)."""
+    """Twice the daily budget the arms run on (the campaign's, or their ad sets' when the campaign
+    has none), and never above the account's ceiling."""
+    import money_rules
+    cap = money_rules.ceiling(settings_store.get("max_daily_budget_cents"))
     ids = [i for a in exp["arms"] for i in a.get("ad_ids") or []]
-    row = db.query("""SELECT MAX(c.daily_budget_cents) AS b FROM ads a JOIN campaigns c ON c.id = a.campaign_id
+    row = db.query("""SELECT MAX(COALESCE(c.daily_budget_cents, s.daily_budget_cents)) AS b FROM ads a
+                      JOIN campaigns c ON c.id = a.campaign_id LEFT JOIN adsets s ON s.id = a.adset_id
                       WHERE a.id = ANY(%s)""", (ids,), one=True) if ids else None
-    return 2 * row["b"] if row and row["b"] else None
+    return min(2 * row["b"], cap) if row and row["b"] else cap
 
 
 def _plan(exp, data):
@@ -245,7 +252,7 @@ def _plan(exp, data):
 
 def _tz():
     import config
-    return config.ACCOUNT_TZ
+    return account_info.tz_name()
 
 
 @bp.post("/<int:exp_id>/meta/plan")
@@ -285,10 +292,17 @@ def meta_create(exp_id):
     import ads_api
     user = current_user()
     row = {"id": str(exp_id), "name": exp["name"], "campaign_id": None}
+    # Claimed first: a second click while Meta is answering gets "already being created", not a second study.
+    if not db.execute("""UPDATE experiments SET meta_study = '{"creating": true}'::jsonb WHERE id = %s AND meta_study IS NULL
+                         RETURNING id""", (exp_id,), returning=True):
+        return api_error("This test is already being put on Meta", 409)
     try:
         study = meta_client.post(f"{mt.business_id()}/ad_studies", data=mt.graph_form(p["payload"]))
     except (meta_client.MetaError, mt.PlanError) as exc:
+        db.execute("UPDATE experiments SET meta_study = NULL WHERE id = %s", (exp_id,))
         ads_api.record(user, "study", row, "create", None, p["summary"], False, str(exc))
+        if getattr(exc, "unknown", False):
+            return api_error(f"{exc} Look in Ads Manager → Experiments before trying again.", 400)
         return api_error(f"Meta refused: {exc}", 400)
     payload = p["payload"]
     stored = {"id": study["id"], "type": payload["type"], "kind": p["kind"], "start_time": payload["start_time"],

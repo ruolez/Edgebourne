@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from flask import Blueprint, jsonify, request
 
 import concepts as c
+import account_info
 import db
 from auth import current_user, login_required, visible_campaign_ids
 from util import api_error, log_activity
@@ -80,7 +81,7 @@ def by_concept():
     if dim not in c.DIMENSIONS:
         return api_error("Unknown dimension", 400)
     days = RANGES.get(request.args.get("range", "30"), 30)
-    end = date.today() - timedelta(days=1)
+    end = account_info.today() - timedelta(days=1)
     start = end - timedelta(days=days - 1)
     ids = visible_campaign_ids(user)
     where, params = ("TRUE", []) if ids is None else ("a.campaign_id = ANY(%s)", [ids])
@@ -90,10 +91,11 @@ def by_concept():
                        WHERE {where} GROUP BY a.id, a.name HAVING SUM(d.spend_cents) > 0""", [start, end] + params)
     q = {r["ad_id"]: int(r["n"]) for r in db.query(
         """SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND status IN ('qualified', 'won')
-           AND created_time::date BETWEEN %s AND %s GROUP BY ad_id""", (start, end))}
+           AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s GROUP BY ad_id""",
+        (account_info.tz_name(), start, end))}
     rows = [{**{k: int(v) if k not in ("id", "name") else v for k, v in a.items()}, "qualified": q.get(a["id"], 0)} for a in ads]
-    import alerts
-    target = alerts.saved_rules()["cpl_high"]["target_cents"]
+    import targets
+    target = targets.lead_own()  # none set: the groups' own average (see targets.py)
     tags = tags_for([r["id"] for r in rows])
     out = c.group(rows, tags, dim, target)
     names = {}

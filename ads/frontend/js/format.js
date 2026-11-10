@@ -1,8 +1,15 @@
 // Number and date formatting shared by every page.
+// The ad account's currency (agency mode: each account has its own); ui.boot sets it from /api/auth/me.
+let CURRENCY = "USD";
+export const setCurrency = (code) => { if (/^[A-Z]{3}$/.test(code || "")) CURRENCY = code; };
+export const currencySymbol = () => {
+  const part = (0).toLocaleString(undefined, { style: "currency", currency: CURRENCY }).replace(/[\d.,\s\u00a0]/g, "");
+  return part || CURRENCY;
+};
 export const money = (cents, { exact = false } = {}) => {
   const v = (cents || 0) / 100;
   const digits = exact || Math.abs(v) < 100 ? 2 : 0;
-  return v.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return v.toLocaleString(undefined, { style: "currency", currency: CURRENCY, minimumFractionDigits: digits, maximumFractionDigits: digits });
 };
 export const count = (n) => Number(n || 0).toLocaleString();
 export const per = (cents, n) => (n ? money(cents / n, { exact: true }) : "—");

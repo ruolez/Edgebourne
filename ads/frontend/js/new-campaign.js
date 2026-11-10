@@ -3,6 +3,8 @@ import { boot, confirmDialog, esc, fieldError, icon, toast } from "./ui.js";
 import { CTA_LABELS, money } from "./format.js";
 import { placesHtml, placesWidget } from "./places.js";
 
+const CLIENT_KEY = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
 const $ = (id) => document.getElementById(id);
 let opts;
 let places;
@@ -18,20 +20,27 @@ const pill = (s) => { const [c, l] = STATUS[s] || ["", s ? s.toLowerCase().repla
 // ---------------------------------------------------------------- ads step
 
 function blankAd() {
-  const t = opts.templates[0] || {};
+  const t = opts.templates[0];
+  if (!t) {  // a new account: words and media of its own
+    const m = media[0];
+    return { name: "", title: "", body: "", template_ad_id: "", cta_type: "SIGN_UP",
+      media: m ? (m.kind === "image" ? { kind: "image", hash: m.hash } : { kind: "video", video_id: m.video_id }) : { kind: "none" } };
+  }
   return { name: "", title: t.title || "", body: t.body || "", template_ad_id: t.id || "", cta_type: t.cta_type || "SIGN_UP", media: { kind: "same" } };
 }
 
 function mediaOptions(ad) {
   const v = ad.media.kind === "same" ? "same" : `${ad.media.kind}:${ad.media.hash || ad.media.video_id}`;
-  return `<option value="same" ${v === "same" ? "selected" : ""}>Same image or video as the starting ad</option>` +
+  const same = ad.template_ad_id ? `<option value="same" ${v === "same" ? "selected" : ""}>Same image or video as the starting ad</option>`
+    : (media.length ? "" : '<option value="">Upload one in New ad first (Ads → New ad)</option>');
+  return same +
     media.map((m) => { const k = `${m.kind}:${m.hash || m.video_id}`; return `<option value="${esc(k)}" ${k === v ? "selected" : ""}>${m.kind === "video" ? "Video" : "Image"}: ${esc(m.name || k)}</option>`; }).join("");
 }
 
 function adCard(ad, i) {
   return `<fieldset class="cr-card" data-ad="${i}"><legend>Ad ${i + 1}</legend>
     <div class="grid-2">
-      <div class="field"><label for="a-tpl-${i}">Starts from</label><select class="input" id="a-tpl-${i}" data-k="template_ad_id">${opts.templates.map((t) => `<option value="${esc(t.id)}" ${t.id === ad.template_ad_id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></div>
+      <div class="field"><label for="a-tpl-${i}">Starts from</label><select class="input" id="a-tpl-${i}" data-k="template_ad_id"><option value="" ${ad.template_ad_id ? "" : "selected"}>Nothing: new words and media</option>${opts.templates.map((t) => `<option value="${esc(t.id)}" ${t.id === ad.template_ad_id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></div>
       <div class="field"><label for="a-media-${i}">Image or video</label><select class="input" id="a-media-${i}" data-k="media">${mediaOptions(ad)}</select></div>
     </div>
     <div class="field"><label for="a-body-${i}">Primary text</label><textarea class="input" id="a-body-${i}" data-k="body" rows="4">${esc(ad.body)}</textarea></div>
@@ -55,7 +64,7 @@ function readAds() {
     card.querySelectorAll("[data-k]").forEach((el) => {
       if (el.dataset.k === "media") {
         const [kind, id] = el.value.split(":");
-        ad.media = kind === "same" ? { kind: "same" } : kind === "image" ? { kind, hash: id } : { kind, video_id: id };
+        ad.media = kind === "same" ? { kind: "same" } : kind === "image" ? { kind, hash: id } : kind === "video" ? { kind, video_id: id } : { kind: "none" };
       } else ad[el.dataset.k] = el.value;
     });
   });
@@ -71,7 +80,7 @@ function spec() {
     name: $("c-name").value, daily_budget_cents: dollars ? Math.round(Number(dollars) * 100) : null, form_id: $("f-form").value,
     adset: { template_adset_id: $("s-template").value, name: $("s-name").value, locations: places.get(), age_min: n("s-age-min"), age_max: n("s-age-max"),
       advantage: $("s-advantage").checked, suggest_min: $("s-advantage").checked ? n("s-sug-min") : null, suggest_max: $("s-advantage").checked ? n("s-sug-max") : null,
-      keep_hints: $("s-hints").checked },
+      keep_hints: $("s-hints").checked, start_day: $("s-start").value || null, start_hour: 0, end_day: $("s-end").value || null, end_hour: 23 },
     ads,
   };
 }
@@ -126,7 +135,9 @@ function changed() { checkSoon(); }
 
 async function loadTemplate() {
   try {
-    const t = await api(`/api/adsets/template/${encodeURIComponent($("s-template").value)}`);
+    const t = $("s-template").value ? await api(`/api/adsets/template/${encodeURIComponent($("s-template").value)}`)
+      // From scratch: Advantage+ audience with the minimum age Meta allows for it (25) and 65.
+      : { locations: [], hints: [], age_min: 25, age_max: 65, suggest_min: null, suggest_max: null, advantage: true, keep_hints: false };
     places.set(t.locations); hints = t.hints;
     $("s-age-min").value = t.age_min; $("s-age-max").value = t.age_max;
     $("s-sug-min").value = t.suggest_min ?? ""; $("s-sug-max").value = t.suggest_max ?? "";
@@ -202,12 +213,13 @@ if (me) {
   } else {
     try { [opts, media] = await Promise.all([api("/api/builds/options"), api("/api/media").then((d) => d.items).catch(() => [])]); }
     catch (err) { toast(err.message, "bad"); }
-    if (!opts || !opts.templates.length || !opts.adsets.length) {
-      $("wizard").innerHTML = '<section class="panel empty"><h3>Nothing to build on yet</h3><p>A new campaign copies the setup of your existing ad set and ads. Once they are synced from Meta, come back here.</p><a class="btn" href="/ads.html">Back to ads</a></section>';
+    if (!opts) {
+      $("wizard").innerHTML = '<section class="panel empty"><h3>Couldn\'t load the wizard</h3><p>Check this account\'s Meta connection in Settings.</p><a class="btn" href="/settings.html#meta">Open Settings</a></section>';
     } else {
       $("places-box").innerHTML = placesHtml("nc");
       places = placesWidget("nc", { cityRadius: opts.city_radius, pinRadius: opts.pin_radius, onChange: () => { changed(); estimateSoon(); } });
-      $("s-template").innerHTML = opts.adsets.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
+      $("s-template").innerHTML = opts.adsets.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("")
+        + '<option value="">Nothing: start from scratch</option>';
       $("budget-hint").textContent = `Shared by everything in the campaign. What runs now: ${money(opts.running_daily_cents, { exact: true })} a day.`;
       ads = [blankAd()];
       renderAds();
@@ -223,7 +235,8 @@ if (me) {
           readAds();
           const ad = ads[Number(tpl.closest("[data-ad]").dataset.ad)];
           const t = opts.templates.find((x) => x.id === tpl.value) || {};
-          Object.assign(ad, { title: t.title || ad.title, body: t.body || ad.body, cta_type: opts.cta_types.includes(t.cta_type) ? t.cta_type : ad.cta_type });
+          Object.assign(ad, { template_ad_id: tpl.value, title: t.title || ad.title, body: t.body || ad.body, cta_type: opts.cta_types.includes(t.cta_type) ? t.cta_type : ad.cta_type });
+          if (!tpl.value && ad.media.kind === "same") { const m = media[0]; ad.media = m ? (m.kind === "image" ? { kind: "image", hash: m.hash } : { kind: "video", video_id: m.video_id }) : { kind: "none" }; }
           renderAds();
         }
         changed();
@@ -243,7 +256,8 @@ if (me) {
         $("nc-create").disabled = true;
         $("nc-create").textContent = "Creating…";
         try {
-          const b = await api("/api/builds", { method: "POST", body: s });
+          // One key per wizard: a double click or a retry after a timeout returns the same build.
+          const b = await api("/api/builds", { method: "POST", body: { ...s, client_key: CLIENT_KEY } });
           history.replaceState(null, "", `?build=${b.id}`);
           buildView(b);
           toast(b.status === "created" ? "Created, switched off" : "Stopped halfway; see below", b.status === "created" ? "" : "bad");

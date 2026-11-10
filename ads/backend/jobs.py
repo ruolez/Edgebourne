@@ -39,11 +39,11 @@ def _loop():
     last_sync, last_auto_try, last_alerts = {}, {}, {}
     ALERTS_EVERY = 900
 
-    def each_account(conn, acct):
-        """One account's pass: its leads, replies, Claude's schedules, reminders, lead stages,
-        the automatic pull, the hourly sync, alerts and Meta reads. Errors stay inside the account."""
-        leads.process_pending_events()
-        for name, job in (("lead replies", lambda: __import__("replies").process_pending()),
+    def quick(acct):
+        """What can't wait: new leads, replies, Claude's schedules, reminders, lead stages, report
+        emails. Done for every account before any slow Meta pull. Errors stay inside the job."""
+        for name, job in (("new leads", leads.process_pending_events),
+                          ("lead replies", lambda: __import__("replies").process_pending()),
                           ("Desk schedules", lambda: __import__("schedules").run()),
                           ("lead reminders", lambda: __import__("reminders").run()),
                           ("lead stages to Meta", crm_events.process_pending),
@@ -52,8 +52,13 @@ def _loop():
                 job()
             except Exception:
                 log.exception("account %s: %s failed", acct, name)
+
+    def slow(conn, acct):
+        """The account's Meta reads: the automatic pull, the hourly sync, alerts, tests, advice."""
         now = time.time()
         pulled = False
+        if acct not in last_sync:  # after a restart, carry on from the last sync instead of pulling at once
+            last_sync[acct] = synced_at(settings_store.get("last_performance_sync"))
         if settings_store.get("meta_system_token") and settings_store.get("meta_ad_account_id") and refresh_api.auto_due(
                 settings_store.get("last_refresh_at"), last_auto_try.get(acct), now,
                 refresh_api.auto_minutes(settings_store.get("auto_refresh_minutes"))):
@@ -89,6 +94,7 @@ def _loop():
                     except Exception as exc:
                         log.info("account %s: %s not read: %s", acct, name, exc)
 
+    last_prune = 0.0
     while True:
         _event.wait(timeout=30)
         _event.clear()
@@ -101,21 +107,83 @@ def _loop():
                     telegram.poll_updates(conn)
                 except Exception as exc:
                     log.info("telegram updates skipped: %s", exc)
-                for row in db.query("SELECT id FROM accounts WHERE archived_at IS NULL ORDER BY id"):
-                    with account_ctx.use(row["id"]):
-                        try:
-                            each_account(conn, row["id"])
-                        except Exception:
-                            log.exception("account %s: worker pass failed", row["id"])
+                accounts = [r["id"] for r in db.query("SELECT id FROM accounts WHERE archived_at IS NULL ORDER BY id")]
+                for acct in accounts:
+                    with account_ctx.use(acct), db.reusing():
+                        quick(acct)
                 try:
                     notify.process_pending()  # one queue for everyone
                 except Exception:
                     log.exception("sending alerts failed")
+                for acct in accounts:
+                    with account_ctx.use(acct), db.reusing():
+                        try:
+                            slow(conn, acct)
+                        except Exception:
+                            log.exception("account %s: worker pass failed", acct)
+                if time.time() - last_prune > PRUNE_EVERY:
+                    last_prune = time.time()
+                    try:
+                        prune()
+                    except Exception:
+                        log.exception("pruning old rows failed")
+                beat()
         except Exception:
             log.exception("worker pass failed")
         finally:
             if conn is not None:
                 conn.close()  # releases the advisory lock
+
+
+def synced_at(value):
+    """The unix time of a stored ISO timestamp; 0 when there's none."""
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def beat():
+    """The worker's heartbeat: /api/health and Today read it to tell when the worker stopped."""
+    import settings_store
+    from datetime import datetime, timezone
+    settings_store.set("worker_last_pass", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+
+
+def worker_expected():
+    """Dev and tests run without the worker (WORKERS_ENABLED=0): no banner there."""
+    return config.WORKERS_ENABLED
+
+
+_BOOTED = time.time()
+
+
+def worker_stale(last_pass, now, limit=600, booted=None):
+    """True when the worker hasn't finished a pass within `limit` seconds. A freshly started process
+    gets `limit` seconds of grace (an Update restarts it; its first pass may still be running)."""
+    if now - (_BOOTED if booted is None else booted) < limit:
+        return False
+    at = synced_at(last_pass)
+    return not at or now - at > limit
+
+
+PRUNE_EVERY = 86400
+# What grows forever otherwise. Meta changes and leads are kept: they are the record.
+PRUNE = (
+    ("activity", "at < now() - interval '180 days'"),
+    ("notifications", "status IN ('sent','failed','skipped') AND created_at < now() - interval '90 days'"),
+    ("webhook_events", "processed_at IS NOT NULL AND received_at < now() - interval '90 days'"),
+    ("meta_cache", "fetched_at < now() - interval '30 days'"),
+    ("alerts", "resolved_at IS NOT NULL AND resolved_at < now() - interval '180 days'"),
+)
+
+
+def prune():
+    import account_ctx
+    with account_ctx.all_accounts():
+        for table, where in PRUNE:
+            db.execute(f"DELETE FROM {table} WHERE {where}")
 
 
 def start():

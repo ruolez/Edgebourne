@@ -10,6 +10,7 @@ from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import account_info
 import config
 import db
 
@@ -97,7 +98,7 @@ def clean_rule(data):
 
 
 def tz():
-    return ZoneInfo(config.ACCOUNT_TZ)
+    return account_info.tz()
 
 
 def run(now=None):

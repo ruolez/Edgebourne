@@ -9,6 +9,7 @@ The Mac only ever pulls. Nothing here can spend money: proposals are recorded
 for a person to approve (phase 4).
 """
 import hashlib
+import re
 import json
 import hmac
 import logging
@@ -18,12 +19,13 @@ from functools import wraps
 
 from flask import Blueprint, jsonify, request
 
+import account_info
 import config
 import db
 import desk_view
 import schedules
 import settings_store
-from auth import admin_required, current_user
+from auth import admin_required, current_user, owner_required
 from performance_api import overview_data
 from util import api_error, log_activity
 
@@ -61,7 +63,44 @@ def bridge_status():
         "online": online,
         "host": settings_store.get("bridge_host"),
         "version": settings_store.get("bridge_version"),
+        "outdated": bridge_outdated(),
+        "claude_sign_in_failed": bool(settings_store.get("bridge_claude_error")),
     }
+
+
+MIN_BRIDGE = (1, 6)  # desk 1.6 names the task's account; older ones answer every account as account 1
+SIGN_IN_TROUBLE = re.compile(r"(invalid api key|oauth token (has )?expired|authentication_error|please run /login|"
+                             r"setup-token|not logged in|401 unauthorized|credit balance)", re.I)
+
+
+def version_tuple(v):
+    try:
+        return tuple(int(x) for x in str(v).split(".")[:2])
+    except ValueError:
+        return (0, 0)
+
+
+def bridge_outdated():
+    """The Mac helper's version when it's too old for several accounts, else None."""
+    v = settings_store.get("bridge_version")
+    if not v or version_tuple(v) >= MIN_BRIDGE:
+        return None
+    with __import__("account_ctx").all_accounts():
+        n = db.query("SELECT COUNT(*) AS n FROM accounts WHERE archived_at IS NULL", one=True)["n"]
+    return v if n > 1 else None
+
+
+def claude_sign_in_problem(error):
+    """True when a failed run says Claude couldn't sign in on the Mac (expired setup-token)."""
+    return bool(error and SIGN_IN_TROUBLE.search(error))
+
+
+def note_claude_sign_in(status, error):
+    if status == "done":
+        if settings_store.get("bridge_claude_error"):
+            settings_store.set("bridge_claude_error", None)
+    elif claude_sign_in_problem(error):
+        settings_store.set("bridge_claude_error", str(int(time.time())))
 
 
 def expire_stale():
@@ -180,7 +219,7 @@ def create_task():
 @bp.get("/schedules")
 @admin_required
 def list_schedules():
-    return jsonify({"schedules": schedules.listing(), "tz": config.ACCOUNT_TZ})
+    return jsonify({"schedules": schedules.listing(), "tz": account_info.tz_name()})
 
 
 @bp.patch("/schedules/<int:sid>")
@@ -245,7 +284,7 @@ def ask_again(task_id):
 
 
 @bp.post("/key")
-@admin_required
+@owner_required
 def create_key():
     """A new Mac key; replaces the old one. Shown once, stored only as a hash."""
     token = "ebdesk_" + secrets.token_urlsafe(32)
@@ -256,7 +295,7 @@ def create_key():
 
 
 @bp.delete("/key")
-@admin_required
+@owner_required
 def revoke_key():
     settings_store.set("agent_key_hash", None)
     settings_store.set("agent_key_hint", None)
@@ -273,12 +312,15 @@ def agent_required(f):
         header = request.headers.get("Authorization", "")
         token = header[7:] if header.startswith("Bearer ") else ""
         if not stored or not token or not hmac.compare_digest(stored, key_hash(token)):
-            return api_error("This Mac key isn't valid. Create a new one on the Desk page.", 401)
+            return api_error("This Mac key isn't valid. Create a new one on the Claude page.", 401)
         settings_store.set("bridge_last_seen", str(time.time()))
         host = request.headers.get("X-Bridge-Host")
         if host:
             settings_store.set("bridge_host", host[:80])
             settings_store.set("bridge_version", (request.headers.get("X-Bridge-Version") or "")[:20])
+        if bridge_outdated():
+            return api_error(f"This Mac helper is too old for several ad accounts (needs "
+                             f"{'.'.join(map(str, MIN_BRIDGE))}). Re-run ads/bridge/install.sh on the Mac.", 426)
         return f(*args, **kwargs)
     return wrapper
 
@@ -366,6 +408,7 @@ def set_status(task_id):
             (status, summary, error if status == "failed" else None, task_id), returning=True)
         if row:
             log_activity(f"desk.task_{status}", subject=str(task_id), actor="claude")
+            note_claude_sign_in(status, error)
             try:
                 tell_finished(task_id)
             except Exception:
@@ -390,7 +433,7 @@ def tell_finished(task_id):
     if waiting:
         lines.append(f"{waiting} idea{'s' if waiting != 1 else ''} waiting for your decision.")
     for uid, channel in notify.reach(people, "notify_reminders"):
-        notify.queue(uid, channel, "desk", title, lines, f"{config.APP_BASE_URL}/desk.html#{'waiting' if waiting else 'runs'}",
+        notify.queue(uid, channel, "desk", title, lines, notify.link(f"/desk.html#{'waiting' if waiting else 'runs'}"),
                      "Open in the console", ref=str(task_id), dedupe_key=f"desk:{task_id}:{uid}")
 
 

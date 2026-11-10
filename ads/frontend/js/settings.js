@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { money, currencySymbol } from "./format.js";
 import { boot, confirmDialog, esc, fieldError, toast, when } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
@@ -23,7 +24,13 @@ function fill(form, section) {
 
 function renderMeta() {
   const m = s.meta;
-  const ready = m.meta_app_id && m.meta_app_secret.set && m.meta_system_token.set && m.meta_verify_token.set;
+  fill($("app-form"), { meta_app_id: m.meta_app_id, meta_app_secret: m.meta_app_secret, meta_verify_token: m.meta_verify_token, meta_graph_version: m.meta_graph_version });
+  const inherit = $("token-inherit");
+  inherit.hidden = s.account.id === 1 || s.account.own_token;
+  inherit.textContent = "Uses Edge Bourne's System User token. Paste this business's own token if its ad account isn't shared with Edge Bourne's System User.";
+  if (!inherit.hidden) $("meta-form").querySelector('[data-hint="meta_system_token"]').textContent = "Not set for this account.";
+  $("app-state").innerHTML = m.meta_app_id && m.meta_app_secret.set && m.meta_verify_token.set ? '<span class="pill ok">Set</span>' : '<span class="pill warn">Not complete</span>';
+  const ready = m.meta_ad_account_id && m.meta_page_id && (m.meta_system_token.set || !s.account.own_token);
   $("meta-state").innerHTML = s.page_subscribed ? '<span class="pill ok">Receiving leads</span>'
     : ready ? '<span class="pill warn">Saved, not receiving leads yet</span>' : '<span class="pill">Not connected</span>';
   $("graph-default").textContent = `Leave blank for ${s.graph_version_default}.`;
@@ -40,7 +47,7 @@ function renderMeta() {
 async function loadReports() {
   try {
     const r = await api("/api/reports/settings");
-    $("rep-target").value = r.target_cents ? r.target_cents / 100 : "";
+    $("rep-leads").checked = !!s.account.clients_update_leads;
     $("rep-email").value = r.email;
     $("rep-state").innerHTML = r.email === "off" ? '<span class="pill">Not emailed</span>' : `<span class="pill ok">${r.email === "weekly" ? "Weekly" : "Monthly"}</span>`;
     $("rep-clients").textContent = r.clients.length ? `Goes to ${r.clients.join(", ")}, with a link that works for 90 days.` : "No clients on this account yet: add them on the Team page (role Client).";
@@ -162,7 +169,7 @@ const RULE_UI = [
   ["spend_cap", "The account spending limit is nearly used", [["percent", "at", "%"]]],
   ["cap_soon", "The spending limit will run out soon at this pace", [["days", "within", "days"]]],
   ["pace_over", "The month is heading over your monthly target (set it on Results)", [["percent", "by more than", "%"]]],
-  ["cpl_high", "Leads cost too much", [["target_cents", "target $", "per lead,"], ["times", "alert above", "× the target"]]],
+  ["cpl_high", "Leads cost too much (against the cost-per-lead target in Targets)", [["times", "alert above", "× the target"]]],
   ["no_leads", "No leads while the ads spend", [["days", "for", "days in a row"]]],
   ["tracking", "Leads Meta counted aren't reaching the inbox", []],
   ["stale_data", "Meta stops answering", [["hours", "for", "hours"]]],
@@ -177,7 +184,10 @@ function renderAlerts() {
       const v = k === "target_cents" ? (r[k] ? r[k] / 100 : "") : r[k];
       return `<label class="al-num">${esc(before)} <input class="input" type="number" min="0" step="any" inputmode="decimal" data-rule="${id}" data-key="${k}" value="${esc(String(v ?? ""))}" ${k === "target_cents" ? 'placeholder="not set"' : ""}> ${esc(after)}</label>`;
     }).join(" ");
-    const hint = id === "cpl_high" && !r.target_cents ? '<small class="muted">Off until you set a target. Your brief\'s $60 is per qualified lead; this one counts every form lead.</small>' : "";
+    const t = s.targets;
+    const hint = id === "cpl_high" ? `<small class="muted">${t.lead_cents ? `Target ${money(t.lead_cents, { exact: true })} per lead.`
+      : t.lead_used_cents ? `No cost-per-lead target, so it uses ${money(t.lead_used_cents, { exact: true })} per qualified lead: any lead costing more than that misses the goal.`
+        : "Off until a target is set in Targets."} <a href="#targets">Change</a></small>` : "";
     return `<li><label class="check"><input type="checkbox" data-rule="${id}" data-key="on" ${r.on ? "checked" : ""}> ${esc(label)}</label>${inputs ? `<div class="al-fields">${inputs}</div>` : ""}${hint}</li>`;
   }).join("");
   const recent = s.alerts.recent;
@@ -206,15 +216,14 @@ async function load() {
       ? `Using the mailbox below (${use.host}). Clear the SMTP server and save to go back to the website's email settings.`
       : "Email isn't set up yet. Set it up once in the website admin under Email and it's used here too, or enter a mailbox below.";
   renderMeta();
+  renderTargets();
+  renderConsole();
   renderCrm();
   renderAuto();
   renderMetaTests();
   loadTracking();
   loadReports();
-  if ((me.accounts || []).length > 1) {
-    $("acct-note").hidden = false;
-    $("acct-note").innerHTML = `You're setting up <b>${esc(me.account.name)}</b>: its Meta connection, lead stages, alerts, lead replies and targets. Email, Telegram and Meta's app keys are shared by every account. An account without its own System User token uses Edge Bourne's.`;
-  }
+  document.querySelectorAll("[data-acct-name]").forEach((el) => { el.textContent = s.account.name; });
   renderTelegram();
   renderAlerts();
   if (editing === null) renderReplies();
@@ -222,6 +231,37 @@ async function load() {
   $("activity").innerHTML = rows.length ? `<thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${rows.map((r) =>
     `<tr><td class="muted">${when(r.at)}</td><td>${esc(r.who || ({ meta: "Meta", claude: "Claude", system: "System" }[r.actor] || r.actor))}</td><td>${esc(describe(r))}${r.subject && !r.action.startsWith("lead.") ? ` <span class="muted">${esc(r.subject)}</span>` : ""}</td></tr>`).join("")}</tbody>`
     : '<tbody><tr><td class="muted">Nothing yet.</td></tr></tbody>';
+}
+
+function renderTargets() {
+  const t = s.targets;
+  document.querySelectorAll("[data-cur]").forEach((el) => { el.textContent = currencySymbol(); });
+  $("t-qualified").value = t.qualified_cents ? (t.qualified_cents / 100).toFixed(2).replace(/\.00$/, "") : "";
+  $("t-lead").value = t.lead_cents ? (t.lead_cents / 100).toFixed(2).replace(/\.00$/, "") : "";
+  $("t-max").value = (t.max_daily_cents / 100).toFixed(2).replace(/\.00$/, "");
+  $("t-lead-hint").textContent = t.lead_cents ? "Any form lead. Alerts, By idea and Tests judge leads by it."
+    : t.qualified_cents ? `Not set: the cost-per-lead alert uses the ${money(t.qualified_cents, { exact: true })} per qualified lead instead; By idea and Tests use their own average.` : "Any form lead. Alerts, By idea and Tests judge leads by it.";
+  $("t-monthly").textContent = t.monthly_cents ? `${money(t.monthly_cents)} a month` : "Not set";
+}
+
+// What every account shares: only the console's owner changes it, from Edge Bourne's own Settings.
+async function renderConsole() {
+  const group = $("grp-console");
+  document.querySelectorAll(".console-only").forEach((el) => { el.hidden = !s.owner; });
+  group.hidden = !s.owner;
+  if (!s.owner) return;
+  const note = $("console-note");
+  note.hidden = s.console_editable;
+  note.innerHTML = s.console_editable ? "" : `These apply to every account. To change them, switch to <b>Edge Bourne</b> first.`;
+  group.querySelectorAll("#app-form, #auto-form, #tg-form, #smtp-form").forEach((f) => {
+    f.querySelectorAll("input, select, button").forEach((el) => { el.disabled = !s.console_editable; });
+  });
+  try {
+    const r = await api("/api/accounts/all");
+    $("acct-list").innerHTML = r.items.map((a) => `<li class="${a.archived ? "muted" : ""}"><b>${esc(a.name)}</b>${a.archived ? ' <span class="pill">Closed</span>' : a.id === s.account.id ? ' <span class="pill ok">Open now</span>' : ""}
+      <span class="spacer"></span><button class="btn btn-quiet btn-small" type="button" data-acct-rename="${a.id}" data-name="${esc(a.name)}">Rename</button>
+      ${a.id === 1 ? "" : `<button class="btn ${a.archived ? "btn-quiet" : "btn-danger-text"} btn-small" type="button" data-acct-close="${a.id}" data-name="${esc(a.name)}" data-archived="${a.archived ? "1" : ""}">${a.archived ? "Reopen" : "Close"}</button>`}</li>`).join("");
+  } catch (err) { $("acct-list").innerHTML = `<li class="muted">${esc(err.message)}</li>`; }
 }
 
 function values(form) {
@@ -238,13 +278,17 @@ async function run(btn, fn) {
 const ACTIONS = {
   "auth.password_changed": "Changed their password",
   "settings.meta": "Changed the Meta settings",
+  "settings.targets": "Changed the targets",
+  "settings.client_access": "Changed what clients may do",
+  "account.created": "Added an account", "account.renamed": "Renamed an account", "account.archived": "Closed an account", "account.reopened": "Reopened an account",
+  "report.links_revoked": "Stopped every shared report link",
   "settings.smtp": "Changed the email settings",
-  "desk.task_created": "Asked Claude something on the Desk",
-  "desk.task_cancelled": "Cancelled a Desk request",
-  "desk.task_done": "Claude finished a Desk request",
-  "desk.task_failed": "A Desk request didn't finish",
-  "desk.key_created": "Created a Mac key for the Desk",
-  "desk.key_revoked": "Disconnected the Mac from the Desk",
+  "desk.task_created": "Asked Claude something",
+  "desk.task_cancelled": "Cancelled a request to Claude",
+  "desk.task_done": "Claude finished a request",
+  "desk.task_failed": "A request to Claude didn't finish",
+  "desk.key_created": "Created a Mac key for Claude",
+  "desk.key_revoked": "Disconnected the Mac from Claude",
   "settings.page_connected": "Connected the Page to receive leads",
   "sync.manual": "Synced campaigns and leads",
   "team.added": "Added a teammate",
@@ -269,6 +313,38 @@ const me = await boot({ page: "settings", admin: true });
 if (me) {
   await load();
   $("meta-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); toast("Meta settings saved"); load(); }); });
+  $("app-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); toast("Meta app saved"); load(); }); });
+  $("tg-targets").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
+    fieldError(e.target);
+    try { s = await api("/api/settings/targets", { method: "PUT", body: values(e.target) }); }
+    catch (err) { if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; } throw err; }
+    toast("Targets saved"); renderTargets(); renderAlerts();
+  }); });
+  $("acct-list").addEventListener("click", async (e) => {
+    const ren = e.target.closest("[data-acct-rename]");
+    const close = e.target.closest("[data-acct-close]");
+    try {
+      if (ren) {
+        const name = await confirmDialog({ title: "Rename the account", confirm: "Rename", field: { label: "Business name", value: ren.dataset.name, validate: (v) => (v.trim() ? null : "Give it a name") } });
+        if (!name) return;
+        await api(`/api/accounts/${ren.dataset.acctRename}`, { method: "PATCH", body: { name: name.trim() } });
+        toast("Renamed"); location.reload();
+      }
+      if (close) {
+        const reopen = !!close.dataset.archived;
+        const yes = await confirmDialog(reopen ? { title: `Reopen “${close.dataset.name}”?`, body: "<p>Its people can sign in again and Claude's checks and alerts run for it again.</p>", confirm: "Reopen" }
+          : { title: `Close “${close.dataset.name}”?`, body: "<p>Its clients and team members can't sign in any more, its shared report links stop working, and the console stops checking it. Nothing is deleted on Meta or here; you can reopen it.</p>", confirm: "Close the account", danger: true });
+        if (!yes) return;
+        await api(`/api/accounts/${close.dataset.acctClose}`, { method: "PATCH", body: { archived: !reopen } });
+        toast(reopen ? "Reopened" : "Closed"); location.reload();
+      }
+    } catch (err) { toast(err.message, "bad"); }
+  });
+  $("rep-revoke").addEventListener("click", async () => {
+    const yes = await confirmDialog({ title: "Stop every shared report link?", body: "<p>Every report link sent for this account stops working, including the ones in emails already sent. New links work as before.</p>", confirm: "Stop them", danger: true });
+    if (!yes) return;
+    try { await api("/api/reports/revoke", { method: "POST" }); toast("Old links stopped"); } catch (err) { toast(err.message, "bad"); }
+  });
   $("smtp-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/smtp", { method: "PUT", body: values(e.target) }); toast("Email settings saved"); load(); }); });
   $("tg-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     fieldError(e.target);
@@ -354,7 +430,8 @@ if (me) {
     e.preventDefault();
     fieldError(e.target, null);
     try {
-      await api("/api/reports/settings", { method: "PUT", body: { target_dollars: $("rep-target").value, email: $("rep-email").value } });
+      await api("/api/reports/settings", { method: "PUT", body: { email: $("rep-email").value } });
+      s = await api("/api/settings/client-access", { method: "PUT", body: { update_leads: $("rep-leads").checked } });
       toast("Report settings saved"); loadReports();
     } catch (err) { if (err.body && err.body.field) fieldError(e.target, err.body.field, err.message); else toast(err.message, "bad"); }
   });

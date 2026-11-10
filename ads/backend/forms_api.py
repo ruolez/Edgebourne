@@ -27,6 +27,13 @@ def page_forms():
                                   fields="id,name,status,leads_count,created_time", limit=100))
 
 
+def privacy_default():
+    """Edge Bourne's own policy page, for Edge Bourne's account only: a client's form must link the
+    client's own policy (Meta's rule), so other accounts start with none and the check asks for it."""
+    import account_ctx
+    return forms.DEFAULT_PRIVACY if account_ctx.current() == account_ctx.DEFAULT else ""
+
+
 def clean_spec(raw):
     def text(k, n=400):
         return str(raw.get(k) or "")[:n]
@@ -35,7 +42,7 @@ def clean_spec(raw):
     return {"name": text("name"), "intro_title": text("intro_title"),
             "intro_bullets": [str(b)[:200] for b in (raw.get("intro_bullets") or []) if str(b).strip()][:5],
             "standard": [s for s in (raw.get("standard") or []) if s in forms.STANDARD], "custom": custom,
-            "higher_intent": bool(raw.get("higher_intent")), "privacy_url": text("privacy_url").strip() or forms.DEFAULT_PRIVACY,
+            "higher_intent": bool(raw.get("higher_intent")), "privacy_url": text("privacy_url").strip() or privacy_default(),
             "thanks_title": text("thanks_title"), "thanks_body": text("thanks_body", 600),
             "thanks_button": "website" if raw.get("thanks_button") == "website" else "none",
             "thanks_button_text": text("thanks_button_text", 60), "thanks_url": text("thanks_url").strip()}
@@ -53,7 +60,7 @@ def listing():
         items = page_forms()
     except meta_client.MetaError as exc:
         return api_error(str(exc), 400)
-    return jsonify({"items": items, "privacy_default": forms.DEFAULT_PRIVACY, "standard": forms.STANDARD,
+    return jsonify({"items": items, "privacy_default": privacy_default(), "standard": forms.STANDARD,
                     "limits": forms.LIMITS, "max_custom": forms.MAX_CUSTOM, "max_options": forms.MAX_OPTIONS})
 
 

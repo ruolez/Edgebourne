@@ -60,3 +60,18 @@ class ReviewTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FromScratchTest(unittest.TestCase):
+    """Audit A17: a new account's first campaign needs no ad set or ad to copy."""
+    SPEC = {"name": "C", "daily_budget_cents": 2000, "form_id": "f1",
+            "adset": {"name": "S", "locations": [{"kind": "region", "key": "3847", "name": "California"}], "age_min": 25, "age_max": 65,
+                      "advantage": True, "template_adset_id": ""},
+            "ads": [{"name": "A", "title": "T", "body": "B", "template_ad_id": "", "cta_type": "SIGN_UP", "media": {"kind": "image", "hash": "h"}}]}
+
+    def test_an_ad_with_its_own_media_and_no_template_is_fine(self):
+        self.assertEqual(cb.problems(self.SPEC, {"f1"}, set()), [])
+
+    def test_without_a_template_same_media_is_refused(self):
+        spec = {**self.SPEC, "ads": [{**self.SPEC["ads"][0], "media": {"kind": "same"}}]}
+        self.assertEqual([m for _, m in cb.problems(spec, {"f1"}, set())], ["Ad 1: choose its image or video (it doesn't start from another ad)"])

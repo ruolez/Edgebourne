@@ -700,19 +700,44 @@ install_backup_timer() {
   cat > /usr/local/sbin/edgebourne-backup <<EOF
 #!/bin/sh
 # Written by the EdgeBourne installer. Nightly: database + uploaded images.
-set -e
 dir="$BACKUP_DIR"; keep=$KEEP_BACKUPS
 EOF
   cat >> /usr/local/sbin/edgebourne-backup <<'EOF'
 ts="$(date +%Y%m%d-%H%M%S)"
-docker exec edgebourne-postgres pg_dump -U edgebourne edgebourne | gzip > "$dir/edgebourne-$ts.sql.gz"
-docker exec edgebourne-backend tar czf - -C /data/uploads . > "$dir/edgebourne-uploads-$ts.tar.gz"
+status=0
+# Each archive is written to a .part file and kept only when the command succeeded and wrote
+# something: plain sh has no pipefail, and a failed dump piped into gzip still makes a valid,
+# tiny .gz that would rotate the good backups out.
+keep_if_ok() { # keep_if_ok <target> <exit status of the writer>
+  if [ "$2" -eq 0 ] && [ -s "$1.part" ] && gzip -t "$1.part" 2>/dev/null; then
+    mv "$1.part" "$1"
+  else
+    rm -f "$1.part"; echo "edgebourne-backup: $(basename "$1") failed" >&2; status=1
+  fi
+}
+dump_db() { # dump_db <database> <target>
+  rm -f "$2.sql"
+  if docker exec edgebourne-postgres pg_dump -U edgebourne "$1" > "$2.sql"; then rc=0; else rc=$?; fi
+  if [ $rc -eq 0 ]; then gzip -c "$2.sql" > "$2.part" || rc=$?; fi
+  rm -f "$2.sql"
+  keep_if_ok "$2" $rc
+}
+dump_db edgebourne "$dir/edgebourne-$ts.sql.gz"
+if docker exec edgebourne-backend tar czf - -C /data/uploads . > "$dir/edgebourne-uploads-$ts.tar.gz.part"; then rc=0; else rc=$?; fi
+keep_if_ok "$dir/edgebourne-uploads-$ts.tar.gz" $rc
 if [ "$(docker exec edgebourne-postgres psql -U edgebourne -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'ebads'")" = "1" ]; then
-  docker exec edgebourne-postgres pg_dump -U edgebourne ebads | gzip > "$dir/ads-console-$ts.sql.gz"
+  dump_db ebads "$dir/ads-console-$ts.sql.gz"
 fi
 for pattern in 'edgebourne-*.sql.gz' 'edgebourne-uploads-*.tar.gz' 'ads-console-*.sql.gz'; do
   ls -1t "$dir"/$pattern 2>/dev/null | tail -n +$((keep + 1)) | xargs -r rm -f
 done
+# A copy off this server (optional): BACKUP_COPY_TO="user@host:/path/" in /etc/default/edgebourne-backup,
+# with an SSH key for root. A disk failure here would otherwise take the backups with it.
+[ -r /etc/default/edgebourne-backup ] && . /etc/default/edgebourne-backup
+if [ -n "${BACKUP_COPY_TO:-}" ]; then
+  rsync -a --delete -e "ssh -o BatchMode=yes" "$dir/" "$BACKUP_COPY_TO" || { echo "edgebourne-backup: copy to $BACKUP_COPY_TO failed" >&2; status=1; }
+fi
+exit $status
 EOF
   chmod 700 /usr/local/sbin/edgebourne-backup
   cat > /etc/systemd/system/edgebourne-backup.service <<'EOF'
