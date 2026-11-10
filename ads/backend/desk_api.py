@@ -33,7 +33,7 @@ bp = Blueprint("desk", __name__, url_prefix="/api/desk")
 agent_bp = Blueprint("agent", __name__, url_prefix="/api/agent")
 
 KINDS = ("question", "review", "research", "creative")
-PROPOSAL_KINDS = ("budget", "status", "creative", "targeting", "experiment", "other")
+PROPOSAL_KINDS = ("budget", "status", "creative", "targeting", "experiment", "tags", "other")
 ACTIVE = ("queued", "claimed", "running")
 ONLINE_SECONDS = 90
 STALE_MINUTES = 30
@@ -419,7 +419,20 @@ def clean_proposal(p):
         out["payload"] = clean_experiment(p.get("payload"))
         if not out["payload"]:
             out["kind"] = "other"
+    if kind == "tags":
+        out["payload"] = clean_tags(p.get("payload"))
+        if not out["payload"]:
+            out["kind"] = "other"
     return out
+
+
+def clean_tags(raw):
+    """Concept tags Claude suggests for one ad: {"ad_id": "...", "tags": {"hook": "Question", ...}}."""
+    import concepts
+    if not isinstance(raw, dict) or not db.query("SELECT 1 FROM ads WHERE id = %s", (str(raw.get("ad_id") or ""),), one=True):
+        return None
+    tags = {d: concepts.clean_value(v) for d, v in (raw.get("tags") or {}).items() if d in concepts.DIMENSIONS and concepts.clean_value(v)}
+    return {"ad_id": str(raw["ad_id"]), "tags": tags} if tags else None
 
 
 def clean_experiment(raw):
@@ -507,6 +520,10 @@ def snapshot():
     import experiments_api
     tests = [experiments_api.summary(r) for r in db.query(
         f"SELECT {experiments_api.COLS} FROM experiments WHERE status = 'running' OR closed_at > now() - interval '30 days' ORDER BY start_day DESC")]
+    import concepts_api
+    perf_tags = concepts_api.tags_for([a["id"] for a in perf["ads"]])
+    for a in perf["ads"]:
+        a["tags"] = perf_tags.get(a["id"], {})
     return jsonify({"performance": perf, "lead_stages_by_ad": stages, "lead_business_types": types,
                     "speed_to_lead": speed, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
                     "experiments": tests})

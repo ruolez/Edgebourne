@@ -818,6 +818,46 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
     && spec.image_touchups.enroll_status === 'OPT_IN' && spec.text_optimizations.enroll_status === 'OPT_OUT', JSON.stringify(spec));
   check("the ad's on/off state is untouched", (await page.textContent('#ad-status')) === statusBefore);
 
+  // Ideas: tags on the ad page, results by idea on Results, Claude's tag suggestion applied on approval.
+  await page.goto(BASE + '/ad.html?id=120252672232030312');
+  await page.waitForSelector('#idea .idea-row');
+  check('an ad shows its idea tags, hook first', (await page.inputValue('#tag-hook')) === 'Question'
+    && (await page.locator('#idea .idea-row label').first().textContent()) === 'Hook' && (await page.inputValue('#tag-persona')) === 'Ops and office managers');
+  await page.fill('#tag-angle', '  reports that build themselves  ');
+  await page.fill('#tag-offer', '');
+  await page.click('#idea button[type=submit]');
+  await page.waitForFunction(() => document.getElementById('tag-angle')?.value === 'Reports that build themselves');
+  check('saving tidies the words and an empty box removes the tag', (await page.inputValue('#tag-offer')) === ''
+    && await page.evaluate(async () => !('offer' in (await (await fetch('/api/ads/ad/120252672232030312/tags')).json()).tags)));
+  await page.fill('#tag-offer', 'Free intro call');
+  await page.click('#idea button[type=submit]');
+  await page.waitForFunction(() => document.getElementById('tag-offer')?.value === 'Free intro call');
+  await page.goto(BASE + '/performance.html');
+  await page.waitForSelector('.ideas-table');
+  const hooks = await page.$$eval('.ideas-table tbody th b', (b) => b.map((x) => x.textContent));
+  check('Results groups ads by hook, with both outcome-promise ads in one row', hooks.includes('Outcome promise') && hooks.includes('Question')
+    && /N2 - Order portal, N5 - Quote to invoice/.test(await page.textContent('.ideas-table')), hooks.join(' | '));
+  check('the cheapest idea says how sure that is', /cheapest/.test(await page.textContent('#ideas')) && /sure/.test(await page.textContent('#ideas .note')));
+  await page.click('#idea-by [data-idea="persona"]');
+  await page.waitForFunction(() => /Ops and office managers/.test(document.getElementById('ideas').textContent));
+  check('the grouping switches to who it is for', /Wholesale and distribution/.test(await page.textContent('#ideas')));
+  const tagProp = sh(`docker exec -w /app edgebourne-ads-backend python -c "
+import db, json, desk_api
+db.execute(\\"DELETE FROM ad_tags WHERE ad_id = '120252672233160312' AND dimension = 'hook'\\")
+t = db.execute(\\"INSERT INTO desk_tasks (kind, prompt, status, summary) VALUES ('review', 'QA: tag the ads', 'done', 'Tags') RETURNING id\\", returning=True)
+p = desk_api.clean_proposal({'kind': 'tags', 'title': 'Tag N5 - Quote to invoice', 'rationale': 'It promises an outcome in the first line.', 'payload': {'ad_id': '120252672233160312', 'tags': {'hook': 'outcome promise', 'bogus': 'x'}}})
+r = db.execute('INSERT INTO desk_proposals (task_id, kind, title, rationale, payload) VALUES (%s, %s, %s, %s, %s) RETURNING id', (t['id'], p['kind'], p['title'], p['rationale'], json.dumps(p['payload'])), returning=True)
+print(r['id'])"`).trim();
+  await page.goto(BASE + '/desk.html', { waitUntil: 'networkidle' });
+  const tp = page.locator(`#p-${tagProp}`);
+  await tp.waitFor();
+  check('Claude can suggest tags: the decision shows them', /Hook.*Outcome promise/s.test(await tp.textContent()) && !/bogus/.test(await tp.textContent()) && /Apply the tags/.test(await tp.textContent()));
+  await tp.locator('[data-approve]').click();
+  await page.waitForSelector('dialog.confirm');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction((id) => !document.getElementById(`p-${id}`), tagProp);
+  check('approving applies them, marked as from Claude', sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;r=db.query(\\"SELECT value, source FROM ad_tags WHERE ad_id = '120252672233160312' AND dimension = 'hook'\\", one=True);print(r['value'], r['source'])"`).trim() === 'Outcome promise claude');
+
   await browser.close();
   console.log(results.join('\n'));
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');

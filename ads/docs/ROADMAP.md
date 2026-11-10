@@ -149,7 +149,7 @@ Found while proving Phase 0 and building 1.1. Pick with Eugene; tick here when f
 - [~] 4.4 Advantage+ creative enhancements. Built: ad page Overview → "Meta's automatic changes" (`creative_features.py`: plain-words labels for ~24 `creative_features_spec` keys, the skill's advice — rewriting / generating ones off, fit / brightness fine — a warning when one of the "off" ones is on; `standard_enhancements` hidden as retired), switching one (admins) makes a new creative with the same `object_story_spec` and the changed spec and swaps it onto the ad (`creative` update), logged as `enhancement`; Meta reviews the ad again. Live check 2026-11-09: N1–N5 have none on; two test creatives have `video_filtering` on. Unverified against real Meta: swapping the creative on a live ad
 
 ### Phase 5: Creative intelligence
-- [ ] 5.1 Concept tags (hook, angle, format, persona) and results by concept
+- [~] 5.1 Concept tags. Built: migration 016 `ad_tags` (one value per ad per dimension: hook / angle / persona / format / offer; source manual / claude / seed / copied), seeded for N1–N5 and N1 · v2 from the round notes (hook styles: Pain statement N1, Outcome promise N2 + N5, Command N3, Question N4), `concepts.py` (pure `group`: sums, cost per lead, hook / hold / qualified rates, minimum-data badge (3 leads and 2× target), cheapest judged group with the exact binomial confidence from `experiments.py`), ad page "The idea" (tags with known values to reuse), Results "By idea" (switch dimension, verdict says how sure), new ads copy their template's tags, Desk proposal kind `tags` (approve applies, source claude), tags in the Desk snapshot, skill playbook (installed)
 - [ ] 5.2 Swipe file + competitor watch
 - [ ] 5.3 Meta's own advice: Opportunity Score, recommendations, benchmarks
 
@@ -534,3 +534,4 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-09 · 4.2 new ad set built (starts from the live one, place search, live estimate, created paused, then New ad); unit tests OK, QA 134 PASS; committed, not pushed · next: 4.3 new campaign wizard
 - 2026-11-09 · 4.3 new campaign wizard built (one page, everything off, resumable after a refusal, publish with the budget typed, ads → ad set → campaign); unit tests OK, QA 144 PASS; committed, not pushed · next: 4.4 Advantage+ creative switches
 - 2026-11-09 · 4.4 automatic changes built; Phase 4 code complete (4.1 forms, 4.2 ad sets, 4.3 campaign wizard, 4.4 enhancements); 179 unit tests, QA 149 PASS; pushed · next: Eugene runs Update; Phase 5 (creative intelligence)
+- 2026-11-09 · 5.1 concept tags built (seeded N1–N5, By idea on Results, tag suggestions from Claude); unit tests OK, QA 156 PASS; committed, not pushed · next: 5.2 swipe file + competitor watch

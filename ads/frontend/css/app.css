@@ -1304,3 +1304,15 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .enh-list li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .enh-list li:last-child { border-bottom: 0; }
 .enh-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+/* ---------- Ideas (concept tags) ---------- */
+.ideas-table th[scope="row"] { font-weight: 400; min-width: 240px; color: var(--ink); font-size: 14px; }
+.ideas-table tbody tr:last-child th { border-bottom: 0; }
+.idea-ads { display: block; color: var(--ink-3); font-size: 12px; margin-top: 2px; }
+.ideas-table tr.lead th b { color: var(--seal); }
+.ideas-table tr.untagged th b { color: var(--ink-3); font-weight: 600; }
+.ideas-table .pill { font-size: 11px; padding: 1px 7px; margin-left: 4px; vertical-align: 1px; }
+#ideas .note { margin-bottom: 10px; }
+.idea-row { display: grid; grid-template-columns: 130px minmax(0, 1fr); align-items: center; gap: 4px 12px; }
+.idea-row label { margin: 0; }
+@media (max-width: 720px) { .idea-row { grid-template-columns: 1fr; } }

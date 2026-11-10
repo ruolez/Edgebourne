@@ -112,6 +112,12 @@ files; `cat`, `tail` and pipes are not allowed.
    run on Meta as an A/B test (`meta` in the snapshot: dates, test budget, Meta's own verdict);
    only Eugene starts those, from the Tests page. Never create one with
    `ads_experiment_abtest_create_test`; propose the experiment instead.
+   **tags** = label an ad's idea so Results can compare ideas across ads (each ad in the
+   snapshot carries its `tags`): `payload` `{"ad_id": "<ad id>", "tags": {"hook": "Question",
+   "angle": "…", "persona": "…", "format": "9 s motion video, 4:5", "offer": "Free intro call"}}`.
+   Hooks are a style, reused across ads so they group: Question, Command, Pain statement,
+   Outcome promise, Number or stat, Story, Social proof. Reuse an existing value before inventing
+   one. Propose tags for any ad with none (Polish and review runs), one proposal per ad.
 7. `desk done <id> --summary "<one or two sentences>"`. If you can't finish (Meta down, no
    data, a tool refused), `desk fail <id> --error "<what happened and what would fix it>"`
    rather than stopping silently.

@@ -104,7 +104,11 @@ function render() {
       <div class="panel-body aud-grid"><div><h3 class="chart-title">Share of spend</h3><div id="acc-spend"><p class="muted">Loading from Meta…</p></div></div>
       <div><h3 class="chart-title">Leads and cost per lead</h3><div id="acc-leads"></div></div></div></section>
     ${me.role === "admin" ? `<section class="panel"><div class="panel-head"><h2>What changed on Meta</h2><p>Last 14 days, from Meta's own history: Ads Manager, this dashboard and Meta's automatic changes</p></div><div class="panel-body" id="activity"><p class="muted">Loading…</p></div></section>` : ""}`;
-  $("perf").innerHTML = alerts + cap + figures + charts + ads + extra;
+  const ideas = `<section class="panel" id="ideas-panel"><div class="panel-head wrap"><h2>By idea</h2><p>Ads grouped by their tags, last 30 days</p><span class="spacer"></span>
+      <div class="format-scroll"><div class="segmented" id="idea-by" role="group" aria-label="Group by">${[["hook", "Hook"], ["angle", "Angle"], ["persona", "Who it's for"], ["format", "Format"], ["offer", "Offer"]].map(([k, l]) => `<button type="button" data-idea="${k}" aria-pressed="${k === ideaBy}">${l}</button>`).join("")}</div></div></div>
+      <div class="panel-body" id="ideas"><p class="muted flush">Loading…</p></div></section>`;
+  $("perf").innerHTML = alerts + cap + figures + charts + ads + ideas + extra;
+  loadIdeas();
   renderAds();
   wirePacing();
   loadAccountBreakdown();
@@ -279,6 +283,31 @@ function fixInlineWidths() {
 }
 
 let accBy = "placement";
+let ideaBy = "hook";
+
+const ratePct = (v) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
+
+async function loadIdeas() {
+  const box = document.getElementById("ideas");
+  if (!box) return;
+  try {
+    const d = await api(`/api/concepts?by=${ideaBy}&range=30`);
+    if (!d.groups.length) { box.innerHTML = '<p class="muted flush">No ad spent money in the last 30 days.</p>'; return; }
+    const best = d.groups.find((g) => g.best);
+    const verdict = !best ? '<p class="note">Too early to say which idea works best: each group needs 3 or more leads and twice the target cost in spend.</p>'
+      : d.best_is_clear ? `<p class="note ok"><b>${esc(best.value)}</b> brings the cheapest leads, ${d.best_confidence}% sure.</p>`
+        : `<p class="note"><b>${esc(best.value)}</b> is cheapest so far, but only ${d.best_confidence}% sure: the difference could be chance. Keep the ideas running side by side.</p>`;
+    box.innerHTML = `${verdict}<div class="scroll-x"><table class="table middle ideas-table">
+      <thead><tr><th>${esc(d.dimensions[d.by][0])}</th><th class="num">Ads</th><th class="num">Spent</th><th class="num">Leads</th><th class="num">Cost per lead</th>
+        <th class="num" title="3-second views ÷ impressions">Hook rate</th><th class="num" title="ThruPlays ÷ 3-second views">Hold</th><th class="num" title="Qualified or won ÷ leads">Qualified</th></tr></thead>
+      <tbody>${d.groups.map((g) => `<tr class="${g.best ? "lead" : ""}${g.value === "Not tagged" ? " untagged" : ""}">
+        <th scope="row"><b>${esc(g.value)}</b>${g.best ? ' <span class="pill ok">cheapest</span>' : ""}${g.enough ? "" : ' <span class="pill" title="Fewer than 3 leads or less than twice the target cost spent">too early</span>'}<span class="idea-ads">${g.ad_names.map(esc).join(", ")}</span></th>
+        <td class="num">${count(g.ads)}</td><td class="num">${money(g.spend_cents)}</td><td class="num">${count(g.leads)}</td>
+        <td class="num">${g.cpl_cents != null ? `<span class="${g.enough ? "" : "early"}">${money(g.cpl_cents, { exact: true })}</span>` : "—"}</td>
+        <td class="num">${ratePct(g.hook_rate)}</td><td class="num">${ratePct(g.hold_rate)}</td><td class="num">${ratePct(g.qualified_rate)}</td></tr>`).join("")}</tbody></table></div>
+      ${d.untagged_ads ? `<p class="muted small flush">${d.untagged_ads} ad${d.untagged_ads === 1 ? " has" : "s have"} no ${esc(d.dimensions[d.by][0].toLowerCase())} yet: tag them under "The idea" on each ad's page, or ask Claude to.</p>` : ""}`;
+  } catch (err) { box.innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
+}
 
 async function loadAccountBreakdown() {
   if (me.role !== "admin") { const el = document.getElementById("acc-spend"); if (el) el.closest(".panel").remove(); return; }
@@ -320,6 +349,13 @@ async function load() {
 me = await boot({ page: "performance" });
 if (me) {
   document.addEventListener("click", (e) => {
+    const ib = e.target.closest("#idea-by [data-idea]");
+    if (ib) {
+      ideaBy = ib.dataset.idea;
+      document.querySelectorAll("#idea-by button").forEach((x) => x.setAttribute("aria-pressed", String(x === ib)));
+      loadIdeas();
+      return;
+    }
     const b = e.target.closest("#acc-by [data-by]");
     if (!b) return;
     accBy = b.dataset.by;

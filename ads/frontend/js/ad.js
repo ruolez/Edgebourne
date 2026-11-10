@@ -147,6 +147,10 @@ function renderOverview() {
             </dl>
           </div>
         </section>
+        <section class="panel" id="idea-panel">
+          <div class="panel-head"><h2>The idea</h2><p>Tags that group ads on Results</p></div>
+          <form class="panel-body stack tight" id="idea" novalidate><p class="muted flush">Loading…</p></form>
+        </section>
         <section class="panel" id="enh-panel">
           <div class="panel-head"><h2>Meta's automatic changes</h2><p>Advantage+ creative</p></div>
           <div class="panel-body" id="enh"><p class="muted flush">Reading from Meta…</p></div>
@@ -163,12 +167,39 @@ function renderOverview() {
     format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
   loadPreview();
   loadEnhancements();
+  loadIdea();
   const eb = $("edit-budget");
   if (eb) eb.addEventListener("click", () => editBudget({ level: budgetLevel, id: budgetLevel === "adset" ? ad.adset_id : ad.campaign_id, name: budgetLevel === "adset" ? ad.adset_name : ad.campaign_name, current: budgetCents }, load));
   if (ad.adset_id) api(`/api/insights/adset/${encodeURIComponent(ad.adset_id)}/estimate`).then((e) => {
     if (e.lower && e.upper && $("estimate")) $("estimate").innerHTML = `<br><span class="muted small">Meta estimates ${count(e.lower)}–${count(e.upper)} people could see ads from this ad set.</span>`;
   }).catch(() => {});
 }
+
+// ---------------------------------------------------------------- the idea (concept tags)
+
+function ideaHtml(d) {
+  return `${d.order.map((k) => [k, d.dimensions[k]]).map(([k, [label, hint]]) => `<div class="field idea-row">
+      <label for="tag-${k}">${esc(label)}</label>
+      <input class="input" id="tag-${k}" name="${k}" value="${esc(d.tags[k] || "")}" list="tag-list-${k}" placeholder="${esc(hint)}" autocomplete="off" maxlength="80">
+      <datalist id="tag-list-${k}">${(d.known[k] || []).map((v) => `<option value="${esc(v)}">`).join("")}</datalist>
+    </div>`).join("")}
+    <div class="row"><button class="btn btn-small" type="submit">Save</button><span class="muted small">Reuse a value from the list so ads group together.</span></div>`;
+}
+
+async function loadIdea() {
+  const f = $("idea");
+  if (!f) return;
+  try { f.innerHTML = ideaHtml(await api(`/api/ads/ad/${encodeURIComponent(adId)}/tags`)); }
+  catch (err) { f.innerHTML = `<p class="muted flush">${esc(err.message)}</p>`; }
+}
+
+document.addEventListener("submit", async (e) => {
+  if (e.target.id !== "idea") return;
+  e.preventDefault();
+  const tags = Object.fromEntries([...e.target.querySelectorAll("input[name]")].map((i) => [i.name, i.value.trim()]));
+  try { e.target.innerHTML = ideaHtml(await api(`/api/ads/ad/${encodeURIComponent(adId)}/tags`, { method: "PUT", body: { tags } })); toast("Saved"); }
+  catch (err) { toast(err.message, "bad"); }
+});
 
 // ---------------------------------------------------------------- Meta's automatic changes
 

@@ -656,6 +656,8 @@ def create_ad_from(user, data, proposal_id=None):
         record(user, "ad", row, "create", None, row["name"], False, str(exc), proposal_id)
         return None, (f"Meta refused: {exc}", 400)
     record(user, "ad", {**row, "id": ad["id"]}, "create", None, name, True, proposal_id=proposal_id)
+    import concepts_api
+    concepts_api.copy_tags(ctx["template"]["id"], ad["id"])
     try:
         insights.sync_structure()
     except meta_client.MetaError:
@@ -687,6 +689,16 @@ def decide(proposal_id, decision):
         return api_error("This proposal was already decided", 409)
     if p["kind"] == "experiment" and decision == "approve":
         return approve_experiment(user, p)
+    if p["kind"] == "tags" and decision == "approve":
+        import concepts_api
+        pl = p.get("payload") or {}
+        row = db.query("SELECT campaign_id FROM ads WHERE id = %s", (pl.get("ad_id"),), one=True)
+        if not row or not can_touch(user, row["campaign_id"]):
+            return api_error("Ad not found", 404)
+        concepts_api.save_tags(pl["ad_id"], pl.get("tags") or {}, "claude")
+        db.execute("UPDATE desk_proposals SET status = 'applied', decided_by = %s, decided_at = now() WHERE id = %s", (user["id"], p["id"]))
+        log_activity("proposal.applied", subject=str(p["id"]), details={"title": p["title"], "tags": pl.get("tags")})
+        return jsonify({"status": "applied", "applied": True})
     tid = p.get("entity_id") or (p.get("payload") or {}).get("template_ad_id")
     level, row = find_entity(tid) if tid else (None, None)
     if row and not can_touch(user, row["campaign_id"]):

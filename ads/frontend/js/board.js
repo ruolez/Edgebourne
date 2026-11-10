@@ -80,6 +80,10 @@ function changeList(p, ix) {
     if (pl.name) rows.push(`<div><dt>Name</dt><dd>${esc(pl.name)}</dd></div>`);
     return `<dl class="facts changes">${rows.join("")}</dl>`;
   }
+  if (p.kind === "tags" && p.payload) {
+    const DIM = { hook: "Hook", angle: "Angle", persona: "Who it's for", format: "Format", offer: "Offer" };
+    return `<dl class="facts changes">${Object.entries(p.payload.tags).map(([d, v]) => `<div><dt>${esc(DIM[d] || d)}</dt><dd><ins>${esc(v)}</ins></dd></div>`).join("")}</dl>`;
+  }
   if (p.kind === "experiment" && p.payload) {
     const arm = (a) => (a.names || []).join(", ") || "an ad";
     const rows = (pl.arms || []).map((a) => `<div><dt>${esc(a.label)}</dt><dd>${esc(arm(a))}</dd></div>`);
@@ -107,6 +111,10 @@ function sourceLine(p, ix) {
 }
 
 function actions(p, ix) {
+  if (p.kind === "tags" && p.payload) {
+    return `<div class="row decide"><button class="btn btn-claude" type="button" data-approve="${p.id}">Apply the tags</button>
+      <button class="btn btn-quiet" type="button" data-decline="${p.id}">Decline</button></div>`;
+  }
   if (p.kind === "experiment" && p.payload) {
     return `<div class="row decide"><button class="btn btn-claude" type="button" data-approve="${p.id}">Track this test</button>
       <button class="btn btn-quiet" type="button" data-decline="${p.id}">Decline</button></div>`;
@@ -128,6 +136,7 @@ function actions(p, ix) {
 
 function changeSummary(p) {
   const pl = p.payload || {};
+  if (p.kind === "tags") return "Labels the ad's idea so Results can compare ideas. Nothing changes on Meta.";
   if (p.kind === "experiment") return `Tracks “${pl.name || p.title}” on the Tests page. Nothing changes on Meta.`;
   if (p.kind === "creative") return `New ad “${pl.name || p.title}”, created switched off${pl.media && pl.media.kind !== "same" ? ", with Claude's new " + pl.media.kind : ""}.`;
   return [p.entity_name, p.field && `${p.field}: ${p.current_value || "—"} → ${p.proposed_value || "—"}`].filter(Boolean).join(" · ");
