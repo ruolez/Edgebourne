@@ -260,6 +260,54 @@ def fake_comments():
     return jsonify(COMMENTS)
 
 
+# ---- A stand-in web push service: devices register their private key here (dev only) so
+# the fake can decrypt what the console sends, proving the encryption end to end.
+PUSH_DEVICES, PUSH_SENT = {}, []
+
+
+def _push_decrypt(body, private_b64u, auth_b64u):
+    import base64
+    import hashlib
+    import hmac as hm
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    unb = lambda t: base64.urlsafe_b64decode(t + "=" * (-len(t) % 4))
+    mac = lambda k, d: hm.new(k, d, hashlib.sha256).digest()
+    key = ec.derive_private_key(int.from_bytes(unb(private_b64u), "big"), ec.SECP256R1())
+    ua_pub = key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+    salt, idlen = body[:16], body[20]
+    as_pub, cipher = body[21:21 + idlen], body[21 + idlen:]
+    ecdh = key.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), as_pub))
+    prk = mac(salt, mac(mac(unb(auth_b64u), ecdh), b"WebPush: info\x00" + ua_pub + as_pub + b"\x01"))
+    plain = AESGCM(mac(prk, b"Content-Encoding: aes128gcm\x00\x01")[:16]).decrypt(mac(prk, b"Content-Encoding: nonce\x00\x01")[:12], cipher, None)
+    return plain.rstrip(b"\x00")[:-1].decode()
+
+
+@app.route("/push/_register", methods=["POST"])
+def push_register():
+    d = request.get_json()
+    PUSH_DEVICES[d["id"]] = d
+    return jsonify({"ok": True})
+
+
+@app.route("/push/_sent")
+def push_sent():
+    return jsonify(PUSH_SENT)
+
+
+@app.route("/push/<pid>", methods=["POST"])
+def push_receive(pid):
+    if pid.startswith("gone"):
+        return "", 410
+    dev = PUSH_DEVICES.get(pid)
+    auth_ok = request.headers.get("Authorization", "").startswith("vapid t=") and request.headers.get("Content-Encoding") == "aes128gcm"
+    if not dev or not auth_ok:
+        return "", 400
+    PUSH_SENT.append({"id": pid, "ttl": request.headers.get("TTL"), "payload": json.loads(_push_decrypt(request.get_data(), dev["private"], dev["auth"]))})
+    return "", 201
+
+
 @app.route("/fake/_refuse_next_ad")
 def fake_refuse_next_ad():
     REFUSE_NEXT_AD.append(1)

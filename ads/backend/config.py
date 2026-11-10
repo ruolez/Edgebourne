@@ -48,6 +48,8 @@ GRAPH_VERSION_DEFAULT = os.environ.get("META_GRAPH_VERSION", "v24.0")
 META_GRAPH_BASE = os.environ.get("META_GRAPH_BASE", "").rstrip("/")
 ACCOUNT_TZ = os.environ.get("ACCOUNT_TZ", "America/Los_Angeles")  # the ad account's time zone
 TELEGRAM_API_BASE = os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
+# Extra push service hosts (host:port) allowed over plain http: the dev stand-in only.
+PUSH_TEST_HOSTS = {h.strip() for h in os.environ.get("PUSH_TEST_HOSTS", "").split(",") if h.strip()}
 
 # Defaults for the Edge Bourne account; editable in Settings.
 META_DEFAULTS = {

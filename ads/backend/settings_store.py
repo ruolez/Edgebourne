@@ -10,6 +10,7 @@ import db
 
 SECRET_KEYS = {
     "telegram_bot_token",
+    "vapid_private_key",
     "meta_app_secret",
     "meta_system_token",
     "meta_verify_token",

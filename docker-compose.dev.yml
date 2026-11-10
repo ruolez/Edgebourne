@@ -19,6 +19,8 @@ services:
       - META_GRAPH_BASE=${ADS_FAKE_META_BASE:-http://fake-meta:5001/v24.0}
       # Telegram also goes to the stand-in; the fake bot token is 123456:FAKE-token.
       - TELEGRAM_API_BASE=${ADS_FAKE_TELEGRAM_BASE:-http://fake-meta:5001/telegram}
+      # Web push: the stand-in push service (dev only; production accepts the browsers' own services).
+      - PUSH_TEST_HOSTS=fake-meta:5001
 
   # Local stand-in for the Meta Graph API (ads/dev/fake_meta.py).
   fake-meta:

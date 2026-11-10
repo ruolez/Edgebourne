@@ -976,6 +976,56 @@ print(r['id'])"`).trim();
   check('a dataset that never received anything reads "Not set up" and explains it', /Not set up/.test(await page.textContent('#tr-state')) && /never received an event/.test(await page.textContent('#tr-body')));
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import settings_store;settings_store.set('tracking_snapshot', None)"`);
 
+  // Installable app + push: manifest and offline page, a device turned on, messages encrypted end to end, channel order.
+  const man = await page.evaluate(async () => { const r = await fetch('/manifest.webmanifest'); return { type: r.headers.get('content-type'), m: await r.json() }; });
+  check('the app manifest is served with its icons and opens on Today', man.m.start_url === '/home.html' && man.m.display === 'standalone' && man.m.icons.some((i) => i.purpose === 'maskable'));
+  check('the service worker is registered', await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration('/'))));
+  const ecdh = require('crypto').generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const jwk = ecdh.privateKey.export({ format: 'jwk' });
+  const raw = Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')]).toString('base64url');
+  const authKey = require('crypto').randomBytes(16).toString('base64url');
+  const fakePost = (path, body) => sh(`docker exec edgebourne-fake-meta python -c "import urllib.request,json;urllib.request.urlopen(urllib.request.Request('http://localhost:5001${path}', data=json.dumps(${JSON.stringify(body).replace(/"/g, "'")}).encode(), headers={'Content-Type':'application/json'}))"`);
+  fakePost('/push/_register', { id: 'qa1', private: jwk.d, auth: authKey });
+  const sentBefore = JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/push/_sent').read().decode())"`)).length;
+  const pushSeen = errors.length;
+  const refusedEvil = await page.evaluate(async () => (await fetch('/api/me/push', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subscription: { endpoint: 'https://evil.example/collect', keys: { p256dh: 'x', auth: 'y' } } }) })).status);
+  errors.splice(pushSeen);
+  check("the server only accepts the browsers' own push services", refusedEvil === 400);
+  await page.evaluate(async ({ raw, authKey }) => fetch('/api/me/push', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subscription: { endpoint: 'http://fake-meta:5001/push/qa1', keys: { p256dh: raw, auth: authKey } }, label: 'QA phone' }) }), { raw, authKey });
+  await page.goto(BASE + '/account.html');
+  await page.waitForSelector('.device-list');
+  check('Your account lists the devices with notifications on', /QA phone/.test(await page.textContent('.device-list')));
+  await page.evaluate(() => fetch('/api/me/push/test', { method: 'POST' }));
+  const got = JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/push/_sent').read().decode())"`)).slice(sentBefore);
+  check('a test message reaches the device, encrypted with its keys and readable only with them', got.length === 1 && got[0].payload.title === 'Test from Edge Bourne Ads' && got[0].id === 'qa1', JSON.stringify(got[0] || {}));
+  const channels = sh(`docker exec -w /app edgebourne-ads-backend python -c "
+import db, notify
+uid = db.query(\\"SELECT id FROM users WHERE email = 'eugene@edgebourne.com'\\", one=True)['id']
+tg = db.query('SELECT notify_telegram FROM users WHERE id = %s', (uid,), one=True)['notify_telegram']
+a = notify.reach([uid], 'notify_new_leads')
+db.execute('UPDATE users SET notify_telegram = FALSE WHERE id = %s', (uid,))
+b = notify.reach([uid], 'notify_new_leads')
+notify.queue(uid, 'push', 'lead', 'New lead: QA Push', ['Phone (555) 010-0000'], '/leads.html', dedupe_key='qa-push-lead-${Date.now()}')
+notify.process_pending()
+db.execute('UPDATE users SET notify_telegram = %s WHERE id = %s', (tg, uid))
+print(a[0][1] if a else '-', b[0][1] if b else '-')"`).trim();
+  const got2 = JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/push/_sent').read().decode())"`)).slice(sentBefore + 1);
+  check('alerts go to Telegram first, then to push devices, then email; a lead alert arrives by push with its link',
+    channels === 'telegram push' && got2.length === 1 && got2[0].payload.title === 'New lead: QA Push' && got2[0].payload.url === '/leads.html', `${channels} ${JSON.stringify(got2[0] || {})}`);
+  const gSeen = errors.length;
+  const badKeys = await page.evaluate(async () => (await fetch('/api/me/push', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subscription: { endpoint: 'http://fake-meta:5001/push/x', keys: { p256dh: 'BFAKE', auth: 'AFAKE' } } }) })).status);
+  await page.evaluate(async ({ raw, authKey }) => fetch('/api/me/push', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subscription: { endpoint: 'http://fake-meta:5001/push/gone1', keys: { p256dh: raw, auth: authKey } }, label: 'Old laptop' }) }), { raw, authKey });
+  await page.evaluate(() => fetch('/api/me/push/test', { method: 'POST' }));
+  errors.splice(gSeen);
+  errors.splice(gSeen);
+  const left = await page.evaluate(async () => (await (await fetch('/api/me/push')).json()).devices.map((d) => d.label));
+  check('a device the push service says is gone is removed by itself; unusable keys are refused up front', left.join() === 'QA phone' && badKeys === 400, `${left.join()} ${badKeys}`);
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute('DELETE FROM push_subscriptions')"`);
+
 
   // Ad blockers hide elements whose class or id looks like an ad (EasyList: .ad-cell, .adset, #ads-panel …).
   // An ads console is full of them, so no class or id may start with ad- / ads- / adset / advert / sponsor / banner / promo.

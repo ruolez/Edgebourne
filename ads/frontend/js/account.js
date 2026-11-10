@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { applyTheme, boot, confirmDialog, currentTheme, esc, fieldError, toast } from "./ui.js";
+import { applyTheme, boot, canInstall, confirmDialog, currentTheme, esc, fieldError, promptInstall, toast, when } from "./ui.js";
 
 const me = await boot({ page: "account" });
 if (me) {
@@ -104,5 +104,94 @@ if (me) {
     } catch (err) {
       if (err.body.field) fieldError(form, err.body.field, err.message); else toast(err.message, "bad");
     }
+  });
+
+  wireDevice();
+}
+
+// ---------------------------------------------------------------- this device: app + push
+
+function standalone() { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; }
+function isIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); }
+function pushSupported() { return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; }
+
+function deviceLabel() {
+  const ua = navigator.userAgent;
+  const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) || isIOS() ? "iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "Computer";
+  const browser = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Browser";
+  return `${os} · ${browser}${standalone() ? " (app)" : ""}`;
+}
+
+function b64ToBytes(b64) {
+  const s = atob(b64.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (b64.length % 4)) % 4));
+  return Uint8Array.from(s, (c) => c.charCodeAt(0));
+}
+
+function renderInstall() {
+  const box = document.getElementById("install-box");
+  if (standalone()) { box.innerHTML = '<p class="flush"><b>Installed.</b> <span class="muted">You\'re using the app.</span></p>'; return; }
+  if (isIOS()) {
+    box.innerHTML = '<p class="flush"><b>Install on iPhone:</b> tap Share <span aria-hidden="true">⎙</span>, then <b>Add to Home Screen</b>. Notifications on iPhone work only from the installed app.</p>';
+    return;
+  }
+  box.innerHTML = canInstall()
+    ? '<div class="row"><button type="button" class="btn" id="install">Install the app</button><span class="muted small">Opens in its own window, with an icon on your dock or home screen.</span></div>'
+    : '<p class="muted flush small">To install: use your browser\'s Install option (Chrome and Edge: the icon at the right of the address bar).</p>';
+}
+
+async function currentSub() {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+async function renderPush(view) {
+  const box = document.getElementById("push-box");
+  if (!pushSupported()) {
+    box.innerHTML = `<p class="muted flush">${isIOS() && !standalone() ? "Install the app first (above), then turn notifications on from it." : "This browser can't show notifications."}</p>`;
+  } else if (Notification.permission === "denied") {
+    box.innerHTML = '<p class="note warn flush">Notifications are blocked for this site. Allow them in the browser\'s site settings, then come back here.</p>';
+  } else {
+    const sub = await currentSub();
+    box.innerHTML = sub
+      ? `<div class="row"><span class="pill ok">Notifications on</span><button type="button" class="btn btn-small" id="push-test">Send a test</button><button type="button" class="btn btn-quiet btn-small" id="push-off">Turn off on this device</button></div>
+         <p class="muted small flush">New leads, reminders and alerts come here instead of email (Telegram still comes first if it's connected).</p>`
+      : `<div class="row"><button type="button" class="btn btn-primary" id="push-on">Turn on notifications</button><span class="muted small">New leads, reminders and alerts pop up on this device, even when the console is closed.</span></div>`;
+  }
+  document.getElementById("devices").innerHTML = view.devices.length
+    ? `<ul class="device-list">${view.devices.map((d) => `<li><span><b>${esc(d.label || "A device")}</b><small class="muted">on since ${esc(when(d.created_at))}${d.last_ok_at ? ` · last delivered ${esc(when(d.last_ok_at))}` : ""}</small></span>
+        <button type="button" class="link-btn muted" data-device-off="${d.id}">Remove</button></li>`).join("")}</ul>` : "";
+}
+
+async function loadPush() {
+  try { renderPush(await api("/api/me/push")); } catch (err) { document.getElementById("push-box").innerHTML = `<p class="note warn flush">${esc(err.message)}</p>`; }
+}
+
+function wireDevice() {
+  renderInstall();
+  document.addEventListener("ebads:installable", renderInstall);
+  loadPush();
+  document.getElementById("device").addEventListener("click", async (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    try {
+      if (b.id === "install") { if (await promptInstall()) toast("Installed"); renderInstall(); return; }
+      if (b.id === "push-on") {
+        b.disabled = true;
+        if ((await Notification.requestPermission()) !== "granted") { toast("Notifications weren't allowed", "bad"); loadPush(); return; }
+        const view = await api("/api/me/push");
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(view.public_key) });
+        renderPush(await api("/api/me/push", { method: "POST", body: { subscription: sub.toJSON(), label: deviceLabel() } }));
+        toast("Notifications are on for this device");
+      }
+      if (b.id === "push-test") { await api("/api/me/push/test", { method: "POST" }); toast("Sent. It should pop up in a moment."); }
+      if (b.id === "push-off") {
+        const sub = await currentSub();
+        if (sub) { await api("/api/me/push/off", { method: "POST", body: { endpoint: sub.endpoint } }); await sub.unsubscribe(); }
+        loadPush(); toast("Notifications off for this device");
+      }
+      if (b.dataset.deviceOff) { renderPush(await api(`/api/me/push/${b.dataset.deviceOff}`, { method: "DELETE" })); toast("Removed"); }
+    } catch (err) { toast(err.message, "bad"); b.disabled = false; }
   });
 }

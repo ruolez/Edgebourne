@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Your account | Edge Bourne Ads</title>
   <link rel="icon" href="/img/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/img/app/apple-touch-icon.png">
+  <meta name="theme-color" content="#0D7468">
+  <meta name="apple-mobile-web-app-title" content="EB Ads">
   <script src="/js/theme.js"></script>
   <link rel="stylesheet" href="/css/app.css">
 </head>
@@ -42,6 +46,14 @@
             <label class="check"><input type="checkbox" id="remind"> Remind me about leads nobody has contacted <span class="muted">(after 5 minutes if they're mine; admins also after an hour and a list at 8 AM)</span></label>
             <label class="check" id="alerts-row" hidden><input type="checkbox" id="alerts-on"> Tell me when something is wrong with the ads <span class="muted">(rejected ads, no delivery, tired ads, overspend, no leads; set the rules in Settings → Alerts)</span></label>
             <div class="tg-box" id="tg" aria-live="polite"></div>
+          </div>
+        </section>
+        <section class="panel" id="device">
+          <div class="panel-head"><h2>This device</h2><p>The app and notifications</p></div>
+          <div class="panel-body stack tight">
+            <div id="install-box"></div>
+            <div id="push-box" aria-live="polite"><p class="muted flush">Checking this browser…</p></div>
+            <div id="devices"></div>
           </div>
         </section>
       </div>

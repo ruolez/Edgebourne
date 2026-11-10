@@ -45,16 +45,21 @@ def telegram_people(user_ids):
 
 
 def reach(user_ids, flag="notify_reminders"):
-    """[(user id, channel)]: Telegram when the person linked it, otherwise email. `flag` is the
-    person's own on/off switch for this kind of alert (a users column)."""
+    """[(user id, channel)]: Telegram when the person linked it, else push when a device of theirs
+    has notifications on, else email. `flag` is the person's own on/off switch for this kind of
+    alert (a users column)."""
     if not user_ids:
         return []
+    import push
     by_tg = set(telegram_people(user_ids))
+    by_push = push.has_devices(user_ids)
     rows = db.query(f"SELECT id FROM users WHERE id = ANY(%s) AND is_active AND {flag}", (list(user_ids),))
     out = []
     for r in rows:
         if r["id"] in by_tg:
             out.append((r["id"], "telegram"))
+        elif r["id"] in by_push:
+            out.append((r["id"], "push"))
         elif mailer.configured():
             out.append((r["id"], "email"))
     return out
@@ -81,8 +86,16 @@ def _deliver(row):
         user = db.query("SELECT email FROM users WHERE id = %s", (row["user_id"],), one=True)
         link = f"\n\n{row['button'] or 'Open'}: {row['url']}" if row["url"] else ""
         mailer.send(user["email"], row["title"], "\n".join(row["lines"]) + link)
+    elif row["channel"] == "push":
+        import push
+        push.send_to_user(row["user_id"], row["title"], row["lines"], row["url"], tag=row.get("kind"))
     else:
         raise telegram.TelegramError(f"Unknown channel {row['channel']}", status=400)
+
+
+def push_error():
+    import push
+    return push.PushError
 
 
 def process_pending(now=None):
@@ -91,7 +104,7 @@ def process_pending(now=None):
     for row in rows:
         try:
             _deliver(row)
-        except (telegram.TelegramError, mailer.MailError) as exc:
+        except (telegram.TelegramError, mailer.MailError, push_error()) as exc:
             attempts = row["attempts"] + 1
             again = retry_at(attempts, row["created_at"], now, getattr(exc, "permanent", False))
             db.execute("UPDATE notifications SET attempts = %s, last_error = %s, status = %s, next_attempt_at = COALESCE(%s, next_attempt_at) WHERE id = %s",
