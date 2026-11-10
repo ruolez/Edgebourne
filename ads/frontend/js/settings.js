@@ -37,6 +37,37 @@ function renderMeta() {
   });
 }
 
+// Tracking health: what Meta's dataset has received, and what this console has sent it.
+const TR_STATE = { ok: ["ok", "Healthy"], weak: ["warn", "Something to fix"], quiet: ["bad", "Gone quiet"], not_set_up: ["", "Not set up"] };
+
+function trackingHtml(t) {
+  const a = t.assessment;
+  const events = t.events && Object.keys(t.events).length
+    ? Object.entries(t.events).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${esc(k)} ${v}`).join(" · ") : "none";
+  const stages = Object.keys(t.sent_by_stage || {}).length ? Object.entries(t.sent_by_stage).map(([k, v]) => `${esc(k)} ${v}`).join(" · ") : "none";
+  const match = (t.match || []).length ? t.match.map((m) => `${esc(m.event || m.channel)} ${m.emq}/10`).join(" · ") : "not reported yet";
+  return `<p class="flush tr-headline">${esc(a.headline)}</p>
+    ${t.dataset ? `<dl class="facts tr-facts">
+      <div><dt>Dataset</dt><dd>${esc(t.name || "")} <span class="muted small">${esc(t.dataset)}</span></dd></div>
+      <div><dt>Last event</dt><dd>${a.last ? esc(when(a.last)) : "never"}</dd></div>
+      <div><dt>Received, last ${t.days} days</dt><dd>${events}</dd></div>
+      <div><dt>From a server</dt><dd>${a.server_share != null ? `${a.server_share}% <span class="muted small">(Conversions API; the rest from the website)</span>` : "—"}</dd></div>
+      <div><dt>Match quality</dt><dd>${match} <span class="muted small">(6 or more is good)</span></dd></div>
+      <div><dt>Sent from here, last 7 days</dt><dd>${stages}${t.crm.pending ? ` · ${t.crm.pending} waiting` : ""}${t.crm.failed ? ` · <span class="bad-text">${t.crm.failed} failed</span>` : ""}${t.crm_on ? "" : ' <span class="muted small">(sending is off)</span>'}</dd></div>
+    </dl>` : ""}
+    ${a.todo.length ? `<ul class="tr-todo">${a.todo.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+    <p class="muted small flush">Instant Form leads are counted by Meta without any website code. The dataset is how Meta learns which of those leads became clients.${t.fetched_at ? ` Checked ${esc(when(t.fetched_at))}.` : ""}</p>`;
+}
+
+async function loadTracking(fresh = false) {
+  try {
+    const t = await api(`/api/tracking${fresh ? "?fresh=1" : ""}`);
+    const [cls, label] = TR_STATE[t.assessment.state] || ["", t.assessment.state];
+    $("tr-state").innerHTML = `<span class="pill ${cls}">${esc(label)}</span>`;
+    $("tr-body").innerHTML = trackingHtml(t);
+  } catch (err) { $("tr-body").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
+}
+
 function renderMetaTests() {
   $("mt-on").checked = !!s.meta_ab_tests;
   $("mt-state").innerHTML = s.meta_ab_tests ? '<span class="pill ok">On</span>' : '<span class="pill">Off</span>';
@@ -125,6 +156,7 @@ const RULE_UI = [
   ["no_leads", "No leads while the ads spend", [["days", "for", "days in a row"]]],
   ["tracking", "Leads Meta counted aren't reaching the inbox", []],
   ["stale_data", "Meta stops answering", [["hours", "for", "hours"]]],
+  ["events_quiet", "Lead stages stop reaching Meta's dataset (two days)", []],
 ];
 
 function renderAlerts() {
@@ -167,6 +199,7 @@ async function load() {
   renderCrm();
   renderAuto();
   renderMetaTests();
+  loadTracking();
   renderTelegram();
   renderAlerts();
   if (editing === null) renderReplies();
@@ -301,6 +334,7 @@ if (me) {
     s = await api("/api/settings/refresh", { method: "PUT", body: { minutes: Number($("auto-minutes").value) } });
     toast(`The latest now comes from Meta ${every(s.auto_refresh_minutes).toLowerCase()}`); renderAuto();
   }); });
+  $("tr-fresh").addEventListener("click", () => loadTracking(true));
   $("mt-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const on = $("mt-on").checked;

@@ -110,6 +110,11 @@ def _loop():
                             advice_api.refresh_if_stale()
                         except Exception as exc:
                             log.info("Meta's advice not read: %s", exc)
+                        try:
+                            import tracking_api
+                            tracking_api.refresh_if_stale()
+                        except Exception as exc:
+                            log.info("tracking health not read: %s", exc)
         except Exception:
             log.exception("worker pass failed")
         finally:

@@ -28,6 +28,7 @@ DEFAULTS = {
     "no_leads": {"on": True, "days": 3},
     "tracking": {"on": True},
     "stale_data": {"on": True, "hours": 3},
+    "events_quiet": {"on": True},
     "cap_soon": {"on": True, "days": 3},
     "pace_over": {"on": True, "percent": 15},
 }
@@ -179,6 +180,12 @@ def evaluate(snap, rules, today):
             [f"Meta counted {meta} leads in the last two days, but none arrived here. Check the Page connection in Settings → Meta."],
             None, "/settings.html")
 
+    r = rules["events_quiet"]
+    t = snap.get("tracking") or {}
+    if r["on"] and t.get("state") == "quiet":
+        add("events_quiet", "account", "warn", "Meta stopped receiving lead stages",
+            [t.get("headline") or "Nothing has reached the dataset for two days.", "See Settings → Tracking health."], None, "/settings.html#tracking")
+
     r = rules["stale_data"]
     age = snap.get("last_pull_age_h")
     if r["on"] and snap.get("connected") and age is not None and age > r["hours"]:
@@ -229,7 +236,20 @@ def snapshot(now):
         "last_pull_age_h": (now.timestamp() - updated) / 3600 if updated else None,
         "connected": bool(settings_store.get("meta_system_token")),
         "pacing": pacing_data(None),
+        "tracking": tracking_state(now),
     }
+
+
+def tracking_state(now):
+    """The tracking verdict from the last dataset read (no Meta call here)."""
+    raw = settings_store.get("tracking_snapshot")
+    data = json.loads(raw) if raw else {}
+    if not data.get("dataset"):
+        return {}
+    import crm_events
+    import tracking
+    return tracking.assess(data["details"], data["events"], data["sources"], data["match"], crm_events.summary(), now,
+                           settings_store.get("crm_send_enabled") == "1")
 
 
 def run(now=None):

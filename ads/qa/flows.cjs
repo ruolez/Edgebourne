@@ -391,7 +391,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   // Alerts: rules in Settings; a rejected ad raises one alert (Telegram + Today), not twice, and it clears by itself.
   await page.goto(BASE + '/settings.html');
   await page.waitForSelector('#al-rules li');
-  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 12);
+  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 13);
   await page.fill('[data-rule="no_leads"][data-key="days"]', '4');
   await page.fill('[data-rule="cpl_high"][data-key="target_cents"]', '15');
   await page.click('#al-form button[type=submit]');
@@ -959,6 +959,22 @@ print(r['id'])"`).trim();
   errors.splice(cSeen);
   check("a comment that isn't on this ad's post is refused", foreign === 404);
   check('replies and hiding are logged', sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(','.join(r['action'] for r in db.query('SELECT action FROM meta_changes ORDER BY id DESC LIMIT 3')[::-1]))"`).trim() === 'comment_reply,comment_hide,comment_show');
+
+  // Tracking health: what Meta's dataset received (here: the lead stages sent earlier in this run), and what to do.
+  await page.goto(BASE + '/settings.html');
+  await page.waitForSelector('#tr-body .tr-headline');
+  await page.click('#tr-fresh');
+  await page.waitForFunction(() => /Lead/.test(document.getElementById('tr-body').textContent) && /Healthy|Something to fix/.test(document.getElementById('tr-state').textContent));
+  const tr = await page.textContent('#tr-body');
+  check('Tracking health shows what Meta received, from a server, with match quality', /Healthy/.test(await page.textContent('#tr-state'))
+    && /Lead \d/.test(tr) && /Contacted \d/.test(tr) && /100%/.test(tr) && /Lead 7\.4\/10/.test(tr), tr.replace(/\s+/g, ' ').slice(0, 300));
+  check('it says sending is off when it is, and what to do', /sending is off/.test(tr) && /Turn on Settings → Lead stages to Meta/.test(tr));
+  check('a silent dataset is one of the alert rules', /Lead stages stop reaching Meta's dataset/.test(await page.textContent('#al-form')));
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import settings_store,json;settings_store.set('tracking_snapshot', json.dumps({'dataset':'1','details':{'server_last_fired_time':'1969-12-31T16:00:00-0800'},'events':{},'sources':{'server':0,'browser':0},'match':[],'fetched_at':'2099-01-01T00:00:00+00:00'}))"`);
+  await page.reload();
+  await page.waitForSelector('#tr-body .tr-headline');
+  check('a dataset that never received anything reads "Not set up" and explains it', /Not set up/.test(await page.textContent('#tr-state')) && /never received an event/.test(await page.textContent('#tr-body')));
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import settings_store;settings_store.set('tracking_snapshot', None)"`);
 
 
   // Ad blockers hide elements whose class or id looks like an ad (EasyList: .ad-cell, .adset, #ads-panel …).

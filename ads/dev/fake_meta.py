@@ -202,6 +202,7 @@ def tg_api(tok, method):
 BUSINESS = "9990001"
 NEW_ADSETS = {}
 NEW_CAMPAIGNS = {}
+DATASET = "1821497329119793"  # the live dataset's id; the fake counts the lead stages it received
 # Opportunity Score + recommendations: the live account's one (2026-11-09) plus a budget one to apply.
 ADVICE = {"score": 87, "recs": [
     {"type": "reels_pc_recommendation", "object_ids": ["120252672227950312"], "recommendation_stage": "mid_flight_recommendation",
@@ -334,6 +335,23 @@ def graph(path):
         if len(parts) == 2 and parts[1] == "delivery_estimate":
             return jsonify({"data": [{"estimate_mau_lower_bound": 1_400_000, "estimate_mau_upper_bound": 1_650_000,
                                       "estimate_ready": True}]})
+        if parts == ["dataset_quality"]:
+            seen = [e for e in CRM_EVENTS]
+            return jsonify({"web": [], "crm": [{"event_name": "Lead", "event_match_quality": {"composite_score": 7.4}}] if seen else []})
+        if len(parts) == 1 and parts[0] == DATASET:
+            last = max((e.get("event_time") for e in CRM_EVENTS), default=None)
+            return jsonify({"id": DATASET, "name": "edgebourne.com", "is_unavailable": False,
+                            "last_fired_time": "1969-12-31T16:00:00-0800",
+                            "server_last_fired_time": int(last) if last else "1969-12-31T16:00:00-0800"})
+        if len(parts) == 2 and parts[0] == DATASET and parts[1] == "stats":
+            if a.get("aggregation") == "event_source":
+                rows = [{"value": "SERVER", "count": len(CRM_EVENTS)}] if CRM_EVENTS else []
+            else:
+                byname = {}
+                for e in CRM_EVENTS:
+                    byname[e["event_name"]] = byname.get(e["event_name"], 0) + 1
+                rows = [{"value": k, "count": v} for k, v in byname.items()]
+            return jsonify({"data": [{"start_time": TODAY.isoformat(), "aggregation": a.get("aggregation"), "data": rows}] if rows else []})
         if len(parts) == 2 and parts[1] == "comments":
             items = comments_for(parts[0])
             return jsonify({"data": [{**c, "comment_count": len(c["comments"]["data"])} for c in items], "summary": {"total_count": len(items)}})

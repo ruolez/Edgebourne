@@ -1374,3 +1374,6 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .c-actions { margin-top: 8px; }
 .c-reply { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
 .quote { border-left: 3px solid var(--line-strong); padding-left: 10px; color: var(--ink); white-space: pre-wrap; }
+.tr-headline { font-weight: 650; }
+.tr-facts { margin: 0; }
+.tr-todo { margin: 0; padding-left: 18px; color: var(--ink-2); }
