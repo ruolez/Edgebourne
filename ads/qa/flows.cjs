@@ -930,6 +930,36 @@ print(r['id'])"`).trim();
   check("the Monday summary's benchmarks show on Today", bmk.body.saved === 2 && /Cost per lead\s*\$4\.79\s*\$18–\$42/.test(await page.textContent('#advice .bench')) && /From Claude's Monday summary, 2026-11-09/.test(await page.textContent('#advice')));
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE campaigns SET daily_budget_cents = 2000 WHERE id = '120252638288040312'\\")"`);
 
+  // Comments: reply as the Page and hide / show, never delete; only comments on the ad's own post.
+  await page.goto(BASE + '/ad.html?id=120252672229400312#tab=comments');
+  await page.waitForSelector('.comment');
+  check('comments show who, what, and whether the Page answered', (await page.locator('.comment').count()) === 2 && /2 not answered/.test(await page.textContent('.comments-panel .panel-head')));
+  const first = page.locator('.comment').first();
+  await first.locator('[data-reply-open]').click();
+  await first.locator('textarea').fill('Thanks Daniel! It depends on what you need; we cover it on the free intro call.');
+  await first.locator('.c-reply button[type=submit]').click();
+  await page.waitForSelector('dialog.confirm');
+  check('a reply is shown in full before it is posted publicly', /It appears publicly under the comment/.test(await page.textContent('dialog.confirm')) && /free intro call/.test(await page.textContent('dialog.confirm .quote')));
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => /You \(the Page\)/.test(document.querySelector('.comment')?.textContent || ''));
+  const fc = fake('_comments');
+  const post = Object.keys(fc).find((k) => fc[k][0].comments.data.some((r) => /free intro call/.test(r.message)));
+  check('the reply reaches Facebook under that comment, and the comment reads answered',
+    !!post && fc[post][0].comments.data.length === 1 && /Answered/.test(await page.textContent('.comment')));
+  await page.locator('.comment').nth(1).locator('[data-hide="1"]').click();
+  await page.waitForSelector('dialog.confirm');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => /Hidden/.test(document.querySelectorAll('.comment')[1]?.textContent || ''));
+  check('hiding a comment hides it on Facebook, and it can be shown again', fake('_comments')[post][1].is_hidden === true);
+  await page.locator('.comment').nth(1).locator('[data-hide="0"]').click();
+  await page.waitForFunction(() => !/Hidden/.test(document.querySelectorAll('.comment')[1]?.textContent || 'Hidden'));
+  check('shown again', fake('_comments')[post][1].is_hidden === false && (await page.locator('[data-delete], [data-remove-comment]').count()) === 0);
+  const cSeen = errors.length;
+  const foreign = await page.evaluate(async () => (await fetch('/api/insights/ad/120252672229400312/comments/999_1/reply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'x' }) })).status);
+  errors.splice(cSeen);
+  check("a comment that isn't on this ad's post is refused", foreign === 404);
+  check('replies and hiding are logged', sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(','.join(r['action'] for r in db.query('SELECT action FROM meta_changes ORDER BY id DESC LIMIT 3')[::-1]))"`).trim() === 'comment_reply,comment_hide,comment_show');
+
   await browser.close();
   console.log(results.join('\n'));
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');

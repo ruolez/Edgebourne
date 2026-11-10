@@ -234,6 +234,31 @@ FORMS = {"1132280359202136": {
 STUDIES = {}
 
 
+COMMENTS = {}
+
+
+def comments_for(story):
+    """Two comments per post, ids shaped like Meta's (<post id>_<comment id>)."""
+    post = story.split("_", 1)[-1]
+    if post not in COMMENTS:
+        COMMENTS[post] = [
+            {"id": f"{post}_7001", "message": "How much does something like this cost?", "created_time": TODAY.isoformat() + "T18:02:00+0000",
+             "from": {"name": "Daniel K.", "id": "901"}, "like_count": 1, "is_hidden": False, "can_hide": True, "comments": {"data": []}},
+            {"id": f"{post}_7002", "message": "We still do invoices in Excel lol", "created_time": TODAY.isoformat() + "T16:40:00+0000",
+             "from": {"name": "Maria L.", "id": "902"}, "like_count": 3, "is_hidden": False, "can_hide": True, "comments": {"data": []}}]
+    return COMMENTS[post]
+
+
+def find_comment(cid):
+    post = cid.split("_", 1)[0]
+    return next((c for c in COMMENTS.get(post, []) if c["id"] == cid), None)
+
+
+@app.route("/fake/_comments")
+def fake_comments():
+    return jsonify(COMMENTS)
+
+
 @app.route("/fake/_refuse_next_ad")
 def fake_refuse_next_ad():
     REFUSE_NEXT_AD.append(1)
@@ -310,11 +335,8 @@ def graph(path):
             return jsonify({"data": [{"estimate_mau_lower_bound": 1_400_000, "estimate_mau_upper_bound": 1_650_000,
                                       "estimate_ready": True}]})
         if len(parts) == 2 and parts[1] == "comments":
-            return jsonify({"data": [
-                {"id": "c1", "message": "How much does something like this cost?", "created_time": TODAY.isoformat() + "T18:02:00+0000",
-                 "from": {"name": "Daniel K."}, "like_count": 1, "comment_count": 0},
-                {"id": "c2", "message": "We still do invoices in Excel lol", "created_time": TODAY.isoformat() + "T16:40:00+0000",
-                 "from": {"name": "Maria L."}, "like_count": 3, "comment_count": 1}], "summary": {"total_count": 2}})
+            items = comments_for(parts[0])
+            return jsonify({"data": [{**c, "comment_count": len(c["comments"]["data"])} for c in items], "summary": {"total_count": len(items)}})
         if parts == [PAGE, "leadgen_forms"]:
             return jsonify({"data": [{k: f.get(k) for k in ("id", "name", "status", "leads_count", "created_time")} for f in FORMS.values()]})
         if len(parts) == 1 and parts[0] in FORMS:
@@ -395,7 +417,8 @@ def graph(path):
                               "call_to_action_type": (media.get("call_to_action") or {}).get("type"),
                               "video_id": media.get("video_id"), "image_url": PIC if "link_data" in spec else None,
                               "thumbnail_url": PIC, "object_story_spec": spec,
-                              "degrees_of_freedom_spec": json.loads(a.get("degrees_of_freedom_spec") or "{}")}
+                              "degrees_of_freedom_spec": json.loads(a.get("degrees_of_freedom_spec") or "{}"),
+                              "effective_object_story_id": f"{PAGE}_{next(ids)}"}
             return jsonify({"id": cid})
         if parts == [act, "campaigns"]:
             if a.get("status") != "PAUSED" or a.get("objective") != "OUTCOME_LEADS" or not a.get("name"):
@@ -453,6 +476,17 @@ def graph(path):
                           "follow_up_action_url": a.get("follow_up_action_url"), "locale": a.get("locale"),
                           "is_optimized_for_quality": a.get("is_optimized_for_quality") == "true"}
             return jsonify({"id": fid})
+        if len(parts) == 2 and parts[1] == "comments":
+            parent = find_comment(parts[0])
+            if not parent or not a.get("message"):
+                return jsonify({"error": {"message": "Unsupported post request (fake)", "code": 100}}), 400
+            rid = f"{parts[0].split('_')[0]}_{next(ids)}"
+            parent["comments"]["data"].append({"id": rid, "message": a["message"], "created_time": TODAY.isoformat() + "T20:00:00+0000",
+                                               "from": {"name": "Edge Bourne Consulting", "id": PAGE}})
+            return jsonify({"id": rid})
+        if len(parts) == 1 and find_comment(parts[0]) and "is_hidden" in a:
+            find_comment(parts[0])["is_hidden"] = a["is_hidden"] == "true"
+            return jsonify({"success": True})
         if parts == [act, "recommendations"]:
             sig = a.get("recommendation_signature", "").strip('"')
             rec = next((r for r in ADVICE["recs"] if r.get("recommendation_signature") == sig), None)

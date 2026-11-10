@@ -183,12 +183,14 @@ def comments(ad_id):
         return jsonify({"items": [], "total": 0, "post_url": None, "note": "Meta hasn't linked a post to this ad yet."})
 
     def fetch():
+        import comments as cm
         token = meta_client.page_token()
-        body = meta_client.get(f"{story}/comments", token=token, fields="id,message,created_time,from{name},like_count,comment_count",
-                               order="reverse_chronological", summary="true", filter="stream", limit=50)
-        return {"items": [{"id": c["id"], "message": c.get("message"), "created_time": c.get("created_time"),
-                           "name": (c.get("from") or {}).get("name"), "likes": c.get("like_count", 0),
-                           "replies": c.get("comment_count", 0)} for c in body.get("data", [])],
+        body = meta_client.get(f"{story}/comments", token=token,
+                               fields="id,message,created_time,from{name,id},like_count,comment_count,is_hidden,can_hide,"
+                                      "comments.limit(10){id,message,created_time,from{name,id}}",
+                               order="reverse_chronological", summary="true", filter="toplevel", limit=50)
+        page_id = settings_store.get("meta_page_id")
+        return {"items": [cm.shape(c, page_id) for c in body.get("data", [])],
                 "total": (body.get("summary") or {}).get("total_count", len(body.get("data", [])))}
     try:
         data = cached(f"comments:{story}", 300, fetch)
@@ -196,6 +198,59 @@ def comments(ad_id):
         return api_error(f"Couldn't read the comments: {exc}", 400)
     page, post = (story.split("_", 1) + [""])[:2]
     return jsonify({**data, "post_url": f"https://www.facebook.com/{page}/posts/{post}"})
+
+
+def _comment_target(ad_id, comment_id):
+    """(ad row, error response) for a comment on this ad's own post, for someone allowed to act."""
+    import comments as cm
+    err = _scoped("ad", ad_id)
+    if err:
+        return None, err
+    row = db.query("SELECT id, name, campaign_id, story_id FROM ads WHERE id = %s", (ad_id,), one=True)
+    if not row or not cm.belongs(comment_id, row["story_id"]):
+        return None, api_error("That comment isn't on this ad's post", 404)
+    return row, None
+
+
+@bp.post("/ad/<ad_id>/comments/<comment_id>/reply")
+@login_required
+def reply_comment(ad_id, comment_id):
+    """Reply as the Page. Shown publicly under the comment."""
+    import ads_api
+    import comments as cm
+    row, err = _comment_target(ad_id, comment_id)
+    if err:
+        return err
+    text, problem = cm.clean_reply((request.get_json(silent=True) or {}).get("message"))
+    if problem:
+        return api_error(problem, 400, field="message")
+    try:
+        made = meta_client.post(f"{comment_id}/comments", token=meta_client.page_token(), data={"message": text})
+    except meta_client.MetaError as exc:
+        ads_api.record(current_user(), "ad", row, "comment_reply", comment_id, text[:200], False, str(exc))
+        return api_error(f"Facebook refused the reply: {exc}", 400)
+    ads_api.record(current_user(), "ad", row, "comment_reply", comment_id, text[:200], True)
+    db.execute("DELETE FROM meta_cache WHERE key = %s", (f"comments:{row['story_id']}",))
+    return jsonify({"id": made.get("id")})
+
+
+@bp.post("/ad/<ad_id>/comments/<comment_id>/hide")
+@login_required
+def hide_comment(ad_id, comment_id):
+    """Hide or show a comment. Hidden comments stay visible to their writer and friends; nothing is deleted."""
+    import ads_api
+    row, err = _comment_target(ad_id, comment_id)
+    if err:
+        return err
+    hidden = bool((request.get_json(silent=True) or {}).get("hidden"))
+    try:
+        meta_client.post(comment_id, token=meta_client.page_token(), data={"is_hidden": "true" if hidden else "false"})
+    except meta_client.MetaError as exc:
+        ads_api.record(current_user(), "ad", row, "comment_hide" if hidden else "comment_show", comment_id, None, False, str(exc))
+        return api_error(f"Facebook refused: {exc}", 400)
+    ads_api.record(current_user(), "ad", row, "comment_hide" if hidden else "comment_show", comment_id, None, True)
+    db.execute("DELETE FROM meta_cache WHERE key = %s", (f"comments:{row['story_id']}",))
+    return jsonify({"hidden": hidden})
 
 
 @bp.get("/adset/<adset_id>/estimate")

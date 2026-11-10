@@ -1360,3 +1360,16 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .advice-card .card-head { padding: 0 0 6px; align-items: center; }
 .advice-text .ttl { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 @media (max-width: 720px) { .advice-card { padding: 18px; } }
+
+/* ---------- Comments: replies and hiding ---------- */
+.comment.is-hidden > p { color: var(--ink-3); }
+.comment .c-head { flex-wrap: wrap; align-items: center; }
+.comment .c-head .pill { margin-left: auto; font-size: 12px; }
+.c-thread { list-style: none; margin: 8px 0 0 16px; padding: 0 0 0 12px; border-left: 2px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.c-thread li { font-size: 14px; }
+.c-thread li small { color: var(--ink-3); margin-left: 8px; }
+.c-thread li p { margin: 2px 0 0; }
+.c-thread li.mine b { color: var(--seal); }
+.c-actions { margin-top: 8px; }
+.c-reply { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.quote { border-left: 3px solid var(--line-strong); padding-left: 10px; color: var(--ink); white-space: pre-wrap; }

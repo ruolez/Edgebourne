@@ -210,7 +210,7 @@ function enhancementsHtml(d) {
       <div class="enh-text"><b>${esc(f.label)}</b><span class="muted small">${esc(f.about)}${f.advice === "fine" ? " Harmless: it doesn't change what the ad says." : ""}</span></div>
       ${d.can_change ? switchHtml(f.on, `data-enh="${esc(f.key)}" data-label="${esc(f.label)}"`, `${f.label} on or off`) : `<span class="pill ${f.on ? "ok" : ""}">${f.on ? "On" : "Off"}</span>`}
     </li>`).join("")}</ul>
-    ${d.can_change ? '<p class="muted small flush">Switching one makes a copy of the creative with the new setting and puts it on this ad. Meta reviews the ad again (usually minutes to a few hours); results so far stay with the ad.</p>' : ""}`;
+    ${d.can_change ? '<p class="muted small flush">Switching one makes a copy of the creative with the new setting and puts it on this ad. Meta reviews the ad again (usually minutes to a few hours). Results so far stay with the ad; likes and comments stay with the old post.</p>' : ""}`;
 }
 
 async function loadEnhancements() {
@@ -225,7 +225,7 @@ document.addEventListener("click", async (e) => {
   if (!sw) return;
   const on = sw.getAttribute("aria-checked") !== "true";
   const yes = await confirmDialog({ title: `Turn ${on ? "on" : "off"} “${sw.dataset.label}”?`,
-    body: "<p>Makes a copy of the creative with this setting and puts it on the ad. Meta reviews the ad again before it delivers with the change.</p>",
+    body: "<p>Makes a copy of the creative with this setting and puts it on the ad. Meta reviews the ad again before it delivers with the change.</p><p class=\"note warn\">The copy is a new post: likes, comments and shares on the current one stay behind.</p>",
     confirm: on ? "Turn on" : "Turn off" });
   if (!yes) return;
   sw.disabled = true;
@@ -410,16 +410,65 @@ async function renderVideo() {
 
 // ---------------------------------------------------------------- comments
 
+function commentHtml(c) {
+  const thread = c.thread.map((r) => `<li class="${r.from_page ? "mine" : ""}"><b>${esc(r.from_page ? "You (the Page)" : r.name || "Someone")}</b><small>${esc(when(r.created_time))}</small><p>${esc(r.message || "")}</p></li>`).join("");
+  return `<li class="comment${c.hidden ? " is-hidden" : ""}" data-comment="${esc(c.id)}">
+    <div class="c-head"><b>${esc(c.name || "Someone")}</b><small>${esc(when(c.created_time))}${c.likes ? ` · ${c.likes} like${c.likes === 1 ? "" : "s"}` : ""}</small>
+      ${c.hidden ? '<span class="pill">Hidden</span>' : c.answered ? '<span class="pill ok">Answered</span>' : '<span class="pill warn">Not answered</span>'}</div>
+    <p>${esc(c.message || "")}</p>
+    ${thread ? `<ul class="c-thread">${thread}</ul>` : ""}
+    <div class="row c-actions">
+      <button type="button" class="btn btn-small" data-reply-open>Reply</button>
+      ${c.can_hide ? `<button type="button" class="btn btn-quiet btn-small" data-hide="${c.hidden ? "0" : "1"}">${c.hidden ? "Show again" : "Hide"}</button>` : ""}
+    </div>
+    <form class="c-reply" hidden novalidate>
+      <label class="sr-only" for="r-${esc(c.id)}">Reply to ${esc(c.name || "this comment")}</label>
+      <textarea class="input" id="r-${esc(c.id)}" name="message" rows="3" placeholder="Reply publicly as the Page"></textarea>
+      <div class="row"><button class="btn btn-primary btn-small" type="submit">Send reply</button><button class="btn btn-quiet btn-small" type="button" data-reply-cancel>Cancel</button>
+        <span class="muted small">Everyone who sees the ad can read it.</span></div>
+    </form>
+  </li>`;
+}
+
 async function renderComments() {
   $("ad").innerHTML = '<section class="panel"><div class="panel-body"><p class="muted">Loading comments from Facebook…</p></div></section>';
   try {
     const d = await api(`/api/insights/ad/${encodeURIComponent(adId)}/comments`);
+    const open = d.items.filter((c) => !c.answered && !c.hidden).length;
     $("ad").innerHTML = `<section class="panel comments-panel">
-      <div class="panel-head"><h2>Comments</h2><p>${count(d.total)} on the ad's post</p><span class="spacer"></span>${d.post_url ? `<a class="btn btn-small" href="${esc(d.post_url)}" target="_blank" rel="noopener noreferrer">Reply on Facebook ${icon("external")}</a>` : ""}</div>
-      <div class="panel-body">${d.items.length ? `<ul class="comments">${d.items.map((c) => `<li><div class="c-head"><b>${esc(c.name || "Someone")}</b><small>${esc(when(c.created_time))}${c.likes ? ` · ${c.likes} like${c.likes === 1 ? "" : "s"}` : ""}${c.replies ? ` · ${c.replies} repl${c.replies === 1 ? "y" : "ies"}` : ""}</small></div><p>${esc(c.message || "")}</p></li>`).join("")}</ul>`
+      <div class="panel-head"><h2>Comments</h2><p>${count(d.total)} on the ad's post${open ? ` · ${open} not answered` : ""}</p><span class="spacer"></span>${d.post_url ? `<a class="btn btn-quiet btn-small" href="${esc(d.post_url)}" target="_blank" rel="noopener noreferrer">Open on Facebook ${icon("external")}</a>` : ""}</div>
+      <div class="panel-body">${d.items.length ? `<ul class="comments">${d.items.map(commentHtml).join("")}</ul>
+        <p class="muted small flush">Hiding keeps a comment visible to its writer and their friends, and to no one else. Nothing is deleted from here.</p>`
         : `<p class="muted flush">${esc(d.note || "No comments yet. Questions here are warm leads: reply within a few hours.")}</p>`}</div></section>`;
   } catch (err) { $("ad").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
+
+document.addEventListener("click", async (e) => {
+  const li = e.target.closest("[data-comment]");
+  if (!li) return;
+  const form = li.querySelector(".c-reply");
+  if (e.target.closest("[data-reply-open]")) { form.hidden = false; form.message.focus(); return; }
+  if (e.target.closest("[data-reply-cancel]")) { form.hidden = true; return; }
+  const hb = e.target.closest("[data-hide]");
+  if (hb) {
+    const hide = hb.dataset.hide === "1";
+    if (hide && !(await confirmDialog({ title: "Hide this comment?", body: "<p>Only its writer and their friends will still see it. You can show it again any time.</p>", confirm: "Hide" }))) return;
+    try { await api(`/api/insights/ad/${encodeURIComponent(adId)}/comments/${encodeURIComponent(li.dataset.comment)}/hide`, { method: "POST", body: { hidden: hide } }); toast(hide ? "Hidden" : "Shown again"); renderComments(); }
+    catch (err) { toast(err.message, "bad"); }
+  }
+});
+
+document.addEventListener("submit", async (e) => {
+  const form = e.target.closest(".c-reply");
+  if (!form) return;
+  e.preventDefault();
+  const li = form.closest("[data-comment]");
+  const message = form.message.value.trim();
+  if (!message) { form.message.focus(); return; }
+  if (!(await confirmDialog({ title: "Post this reply?", body: `<p>It appears publicly under the comment, from the Page:</p><p class="quote">${esc(message)}</p>`, confirm: "Post reply" }))) return;
+  try { await api(`/api/insights/ad/${encodeURIComponent(adId)}/comments/${encodeURIComponent(li.dataset.comment)}/reply`, { method: "POST", body: { message } }); toast("Reply posted"); renderComments(); }
+  catch (err) { toast(err.message, "bad"); }
+});
 
 // ---------------------------------------------------------------- history
 
