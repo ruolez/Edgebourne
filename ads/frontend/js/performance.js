@@ -173,7 +173,7 @@ function renderAds() {
     : `<div class="empty-inline"><p class="muted">${table.q ? `No ad called “${esc(table.q)}”` : `No ads ${{ spent: "spent money", running: "are running", all: "" }[table.filter]} in this period`.replace("  ", " ")}.</p>
         <button type="button" class="btn btn-quiet btn-small" data-clear>Show all ads</button></div>`;
   const head = box.querySelector(".results-bar");
-  const bar = `<div class="panel-head wrap results-bar"><h2>Ads</h2>
+  const bar = `<div class="panel-head wrap results-bar"><h2>Ads</h2><a class="more" href="/ads.html?range=${encodeURIComponent(range)}&vs=1" title="Turn ads on or off, compare or change several at once">Manage in Ads</a>
       <div class="segmented" id="cr-filter" role="group" aria-label="Show ads">${Object.entries(FILTERS).map(([k, [l]]) =>
         `<button type="button" data-filter="${k}" aria-pressed="${k === table.filter}">${esc(l)} <span class="n">${counts[k]}</span></button>`).join("")}</div>
       <div class="search">${icon("search")}<label class="sr-only" for="cr-q">Find an ad</label><input class="input" id="cr-q" type="search" placeholder="Find an ad" autocomplete="off"></div>

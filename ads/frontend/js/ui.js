@@ -277,7 +277,7 @@ const SECTIONS = {
 // Section tabs: [page, label, who] (who: "admin" = admins only, "all" = everyone signed in).
 const SUBNAV = {
   ads: [["ads", "Ads", "all"], ["forms", "Lead forms", "admin"]],
-  insights: [["performance", "Results", "all"], ["experiments", "Tests", "admin"], ["report", "Reports", "all"]],
+  insights: [["performance", "Results", "all"], ["compare", "Compare", "all"], ["experiments", "Tests", "admin"], ["report", "Reports", "all"]],
   claude: [["desk", "Claude", "admin"], ["research", "Research", "admin"]],
   settings: [["settings", "Settings", "admin"], ["team", "Team", "admin"]],
 };

@@ -161,7 +161,7 @@ function renderOverview() {
           <div class="panel-body" id="enh"><p class="muted flush">Reading from Meta…</p></div>
         </section>
         <section class="panel">
-          <div class="panel-head"><h2>Leads from this ad</h2></div>
+          <div class="panel-head"><h2>Leads from this ad</h2><a class="more" href="/leads.html?ad=${encodeURIComponent(data.ad.id)}">All in Leads</a></div>
           <div class="panel-body">${leadsHtml}</div>
         </section>
       </div>

@@ -25,7 +25,9 @@ def build(alerts, leads, proposals, read_keys):
         key = f"alert:{a['id']}"
         items.append({"key": key, "category": category(a["rule"]), "rule": a["rule"], "level": a["level"],
                       "title": a["title"], "lines": a.get("lines") or [], "href": a.get("href"), "at": a["created_at"],
-                      "entity_id": a.get("entity_id"), "open": a.get("resolved_at") is None, "unread": key not in read_keys})
+                      "entity_id": a.get("entity_id"), "open": a.get("resolved_at") is None,
+                      "resolved": a.get("kind", "condition") == "condition" and a.get("resolved_at") is not None,
+                      "unread": key not in read_keys})
     for l in leads:
         key = f"lead:{l['id']}"
         items.append({"key": key, "category": "leads", "rule": "new_lead", "level": "lead",
@@ -60,12 +62,12 @@ def items_for(user):
     from auth import visible_campaign_ids
     ids = visible_campaign_ids(user)
     if ids is None:
-        alerts = db.query("SELECT id, rule, level, title, lines, href, entity_id, campaign_id, created_at, resolved_at "
+        alerts = db.query("SELECT id, rule, level, title, lines, href, entity_id, campaign_id, created_at, resolved_at, kind "
                           "FROM alerts WHERE created_at > now() - make_interval(days => %s) ORDER BY id DESC LIMIT 300", (DAYS,))
         leads = db.query("SELECT id, full_name, ad_name, created_time, status FROM leads WHERE NOT is_test "
                          "AND created_time > now() - interval '7 days' ORDER BY created_time DESC LIMIT 100")
     else:
-        alerts = db.query("SELECT id, rule, level, title, lines, href, entity_id, campaign_id, created_at, resolved_at "
+        alerts = db.query("SELECT id, rule, level, title, lines, href, entity_id, campaign_id, created_at, resolved_at, kind "
                           "FROM alerts WHERE created_at > now() - make_interval(days => %s) AND campaign_id = ANY(%s) "
                           "ORDER BY id DESC LIMIT 300", (DAYS, ids))
         leads = db.query("SELECT id, full_name, ad_name, created_time, status FROM leads WHERE NOT is_test "

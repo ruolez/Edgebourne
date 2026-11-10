@@ -65,3 +65,42 @@ export function barList(el, items, { key, format, max = null, extra = null }) {
     : '<p class="muted flush">No data for this period.</p>';
   el.querySelectorAll(".bar-track i[data-w]").forEach((b) => { b.style.width = `${b.dataset.w}%`; });
 }
+
+// Several lines on one axis (compare: one line per ad). series = [{ label, cls, points: [{day, value}] }].
+// Thin lines, round joins, one shared y axis, a tooltip listing every line on the hovered day.
+export function lineChart({ el, series, format, axisFormat, title, integer = false, height = 220 }) {
+  const W = 560, H = height, L = 52, R = 10, T = 12, B = 26;
+  const days = series[0]?.points.map((p) => p.day) || [];
+  const values = series.flatMap((s) => s.points.map((p) => p.value ?? 0));
+  const { top, step } = niceMax(Math.max(...values, 0), 4, integer);
+  const plotW = W - L - R, plotH = H - T - B;
+  const x = (i) => L + (days.length > 1 ? (i / (days.length - 1)) * plotW : plotW / 2);
+  const y = (v) => T + plotH - (v / top) * plotH;
+  let grid = "", ticks = "";
+  for (let v = 0; v <= top + 1e-9; v += step) {
+    grid += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`;
+    ticks += `<text class="tick" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${esc(axisFormat(v))}</text>`;
+  }
+  const every = Math.ceil(days.length / 6);
+  const labels = days.map((d, i) => (i % every === 0 || i === days.length - 1 ? `<text class="tick" x="${x(i)}" y="${H - 6}" text-anchor="middle">${dayLabel(d)}</text>` : "")).join("");
+  const lines = series.map((s) => {
+    const pts = s.points.map((p, i) => (p.value == null ? null : `${x(i).toFixed(1)},${y(p.value).toFixed(1)}`)).filter(Boolean).join(" ");
+    return `<polyline class="ln ${s.cls}" points="${pts}"/>`;
+  }).join("");
+  const hits = days.map((d, i) => `<rect class="hit" data-i="${i}" x="${x(i) - plotW / Math.max(days.length - 1, 1) / 2}" y="${T}" width="${plotW / Math.max(days.length - 1, 1)}" height="${plotH}"/>`).join("");
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}"><g class="grid">${grid}</g>${ticks}${labels}${lines}<line class="cursor" x1="0" x2="0" y1="${T}" y2="${T + plotH}" hidden/>${hits}</svg><div class="tip" hidden></div>`;
+  el.querySelector("svg").style.height = `${H}px`;
+  const svg = el.querySelector("svg"), tip = el.querySelector(".tip"), cursor = el.querySelector(".cursor");
+  el.querySelectorAll(".hit").forEach((hit) => {
+    hit.addEventListener("mouseenter", () => {
+      const i = Number(hit.dataset.i);
+      const scale = svg.getBoundingClientRect().width / W;
+      cursor.setAttribute("x1", x(i)); cursor.setAttribute("x2", x(i)); cursor.hidden = false;
+      tip.innerHTML = `<small>${dayLabel(days[i])}</small>${series.map((s) => `<span class="tip-row"><i class="sw ${s.cls}"></i>${esc(s.label)} <b>${s.points[i].value == null ? "—" : esc(format(s.points[i].value))}</b></span>`).join("")}`;
+      tip.style.left = `${x(i) * scale}px`;
+      tip.style.top = `${T * scale}px`;
+      tip.hidden = false;
+    });
+    hit.addEventListener("mouseleave", () => { tip.hidden = true; cursor.hidden = true; });
+  });
+}

@@ -49,6 +49,12 @@ def list_leads():
         clauses.append("l.status IN ('new', 'contacted', 'qualified')")
     if request.args.get("tests") != "1":
         clauses.append("NOT l.is_test")
+    if request.args.get("campaign"):
+        clauses.append("l.campaign_id = %s")
+        params.append(request.args["campaign"])
+    if request.args.get("ad"):
+        clauses.append("l.ad_id = %s")
+        params.append(request.args["ad"])
     q = (request.args.get("q") or "").strip()
     if q:
         clauses.append("(l.full_name ILIKE %s OR l.email ILIKE %s OR l.phone ILIKE %s "
@@ -63,7 +69,11 @@ def list_leads():
         f"SELECT l.status, COUNT(*) AS n FROM leads l WHERE {where} AND NOT l.is_test GROUP BY l.status",
         _scope(user)[1],
     )
-    return jsonify({"leads": rows, "counts": {r["status"]: r["n"] for r in counts},
+    sources = db.query(
+        f"""SELECT l.campaign_id, MAX(l.campaign_name) AS campaign_name, l.ad_id, MAX(l.ad_name) AS ad_name, COUNT(*) AS n
+            FROM leads l WHERE {where} AND NOT l.is_test AND l.campaign_id IS NOT NULL
+            GROUP BY l.campaign_id, l.ad_id ORDER BY 2, 4""", _scope(user)[1])
+    return jsonify({"leads": rows, "counts": {r["status"]: r["n"] for r in counts}, "sources": sources,
                     "response": reminders.stats(*_scope(user))})
 
 

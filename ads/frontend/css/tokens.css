@@ -77,3 +77,8 @@
   --chart-spend: #9EA3AB; --chart-leads: #22C55E; --grid: rgba(255, 255, 255, .07);
   color-scheme: dark;
 }
+
+/* Series colours for comparisons (up to 6 lines), distinct in both themes. */
+:root { --s1: #16A34A; --s2: #3B5BDB; --s3: #D99A0B; --s4: #6A4FD8; --s5: #0E9AA7; --s6: #6B7079; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --s1: #22C55E; --s2: #8DA2F7; --s3: #F2B53A; --s4: #A895F5; --s5: #3CC8D4; --s6: #9EA3AB; } }
+:root[data-theme="dark"] { --s1: #22C55E; --s2: #8DA2F7; --s3: #F2B53A; --s4: #A895F5; --s5: #3CC8D4; --s6: #9EA3AB; }

@@ -94,11 +94,25 @@ function render(d) {
         return `<li class="ic ${cls}">${icon(ic)}<span>${what}${c.ok ? "" : ' <b class="bad-text">(Meta refused)</b>'}<small>${esc(when(c.created_at))}${c.user_name ? `, ${esc(c.user_name)}` : ""}</small></span></li>`;
       }).join("")}</ul>`
     : '<p class="muted flush">No changes made from the dashboard yet.</p>';
-  const changesCard = `<section class="panel changes-card" aria-labelledby="h-changes"><div class="card-head"><h2 id="h-changes">Changes</h2></div>${changes}</section>`;
+  // Today → Inbox: the latest unread (Meta's approvals and rejections, leads, Claude, money), then what you changed.
+  const inReview = (d.ads?.IN_PROCESS || 0) + (d.ads?.PENDING_REVIEW || 0);
+  const changesCard = `<section class="panel changes-card" aria-labelledby="h-changes"><div class="card-head"><h2 id="h-changes">Inbox</h2>
+      ${inReview ? `<span class="st st-warn">${inReview} in review at Meta</span>` : ""}<a class="more" href="/inbox.html">Open Inbox</a></div>
+    <ul class="today-inbox" id="today-inbox"><li class="muted">Loading…</li></ul>
+    <details class="today-changes"><summary>Changes made from the console</summary>${changes}</details></section>`;
 
   const adviceCard = d.bridge ? `<section class="panel advice-card" aria-labelledby="h-advice" id="advice"><div class="card-head"><h2 id="h-advice">Meta's advice</h2></div><p class="muted flush">Reading from Meta…</p></section>` : "";
   $("home").innerHTML = `${attention}<div class="today">${callCard}${moneyCard}${adsCard}${claudeCard}${changesCard}${adviceCard}</div>`;
   if (adviceCard) loadAdvice();
+  api("/api/inbox?filter=unread").then((ib) => {
+    const el = $("today-inbox");
+    if (!el) return;
+    const tone = { bad: "bad", warn: "warn", ok: "ok", lead: "ok", claude: "claude" };
+    const live = ib.items.filter((i) => !i.resolved);
+    el.innerHTML = live.length ? live.slice(0, 5).map((i) => `<li><a href="${esc(i.href || "/inbox.html")}"><span class="st st-${tone[i.level] || "info"}"></span><span><b>${esc(i.title)}</b><small>${esc(when(i.at))}</small></span></a></li>`).join("")
+      + (live.length > 5 ? `<li class="muted small">${live.length - 5} more in the Inbox</li>` : "")
+      : '<li class="muted">Nothing new. Approvals, rejections and new leads show up here.</li>';
+  }).catch(() => { const el = $("today-inbox"); if (el) el.innerHTML = ""; });
   if (!claudeCard) $("home").querySelector(".changes-card").classList.add("wide");
   $("home").querySelectorAll("[data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
 }

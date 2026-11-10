@@ -58,7 +58,7 @@ function renderDetail() {
   const i = data.items.find((x) => x.key === current);
   if (!i) { $("ib-detail").innerHTML = `<p class="muted ib-pick">Pick an item to see the details.</p>`; return; }
   $("ib-detail").innerHTML = `<div class="ib-dh"><span class="ib-ic k-${TONE[i.level] || "info"}">${icon(ICON[i.category] || "alarm")}</span>
-      <div><p class="ib-kicker">${esc(when(i.at))}${i.open === false ? " · resolved" : ""}</p><h2>${esc(i.title)}</h2></div></div>
+      <div><p class="ib-kicker">${esc(when(i.at))}${i.resolved ? " · fixed since" : ""}</p><h2>${esc(i.title)}</h2></div></div>
     ${(i.lines || []).map((l) => `<p>${esc(l)}</p>`).join("")}
     <div class="row">${action(i)}${i.unread ? '<button class="btn" type="button" data-read>Mark read</button>' : ""}</div>`;
 }

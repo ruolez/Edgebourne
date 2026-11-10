@@ -1142,13 +1142,18 @@ with account_ctx.use(a2):
   // Ad blockers hide elements whose class or id looks like an ad (EasyList: .ad-cell, .adset, #ads-panel …).
   // An ads console is full of them, so no class or id may start with ad- / ads- / adset / advert / sponsor / banner / promo.
   const risky = [];
-  for (const p of ['home.html', 'ads.html', 'ad.html?id=120252672229400312', 'performance.html', 'new-campaign.html', 'new-ad.html', 'desk.html']) {
+  const riskyFiles = [];
+  for (const p of ['home.html', 'inbox.html', 'ads.html', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312',
+    'compare.html?ids=120252672232030312,120252672233160312', 'ad.html?id=120252672229400312', 'performance.html', 'new-campaign.html', 'new-ad.html', 'new-adset.html', 'desk.html']) {
     await page.goto(BASE + '/' + p);
+    riskyFiles.push(...(await page.evaluate(() => performance.getEntriesByType('resource').map((r) => new URL(r.name).pathname)
+      .filter((u) => /\/(ad|ads|adset|advert|banner|sponsor|promo)[-_.]|[-_](ad|ads)\.js/i.test(u)))).map((u) => `${p}: ${u}`));
     await page.waitForTimeout(1500);
     risky.push(...(await page.evaluate(() => [...document.querySelectorAll('[class], [id]')].flatMap((e) => [...(typeof e.className === 'string' ? e.className.split(/\s+/) : []), e.id])
       .filter((n) => /^(ad|ads|adset|adsets|advert|advertisement|sponsor|sponsored|banner|promo|promoted)([-_]|$)/i.test(n)))).map((n) => `${p}: ${n}`));
   }
   check('no class or id an ad blocker would hide', risky.length === 0, [...new Set(risky)].slice(0, 6).join(' | '));
+  check('no script or stylesheet path an ad blocker would block', riskyFiles.length === 0, [...new Set(riskyFiles)].slice(0, 6).join(' | '));
 
   {
   const a2Seen = errors.length;
@@ -1412,6 +1417,26 @@ with account_ctx.use(a2):
   await page.goto(BASE + '/adset.html?id=120252672227950312');
   await page.waitForSelector('.tbl tr[data-row^="ad:"]');
   check('an ad set page shows its ads, learning and who sees it', /Learning/.test(await page.textContent('.learn')) && (await page.textContent('.crumbs')).split('/').length === 3);
+  // 8.7 Compare page, Leads by source, Today's Inbox card.
+  await page.goto(BASE + '/compare.html?ids=120252672232030312,120252672233160312,120252672230740312&range=14');
+  await page.waitForSelector('#cmp-chart svg .ln');
+  const cmpText = await page.textContent('#cmp');
+  check('the Compare page lines up 3 ads with a verdict and a line per ad', (await page.locator('.cmp thead .cmp-th').count()) === 3
+    && (await page.locator('#cmp-chart .ln').count()) === 3 && /Too early to name a winner|leads on cost per/.test(cmpText));
+  await page.click('[data-drop]');
+  await page.waitForFunction(() => document.querySelectorAll('.cmp thead .cmp-th').length === 2);
+  check('removing an ad from the comparison keeps the rest', (new URL(page.url())).searchParams.get('ids').split(',').length === 2);
+  await page.goto(BASE + '/leads.html');
+  await page.waitForSelector('#source option[value^="a:"]', { state: 'attached' });
+  const adOpt = await page.$eval('#source option[value^="a:"]', (o) => o.value);
+  await page.selectOption('#source', adOpt);
+  await page.waitForFunction(() => /[?&]ad=/.test(location.search));
+  await page.waitForTimeout(600);
+  const leadAds = await page.evaluate(async (a) => (await (await fetch(`/api/leads?ad=${a}`)).json()).leads.map((l) => l.ad_name), adOpt.slice(2));
+  check('Leads filter to one ad and keep it in the URL', leadAds.length > 0 && new Set(leadAds).size === 1);
+  await page.goto(BASE + '/home.html');
+  await page.waitForSelector('#today-inbox li');
+  check('Today shows the latest from the Inbox', (await page.locator('#today-inbox li').count()) > 0);
   // Phones: no page wider than the screen.
   const phonePage = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
   await phonePage.goto(BASE + '/login.html');

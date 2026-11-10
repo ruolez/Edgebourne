@@ -72,13 +72,28 @@ function renderList() {
   state.leads.forEach((l) => state.seen.add(l.id));
 }
 
+// Filter by where the lead came from: a campaign, or one ad inside it (kept in the URL: ?campaign= / ?ad=).
+function renderSources(sources, src) {
+  const sel = document.getElementById("source");
+  const current = src.get("ad") ? `a:${src.get("ad")}` : src.get("campaign") ? `c:${src.get("campaign")}` : "";
+  const camps = [...new Map(sources.map((s) => [s.campaign_id, s.campaign_name])).entries()];
+  sel.innerHTML = `<option value="">All campaigns and ads</option>${camps.map(([cid, cname]) => `<optgroup label="${esc(cname || "Campaign")}">
+      <option value="c:${esc(cid)}">All of “${esc(cname || "this campaign")}”</option>
+      ${sources.filter((s) => s.campaign_id === cid && s.ad_id).map((s) => `<option value="a:${esc(s.ad_id)}">${esc(s.ad_name || s.ad_id)} (${s.n})</option>`).join("")}</optgroup>`).join("")}`;
+  sel.value = current;
+  sel.hidden = !sources.length;
+}
+
 async function load({ quiet = false } = {}) {
   const params = new URLSearchParams();
   if (state.filter !== "all") params.set("status", state.filter);
   if (state.q) params.set("q", state.q);
   if (state.tests) params.set("tests", "1");
+  const src = new URLSearchParams(location.search);
+  for (const k of ["campaign", "ad"]) if (src.get(k)) params.set(k, src.get(k));
   try {
     const data = await api("/api/leads?" + params);
+    renderSources(data.sources || [], src);
     state.leads = data.leads;
     state.counts = data.counts;
     renderResponse(data.response);
@@ -321,6 +336,16 @@ async function main() {
     load();
   });
   $("tests").addEventListener("change", (e) => { state.tests = e.target.checked; load(); });
+  $("source").addEventListener("change", (e) => {
+    const u = new URL(location.href);
+    u.searchParams.delete("campaign"); u.searchParams.delete("ad");
+    const [kind, value] = e.target.value.split(":");
+    if (kind === "c") u.searchParams.set("campaign", value);
+    if (kind === "a") u.searchParams.set("ad", value);
+    history.replaceState(null, "", u);
+    state.selected = null;
+    load();
+  });
   let t;
   $("q").addEventListener("input", (e) => {
     clearTimeout(t);

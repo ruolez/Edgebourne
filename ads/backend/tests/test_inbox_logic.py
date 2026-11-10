@@ -30,6 +30,12 @@ class BuildTests(unittest.TestCase):
                          [("lead:9", "leads", True), ("alert:1", "status", True), ("proposal:4", "claude", True),
                           ("alert:2", "money", False)])
 
+    def test_a_fixed_problem_is_resolved_but_an_approval_is_not(self):
+        fixed = dict(alert(1, "ad_rejected", 5), kind="condition", resolved_at=NOW)
+        approved = dict(alert(2, "ad_approved", 4, "ok"), kind="event", resolved_at=NOW)
+        got = inbox.build([fixed, approved], [], [], read_keys=set())
+        self.assertEqual([(i["key"], i["resolved"]) for i in got], [("alert:2", False), ("alert:1", True)])
+
     def test_a_lead_no_longer_new_is_read(self):
         got = inbox.build([], [dict(self.leads[0], status="contacted")], [], read_keys=set())
         self.assertEqual([i["unread"] for i in got], [False])
