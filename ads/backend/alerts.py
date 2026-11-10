@@ -32,6 +32,9 @@ DEFAULTS = {
     "events_quiet": {"on": True},
     "cap_soon": {"on": True, "days": 3},
     "pace_over": {"on": True, "percent": 15},
+    "ad_approved": {"on": True},
+    "learning_limited": {"on": True},
+    "changed_outside": {"on": True},
 }
 MIN_IMPRESSIONS = 1000  # per 7-day window, before fatigue is judged
 
@@ -111,7 +114,7 @@ def evaluate(snap, rules, today):
         r = rules["no_delivery"]
         if r["on"] and ad["effective_status"] == "ACTIVE" and ad["age_hours"] >= r["hours"] and not _sum(rows, "impressions"):
             add("no_delivery", ad["id"], "warn", f"“{ad['name']}” is on but nobody has seen it",
-                [f"No impressions {ad['age_hours']:.0f} hours after it was created."], ad["campaign_id"], href)
+                [f"No impressions {ad['age_hours']:.0f} hours after it went live."], ad["campaign_id"], href)
         r = rules["fatigue"]
         tired = r["on"] and ad["effective_status"] == "ACTIVE" and _fatigue(rows, today, r)
         if tired:
@@ -207,10 +210,15 @@ def snapshot(now):
     import refresh_api
     tz = account_info.tz()
     today = now.astimezone(tz).date()
-    ads = db.query("SELECT id, name, campaign_id, effective_status, created_time FROM ads "
-                   "WHERE effective_status NOT IN ('DELETED', 'ARCHIVED')")
+    # "No delivery" counts from when the ad last went live (approved or switched on), not from creation:
+    # an ad can sit in review or off for days.
+    ads = db.query("""SELECT a.id, a.name, a.campaign_id, a.effective_status,
+                             GREATEST(a.created_time, (SELECT MAX(e.at) FROM status_events e WHERE e.entity_id = a.id
+                                 AND e.field IN ('effective_status', 'created') AND e.new_value = 'ACTIVE'
+                                 AND e.source <> 'backfill')) AS live_since
+                      FROM ads a WHERE a.effective_status NOT IN ('DELETED', 'ARCHIVED')""")
     for a in ads:
-        a["age_hours"] = (now - a["created_time"]).total_seconds() / 3600 if a["created_time"] else 0
+        a["age_hours"] = (now - a["live_since"]).total_seconds() / 3600 if a["live_since"] else 0
     ad_days = {}
     for r in db.query("SELECT day, ad_id, spend_cents, impressions, reach, link_clicks, leads FROM ad_daily "
                       "WHERE day >= %s AND day < %s ORDER BY day", (today - timedelta(days=90), today)):
@@ -261,28 +269,36 @@ def run(now=None):
     rules = saved_rules()
     rules["cpl_high"] = {**rules["cpl_high"], "target_cents": targets.lead()}  # Settings → Targets
     found = evaluate(snap, rules, today)
+    raised = raise_found(found)
+    live = {(a["rule"], a["entity_id"]) for a in found}
+    for open_row in db.query("SELECT id, rule, entity_id FROM alerts WHERE resolved_at IS NULL AND kind = 'condition'"):
+        if (open_row["rule"], open_row["entity_id"]) not in live:
+            db.execute("UPDATE alerts SET resolved_at = now() WHERE id = %s", (open_row["id"],))
+    return [a["key"] for _, a in raised]
+
+
+def raise_found(found):
+    """Store new alerts (once per dedupe key) and tell the admins; info alerts stay in the console."""
     raised = []
     for a in found:
         row = db.execute(
-            "INSERT INTO alerts (rule, dedupe_key, level, title, lines, entity_id, campaign_id, href) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (account_id, dedupe_key) DO NOTHING RETURNING id",
-            (a["rule"], a["key"], a["level"], a["title"], json.dumps(a["lines"]), a["entity_id"], a["campaign_id"], a["href"]),
+            "INSERT INTO alerts (rule, dedupe_key, level, title, lines, entity_id, campaign_id, href, kind, resolved_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END) "
+            "ON CONFLICT (account_id, dedupe_key) DO NOTHING RETURNING id",
+            (a["rule"], a["key"], a["level"], a["title"], json.dumps(a["lines"]), a["entity_id"], a["campaign_id"], a["href"],
+             a.get("kind", "condition"), bool(a.get("resolved"))),
             returning=True)
         if row:
             raised.append((row["id"], a))
-    live = {(a["rule"], a["entity_id"]) for a in found}
-    for open_row in db.query("SELECT id, rule, entity_id FROM alerts WHERE resolved_at IS NULL"):
-        if (open_row["rule"], open_row["entity_id"]) not in live:
-            db.execute("UPDATE alerts SET resolved_at = now() WHERE id = %s", (open_row["id"],))
     if raised:
         people = notify.reach(notify.admin_ids(), "notify_alerts")
         for alert_id, a in raised:
             if a["level"] == "info":
-                continue  # shown on Home only
+                continue  # shown in the console only
             for uid, channel in people:
                 notify.queue(uid, channel, "alert", a["title"], a["lines"], notify.link(a["href"] or "/home.html"),
                              "Open in the console", ref=str(alert_id), dedupe_key=f"alert:{alert_id}:{uid}")
-    return [a["key"] for _, a in raised]
+    return raised
 
 
 def open_alerts(scope_ids=None):

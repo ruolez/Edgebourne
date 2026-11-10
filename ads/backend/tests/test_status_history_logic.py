@@ -126,3 +126,59 @@ class TimelineWordsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TransitionTests(unittest.TestCase):
+    RULES = {"ad_rejected": {"on": True}, "ad_approved": {"on": True}, "learning_limited": {"on": True},
+             "changed_outside": {"on": True}}
+    AD = {"id": "a1", "name": "N1 · v2", "campaign_id": "c1", "adset_id": "s1",
+          "ad_review_feedback": {"global": {"PERSONAL_ATTRIBUTES": "Ads can't imply knowledge of personal attributes."}}}
+    TODAY = NOW.date()
+
+    def found(self, level, entity, events, rules=None):
+        return sh.transitions(level, entity, events, rules or self.RULES, NOW, self.TODAY)
+
+    def test_leaving_review_is_an_approval(self):
+        ev = [{"field": "effective_status", "old": "IN_PROCESS", "new": "ACTIVE", "source": "poll"}]
+        got = self.found("ad", self.AD, ev)
+        self.assertEqual([(a["rule"], a["level"], a["kind"], a["resolved"], a["title"], a["href"]) for a in got],
+                         [("ad_approved", "ok", "event", True, "Meta approved “N1 · v2”", "/ad.html?id=a1")])
+
+    def test_a_new_ad_seen_already_live_is_an_approval(self):
+        ev = [{"field": "created", "old": None, "new": "ACTIVE", "source": "poll"}]
+        self.assertEqual([a["rule"] for a in self.found("ad", self.AD, ev)], ["ad_approved"])
+
+    def test_turning_an_approved_ad_back_on_is_not_an_approval(self):
+        ev = [{"field": "effective_status", "old": "PAUSED", "new": "ACTIVE", "source": "console"}]
+        self.assertEqual(self.found("ad", self.AD, ev), [])
+
+    def test_rejection_shares_the_polled_rule_key_and_names_the_reason(self):
+        ev = [{"field": "effective_status", "old": "IN_PROCESS", "new": "DISAPPROVED", "source": "webhook"},
+              {"field": "review", "old": None, "new": "PERSONAL_ATTRIBUTES", "source": "webhook"}]
+        got = self.found("ad", self.AD, ev)
+        self.assertEqual([(a["rule"], a["key"], a["kind"], a["resolved"]) for a in got],
+                         [("ad_rejected", "ad_rejected:a1:2026-11-10", "condition", False)])
+        self.assertEqual(got[0]["lines"][0], "Reason: Personal attributes. Ads can't imply knowledge of personal attributes.")
+
+    def test_learning_limited_on_an_ad_set(self):
+        ev = [{"field": "learning", "old": "LEARNING", "new": "FAIL", "source": "poll"}]
+        got = self.found("adset", {"id": "s1", "name": "SoCal", "campaign_id": "c1",
+                                   "learning_stage_info": {"status": "FAIL", "conversions": 9}}, ev)
+        self.assertEqual([(a["rule"], a["key"], a["level"]) for a in got], [("learning_limited", "learning_limited:s1:2026-11-10", "warn")])
+        self.assertIn("9 results", got[0]["lines"][0])
+
+    def test_switch_outside_the_console(self):
+        ev = [{"field": "configured_status", "old": "ACTIVE", "new": "PAUSED", "source": "poll"}]
+        got = self.found("campaign", {"id": "c1", "name": "Leads"}, ev)
+        self.assertEqual([(a["rule"], a["level"], a["title"]) for a in got],
+                         [("changed_outside", "info", "Campaign “Leads” was switched off outside this console")])
+
+    def test_our_own_switch_raises_nothing(self):
+        ev = [{"field": "configured_status", "old": "ACTIVE", "new": "PAUSED", "source": "console"}]
+        self.assertEqual(self.found("campaign", {"id": "c1", "name": "Leads"}, ev), [])
+
+    def test_backfill_and_switched_off_rules_raise_nothing(self):
+        ev = [{"field": "effective_status", "old": "IN_PROCESS", "new": "ACTIVE", "source": "poll"}]
+        self.assertEqual(self.found("ad", self.AD, ev, dict(self.RULES, ad_approved={"on": False})), [])
+        self.assertEqual(self.found("ad", self.AD, [{"field": "effective_status", "old": None, "new": "ACTIVE",
+                                                     "source": "backfill", "backfill": True}]), [])

@@ -401,7 +401,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   // Alerts: rules in Settings; a rejected ad raises one alert (Telegram + Today), not twice, and it clears by itself.
   await page.goto(BASE + '/settings.html');
   await page.waitForSelector('#al-rules li');
-  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 13);
+  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 16);
   await page.fill('[data-rule="no_leads"][data-key="days"]', '4');
   await page.click('#al-form button[type=submit]');
   await page.waitForTimeout(500);
@@ -1255,6 +1255,19 @@ with account_ctx.use(a2):
   const again = (await call('GET', `/api/ads/ad/${N3}`)).body.timeline.length;
   pull();
   check('a repeat refresh records nothing new', (await call('GET', `/api/ads/ad/${N3}`)).body.timeline.length === again);
+  // 8.2 Status alerts reach the Inbox: the rejection (with Meta's reason) and an approval; reading one lowers the count.
+  sh(`docker exec edgebourne-ads-backend python -c "import requests;requests.get('http://fake-meta:5001/fake/_review?ad=120252672233160312&to=IN_PROCESS')"`);
+  pull();
+  sh(`docker exec edgebourne-ads-backend python -c "import requests;requests.get('http://fake-meta:5001/fake/_review?ad=120252672233160312&to=ACTIVE')"`);
+  pull();
+  const box = (await call('GET', '/api/inbox?filter=all&kind=status')).body;
+  const rejected = box.items.find((i) => i.title.startsWith('Meta rejected') && i.entity_id === N3);
+  const approved = box.items.find((i) => i.title.startsWith('Meta approved') && i.entity_id === '120252672233160312');
+  check('a rejection reaches the Inbox with Meta\'s reason, an approval too', !!rejected && /Personal attributes/.test(rejected.lines[0]) && !!approved,
+    box.items.slice(0, 4).map((i) => i.title).join(' | '));
+  const unreadBefore = (await call('GET', '/api/refresh')).body.inbox_unread;
+  await call('POST', '/api/inbox/read', { keys: [approved.key] });
+  check('marking an Inbox item read lowers the unread count by one', (await call('GET', '/api/refresh')).body.inbox_unread === unreadBefore - 1);
   await page.goto(BASE + '/ad.html?id=120252672229400312#tab=history');
   await page.waitForSelector('.st-tl');
   const n2Timeline = await page.locator('.st-tl').innerText();

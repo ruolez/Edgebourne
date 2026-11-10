@@ -162,7 +162,10 @@ function closeTemplate() { editing = null; $("tpl-form").hidden = true; $("tpl-a
 // Alerts: one row per rule, a switch and its numbers.
 const RULE_UI = [
   ["ad_rejected", "An ad is rejected or has issues", []],
-  ["no_delivery", "An ad is on but nobody has seen it", [["hours", "after", "hours"]]],
+  ["ad_approved", "Meta approves an ad (it starts delivering)", []],
+  ["learning_limited", "An ad set is learning limited", []],
+  ["changed_outside", "Something is switched on or off outside this console (Inbox only, no message)", []],
+  ["no_delivery", "An ad is live but nobody has seen it", [["hours", "after", "hours"]]],
   ["fatigue", "An ad looks tired", [["frequency", "seen more than", "times a week,"], ["ctr_drop", "clicks down", "%,"], ["cpm_rise", "cost per 1,000 views up", "%"]]],
   ["day_overspend", "One day's spend is high (shown on Today only)", [["times", "more than", "× the daily budget"]]],
   ["week_overspend", "The week's spend is high", [["times", "more than", "× the daily budget in 7 days"]]],

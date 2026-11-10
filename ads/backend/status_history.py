@@ -224,7 +224,22 @@ def record(level, entity, events, source, now=None, detail=None):
             returning=True)
         out.append({**ev, "id": row["id"], "source": src, "level": level, "entity_id": entity["id"],
                     "entity_name": entity.get("name"), "campaign_id": entity.get("campaign_id"), "change_id": change_id})
+    alert_on(level, entity, out, now)
     return out
+
+
+def alert_on(level, entity, events, now):
+    """Raise the alerts these changes deserve (approved, rejected, issues, learning limited, changed outside)."""
+    import account_info
+    import alerts
+    try:
+        today = now.astimezone(account_info.tz()).date()
+        found = transitions(level, entity, events, alerts.saved_rules(), now, today)
+        if found:
+            alerts.raise_found(found)
+    except Exception as exc:  # an alert must never break a sync
+        import logging
+        logging.getLogger(__name__).warning("status alert failed for %s: %s", entity.get("id"), exc)
 
 
 def mark_missing(level, seen, source="poll"):
@@ -254,3 +269,71 @@ def timeline(level, entity_id, limit=100):
         r["headline"] = headline({"field": r["field"], "old": r["old_value"], "new": r["new_value"],
                                   "backfill": r["source"] == "backfill"})
     return rows
+
+
+# ---------------------------------------------------------------- alerts from changes (pure)
+
+LEVEL_WORDS = {"campaign": "Campaign", "adset": "Ad set", "ad": "Ad"}
+
+
+def _href(level, entity):
+    return f"/ad.html?id={entity['id']}" if level == "ad" else "/ads.html"
+
+
+def _reason_lines(entity, events):
+    review = next((e.get("new") for e in events if e["field"] == "review" and e.get("new")), None)
+    feedback = entity.get("ad_review_feedback") or {}
+    texts = list((feedback.get("global") or {}).values())
+    for reasons in (feedback.get("placement_specific") or {}).values():
+        texts += [t for t in (reasons or {}).values() if t not in texts]
+    if not review:
+        review = review_summary(feedback)
+    line = f"Reason: {reason_words(review)}." if review else "Open the ad to see Meta's reason."
+    if texts and texts[0]:
+        line += " " + texts[0].strip()
+    return [line, "Fix the words or picture and Meta reviews it again, or ask Claude for a fixed version."]
+
+
+def transitions(level, entity, events, rules, now, today):
+    """Alert dicts (same shape as alerts.evaluate) for changes worth telling someone about."""
+    on = lambda rule: (rules.get(rule) or {}).get("on", True)
+    name, eid = entity.get("name") or entity["id"], entity["id"]
+    camp = entity["id"] if level == "campaign" else entity.get("campaign_id")
+    stamp = now.strftime("%Y-%m-%dT%H:%M")
+    out = []
+
+    def add(rule, key, alert_level, title, lines, kind="event", resolved=True):
+        out.append({"rule": rule, "key": key, "level": alert_level, "title": title, "lines": lines, "entity_id": eid,
+                    "campaign_id": camp, "href": _href(level, entity), "kind": kind, "resolved": resolved})
+
+    for ev in events:
+        if ev.get("backfill") or ev.get("source") == "backfill":
+            continue
+        field, old, new = ev["field"], ev.get("old"), ev.get("new")
+        if level == "ad" and on("ad_approved") and new in ("ACTIVE", "PREAPPROVED") and (
+                (field == "effective_status" and old in REVIEW_STATES) or field == "created"):
+            add("ad_approved", f"ad_approved:{eid}:{stamp}", "ok", f"Meta approved “{name}”",
+                ["It's delivering now." if new == "ACTIVE" else "It starts on its schedule."])
+        elif level == "ad" and field in ("effective_status", "created") and new == "DISAPPROVED" and on("ad_rejected"):
+            add("ad_rejected", f"ad_rejected:{eid}:{today.isoformat()}", "bad", f"Meta rejected “{name}”",
+                _reason_lines(entity, events), kind="condition", resolved=False)
+        elif field == "effective_status" and new == "WITH_ISSUES" and on("ad_rejected"):
+            issue = issues_summary(entity.get("issues_info")) or "Meta reports a problem."
+            if level == "ad":
+                add("ad_rejected", f"ad_rejected:{eid}:{today.isoformat()}", "bad", f"“{name}” has a problem on Meta",
+                    [issue, "It doesn't deliver until this is fixed."], kind="condition", resolved=False)
+            else:
+                add("ad_rejected", f"issues:{eid}:{today.isoformat()}", "bad",
+                    f"{LEVEL_WORDS[level]} “{name}” has a problem on Meta", [issue, "Its ads don't deliver until this is fixed."])
+        elif level == "adset" and field == "learning" and new == "FAIL" and on("learning_limited"):
+            got = (entity.get("learning_stage_info") or {}).get("conversions")
+            add("learning_limited", f"learning_limited:{eid}:{today.isoformat()}", "warn", f"Ad set “{name}” is learning limited",
+                [f"{got if got is not None else 'Too few'} results since its last big edit; Meta wants about 50 a week to finish learning.",
+                 "Usually: fewer ad sets, a bigger budget or a broader audience. Don't edit it often."])
+        elif field == "configured_status" and ev.get("source") in ("poll", "webhook") and on("changed_outside") and old:
+            word = {"ACTIVE": "on", "PAUSED": "off", "ARCHIVED": "archived", "DELETED": "deleted"}.get(new, (new or "").lower())
+            verb = "switched " + word if word in ("on", "off") else word
+            add("changed_outside", f"changed_outside:{eid}:{stamp}", "info",
+                f"{LEVEL_WORDS[level]} “{name}” was {verb} outside this console",
+                ["Someone changed it in Ads Manager (or through Claude on the Mac). Nothing to do if that was you."])
+    return out

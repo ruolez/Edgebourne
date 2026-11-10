@@ -112,6 +112,8 @@ def status():
     lw, lp = ("TRUE", []) if ids is None else ("campaign_id = ANY(%s)", [ids])
     out = {**_status(),
            "new_leads": int(db.query(f"SELECT COUNT(*) AS n FROM leads WHERE status = 'new' AND NOT is_test AND {lw}", lp, one=True)["n"])}
+    import inbox
+    out["inbox_unread"] = inbox.counts(inbox.items_for(user))["unread"]
     if user["role"] == "admin":
         out["proposals"] = int(db.query("SELECT COUNT(*) AS n FROM desk_proposals WHERE status = 'pending'", one=True)["n"])
         out["cap"] = cap_snapshot()
