@@ -174,7 +174,8 @@ function render() {
           <span class="level">Campaign</span>
           <h2>${esc(c.name)}</h2>
           <div class="row tight-row"><span class="pill ${cc}">${esc(cl)}</span>${budgetChip("campaign", c, c.can_control)}
-            ${c.pending_proposals ? `<span class="pill claude">${plural(c.pending_proposals, "proposal")}</span>` : ""}</div>
+            ${c.pending_proposals ? `<span class="pill claude">${plural(c.pending_proposals, "proposal")}</span>` : ""}
+            ${me.role === "admin" ? `<a class="chip campaign-add" href="/new-adset.html?campaign=${encodeURIComponent(c.id)}">+ New ad set</a>` : ""}</div>
         </div>
         ${figures(c.m)}
         ${c.can_control ? switchHtml(isOn(c.status), `data-toggle="campaign:${c.id}" data-name="${esc(c.name)}"`, `${c.name} on or off`) : ""}

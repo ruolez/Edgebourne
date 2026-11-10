@@ -144,6 +144,8 @@ if (me) {
     $("adset").innerHTML = options.adsets.map((s) => `<option value="${esc(s.id)}">${esc(s.name)} · ${esc(s.campaign_name)}</option>`).join("");
     $("template").innerHTML = options.templates.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("");
     $("cta").innerHTML = options.cta_types.map((c) => `<option value="${c}">${esc(CTA_LABELS[c] || c)}</option>`).join("");
+    const wantSet = new URLSearchParams(location.search).get("adset");
+    if (wantSet && options.adsets.some((s) => s.id === wantSet)) { $("adset").value = wantSet; $("adset").dataset.touched = "1"; }
     const from = new URLSearchParams(location.search).get("from");
     if (from && options.templates.some((t) => t.id === from)) $("template").value = from;
     counter($("body"), $("body-count"), 125);

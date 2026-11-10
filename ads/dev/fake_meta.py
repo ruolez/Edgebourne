@@ -24,11 +24,18 @@ CAMPAIGN = {"id": "120252638288040312", "name": "Edge Bourne - Free intro call -
 ADSET = {"id": "120252672227950312", "name": "SoCal business owners - Instant form", "campaign_id": CAMPAIGN["id"],
          "status": "ACTIVE", "effective_status": "ACTIVE", "optimization_goal": "LEAD_GENERATION",
          "learning_stage_info": {"status": "LEARNING"},
-         "targeting": {"age_min": 25, "age_max": 65,
-                       "geo_locations": {"custom_locations": [{"radius": 50, "distance_unit": "mile"}] * 4},
-                       "flexible_spec": [{"interests": [{"name": "Small business owners"}, {"name": "Entrepreneurship"}],
-                                          "behaviors": [{"name": "Business page admins"}]}],
-                       "targeting_automation": {"advantage_audience": 1}}}
+         "targeting": {"age_min": 25, "age_max": 65, "age_range": [30, 64],
+                       "geo_locations": {"custom_locations": [
+                           {"latitude": 32.7157, "longitude": -117.1611, "radius": 50, "distance_unit": "mile", "primary_city_id": 2421830},
+                           {"latitude": 33.9533, "longitude": -117.3962, "radius": 50, "distance_unit": "mile", "primary_city_id": 2421696},
+                           {"latitude": 34.0522, "longitude": -118.2437, "radius": 50, "distance_unit": "mile", "primary_city_id": 2420379},
+                           {"latitude": 34.2746, "longitude": -119.229, "radius": 50, "distance_unit": "mile", "primary_city_id": 2422675}],
+                           "location_types": ["home", "recent"]},
+                       "flexible_spec": [{"interests": [{"id": "6003371567474", "name": "Entrepreneurship"}],
+                                          "behaviors": [{"id": "6002714898572", "name": "Small business owners"},
+                                                        {"id": "6020530281783", "name": "Business page admins"}]}],
+                       "targeting_automation": {"advantage_audience": 1}},
+         "destination_type": "ON_AD", "billing_event": "IMPRESSIONS", "promoted_object": {"page_id": "1404203629446490"}}
 TEXTS = {
     "N1 - One simple system": ("Everything in one system", "Notepads, spreadsheets, sticky notes, sales reports by hand. It works until the business grows.\nWe bring it all into one simple system your team can use. AI can handle the routine updates, if you want it. You own it.\nFree intro call for Southern California businesses."),
     "N2 - Order portal": ("Orders that come in on their own", "Customers order any time, even at 2 AM. Email orders get read in automatically.\nFree intro call for Southern California businesses."),
@@ -67,6 +74,8 @@ def by_id(oid):
         return CAMPAIGN
     if oid == ADSET["id"]:
         return ADSET
+    if oid in NEW_ADSETS:
+        return NEW_ADSETS[oid]
     return ADS.get(oid) or CREATIVES.get(oid) or VIDEOS.get(oid)
 
 
@@ -182,6 +191,14 @@ def tg_api(tok, method):
 
 
 BUSINESS = "9990001"
+NEW_ADSETS = {}
+PLACES = [{"key": "2421696", "name": "Riverside", "type": "city", "region": "California", "country_code": "US"},
+          {"key": "2420379", "name": "Los Angeles", "type": "city", "region": "California", "country_code": "US"},
+          {"key": "2421830", "name": "San Diego", "type": "city", "region": "California", "country_code": "US"},
+          {"key": "2420886", "name": "Fontana", "type": "city", "region": "California", "country_code": "US"},
+          {"key": "2422675", "name": "Ventura", "type": "city", "region": "California", "country_code": "US"},
+          {"key": "3847", "name": "California", "type": "region", "country_code": "US"},
+          {"key": "US:92335", "name": "92335", "type": "zip", "region": "California", "country_code": "US"}]
 FORMS = {"1132280359202136": {
     "id": "1132280359202136", "name": "EB | Free AI workflow review", "status": "ACTIVE", "leads_count": 41,
     "created_time": "2026-11-07T20:00:00+0000", "locale": "EN_US", "is_optimized_for_quality": False,
@@ -194,6 +211,11 @@ FORMS = {"1132280359202136": {
                        "button_text": "Visit our website", "website_url": "https://edgebourne.com"},
     "follow_up_action_url": "https://edgebourne.com"}}
 STUDIES = {}
+
+
+@app.route("/fake/_adsets")
+def fake_adsets():
+    return jsonify(NEW_ADSETS)
 
 
 @app.route("/fake/_creatives")
@@ -226,7 +248,13 @@ def graph(path):
         if parts == [act, "campaigns"]:
             return jsonify({"data": [CAMPAIGN]})
         if parts == [act, "adsets"]:
-            return jsonify({"data": [ADSET]})
+            return jsonify({"data": [ADSET, *NEW_ADSETS.values()]})
+        if parts == ["search"] and a.get("type") == "adgeolocationmeta":
+            names = {p["key"]: p for p in PLACES}
+            return jsonify({"data": {"cities": {k: {"key": k, "name": names[k]["name"]} for k in json.loads(a.get("cities") or "[]") if k in names}}})
+        if parts == ["search"] and a.get("type") == "adgeolocation":
+            q = (a.get("q") or "").lower()
+            return jsonify({"data": [p for p in PLACES if q in p["name"].lower()][:8]})
         if parts == [act, "ads"]:
             return jsonify({"data": [ad_view(x) for x in ADS.values()]})
         if len(parts) == 2 and parts[1] == "insights":
@@ -334,6 +362,20 @@ def graph(path):
                               "video_id": media.get("video_id"), "image_url": PIC if "link_data" in spec else None,
                               "thumbnail_url": PIC, "object_story_spec": spec}
             return jsonify({"id": cid})
+        if parts == [act, "adsets"]:
+            # Shaped like Meta's ad set create: the fake checks what the builder relies on.
+            t = json.loads(a.get("targeting") or "{}")
+            geo = t.get("geo_locations") or {}
+            if a.get("status") != "PAUSED" or not a.get("campaign_id") or not (geo.get("custom_locations") or geo.get("cities") or geo.get("regions") or geo.get("zips")):
+                return jsonify({"error": {"message": "Invalid parameter (fake): adset", "code": 100}}), 400
+            if a["campaign_id"] == CAMPAIGN["id"] and a.get("daily_budget"):
+                return jsonify({"error": {"message": "Budget is set on the campaign (fake)", "code": 100}}), 400
+            sid = str(next(ids))
+            NEW_ADSETS[sid] = {"id": sid, "name": a["name"], "campaign_id": a["campaign_id"], "status": "PAUSED", "effective_status": "PAUSED",
+                               "optimization_goal": a.get("optimization_goal"), "billing_event": a.get("billing_event"),
+                               "destination_type": a.get("destination_type"), "promoted_object": json.loads(a.get("promoted_object") or "{}"),
+                               "targeting": t, "start_time": a.get("start_time"), "end_time": a.get("end_time")}
+            return jsonify({"id": sid})
         if parts == [act, "ads"]:
             aid = str(next(ids))
             ADS[aid] = {"id": aid, "name": a["name"], "campaign_id": CAMPAIGN["id"], "adset_id": a["adset_id"],

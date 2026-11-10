@@ -706,6 +706,45 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   const cr = Object.values(fake('_creatives')).slice(creativesBefore)[0];
   check("a new ad's button opens the chosen form", !!adMade && cr && cr.object_story_spec.video_data.call_to_action.value.lead_gen_form_id === newForms[0].id, JSON.stringify(cr && cr.object_story_spec.video_data.call_to_action));
 
+  // New ad set: starts from the live one, places and ages change, the estimate follows, created paused.
+  await page.goto(BASE + '/ads.html');
+  await Promise.all([page.waitForURL('**/new-adset.html?campaign=**'), page.locator('.campaign-add').first().click()]);
+  await page.waitForSelector('#places li b');
+  check('a new ad set starts from the live one: its places, ages and hints',
+    (await page.locator('#places li').count()) === 4 && /San Diego area/.test(await page.textContent('#places'))
+    && (await page.inputValue('#age_min')) === '25' && (await page.inputValue('#suggest_min')) === '30' && await page.isChecked('#keep_hints'));
+  check('a campaign with its own budget asks for none on the ad set', await page.isHidden('#budget-field') && /shared by all its ad sets/.test(await page.textContent('#budget-note')));
+  await page.waitForFunction(() => /M/.test(document.getElementById('estimate').textContent));
+  check('the audience estimate shows', /1\.4M – 1\.6M/.test(await page.textContent('#estimate')), await page.textContent('#estimate'));
+  for (let i = 0; i < 4; i++) await page.locator('#places [data-remove]').first().click();
+  await page.fill('#place-q', 'fon');
+  await page.waitForSelector('#place-results li[data-pick]');
+  await page.keyboard.press('Enter');
+  check("a place is found with Meta's place search and added with a radius", /Fontana, California/.test(await page.textContent('#places')) && (await page.inputValue('#places select')) === '25');
+  await page.selectOption('#places select', '15');
+  await page.fill('#name', 'QA Inland Empire');
+  await page.fill('#age_min', '30');
+  const asSeen = errors.length;
+  await page.click('#create');
+  await page.waitForSelector('dialog.confirm');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForSelector('#as-form .field.error .err');
+  check('Advantage+ audience refuses a minimum age over 25, saying why', /at most 25/.test(await page.textContent('#as-form .field.error')));
+  errors.splice(asSeen);
+  await page.fill('#age_min', '25');
+  const adsetsBefore = Object.keys(fake('_adsets')).length;
+  await page.click('#create');
+  await page.waitForSelector('dialog.confirm');
+  check('creating says it is off and empty', /switched off and with no ads yet/.test(await page.textContent('dialog.confirm')));
+  await Promise.all([page.waitForURL('**/new-ad.html?adset=**'), page.click('dialog.confirm #cd-ok')]);
+  const newSets = Object.values(fake('_adsets')).slice(adsetsBefore);
+  check('Meta gets a paused ad set: the city with its radius, the ages, the hints, no budget of its own',
+    newSets.length === 1 && newSets[0].status === 'PAUSED' && newSets[0].targeting.geo_locations.cities.map((c) => `${c.key}:${c.radius}:${c.distance_unit}`).join() === '2420886:15:mile'
+    && newSets[0].targeting.age_range.join() === '30,64' && newSets[0].targeting.flexible_spec[0].behaviors.length === 2 && newSets[0].destination_type === 'ON_AD',
+    JSON.stringify(newSets[0] && newSets[0].targeting));
+  await page.waitForFunction(() => document.querySelectorAll('#adset option').length > 0);
+  check('the next step is adding an ad to the new ad set', (await page.inputValue('#adset')) === newSets[0].id);
+
   await browser.close();
   console.log(results.join('\n'));
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');

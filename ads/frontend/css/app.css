@@ -1262,3 +1262,23 @@ fieldset.field legend { padding: 0; margin-bottom: 6px; }
   .builder { padding: 0 18px 20px; }
   .phone { width: 100%; max-width: 300px; height: 520px; }
 }
+
+/* ---------- New ad set ---------- */
+.places { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.places li { display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 10px; border: 1px solid var(--line); border-radius: var(--radius-s); }
+.places li b { flex: 1; min-width: 0; font-weight: 650; }
+.places .radius { width: auto; min-height: 32px; padding: 4px 8px; }
+.place-kind { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); min-width: 38px; }
+.place-add { position: relative; }
+.place-results { position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); list-style: none; margin: 0; padding: 4px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius-s); box-shadow: var(--shadow-pop); max-height: 280px; overflow-y: auto; }
+.place-results li { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.place-results li:hover, .place-results li:focus { background: var(--seal-soft); outline: none; }
+.age-pair { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+.age-pair .input { width: 84px; }
+.estimate-big { margin: 0; font: 700 28px/1.1 var(--font-ui); font-variant-numeric: tabular-nums; }
+.estimate-big.loading { opacity: .5; }
+@media (max-width: 720px) { .places li { flex-wrap: wrap; } }
+a.chip.campaign-add { color: var(--focus); font-weight: 700; text-decoration: none; }
+a.chip.campaign-add:hover { border-color: var(--ink-3); }
+@media (max-width: 720px) { .places li b { flex: 1 1 calc(100% - 60px); } .places .radius { margin-left: 48px; } }

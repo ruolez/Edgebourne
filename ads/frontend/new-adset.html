@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New ad set | Edge Bourne Ads</title>
+  <link rel="icon" href="/img/favicon.svg">
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail"></aside>
+    <main class="main">
+      <header class="page-head">
+        <a class="crumb" href="/ads.html" id="crumb"></a>
+        <h1>New ad set</h1>
+      </header>
+      <div class="content new-ad-layout">
+        <form class="stack" id="as-form" novalidate>
+          <section class="panel step">
+            <div class="panel-head"><span class="step-n">1</span><h2>Where it goes</h2></div>
+            <div class="panel-body stack tight">
+              <div class="grid-2">
+                <div class="field"><label for="campaign">Campaign</label><select class="input" id="campaign" name="campaign"></select><span class="hint" id="budget-note"></span></div>
+                <div class="field"><label for="template">Start from</label><select class="input" id="template" name="template"></select><span class="hint">Copies its goal (leads on the Instant Form), places, ages and audience hints. Change what you need below.</span></div>
+              </div>
+              <div class="field"><label for="name">Ad set name <span class="muted">(only you see this)</span></label><input class="input" id="name" name="name" maxlength="200" placeholder="Inland Empire - Instant form" autocomplete="off"></div>
+            </div>
+          </section>
+
+          <section class="panel step">
+            <div class="panel-head"><span class="step-n">2</span><h2>Who sees it</h2></div>
+            <div class="panel-body stack tight">
+              <div class="field" id="locations-field"><span class="label">Places</span>
+                <input type="hidden" name="locations">
+                <ul class="places" id="places"></ul>
+                <div class="place-add">
+                  <label class="sr-only" for="place-q">Add a city, state or ZIP code</label>
+                  <input class="input" id="place-q" placeholder="Add a city, state or ZIP code" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="place-results">
+                  <ul class="place-results" id="place-results" role="listbox" hidden></ul>
+                </div>
+                <span class="hint">People who live in or were recently in these places. Cities take a radius of 10 to 50 miles.</span>
+              </div>
+              <label class="check"><input type="checkbox" id="advantage"> <span>Advantage+ audience <span class="muted">· Meta may reach beyond the hints below when it finds people likely to fill in the form (recommended)</span></span></label>
+              <div class="grid-2" id="age-field">
+                <div class="field"><span class="label">Age limits</span><div class="age-pair"><input class="input" type="number" id="age_min" name="age" min="18" max="65"> to <input class="input" type="number" id="age_max" min="18" max="65"></div>
+                  <span class="hint" id="age-hint"></span></div>
+                <div class="field" id="suggest-field"><span class="label">Suggested ages <span class="muted">(where Meta starts)</span></span><div class="age-pair"><input class="input" type="number" id="suggest_min" min="18" max="65"> to <input class="input" type="number" id="suggest_max" min="18" max="65"></div></div>
+              </div>
+              <label class="check" id="hints-row"><input type="checkbox" id="keep_hints"> <span>Keep the audience hints: <span id="hints" class="muted"></span></span></label>
+            </div>
+          </section>
+
+          <section class="panel step">
+            <div class="panel-head"><span class="step-n">3</span><h2>When and how much</h2></div>
+            <div class="panel-body stack tight">
+              <div class="grid-2">
+                <div class="field"><label for="start_day">Starts <span class="muted">(optional)</span></label><input class="input" type="date" id="start_day" name="start"><span class="hint">Empty: as soon as you turn it on.</span></div>
+                <div class="field"><label for="end_day">Ends <span class="muted">(optional)</span></label><input class="input" type="date" id="end_day" name="end"><span class="hint">Empty: runs until you turn it off.</span></div>
+              </div>
+              <div class="field" id="budget-field" hidden><label for="budget">Daily budget</label><span class="money-input">$<input class="input" id="budget" name="budget" inputmode="decimal" placeholder="20"></span><span class="hint" id="budget-hint"></span></div>
+              <p class="muted small flush">Placements: Advantage+ (Facebook, Instagram and Meta's other places, wherever leads are cheapest). Meta no longer offers picking placements by hand for lead campaigns.</p>
+            </div>
+          </section>
+
+          <div class="row create-row">
+            <button class="btn btn-primary" type="submit" id="create">Create ad set (off)</button>
+            <span class="muted small">It's created switched off and empty. Add ads to it, then turn it on.</span>
+          </div>
+        </form>
+        <aside class="stack tips">
+          <section class="panel"><div class="panel-body stack tight">
+            <b>Estimated audience</b>
+            <p class="estimate-big" id="estimate">—</p>
+            <p class="muted small flush" id="estimate-note">People a month Meta could show it to. Updates as you change places and ages.</p>
+          </div></section>
+          <section class="panel"><div class="panel-body stack tight">
+            <b>In one line</b>
+            <p class="flush" id="summary">—</p>
+          </div></section>
+          <section class="panel"><div class="panel-body stack tight">
+            <b>Before you add one</b>
+            <ul class="tip-list">
+              <li>Fewer ad sets learn faster: each needs about 50 leads a week to leave Meta's learning phase.</li>
+              <li>A second ad set over the same places splits the budget and competes with the first.</li>
+              <li>Use one for a genuinely different group (another region, another kind of business).</li>
+            </ul>
+          </div></section>
+        </aside>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="/js/new-adset.js"></script>
+</body>
+</html>
