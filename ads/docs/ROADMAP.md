@@ -615,4 +615,4 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-10 · 8.5 Signal shell built (tokens, fonts, grouped nav, ⌘K palette, breadcrumbs, section tabs, phone tabs, Inbox page); QA 254 PASS; committed, not pushed · next: 8.6 Ads manager rebuild
 - 2026-11-10 · 8.6 Ads manager rebuilt (table + views + bulk + peek + phone list, campaign and ad set pages); QA 262 PASS; committed, not pushed · next: 8.7 compare page, Today queue, Insights/Claude/Settings, Leads filters, 301s
 - 2026-11-10 · 8.7 Compare page, Today Inbox card, Leads source filter, Settings side list, ad-safe file names; QA 267 PASS; committed, not pushed · next: 8.8 finish (shots, docs, live checks list)
-- 2026-11-10 · 8.8 finish pass (screens, docs, inventory); 317 unit tests, QA 267 PASS; Phase 8 code complete, 9 commits not pushed (d24efac … ) · next: Eugene says push → Update on the VPS → live checks 8.8 (1)–(6)
+- 2026-11-10 · 8.8 finish pass (screens, docs, inventory); 317 unit tests, QA 267 PASS; Phase 8 code complete, pushed 2026-11-10 (d24efac…37547ca) · next: Eugene → Update on the VPS → live checks 8.8 (1)–(6)
