@@ -261,7 +261,7 @@ def run(now=None):
     for a in found:
         row = db.execute(
             "INSERT INTO alerts (rule, dedupe_key, level, title, lines, entity_id, campaign_id, href) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dedupe_key) DO NOTHING RETURNING id",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (account_id, dedupe_key) DO NOTHING RETURNING id",
             (a["rule"], a["key"], a["level"], a["title"], json.dumps(a["lines"]), a["entity_id"], a["campaign_id"], a["href"]),
             returning=True)
         if row:

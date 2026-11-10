@@ -282,7 +282,7 @@ def tree():
         c["adsets"] = [s for s in adsets if s["campaign_id"] == c["id"]]
         c["m"] = _sum(c["adsets"])
         c["pending_proposals"] = pending.get(c["id"], 0)
-        c["can_control"] = can_touch(user, c["id"])
+        c["can_control"] = can_touch(user, c["id"]) and user["role"] != "client"
     return jsonify({"range": {"start": start.isoformat(), "end": end.isoformat(), "days": days},
                     "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync"),
                     "archived": archived})
@@ -322,7 +322,7 @@ def ad_detail(ad_id):
     changes = db.query("""SELECT m.*, u.name AS user_name FROM meta_changes m LEFT JOIN users u ON u.id = m.user_id
                           WHERE m.entity_id IN (%s, %s, %s) ORDER BY m.id DESC LIMIT 30""",
                        (ad_id, ad["adset_id"], ad["campaign_id"]))
-    ad["can_control"] = True
+    ad["can_control"] = current_user()["role"] != "client"
     return jsonify({"ad": ad, "series": series, "lifetime": {k: int(v) for k, v in totals.items()},
                     "leads": leads, "proposals": proposals, "changes": changes,
                     "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS]})

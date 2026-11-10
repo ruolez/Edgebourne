@@ -1026,6 +1026,51 @@ print(a[0][1] if a else '-', b[0][1] if b else '-')"`).trim();
   check('a device the push service says is gone is removed by itself; unusable keys are refused up front', left.join() === 'QA phone' && badKeys === 400, `${left.join()} ${badKeys}`);
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute('DELETE FROM push_subscriptions')"`);
 
+  // Agency mode: accounts never see each other's data (every GET route, three roles), switching, read-only clients.
+  const leak = JSON.parse(sh('docker cp dev/qa_leaks.py edgebourne-ads-backend:/app/qa_leaks.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_leaks.py; docker exec edgebourne-ads-backend rm -f /app/qa_leaks.py').trim().split('\n').pop());
+  check(`no account's data shows in another: ${leak.routes_checked.join(' + ')} route calls as admin on each account and as a client`, leak.leaks.length === 0 && leak.routes_checked.every((n) => n > 40), leak.leaks.slice(0, 3).join(' | '));
+  check('a client can change nothing (every change refused) and cannot switch accounts', leak.client_writes_not_refused.length === 0 && leak.client_switch_status === 403 && leak.client_stays_on_own_account,
+    leak.client_writes_not_refused.slice(0, 4).join(' | '));
+  check('each account still sees its own data', leak.admin_sees_account2_on_account2 && leak.client_sees_own_leads);
+  await page.goto(BASE + '/ads.html');
+  await page.waitForSelector('#acct-rail');
+  check('admins switch accounts from the sidebar', (await page.locator('#acct-rail option').count()) >= 3 && /Edge Bourne/.test(await page.textContent('#acct-rail option:checked')));
+  await page.selectOption('#acct-rail', String(leak.account2));
+  await page.waitForFunction(() => /ACCT2MARK/.test(document.getElementById('cr-all')?.textContent || ''), null, { timeout: 8000 }).catch(() => {});
+  const acct2 = `${await page.textContent('#acct-rail option:checked')} | ${(await page.textContent('#cr-all')).replace(/\s+/g, ' ')}`;
+  check('switched, the Ads page shows only that account', /ACCT2MARK ad/.test(acct2) && !/One simple system/.test(acct2), acct2.slice(0, 220));
+  await page.selectOption('#acct-rail', '1');
+  await page.waitForFunction(() => /One simple system/.test(document.getElementById('cr-all')?.textContent || ''));
+  check('and back', /One simple system/.test(await page.textContent('#cr-all')) && !/ACCT2MARK/.test(await page.textContent('#cr-all')));
+  await page.selectOption('#acct-rail', 'new');
+  await page.waitForSelector('dialog.confirm');
+  await page.fill('#cd-input', 'QA Studio');
+  await Promise.all([page.waitForURL('**/settings.html**'), page.click('dialog.confirm #cd-ok')]);
+  await page.waitForSelector('#acct-rail');
+  check('adding an account opens Settings on it, ready to connect its Meta account', /QA Studio/.test(await page.textContent('#acct-rail option:checked')));
+  await page.evaluate(() => fetch('/api/accounts/switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 1 }) }));
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "
+from werkzeug.security import generate_password_hash
+import db
+db.execute(\\"UPDATE users SET password_hash = %s, must_change_password = FALSE WHERE email = 'client-qa@burdanova.test'\\", (generate_password_hash('client-pass-123'),))
+db.execute(\\"UPDATE accounts SET archived_at = now() WHERE name = 'QA Studio'\\")"`);
+  const cctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+  const cp = await cctx.newPage();
+  cp.on('pageerror', (e) => errors.push('client page: ' + e.message));
+  await cp.goto(BASE + '/login.html');
+  await cp.fill('#email', 'client-qa@burdanova.test');
+  await cp.fill('#password', 'client-pass-123');
+  await Promise.all([cp.waitForURL('**/home.html**'), cp.click('button[type=submit]')]);
+  const nav = await cp.$$eval('.rail .nav a', (a) => a.map((x) => x.textContent.trim()));
+  check('a client signs in to their own account with the read-only menu', nav.join() === 'Today,Leads,Ads,Results' && /Burdanova QA/.test(await cp.textContent('.rail')), nav.join());
+  await cp.goto(BASE + '/leads.html');
+  await cp.waitForSelector('.lead-row');
+  await cp.click('.lead-row');
+  await cp.waitForSelector('#stages');
+  check("a client sees their leads but not the controls that change them", /ACCT2MARK Lead Person/.test(await cp.textContent('#list'))
+    && !(await cp.isVisible('#note-form')) && (await cp.locator('#stages button:visible').count()) <= 1);
+  await cctx.close();
+
 
   // Ad blockers hide elements whose class or id looks like an ad (EasyList: .ad-cell, .adset, #ads-panel …).
   // An ads console is full of them, so no class or id may start with ad- / ads- / adset / advert / sponsor / banner / promo.

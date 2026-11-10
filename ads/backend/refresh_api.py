@@ -62,7 +62,9 @@ def auto_due(last_pull, last_try, now, minutes):
 
 def pull_latest(conn):
     """The quick pass. Returns None when another pass holds the lock; MetaError propagates."""
-    if not jobs._locked(conn, LOCK_KEY):
+    import account_ctx
+    lock = LOCK_KEY * 1000 + account_ctx.current()  # one pull at a time per account
+    if not jobs._locked(conn, lock):
         return None
     try:
         result = insights.sync_all(days=DAYS)
@@ -76,7 +78,7 @@ def pull_latest(conn):
         return {"ads": result.get("ads"), "new_leads": new_leads}
     finally:
         with conn.cursor() as cur:
-            cur.execute("SELECT pg_advisory_unlock(%s)", (LOCK_KEY,))
+            cur.execute("SELECT pg_advisory_unlock(%s)", (lock,))
 
 
 def last_updated(refresh_at, sync_iso):

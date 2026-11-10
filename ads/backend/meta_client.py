@@ -34,6 +34,9 @@ def system_token():
 
 
 def _call(method, path, token, params=None, data=None, files=None, timeout=TIMEOUT, video=False):
+    if path.startswith(("act_None", "None", "/act_None")) or "/None/" in path:
+        # Agency mode: an account added but not connected yet has no ad account or Page id.
+        raise MetaError("This account isn't connected to Meta yet: add its ad account in Settings → Meta")
     params = dict(params or {})
     params["access_token"] = token
     resp = requests.request(method, f"{_base(video)}/{path.lstrip('/')}", params=params, data=data,

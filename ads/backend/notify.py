@@ -70,6 +70,9 @@ def admin_ids():
 
 
 def queue(user_id, channel, kind, title, lines, url=None, button="Open", ref=None, dedupe_key=None):
+    import account_ctx
+    if dedupe_key and account_ctx.current() != account_ctx.DEFAULT:
+        dedupe_key = f"a{account_ctx.current()}:{dedupe_key}"  # notifications are shared; keys are per account
     db.execute(
         "INSERT INTO notifications (user_id, channel, kind, ref, dedupe_key, title, lines, url, button) "
         "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dedupe_key) DO NOTHING",

@@ -21,6 +21,7 @@ def create_app(run_migrations=True):
     if run_migrations:
         db.run_migrations()
 
+    import accounts_api
     import ads_api
     import advice_api
     import adsets_api
@@ -44,10 +45,11 @@ def create_app(run_migrations=True):
     import tracking_api
     import webhooks
 
-    for module in (ads_api, adsets_api, advice_api, alerts_api, auth, builds_api, concepts_api, desk_api, experiments_api, forms_api, home_api, insights_api, leads_api, polish, performance_api, push_api, refresh_api, settings_api, swipes_api, team_api, tracking_api, webhooks):
+    for module in (accounts_api, ads_api, adsets_api, advice_api, alerts_api, auth, builds_api, concepts_api, desk_api, experiments_api, forms_api, home_api, insights_api, leads_api, polish, performance_api, push_api, refresh_api, settings_api, swipes_api, team_api, tracking_api, webhooks):
         app.register_blueprint(module.bp)
     app.register_blueprint(desk_api.agent_bp)
     app.teardown_appcontext(db.close_db)
+    app.before_request(accounts_api.choose_for_request)
 
     @app.after_request
     def no_cache(response):

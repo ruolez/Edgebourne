@@ -24,6 +24,16 @@ def verify():
     abort(403)
 
 
+def account_for_page(page_id):
+    """The account whose Facebook Page the lead came from (account 1 when no account claims it)."""
+    import account_ctx
+    if page_id:
+        for r in db.query("SELECT key, value FROM settings WHERE key = 'meta_page_id' OR key LIKE 'meta_page_id@%%'"):
+            if r["value"] == page_id:
+                return int(r["key"].split("@")[1]) if "@" in r["key"] else account_ctx.DEFAULT
+    return account_ctx.DEFAULT
+
+
 @bp.post("/meta")
 def receive():
     raw = request.get_data()
@@ -35,14 +45,17 @@ def receive():
         payload = json.loads(raw)
     except ValueError:
         abort(400)
+    import account_ctx
     count = 0
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):
             if change.get("field") != "leadgen":
                 continue
             leadgen_id = str((change.get("value") or {}).get("leadgen_id") or "")
-            db.execute("INSERT INTO webhook_events (payload, leadgen_id) VALUES (%s, %s)",
-                       (json.dumps(change), leadgen_id or None))
+            page_id = str((change.get("value") or {}).get("page_id") or entry.get("id") or "")
+            with account_ctx.use(account_for_page(page_id)):
+                db.execute("INSERT INTO webhook_events (payload, leadgen_id) VALUES (%s, %s)",
+                           (json.dumps(change), leadgen_id or None))
             count += 1
     if count:
         jobs.wake()

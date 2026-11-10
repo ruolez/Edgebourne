@@ -4,6 +4,7 @@ import secrets
 from flask import Blueprint, jsonify, request, session
 from werkzeug.security import generate_password_hash
 
+import account_ctx
 import db
 from auth import admin_required
 from util import api_error, log_activity
@@ -14,7 +15,7 @@ bp = Blueprint("team", __name__, url_prefix="/api/team")
 def _members():
     users = db.query(
         "SELECT id, email, name, role, is_active, notify_new_leads, last_login_at, created_at "
-        "FROM users ORDER BY is_active DESC, role, name"
+        "FROM users WHERE role = 'admin' OR account_id = %s ORDER BY is_active DESC, role, name", (account_ctx.current(),)
     )
     links = db.query("SELECT campaign_id, user_id FROM campaign_members")
     by_user = {}
@@ -40,7 +41,7 @@ def invite():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     name = (data.get("name") or "").strip()
-    role = data.get("role") if data.get("role") in ("admin", "member") else "member"
+    role = data.get("role") if data.get("role") in ("admin", "member", "client") else "member"
     if "@" not in email:
         return api_error("Enter the teammate's email address", 400, field="email")
     if not name:
@@ -49,9 +50,9 @@ def invite():
         return api_error("Someone with that email is already on the team", 409, field="email")
     temp = secrets.token_urlsafe(9)
     row = db.execute(
-        """INSERT INTO users (email, name, password_hash, role, must_change_password)
-           VALUES (%s, %s, %s, %s, TRUE) RETURNING id""",
-        (email, name, generate_password_hash(temp), role), returning=True,
+        """INSERT INTO users (email, name, password_hash, role, must_change_password, account_id)
+           VALUES (%s, %s, %s, %s, TRUE, %s) RETURNING id""",
+        (email, name, generate_password_hash(temp), role, None if role == "admin" else account_ctx.current()), returning=True,
     )
     _set_campaigns(row["id"], data.get("campaign_ids") or [])
     log_activity("team.added", subject=email, details={"role": role})
@@ -77,10 +78,11 @@ def update(user_id):
     if not user:
         return api_error("That teammate no longer exists", 404)
     changes = {}
-    if "role" in data and data["role"] in ("admin", "member"):
+    if "role" in data and data["role"] in ("admin", "member", "client"):
         if user_id == session["user_id"] and data["role"] != "admin":
             return api_error("You can't remove your own admin access", 400)
-        db.execute("UPDATE users SET role = %s WHERE id = %s", (data["role"], user_id))
+        db.execute("UPDATE users SET role = %s, account_id = COALESCE(account_id, %s) WHERE id = %s",
+                   (data["role"], None if data["role"] == "admin" else account_ctx.current(), user_id))
         changes["role"] = data["role"]
     if "is_active" in data:
         if user_id == session["user_id"] and not data["is_active"]:

@@ -31,7 +31,7 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSION = "1.5"
+VERSION = "1.6"
 # ADS_DESK_CONFIG points a test run at another dashboard (e.g. the local dev stack).
 CONFIG = os.environ.get("ADS_DESK_CONFIG") or os.path.expanduser("~/.config/ads-desk/config.json")
 SERVICE = "ads-desk"
@@ -69,6 +69,8 @@ def call(method, path, body=None, timeout=40, cfg=None, token=None):
         "Content-Type": "application/json",
         "X-Bridge-Host": socket.gethostname().split(".")[0],
         "X-Bridge-Version": VERSION,
+        # Agency mode: the bridge runs each task with DESK_ACCOUNT set to the task's account.
+        "X-Account": os.environ.get("DESK_ACCOUNT", "1"),
         "User-Agent": f"ads-desk/{VERSION}",
     })
     try:

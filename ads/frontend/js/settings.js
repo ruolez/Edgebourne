@@ -200,6 +200,10 @@ async function load() {
   renderAuto();
   renderMetaTests();
   loadTracking();
+  if ((me.accounts || []).length > 1) {
+    $("acct-note").hidden = false;
+    $("acct-note").innerHTML = `You're setting up <b>${esc(me.account.name)}</b>: its Meta connection, lead stages, alerts, lead replies and targets. Email, Telegram and Meta's app keys are shared by every account. An account without its own System User token uses Edge Bourne's.`;
+  }
   renderTelegram();
   renderAlerts();
   if (editing === null) renderReplies();

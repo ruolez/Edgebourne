@@ -17,8 +17,8 @@ function render() {
     <tbody>${data.members.map((m) => `
       <tr class="${m.is_active ? "" : "muted"}">
         <td><b>${esc(m.name)}</b><br><span class="muted">${esc(m.email)}</span></td>
-        <td>${m.is_active ? (m.role === "admin" ? '<span class="pill ok">Admin</span>' : '<span class="pill">Team member</span>') : '<span class="pill bad">Deactivated</span>'}</td>
-        <td>${m.role === "admin" ? '<span class="muted">All campaigns</span>' : campaignNames(m.campaign_ids)}</td>
+        <td>${m.is_active ? (m.role === "admin" ? '<span class="pill ok">Admin</span>' : m.role === "client" ? '<span class="pill claude">Client (read-only)</span>' : '<span class="pill">Team member</span>') : '<span class="pill bad">Deactivated</span>'}</td>
+        <td>${m.role === "admin" ? '<span class="muted">All campaigns</span>' : m.role === "client" ? '<span class="muted">This whole account</span>' : campaignNames(m.campaign_ids)}</td>
         <td>${m.last_login_at ? when(m.last_login_at) : '<span class="muted">Never</span>'}</td>
         <td class="row end">
           <button class="btn" data-edit="${m.id}">Edit</button>

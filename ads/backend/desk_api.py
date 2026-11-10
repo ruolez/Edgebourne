@@ -66,7 +66,13 @@ def bridge_status():
 
 def expire_stale():
     """A task the Mac stopped reporting on (sleep, shutdown, crash) is marked failed
-    instead of showing "working" forever."""
+    instead of showing "working" forever (every account's)."""
+    import account_ctx
+    with account_ctx.all_accounts():
+        _expire_stale()
+
+
+def _expire_stale():
     db.execute(
         f"""UPDATE desk_tasks SET status = 'failed', finished_at = now(), updated_at = now(),
                    error = 'The Mac stopped reporting while working on this (asleep or offline). Ask again.'
@@ -278,14 +284,17 @@ def agent_required(f):
 
 
 def claim_next():
-    return db.execute(
-        """UPDATE desk_tasks SET status = 'claimed', claimed_at = now(), updated_at = now(),
-                  progress = 'Picked up by the Mac'
-           WHERE id = (SELECT id FROM desk_tasks WHERE status = 'queued'
-                       ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED)
-           RETURNING id""",
-        returning=True,
-    )
+    """The oldest queued task of any account (the Mac works for every account, one task at a time)."""
+    import account_ctx
+    with account_ctx.all_accounts():
+        return db.execute(
+            """UPDATE desk_tasks SET status = 'claimed', claimed_at = now(), updated_at = now(),
+                      progress = 'Picked up by the Mac'
+               WHERE id = (SELECT id FROM desk_tasks WHERE status = 'queued'
+                           ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED)
+               RETURNING id, account_id""",
+            returning=True,
+        )
 
 
 def task_payload(task_id):
@@ -307,7 +316,9 @@ def wait():
     while True:
         row = claim_next()
         if row:
-            return jsonify(task_payload(row["id"]))
+            import account_ctx
+            with account_ctx.use(row["account_id"]):
+                return jsonify({**task_payload(row["id"]), "account_id": row["account_id"]})
         if time.monotonic() >= deadline:
             return ("", 204)
         time.sleep(1)
@@ -316,16 +327,19 @@ def wait():
 @agent_bp.get("/tasks/<int:task_id>")
 @agent_required
 def get_task(task_id):
+    import account_ctx
     task = task_payload(task_id)
-    return jsonify(task) if task else api_error("Task not found", 404)
+    return jsonify({**task, "account_id": account_ctx.current()}) if task else api_error("Task not found", 404)
 
 
 @agent_bp.get("/queue")
 @agent_required
 def queue():
+    import account_ctx
     expire_stale()
-    return jsonify({"queued": tasks_with_results("t.status = 'queued'", [], 20),
-                    "active": tasks_with_results("t.status IN ('claimed', 'running')", [], 5)})
+    with account_ctx.all_accounts():
+        return jsonify({"queued": tasks_with_results("t.status = 'queued'", [], 20),
+                        "active": tasks_with_results("t.status IN ('claimed', 'running')", [], 5)})
 
 
 @agent_bp.post("/tasks/<int:task_id>/status")
@@ -524,7 +538,10 @@ def snapshot():
     perf_tags = concepts_api.tags_for([a["id"] for a in perf["ads"]])
     for a in perf["ads"]:
         a["tags"] = perf_tags.get(a["id"], {})
-    return jsonify({"performance": perf, "lead_stages_by_ad": stages, "lead_business_types": types,
+    import account_ctx
+    import accounts_api
+    return jsonify({"account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current())},
+                    "performance": perf, "lead_stages_by_ad": stages, "lead_business_types": types,
                     "speed_to_lead": speed, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
                     "experiments": tests})
 

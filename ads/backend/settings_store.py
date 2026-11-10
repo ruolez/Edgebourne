@@ -5,6 +5,7 @@ import hashlib
 
 from cryptography.fernet import Fernet, InvalidToken
 
+import account_ctx
 import config
 import db
 
@@ -16,6 +17,23 @@ SECRET_KEYS = {
     "meta_verify_token",
     "smtp_password",
 }
+
+# Settings that belong to one ad account (roadmap 7.1). Account 1 keeps the plain key, so nothing
+# stored before agency mode moves; other accounts store "key@<id>". The Meta connection falls back
+# to account 1's when an account has none of its own (one System User can reach clients' accounts).
+ACCOUNT_KEYS = {
+    "meta_ad_account_id", "meta_page_id", "meta_system_token", "meta_dataset_id", "meta_business_id", "meta_page_subscribed",
+    "crm_send_enabled", "last_refresh_at", "last_performance_sync", "last_campaign_sync", "today_snapshot", "account_snapshot",
+    "tracking_snapshot", "meta_advice", "meta_benchmarks", "monthly_target_cents", "meta_ab_tests", "alert_rules",
+    "reply_auto", "reply_auto_template_id", "reply_auto_user_id", "reply_booking_link", "reminder_digest_date",
+}
+INHERITED = {"meta_system_token"}
+
+
+def stored_key(key, account_id=None):
+    acct = account_ctx.current() if account_id is None else account_id
+    return key if key not in ACCOUNT_KEYS or acct == account_ctx.DEFAULT else f"{key}@{acct}"
+
 
 _fernet = Fernet(base64.urlsafe_b64encode(hashlib.sha256(config.SECRET_KEY.encode()).digest()))
 
@@ -33,22 +51,33 @@ def _decrypt(value):
         return None
 
 
-def get(key, default=None):
-    row = db.query("SELECT value FROM settings WHERE key = %s", (key,), one=True)
+def get(key, default=None, account_id=None):
+    row = db.query("SELECT value FROM settings WHERE key = %s", (stored_key(key, account_id),), one=True)
+    if (not row or row["value"] in (None, "")) and key in INHERITED and stored_key(key, account_id) != key:
+        row = db.query("SELECT value FROM settings WHERE key = %s", (key,), one=True)
     if not row or row["value"] in (None, ""):
-        return config.META_DEFAULTS.get(key, default)
+        return config.META_DEFAULTS.get(key, default) if stored_key(key, account_id) == key else default
     return _decrypt(row["value"]) if key in SECRET_KEYS else row["value"]
 
 
-def set(key, value):  # noqa: A001 - mirrors the store's vocabulary
+def own(key, account_id=None):
+    """The account's own value, without falling back to account 1's."""
+    row = db.query("SELECT value FROM settings WHERE key = %s", (stored_key(key, account_id),), one=True)
+    if not row or row["value"] in (None, ""):
+        return None
+    return _decrypt(row["value"]) if key in SECRET_KEYS else row["value"]
+
+
+def set(key, value, account_id=None):  # noqa: A001 - mirrors the store's vocabulary
+    name = stored_key(key, account_id)
     if value is None:
-        db.execute("DELETE FROM settings WHERE key = %s", (key,))
+        db.execute("DELETE FROM settings WHERE key = %s", (name,))
         return
     stored = _encrypt(value) if key in SECRET_KEYS and value else value
     db.execute(
         """INSERT INTO settings (key, value) VALUES (%s, %s)
            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()""",
-        (key, stored),
+        (name, stored),
     )
 
 

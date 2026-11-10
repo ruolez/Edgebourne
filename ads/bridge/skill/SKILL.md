@@ -123,6 +123,15 @@ files; `cat`, `tail` and pipes are not allowed.
    rather than stopping silently.
 
 
+## Which business (agency mode)
+
+The console can run several ad accounts. Every task belongs to one; the bridge runs it with
+`DESK_ACCOUNT` set, so `desk snapshot`, `desk watched` and the rest answer for that account, and
+`snapshot.account.name` says which business it is. Use that business's brief
+(`briefs/<business>.md`, e.g. `briefs/burdanovahair.md`), its own ad account and Page from the
+snapshot's campaigns, and never Edge Bourne's brief, target or wording for another business.
+If there is no brief for it, say so in the report and keep to what the numbers show.
+
 ## Competitor watch (swipe file)
 
 - `desk watched` lists the Pages Eugene watches (name, Page id if known, search terms, when last

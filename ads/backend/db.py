@@ -3,28 +3,56 @@ import os
 
 import psycopg2
 import psycopg2.errors
+import psycopg2.extensions
 import psycopg2.extras
 import psycopg2.sql
 from flask import g, has_app_context
 from werkzeug.security import generate_password_hash
 
+import account_ctx
 import config
 
 log = logging.getLogger(__name__)
+APP_ROLE = "ebads_app"  # no superuser rights: row-level security applies to it
 MIGRATIONS_DIR = os.path.join(os.path.dirname(__file__), "migrations")
 
 psycopg2.extras.register_default_jsonb(loads=__import__("json").loads, globally=True)
 
 
 def connect():
+    """A raw connection with the owner's rights (migrations, advisory locks, all-accounts jobs)."""
     return psycopg2.connect(**config.POSTGRES)
+
+
+class AppConnection(psycopg2.extensions.connection):
+    """Remembers which account the connection is pointed at."""
+    account_id = None
+
+
+def connect_app():
+    """A connection limited to one account at a time by row-level security."""
+    conn = psycopg2.connect(**config.POSTGRES, connection_factory=AppConnection)
+    with conn.cursor() as cur:
+        cur.execute(f"SET ROLE {APP_ROLE}")
+    conn.commit()
+    conn.account_id = None
+    return conn
+
+
+def _scope(conn):
+    """Point the connection at the current account before a query (cheap when unchanged)."""
+    acct = account_ctx.current()
+    if getattr(conn, "account_id", "raw") != acct:
+        with conn.cursor() as cur:
+            cur.execute("SELECT set_config('app.account_id', %s, false)", (str(acct),))
+        conn.account_id = acct
 
 
 def get_db():
     """Per-request connection inside Flask; a fresh one per call in workers."""
     if has_app_context():
         if "db" not in g:
-            g.db = connect()
+            g.db = connect_app()
         return g.db
     return None
 
@@ -36,10 +64,14 @@ def close_db(_exc=None):
 
 
 def _run(sql, params, fetch):
-    conn = get_db()
-    owned = conn is None
-    if owned:
-        conn = connect()
+    if account_ctx.seeing_all():
+        conn, owned = connect(), True
+    else:
+        conn = get_db()
+        owned = conn is None
+        if owned:
+            conn = connect_app()
+        _scope(conn)
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(sql, params)

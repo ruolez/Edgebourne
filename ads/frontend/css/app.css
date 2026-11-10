@@ -1385,3 +1385,18 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .device-list { list-style: none; margin: 0; padding: 0; }
 .device-list li { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
 .device-list li span { display: flex; flex-direction: column; }
+
+/* ---------- Ad accounts (agency mode) ---------- */
+.acct { padding: 0 8px 16px; margin-top: -8px; display: flex; flex-direction: column; gap: 4px; }
+.acct-select { min-height: 36px; padding: 6px 10px; font-weight: 700; font-size: 14px; }
+.acct-only { font-weight: 700; font-size: 14px; color: var(--ink-2); }
+.acct .link-btn { align-self: flex-start; font-size: 13px; }
+.acct-name { margin: -8px 8px 16px; font-weight: 700; font-size: 14px; color: var(--ink-2); }
+.acct-sheet, p.acct-sheet { padding: 12px 16px 0; margin: 0; }
+/* Clients see their account read-only: controls that change things are hidden (the server refuses them too). */
+.read-only #stages button:not([aria-pressed="true"]), .read-only #note-form, .read-only .c-actions, .read-only .c-reply,
+.read-only #cr-actions, .read-only #idea .row, .read-only [data-toggle], .read-only .budget-edit, .read-only .campaign-add,
+.read-only #new-ad, .read-only [data-reply-open], .read-only .reply-actions, .read-only #reply-open, .read-only [data-apply] { display: none !important; }
+.read-only #idea input { pointer-events: none; background: transparent; border-color: transparent; padding-left: 0; }
+.read-only #edit-budget { display: none !important; }
+.acct-note { margin: 0 40px 16px; } @media (max-width: 720px) { .acct-note { margin: 0 16px 12px; } }

@@ -206,6 +206,46 @@ function refreshButton() {
   return `<button type="button" class="refresh" data-refresh title="Get the latest from Meta">${icon("refresh")}<span class="r-text"><b>Refresh</b><small data-updated>…</small></span></button>`;
 }
 
+// Agency mode: which ad account the console shows. Admins switch; others see their own.
+function accountSwitch(me, where) {
+  const list = me.accounts || [];
+  if (me.role !== "admin" || list.length < 1) {
+    return list.length > 1 || me.role === "client" ? `<p class="acct-name acct-${where}">${esc(me.account.name)}</p>` : "";
+  }
+  if (list.length === 1) {
+    return `<div class="acct acct-${where}"><span class="acct-only">${esc(me.account.name)}</span>
+      <button type="button" class="link-btn small" data-acct-add>+ Add an account</button></div>`;
+  }
+  return `<div class="acct acct-${where}"><label class="sr-only" for="acct-${where}">Ad account</label>
+    <select class="input acct-select" id="acct-${where}" data-acct>${list.map((a) => `<option value="${a.id}" ${a.id === me.account.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}
+      <option value="new">+ Add an account…</option></select></div>`;
+}
+
+async function addAccount() {
+  const name = await confirmDialog({ title: "Add an ad account", confirm: "Add",
+    body: "<p>A business whose Meta ads this console will run (for example a client). Its ads, leads, results and Claude's work stay separate from the others.</p>",
+    field: { label: "Business name", value: "", validate: (v) => (v.trim() ? null : "Give it a name") } });
+  if (!name) return false;
+  await api("/api/accounts", { method: "POST", body: { name: name.trim() } });
+  location.href = "/settings.html#meta-form";
+  return true;
+}
+
+// Listening on the document from the start: the switcher is drawn before boot() finishes, and a
+// quick change must not slip through before a per-element listener would be attached.
+document.addEventListener("change", async (e) => {
+  const sel = e.target.closest("[data-acct]");
+  if (!sel) return;
+  try {
+    if (sel.value === "new") { if (!(await addAccount())) sel.value = sel.querySelector("[selected]")?.value || sel.options[0].value; return; }
+    await api("/api/accounts/switch", { method: "POST", body: { id: Number(sel.value) } });
+    location.reload();
+  } catch (err) { toast(err.message, "bad"); }
+});
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-acct-add]")) addAccount().catch((err) => toast(err.message, "bad"));
+});
+
 export async function boot({ page, admin = false }) {
   let me;
   try { me = await api("/api/auth/me"); } catch (e) { return null; }
@@ -215,6 +255,7 @@ export async function boot({ page, admin = false }) {
     return null;
   }
   if (admin && me.role !== "admin") { location.href = "/home.html"; return null; }
+  if (me.role === "client") document.documentElement.classList.add("read-only");
   const isAdmin = me.role === "admin";
   const main = [
     { id: "home", href: "/home.html", label: "Today", icon: "sun" },
@@ -239,6 +280,7 @@ export async function boot({ page, admin = false }) {
   const rail = document.querySelector(".rail");
   rail.innerHTML = `
     <a class="brand" href="/home.html"><img src="/img/favicon.svg" alt=""><span>Edge Bourne Ads</span></a>
+    ${accountSwitch(me, "rail")}
     <nav class="nav" aria-label="Main">
       ${[...main, ...extra].map(link).join("")}
       ${admin2.length ? `<div class="sep" role="separator"></div>${admin2.map(link).join("")}` : ""}
@@ -275,7 +317,7 @@ export async function boot({ page, admin = false }) {
   const sheet = document.createElement("dialog");
   sheet.className = "sheet";
   sheet.setAttribute("aria-label", "More");
-  sheet.innerHTML = `<div class="grab"></div><nav>
+  sheet.innerHTML = `<div class="grab"></div>${accountSwitch(me, "sheet")}<nav>
       ${[...extra, ...admin2].map((l) => `<a href="${l.href}" ${l.id === page ? 'aria-current="page"' : ""}>${icon(l.icon)}${l.label}${badge(l.badge)}</a>`).join("")}
       <a href="/account.html" ${page === "account" ? 'aria-current="page"' : ""}>${icon("user")}Your account</a>
       <div class="sep"></div>

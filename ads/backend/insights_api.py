@@ -49,7 +49,7 @@ def cached(key, ttl_seconds, fetch):
         return row["data"]
     data = fetch()
     db.execute("""INSERT INTO meta_cache (key, data, fetched_at) VALUES (%s, %s, now())
-                  ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, fetched_at = now()""", (key, json.dumps(data)))
+                  ON CONFLICT (account_id, key) DO UPDATE SET data = EXCLUDED.data, fetched_at = now()""", (key, json.dumps(data)))
     return data
 
 

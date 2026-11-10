@@ -18,7 +18,7 @@ def current_user():
     if not uid:
         return None
     user = db.query(
-        "SELECT id, email, name, role, must_change_password, notify_new_leads, notify_reminders, notify_alerts FROM users "
+        "SELECT id, email, name, role, account_id, must_change_password, notify_new_leads, notify_reminders, notify_alerts FROM users "
         "WHERE id = %s AND is_active",
         (uid,), one=True,
     )
@@ -49,8 +49,9 @@ def admin_required(f):
 
 
 def visible_campaign_ids(user):
-    """None means every campaign (admins); otherwise the assigned ones."""
-    if user["role"] == "admin":
+    """None means every campaign of the current account (admins, and clients, who see their whole
+    account read-only); otherwise the assigned ones. Row-level security limits it to one account."""
+    if user["role"] in ("admin", "client"):
         return None
     rows = db.query("SELECT campaign_id FROM campaign_members WHERE user_id = %s", (user["id"],))
     return [r["campaign_id"] for r in rows]
@@ -86,7 +87,12 @@ def logout():
 @bp.get("/me")
 @login_required
 def me():
-    return jsonify(_public(current_user()))
+    import account_ctx
+    import accounts_api
+    user = current_user()
+    accounts = accounts_api.active_accounts() if user["role"] == "admin" else []
+    return jsonify({**_public(user), "account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current())},
+                    "accounts": [{"id": a["id"], "name": a["name"]} for a in accounts]})
 
 
 @bp.post("/password")

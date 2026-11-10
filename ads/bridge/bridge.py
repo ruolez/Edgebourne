@@ -108,6 +108,7 @@ def run_task(cfg, token, task):
            "--allowedTools", ",".join(allowed_tools(skill_dir, cfg["workdir"], task.get("kind"))),
            "--max-turns", "200" if render else "80"]
     env = dict(os.environ)
+    env["DESK_ACCOUNT"] = str(task.get("account_id") or 1)  # the task's ad account (agency mode)
     claude_token = claude_oauth_token()
     if claude_token:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = claude_token
