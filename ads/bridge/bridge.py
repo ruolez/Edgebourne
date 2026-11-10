@@ -27,6 +27,7 @@ desk = importlib.machinery.SourceFileLoader("desk", os.path.join(HERE, "desk")).
 
 RUN_LIMIT_SECONDS = 25 * 60
 RENDER_LIMIT_SECONDS = 50 * 60
+ADVICE_LIMIT_SECONDS = 90 * 60  # an advice run may cut a 9:16 version of every running ad
 KEEPALIVE_SECONDS = 60
 LOG_DIR = os.path.expanduser("~/Library/Logs/ads-desk")
 
@@ -58,11 +59,11 @@ def allowed_tools(skill_dir, workdir, kind="question"):
     tools += files("reports/desk")
     for name in READ_TOOLS:
         tools += [f"mcp__meta-ads__{name}", f"mcp__claude_ai_Meta_Ads__{name}"]
-    if kind in ("polish", "render"):
+    if kind in ("polish", "render", "advice"):
         # Polish looks at video frames and contact sheets; render rebuilds the creative.
         tools += ["Bash(ffmpeg:*)", "Bash(ffprobe:*)", "Bash(mkdir:*)", "Bash(ls:*)"]
-    if kind == "render":
-        # "Make a new version": the ad-creative-render pipeline (Node + headless Chrome +
+    if kind in ("render", "advice"):
+        # "Make a new version" (and Meta's advice, e.g. a 9:16 cut for Reels): the ad-creative-render pipeline (Node + headless Chrome +
         # ffmpeg) inside the workspace's creatives folder. Still no Meta write tools: the
         # result goes back through `desk upload` and a proposal Eugene approves.
         tools += files("creatives") + ["Bash(node:*)", "Bash(cp:*)", "Bash(sips:*)", "Bash(shasum:*)", "Bash(cd:*)"]
@@ -102,11 +103,11 @@ def run_task(cfg, token, task):
     os.makedirs(LOG_DIR, exist_ok=True)
     out_path = os.path.join(LOG_DIR, f"task-{task_id}.log")
     skill_dir = os.path.expanduser("~/.claude/skills/ads-desk")
-    render = task.get("kind") == "render"
+    render = task.get("kind") in ("render", "advice")  # long runs: they render video on this Mac
     cmd = [cfg["claude"], "-p", f"/ads-desk run {task_id}",
            "--permission-mode", "dontAsk",
            "--allowedTools", ",".join(allowed_tools(skill_dir, cfg["workdir"], task.get("kind"))),
-           "--max-turns", "200" if render else "80"]
+           "--max-turns", "300" if task.get("kind") == "advice" else "200" if render else "80"]
     env = dict(os.environ)
     env["DESK_ACCOUNT"] = str(task.get("account_id") or 1)  # the task's ad account (agency mode)
     claude_token = claude_oauth_token()
@@ -132,7 +133,7 @@ def run_task(cfg, token, task):
 
     threading.Thread(target=keepalive, daemon=True).start()
     try:
-        proc.wait(timeout=RENDER_LIMIT_SECONDS if render else RUN_LIMIT_SECONDS)
+        proc.wait(timeout=ADVICE_LIMIT_SECONDS if task.get("kind") == "advice" else RENDER_LIMIT_SECONDS if render else RUN_LIMIT_SECONDS)
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGTERM)
         time.sleep(5)

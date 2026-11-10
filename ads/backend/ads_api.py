@@ -52,6 +52,8 @@ def proposal_action(p, entity):
     """What approving a proposal does on Meta: ("status", "PAUSED"), ("budget", cents)
     or None when it isn't something the dashboard can apply by itself."""
     payload = p.get("payload") or {}
+    if p["kind"] == "creative" and payload.get("update_ad") and (payload.get("vertical") or {}).get("video_id"):
+        return ("vertical", payload)
     if p["kind"] == "creative" and payload.get("template_ad_id") and payload.get("body") and payload.get("title"):
         return ("create", payload)
     if not entity or not p.get("entity_id"):
@@ -937,6 +939,11 @@ def proposal_plan(p):
     kind, value = action
     if kind == "create":
         return {"kind": "create"}
+    if kind == "vertical":
+        ad = db.query("SELECT name, effective_status FROM ads WHERE id = %s", (value["template_ad_id"],), one=True)
+        if not ad:
+            return {"kind": "unclear", "problem": "The ad this was made for isn't there any more."}
+        return {"kind": "vertical", "name": ad["name"], "live": ad["effective_status"] == "ACTIVE"}
     if kind == "unclear":
         return {"kind": "unclear", "problem": f"Claude's new budget isn't one clear amount (“{value or ''}”), so it "
                                               "can't be applied as is. Decline it, or change the budget yourself on the Ads page."}
@@ -1049,6 +1056,10 @@ def _approve(user, p, level, row, data):
     if kind == "create":
         new_id, err = create_ad_from(user, value, proposal_id)
         error = err[0] if err else None
+    elif kind == "vertical":
+        error = add_vertical(user, value["template_ad_id"], value["vertical"]["video_id"], proposal_id)
+        if error and error.startswith(NOT_SENT):
+            return api_error(error[len(NOT_SENT):], 409)
     elif kind == "status":
         error = apply_status(user, level, row, value, proposal_id)
     else:
@@ -1073,6 +1084,26 @@ def approve_experiment(user, p):
     return jsonify({"status": "applied", "applied": True, "experiment_id": exp_id})
 
 
+def vertical_preview_spec(user, data):
+    """The ad as Reels and Stories would show it after the update: its words and button with the 9:16
+    video (a single-video spec, which generatepreviews renders reliably)."""
+    ad = db.query("SELECT id, campaign_id, creative_id FROM ads WHERE id = %s", (data.get("template_ad_id"),), one=True)
+    if not ad or not can_touch(user, ad["campaign_id"]) or not ad["creative_id"]:
+        return None, ("The ad this was made for isn't there any more", 404)
+    vid = str((data.get("vertical") or {}).get("video_id") or "")
+    if not account_video(vid):
+        return None, ("Claude's 9:16 video isn't in this account's media library", 400)
+    story = (meta_client.get(ad["creative_id"], fields="object_story_spec").get("object_story_spec") or {})
+    if not story.get("video_data"):
+        return None, ("Only a single-video ad has this preview", 400)
+    thumb = _video_state(vid)["thumbnail_url"]
+    video = {**story["video_data"], "video_id": vid}
+    video.pop("image_hash", None)
+    if thumb:
+        video["image_url"] = thumb
+    return {**story, "video_data": video}, None
+
+
 @bp.get("/proposals/<int:proposal_id>/preview")
 @login_required
 def proposal_preview(proposal_id):
@@ -1085,11 +1116,15 @@ def proposal_preview(proposal_id):
         return api_error("Unknown preview format", 400)
     data = {**p["payload"], "name": p["payload"].get("name") or p["title"]}
     try:
-        ctx, err = prepare_creative(current_user(), data)
+        if data.get("update_ad"):
+            spec, err = vertical_preview_spec(current_user(), data)
+        else:
+            ctx, err = prepare_creative(current_user(), data)
+            spec = ctx and ctx["spec"]
         if err:
             return api_error(err[0], err[1])
         body = meta_client.get(f"act_{_account()}/generatepreviews", ad_format=fmt,
-                               creative=json.dumps({"object_story_spec": ctx["spec"]}))
+                               creative=json.dumps({"object_story_spec": spec}))
     except meta_client.MetaError as exc:
         return api_error(f"Meta couldn't render this preview: {exc}", 400)
     first = (body.get("data") or [{}])[0]
@@ -1121,6 +1156,57 @@ def sync_now():
     except meta_client.MetaError as exc:
         return api_error(str(exc), 400)
     return jsonify(out)
+
+
+# ---------------------------------------------------------------- 9:16 for Reels (Meta's advice, Claude's fix)
+
+NOT_SENT = "\x00"  # error prefix: refused before anything reached Meta, so the proposal stays waiting
+
+
+def add_vertical(user, ad_id, video_id, proposal_id=None):
+    """Put a 9:16 video on an ad for Reels and Stories; feeds keep its 4:5 video, the words and the
+    lead form stay. A new creative is made and read back first, so a copy Meta stored wrongly never
+    reaches the running ad. Returns None, or what went wrong."""
+    import placements
+    ad = db.query("SELECT id, name, campaign_id, creative_id FROM ads WHERE id = %s", (ad_id,), one=True)
+    if not ad or not ad["creative_id"]:
+        return NOT_SENT + "That ad has no creative Meta can show yet."
+    row = {"id": ad["id"], "name": ad["name"], "campaign_id": ad["campaign_id"]}
+    video_id = str(video_id)
+    try:
+        cr = meta_client.get(ad["creative_id"], fields="object_story_spec,asset_feed_spec,degrees_of_freedom_spec")
+        if placements.has_placements(cr):
+            return NOT_SENT + "This ad already shows different media per placement. Change it in Ads Manager."
+        if not account_video(video_id):
+            return NOT_SENT + "Claude's 9:16 video isn't in this account's media library."
+        state = _video_state(video_id)
+        if not state["ready"]:
+            return NOT_SENT + "Meta is still processing the 9:16 video. Try again in a minute."
+        story, feed = placements.build(cr.get("object_story_spec") or {}, {"video_id": video_id, "thumbnail_url": state["thumbnail_url"]})
+    except ValueError as exc:
+        return NOT_SENT + str(exc)
+    except meta_client.MetaError as exc:
+        return NOT_SENT + f"Couldn't read the ad from Meta, so nothing was changed: {exc}"
+    data = {"name": f"{ad['name']} · 4:5 feeds + 9:16 Reels"[:200], "object_story_spec": json.dumps(story),
+            "asset_feed_spec": json.dumps(feed)}
+    if cr.get("degrees_of_freedom_spec"):
+        data["degrees_of_freedom_spec"] = json.dumps(cr["degrees_of_freedom_spec"])
+    try:
+        new = meta_client.post(f"act_{_account()}/adcreatives", data=data)
+        made = meta_client.get(new["id"], fields="object_story_spec,asset_feed_spec")
+        problem = placements.readback_problem(cr.get("object_story_spec"), made, video_id)
+        if problem:
+            record(user, "ad", row, "placement_media", ad["creative_id"], f"creative {new['id']} not used", False, problem, proposal_id)
+            return f"{problem} The running ad wasn't changed."
+        meta_client.post(ad["id"], data={"creative": json.dumps({"creative_id": new["id"]})})
+    except meta_client.MetaError as exc:
+        record(user, "ad", row, "placement_media", ad["creative_id"], f"9:16 video {video_id}", False, str(exc), proposal_id)
+        return f"{exc}. The running ad wasn't changed."
+    db.execute("UPDATE ads SET creative_id = %s WHERE id = %s", (new["id"], ad["id"]))
+    record(user, "ad", row, "placement_media", ad["creative_id"],
+           f"9:16 video {video_id} in Reels and Stories (creative {new['id']})", True, proposal_id=proposal_id)
+    resync_later()
+    return None
 
 
 # ---------------------------------------------------------------- Meta's automatic changes (roadmap 4.4)

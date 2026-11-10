@@ -325,14 +325,19 @@ def agent_required(f):
     return wrapper
 
 
+ADVICE_BRIDGE = (1, 7)  # desk 1.7 lets advice runs render (9:16 for Reels); older ones would only read
+
+
 def claim_next():
-    """The oldest queued task of any account (the Mac works for every account, one task at a time)."""
+    """The oldest queued task of any account (the Mac works for every account, one task at a time).
+    An older Mac helper leaves advice runs waiting rather than run them without their tools."""
     import account_ctx
+    skip = "" if version_tuple(settings_store.get("bridge_version") or "0") >= ADVICE_BRIDGE else " AND kind <> 'advice'"
     with account_ctx.all_accounts():
         return db.execute(
-            """UPDATE desk_tasks SET status = 'claimed', claimed_at = now(), updated_at = now(),
+            f"""UPDATE desk_tasks SET status = 'claimed', claimed_at = now(), updated_at = now(),
                       progress = 'Picked up by the Mac'
-               WHERE id = (SELECT id FROM desk_tasks WHERE status = 'queued'
+               WHERE id = (SELECT id FROM desk_tasks WHERE status = 'queued'{skip}
                            ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED)
                RETURNING id, account_id""",
             returning=True,
@@ -514,6 +519,14 @@ def clean_payload(raw):
     def text(key, n):
         v = raw.get(key)
         return str(v).strip()[:n] if v not in (None, "") else None
+    vertical = raw.get("vertical") if isinstance(raw.get("vertical"), dict) else {}
+    if "update_ad" in raw or vertical:
+        # Meta's Reels advice: put a 9:16 video on the running ad itself (same words, same form).
+        vid = str(vertical.get("video_id") or "")
+        if raw.get("update_ad") is not True or not vid.isdigit() or not text("template_ad_id", 32):
+            return None
+        return {"template_ad_id": text("template_ad_id", 32), "update_ad": True, "vertical": {"video_id": vid[:32]},
+                "name": text("name", 200)}
     media = raw.get("media") if isinstance(raw.get("media"), dict) else {"kind": "same"}
     kind = media.get("kind") if media.get("kind") in ("same", "image", "video") else "same"
     clean_media = {"kind": kind}

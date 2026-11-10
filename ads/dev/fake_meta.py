@@ -233,6 +233,7 @@ ADVICE = {"score": 87, "recs": [
      "recommendation_content": {"lift_estimate": "Up to 18% more leads", "body": "This campaign gets leads below your average cost.",
                                 "opportunity_score_lift": "9"}, "url": "https://adsmanager.facebook.com/adsmanager/manage/campaigns"}]}
 REFUSE_NEXT_AD = []
+FAKE_FLAGS = {}
 PLACES = [{"key": "2421696", "name": "Riverside", "type": "city", "region": "California", "country_code": "US"},
           {"key": "2420379", "name": "Los Angeles", "type": "city", "region": "California", "country_code": "US"},
           {"key": "2421830", "name": "San Diego", "type": "city", "region": "California", "country_code": "US"},
@@ -359,6 +360,17 @@ def fake_learning():
 def fake_refuse_next_ad():
     REFUSE_NEXT_AD.append(1)
     return jsonify({"ok": True})
+
+
+@app.route("/fake/_drop_form")
+def fake_drop_form():
+    FAKE_FLAGS["drop_form"] = request.args.get("on", "1") == "1"
+    return jsonify({"ok": True})
+
+
+@app.route("/fake/_creative/<cid>")
+def fake_creative(cid):
+    return jsonify(CREATIVES.get(cid) or {})
 
 
 @app.route("/fake/_campaigns")
@@ -569,6 +581,23 @@ def graph(path):
             return jsonify({"success": up["got"] == up["size"]})
         if parts == [act, "adcreatives"]:
             spec = json.loads(a["object_story_spec"])
+            feed = json.loads(a.get("asset_feed_spec") or "null")
+            if feed:
+                # Placement asset customization: checked the way the console relies on (two labelled
+                # videos, rules pointing at them); FAKE_DROP_FORM simulates Meta losing the form.
+                labels = {l["name"] for v in feed.get("videos") or [] for l in v.get("adlabels") or []}
+                if len(feed.get("videos") or []) < 2 or any(r["video_label"]["name"] not in labels for r in feed.get("asset_customization_rules") or []):
+                    return jsonify({"error": {"message": "Invalid asset_feed_spec (fake)", "code": 100}}), 400
+                if FAKE_FLAGS.get("drop_form"):
+                    feed = {**feed, "call_to_actions": [{"type": c["type"]} for c in feed.get("call_to_actions") or []]}
+                cid = str(next(ids))
+                first = feed["videos"][0]
+                CREATIVES[cid] = {"id": cid, "object_type": "VIDEO", "title": feed["titles"][0]["text"], "body": feed["bodies"][0]["text"],
+                                  "call_to_action_type": (feed.get("call_to_action_types") or [None])[0], "video_id": first["video_id"],
+                                  "image_url": None, "thumbnail_url": PIC, "object_story_spec": spec, "asset_feed_spec": feed,
+                                  "degrees_of_freedom_spec": json.loads(a.get("degrees_of_freedom_spec") or "{}"),
+                                  "effective_object_story_id": f"{PAGE}_{next(ids)}"}
+                return jsonify({"id": cid})
             media = spec.get("video_data") or spec.get("link_data")
             cid = str(next(ids))
             CREATIVES[cid] = {"id": cid, "object_type": "VIDEO" if "video_data" in spec else "SHARE",

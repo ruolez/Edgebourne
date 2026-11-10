@@ -51,6 +51,11 @@ class CreativeProposalTests(unittest.TestCase):
         self.assertEqual(ads_api.proposal_action({"kind": "creative", "payload": payload, "entity_id": None}, None),
                          ("create", payload))
 
+    def test_update_payload_becomes_a_vertical_action_on_the_ad(self):
+        payload = {"template_ad_id": "a1", "update_ad": True, "vertical": {"video_id": "77"}}
+        self.assertEqual(ads_api.proposal_action({"kind": "creative", "payload": payload, "entity_id": None}, AD),
+                         ("vertical", payload))
+
     def test_creative_without_payload_is_not_applied(self):
         self.assertIsNone(ads_api.proposal_action({"kind": "creative", "payload": None, "entity_id": "a1"}, AD))
 

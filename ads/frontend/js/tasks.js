@@ -4,7 +4,7 @@ import { confirmDialog, esc, toast, when } from "./ui.js";
 import { renderMarkdown } from "./markdown.js";
 import { money } from "./format.js";
 
-export const KIND_LABELS = { question: "Question", review: "Review results", research: "Research competitors", creative: "New ad ideas", polish: "Polish", render: "New version" };
+export const KIND_LABELS = { question: "Question", review: "Review results", research: "Research competitors", creative: "New ad ideas", polish: "Polish", render: "New version", advice: "Meta's advice" };
 const STATUS = {
   queued: ["warn", "Waiting for your Mac"], claimed: ["claude", "Claude picked it up"], running: ["claude", "Claude is working"],
   done: ["ok", "Done"], failed: ["bad", "Didn't finish"], cancelled: ["", "Cancelled"],
@@ -43,6 +43,16 @@ export function scorecardHtml(card) {
 function creativeProposal(p) {
   const pl = p.payload || {};
   const decided = DECIDED[p.status];
+  if (pl.update_ad) {
+    const change = "Reels and Stories show Claude's 9:16 video, feeds keep the 4:5 one. Same words and form.";
+    return `<article class="proposal variant" data-proposal="${p.id}" data-title="${esc(p.title)}" data-change="${esc(change)}">
+      <header><span class="tag">9:16 for Reels</span><b>${esc(p.title)}</b></header>
+      <p class="muted small flush">${esc(change)}</p>
+      ${p.rationale ? `<p class="muted small flush">${esc(p.rationale)}</p>` : ""}
+      ${p.status === "pending" ? `<div class="row"><button class="btn btn-claude btn-small" type="button" data-approve="${p.id}">Update the ad</button><button class="btn btn-small" type="button" data-decline="${p.id}">Decline</button></div>`
+        : `<p class="flush"><span class="pill ${decided ? decided[0] : ""}">${esc(decided ? decided[1] : p.status)}</span></p>`}
+    </article>`;
+  }
   const foot = p.status === "pending"
     ? `<div class="row"><button class="btn btn-claude btn-small" type="button" data-approve="${p.id}">Create this ad (off)</button>
        <a class="btn btn-small" href="/new-ad.html?proposal=${p.id}">Edit first</a><button class="btn btn-small" type="button" data-decline="${p.id}">Decline</button></div>`
@@ -147,6 +157,16 @@ function approvalDialog(card, plan) {
         body: `<p><b>${esc(plan.name)}</b> starts delivering${daily ? ` and spends up to <b>${money(daily, { exact: true })} a day</b> from ${esc(plan.spend.where)}` : ""}.</p>`,
       },
       body: daily ? { confirm_daily_cents: daily } : {},
+    };
+  }
+  if (plan.kind === "vertical") {
+    return {
+      dialog: {
+        title, claude: true, confirm: "Update the ad",
+        body: `<p><b>${esc(plan.name)}</b> is updated on Meta: feeds keep its 4:5 video, Reels and Stories show Claude's 9:16 one. Same words, same form.</p>
+          <p class="muted small">Meta reviews the ad again before the new version runs${plan.live ? " (usually minutes, sometimes up to a day)" : ""}, and a creative change can restart learning. The console checks Meta's copy first; if anything is off, the ad isn't touched.</p>`,
+      },
+      body: {},
     };
   }
   const words = { status: "It's switched off on Meta right away. Nothing is deleted.", create: "The new ad is created switched off; nothing spends until you turn it on.",

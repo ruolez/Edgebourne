@@ -21,7 +21,7 @@ class ReadTests(unittest.TestCase):
         r = ad.normalize(LIVE)
         self.assertEqual((r["type"], r["label"], r["points"], r["can_apply"], r["note"]),
                          ("REELS_PC_RECOMMENDATION", "Add a vertical 9:16 video for Reels", 4, False,
-                          "Needs a new 9:16 video with sound; make one, then add it to the ad."))
+                          "Needs a 9:16 video with sound for each ad."))
 
     def test_unknown_types_are_humanized_and_a_version_suffix_dropped(self):
         self.assertEqual(ad.normalize({"type": "something_new_v2"})["label"], "Something new")
@@ -47,3 +47,26 @@ class RankTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClaudeFixTests(unittest.TestCase):
+    def test_advice_the_console_cannot_apply_goes_to_claude_with_a_plan(self):
+        r = ad.normalize(LIVE)
+        self.assertEqual((r["can_fix"], r["key"], r["fix"]),
+                         (True, "REELS_PC_RECOMMENDATION:120252672227950312", ad.CLAUDE_FIX["REELS_PC_RECOMMENDATION"]))
+
+    def test_advice_applied_here_has_no_claude_button(self):
+        self.assertEqual(ad.normalize(SCALE, {"c1": 4000})["can_fix"], False)
+
+    def test_unknown_advice_gets_the_general_plan(self):
+        self.assertEqual(ad.normalize({"type": "something_new"})["fix"], ad.DEFAULT_FIX)
+
+    def test_the_key_ignores_the_version_suffix_and_object_order(self):
+        a = ad.fix_key({"type": "reels_pc_recommendation_v2", "object_ids": ["2", "1"]})
+        self.assertEqual(a, ad.fix_key({"type": "REELS_PC_RECOMMENDATION", "object_ids": ["1", "2"]}))
+
+    def test_the_task_prompt_names_the_advice_its_points_and_the_plan(self):
+        r = ad.normalize(LIVE)
+        self.assertEqual(ad.fix_prompt(r), "Meta's advice: Add a vertical 9:16 video for Reels (+4 points). "
+                         "You could get 8% lower cost per result by optimizing your Reels format\n"
+                         f"Fix it: {ad.CLAUDE_FIX['REELS_PC_RECOMMENDATION']}")

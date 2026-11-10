@@ -135,6 +135,7 @@ function changeWords(c, LEVEL) {
     case "comment_show": return ["", "made", `<b>Showed again</b> a comment on “${name}”`];
     case "recommendation": return ["", "spark", `<b>Applied Meta's suggestion</b> “${short(c.new_value)}”`];
     case "recommendation_check": return ["", "spark", `<b>Meta set a different amount</b> than shown: ${short(c.error)}`];
+    case "placement_media": return ["", "spark", c.ok === false ? `<b>9:16 for Reels not added</b> to “${name}”: ${short(c.error)}` : `<b>Added a 9:16 video for Reels</b> to “${name}”`];
     case "enhancement": return ["", "spark", `<b>Changed Meta's automatic changes</b> on “${name}”: ${short(String(c.new_value).replace(/ \(creative .*\)$/, ""))}`];
     case "end": return ["", "tests", `<b>Ended the A/B test</b> “${name}”`];
     case "upload": return ["", "image", `<b>Uploaded</b> ${short(c.new_value)} to the media library`];
@@ -173,6 +174,7 @@ function adviceHtml(a) {
           ${r.lift ? `<p class="flush">${esc(r.lift)}</p>` : ""}${step}
           ${r.note ? `<p class="flush muted small">${esc(r.note)}</p>` : ""}</div>
         <div class="advice-do">${r.can_apply ? `<button type="button" class="btn btn-small" data-apply="${esc(r.signature)}" data-label="${esc(r.label)}" data-big="${b && b.big ? "1" : ""}" data-step="${b && b.from && b.to ? `${money(b.from, { exact: true })} → ${money(b.to, { exact: true })} a day` : ""}" data-to="${b && b.to ? b.to : ""}" data-does="${esc(r.applies || "")}">Apply</button>` : ""}
+          ${r.can_fix ? fixButton(r) : ""}
           ${r.url ? `<a class="btn btn-quiet btn-small" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Ads Manager ${icon("external")}</a>` : ""}</div>
       </li>`;
     }).join("")}</ul>` : '<p class="muted flush">No suggestions from Meta right now.</p>';
@@ -189,6 +191,18 @@ function adviceHtml(a) {
     ${bench}`;
 }
 
+// Advice the console can't apply goes to Claude on the Mac; its run and proposals show here.
+function fixButton(r) {
+  const run = r.fix_run;
+  if (run && ["queued", "claimed", "running"].includes(run.status)) {
+    return `<a class="btn btn-quiet btn-small" href="/desk.html#runs">${icon("spark")}${run.status === "queued" ? "Waiting for your Mac" : "Claude is on it"}</a>`;
+  }
+  if (run && run.waiting) {
+    return `<a class="btn btn-claude btn-small" href="/desk.html#waiting">${icon("spark")}${run.waiting} to approve</a>`;
+  }
+  return `<button type="button" class="btn btn-claude-outline btn-small" data-fix="${esc(r.key)}" data-label="${esc(r.label)}" data-plan="${esc(r.fix)}">${icon("spark")}${run ? "Fix again with Claude" : "Fix with Claude"}</button>`;
+}
+
 async function loadAdvice(fresh = false) {
   const box = document.getElementById("advice");
   if (!box) return;
@@ -198,6 +212,21 @@ async function loadAdvice(fresh = false) {
 
 document.addEventListener("click", async (e) => {
   if (e.target.closest("#advice-fresh")) { loadAdvice(true); return; }
+  const fix = e.target.closest("[data-fix]");
+  if (fix) {
+    const yes = await confirmDialog({
+      title: `Fix “${fix.dataset.label}” with Claude?`, claude: true, confirm: "Send to Claude",
+      body: `<p>${esc(fix.dataset.plan)}</p><p class="muted">It runs on your Mac and can take a while. Nothing changes on Meta until you approve a change on the Claude page.</p>`,
+    });
+    if (!yes) return;
+    fix.disabled = true;
+    try {
+      const r = await api("/api/advice/fix", { method: "POST", body: { key: fix.dataset.fix } });
+      toast(r.already ? "Claude is already on it" : "Sent to Claude. Follow it on the Claude page.");
+      loadAdvice();
+    } catch (err) { toast(err.message, "bad"); fix.disabled = false; }
+    return;
+  }
   const b = e.target.closest("[data-apply]");
   if (!b) return;
   const big = !!b.dataset.big;

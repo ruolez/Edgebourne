@@ -42,6 +42,19 @@ class CleanPayloadTests(unittest.TestCase):
     def test_payload_without_words_is_dropped(self):
         self.assertIsNone(desk_api.clean_payload({"template_ad_id": "123", "title": "x"}))
 
+    def test_update_payload_needs_no_words_only_the_ad_and_its_vertical_video(self):
+        raw = {"template_ad_id": "120252690325970312", "update_ad": True, "vertical": {"video_id": "2015174525716803", "x": 1},
+               "name": "N1 · 9:16 for Reels", "title": "ignored", "media": {"kind": "video", "video_id": "1"}}
+        self.assertEqual(desk_api.clean_payload(raw), {"template_ad_id": "120252690325970312", "update_ad": True,
+                                                       "vertical": {"video_id": "2015174525716803"}, "name": "N1 · 9:16 for Reels"})
+
+    def test_update_payload_with_a_bad_video_id_is_dropped(self):
+        self.assertEqual([desk_api.clean_payload({"template_ad_id": "1", "update_ad": True, "vertical": v})
+                          for v in ({"video_id": "abc"}, {}, "2015")], [None, None, None])
+
+    def test_update_flag_must_be_a_real_true(self):
+        self.assertIsNone(desk_api.clean_payload({"template_ad_id": "1", "update_ad": "yes", "vertical": {"video_id": "2"}}))
+
     def test_payload_only_kept_on_creative_proposals(self):
         self.assertIsNone(desk_api.clean_proposal({"kind": "budget", "title": "x", "payload": dict(self.BASE)})["payload"])
 

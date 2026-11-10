@@ -47,10 +47,62 @@ def budgets():
     return out
 
 
+def fix_runs():
+    """The latest "Fix with Claude" run per piece of advice, with its proposals still waiting."""
+    rows = db.query("""SELECT t.id, t.status, t.options->>'advice_key' AS k,
+                              (SELECT COUNT(*) FROM desk_proposals p WHERE p.task_id = t.id AND p.status = 'pending') AS waiting
+                       FROM desk_tasks t WHERE t.kind = 'advice' ORDER BY t.id DESC LIMIT 100""")
+    out = {}
+    for r in rows:
+        out.setdefault(r["k"], {"id": r["id"], "status": r["status"], "waiting": r["waiting"]})
+    return out
+
+
 def view(data):
+    items = av.ranked(data.get("items") or [], budgets())
+    runs = fix_runs()
+    for r in items:
+        r["fix_run"] = runs.get(r["key"])
     return {"score": data.get("score"), "previous_score": data.get("previous_score"), "fetched_at": data.get("fetched_at"),
-            "items": av.ranked(data.get("items") or [], budgets()),
-            "benchmarks": json.loads(settings_store.get("meta_benchmarks") or "null")}
+            "items": items, "benchmarks": json.loads(settings_store.get("meta_benchmarks") or "null")}
+
+
+def ads_under(object_ids):
+    """The running ads an advice names (it may name ads, ad sets or campaigns)."""
+    return db.query("""SELECT id, name, adset_id, campaign_id, effective_status FROM ads
+                       WHERE (id = ANY(%s) OR adset_id = ANY(%s) OR campaign_id = ANY(%s))
+                         AND effective_status IN ('ACTIVE', 'PENDING_REVIEW', 'IN_PROCESS', 'WITH_ISSUES')
+                       ORDER BY name""", (object_ids, object_ids, object_ids))
+
+
+@bp.post("/advice/fix")
+@admin_required
+def fix():
+    """Hand one piece of advice to Claude on the Mac (a Desk run, kind 'advice'). Claude does the
+    work and sends proposals back; nothing changes on Meta until one is approved."""
+    key = str((request.get_json(silent=True) or {}).get("key") or "")
+    data = json.loads(settings_store.get("meta_advice") or "{}")
+    rec = next((r for r in view(data)["items"] if r["key"] == key), None) if data else None
+    if not rec:
+        return api_error("Meta has changed this suggestion since you looked. Check the list again.", 409)
+    if not rec["can_fix"]:
+        return api_error("This one is applied here with Apply.", 409)
+    run = rec["fix_run"]
+    if run and run["status"] in ("queued", "claimed", "running"):
+        return jsonify({"task_id": run["id"], "already": True})
+    ads = ads_under(rec["object_ids"])
+    campaign = next((a["campaign_id"] for a in ads), None)
+    if not campaign and rec["object_ids"]:
+        found = db.query("SELECT campaign_id FROM adsets WHERE id = ANY(%s) UNION SELECT id FROM campaigns WHERE id = ANY(%s) LIMIT 1",
+                         (rec["object_ids"], rec["object_ids"]), one=True)
+        campaign = found and found["campaign_id"]
+    advice = {k: rec[k] for k in ("type", "label", "body", "lift", "points", "object_ids", "url", "fix")}
+    options = {"advice_key": key, "advice": advice,
+               "ads": [{"id": a["id"], "name": a["name"], "adset_id": a["adset_id"]} for a in ads]}
+    task = db.execute("INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options) VALUES ('advice', %s, %s, %s, %s) RETURNING id",
+                      (av.fix_prompt(rec), campaign, current_user()["id"], json.dumps(options)), returning=True)
+    log_activity("desk.task_created", subject=str(task["id"]), details={"kind": "advice", "advice": rec["type"]})
+    return jsonify({"task_id": task["id"]}), 201
 
 
 @bp.get("/advice")

@@ -931,7 +931,7 @@ print(r['id'])"`).trim();
   check("Today shows Meta's Opportunity Score and its suggestions, most points first",
     /87\/100/.test(await page.textContent('#advice')) && (await page.$$eval('.advice-list .ttl b', (b) => b.map((x) => x.textContent))).join('|') === "Spend more on a campaign that's doing well|Add a vertical 9:16 video for Reels");
   check('a suggestion that needs new media points to Ads Manager instead of an Apply button',
-    (await page.locator('.advice-list li').nth(1).locator('[data-apply]').count()) === 0 && /Needs a new 9:16 video/.test(await page.textContent('.advice-list li:nth-child(2)')));
+    (await page.locator('.advice-list li').nth(1).locator('[data-apply]').count()) === 0 && /Needs a 9:16 video with sound/.test(await page.textContent('.advice-list li:nth-child(2)')));
   check('a budget suggestion shows the step in dollars and flags more than +20%', /\$20\.00 → \$26\.00 a day \(\+30%\): more than \+20%/.test(await page.textContent('.advice-list li:first-child')));
   const budgetBefore = Object.values(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/v24.0/120252638288040312?access_token=x').read().decode())"`).match(/"daily_budget":"?(\d+)/).slice(1))[0];
   await page.click('[data-apply]');
@@ -949,6 +949,67 @@ print(r['id'])"`).trim();
   await page.waitForSelector('#advice .bench');
   check("the Monday summary's benchmarks show on Today", bmk.body.saved === 2 && /Cost per lead\s*\$4\.79\s*\$18–\$42/.test(await page.textContent('#advice .bench')) && /From Claude's Monday summary, 2026-11-09/.test(await page.textContent('#advice')));
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE campaigns SET daily_budget_cents = 2000 WHERE id = '120252638288040312'\\")"`);
+
+  // Fix with Claude: Meta's Reels advice goes to the Mac as a Desk run; its 9:16 proposals update the running ads.
+  const reels = page.locator('.advice-list li', { hasText: 'vertical 9:16' });
+  check('advice the console cannot apply offers "Fix with Claude"', (await reels.locator('[data-fix]').count()) === 1 && (await reels.locator('[data-apply]').count()) === 0);
+  await reels.locator('[data-fix]').click();
+  await page.waitForSelector('dialog.confirm');
+  check('the dialog says what Claude will do and that nothing changes until approved',
+    /9:16 version with sound of each running ad/.test(await page.textContent('dialog.confirm')) && /Nothing changes on Meta until you approve/.test(await page.textContent('dialog.confirm')));
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => /Waiting for your Mac/.test(document.querySelector('.advice-list')?.textContent || ''));
+  const fixTask = sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;r=db.query(\\"SELECT id FROM desk_tasks WHERE kind='advice' ORDER BY id DESC LIMIT 1\\", one=True);print(r['id'])"`).trim();
+  const fixAgain = await page.evaluate(async (key) => (await fetch('/api/advice/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) })).json(),
+    'REELS_PC_RECOMMENDATION:120252672227950312');
+  check('asking twice while it waits reuses the same run', String(fixAgain.task_id) === fixTask && fixAgain.already === true, JSON.stringify(fixAgain));
+  const mac = JSON.parse(sh(`docker cp dev/qa_agent_advice.py edgebourne-ads-backend:/app/qa_agent_advice.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_agent_advice.py ${fixTask}; docker exec edgebourne-ads-backend rm -f /app/qa_agent_advice.py`).trim().split('\n').pop());
+  check("the Mac gets Meta's advice and the ad set's running ads", mac.advice === 'REELS_PC_RECOMMENDATION' && mac.ads.length === 5 && mac.task.campaign_id === '120252638288040312'
+    && /^Meta's advice: Add a vertical 9:16 video for Reels \(\+4 points\)/.test(mac.task.prompt) && mac.added.added === 2, JSON.stringify(mac).slice(0, 200));
+  await page.reload();
+  await page.waitForSelector('.advice-list');
+  check('Today shows the fixes waiting for a yes', /2 to approve/.test(await page.locator('.advice-list li', { hasText: 'vertical 9:16' }).textContent()));
+  await page.goto(BASE + '/desk.html#waiting');
+  const vcard = page.locator('#view .decision', { hasText: `9:16 for Reels: N3` });
+  await vcard.waitFor();
+  check('the decision says the ad is updated, not copied, and previews it as Reels',
+    (await vcard.locator('[data-approve]').textContent()).trim() === 'Update the ad' && /updated, not copied/.test(await vcard.textContent())
+    && (await vcard.locator('[data-preview]').getAttribute('data-format')) === 'INSTAGRAM_REELS');
+  await vcard.locator('[data-preview] iframe').waitFor({ timeout: 15000 });
+  check("Meta's Reels preview of the 9:16 version loads", /INSTAGRAM_REELS/.test(await vcard.locator('[data-preview] iframe').getAttribute('src')));
+  const [n3id, n3vid] = mac.picks[0];
+  const fakeAd = (id) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/v24.0/${id}?access_token=x').read().decode())"`));
+  const fakeCreative = (cid) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/fake/_creative/${cid}').read().decode())"`));
+  const n3before = fakeAd(n3id).creative_id;
+  await vcard.locator('[data-approve]').click();
+  await page.waitForSelector('dialog.confirm');
+  check('approving explains the update and the new review', /is updated on Meta/.test(await page.textContent('dialog.confirm')) && /reviews the ad again/.test(await page.textContent('dialog.confirm'))
+    && (await page.textContent('dialog.confirm #cd-ok')).trim() === 'Update the ad');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => !document.querySelector('#view .decision h3') || ![...document.querySelectorAll('#view .decision h3')].some((h) => /N3/.test(h.textContent)));
+  const n3after = fakeAd(n3id).creative_id;
+  const n3made = fakeCreative(n3after);
+  const feed = n3made.asset_feed_spec || {};
+  check('the running ad now carries 4:5 for feeds and 9:16 for Reels and Stories, same form', n3after !== n3before
+    && feed.videos.map((v) => v.video_id).includes(n3vid) && feed.asset_customization_rules[0].customization_spec.instagram_positions.join() === 'story,reels'
+    && JSON.stringify(feed.call_to_actions).includes('lead_gen_form_id') && feed.titles[0].text === 'Stop typing the same thing twice', `${n3before} → ${n3after}`);
+  check('the update is logged as a change', sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;r=db.query('SELECT action, ok, entity_id FROM meta_changes ORDER BY id DESC LIMIT 1', one=True);print(r['action'], r['ok'], r['entity_id'])"`).trim() === `placement_media True ${n3id}`);
+  // A copy Meta stores without the lead form never reaches the running ad.
+  sh('docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(\'http://localhost:5001/fake/_drop_form?on=1\')"');
+  const [n4id] = mac.picks[1];
+  const n4before = fakeAd(n4id).creative_id;
+  const n4card = page.locator('#view .decision', { hasText: '9:16 for Reels: N4' });
+  const lostFormSeen = errors.length;
+  await n4card.locator('[data-approve]').click();
+  await page.waitForSelector('dialog.confirm');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => /lost the lead form/.test(document.body.textContent));
+  errors.splice(lostFormSeen); // the refused update logs an expected 400
+  check('a creative that lost the lead form is refused and the ad is left alone', fakeAd(n4id).creative_id === n4before);
+  sh('docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(\'http://localhost:5001/fake/_drop_form?on=0\')"');
+  await page.goto(BASE + '/home.html');
+  await page.waitForSelector('.advice-list');
+  check('after the run, Today offers to fix it again', /Fix again with Claude/.test(await page.locator('.advice-list li', { hasText: 'vertical 9:16' }).textContent()));
 
   // Comments: reply as the Page and hide / show, never delete; only comments on the ad's own post.
   await page.goto(BASE + '/ad.html?id=120252672229400312#tab=comments');

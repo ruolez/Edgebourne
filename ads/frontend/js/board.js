@@ -11,7 +11,7 @@ const STATE_PILL = {
   waiting: "claude", working: "claude", live: "ok", off: "", review: "warn", archived: "", deleted: "",
   applied: "ok", approved: "ok", done: "ok", declined: "", expired: "", failed: "bad",
 };
-const RUN_WORDS = { polish: "Polish", render: "New version", question: "Question", review: "Results review", research: "Competitor research", creative: "New ad ideas" };
+const RUN_WORDS = { advice: "Meta's advice", polish: "Polish", render: "New version", question: "Question", review: "Results review", research: "Competitor research", creative: "New ad ideas" };
 const ACTIVE = new Set(["queued", "claimed", "running"]);
 
 export function index(data) {
@@ -66,6 +66,12 @@ function firstLine(text) {
 function changeList(p, ix) {
   const pl = p.payload || {};
   const from = ix.ads[p.about_ad] || {};
+  if (p.kind === "creative" && pl.update_ad) {
+    return `<dl class="facts changes"><div><dt>Ad</dt><dd>${esc(from.name || pl.template_ad_id)} <span class="muted">(updated, not copied)</span></dd></div>
+      <div><dt>Reels, Stories</dt><dd><ins>New 9:16 video Claude made</ins></dd></div>
+      <div><dt>Feeds</dt><dd class="muted">Same 4:5 video as now</dd></div>
+      <div><dt>Words, button, form</dt><dd class="muted">Same as now</dd></div></dl>`;
+  }
   if (p.kind === "creative") {
     const rows = [];
     const same = (a, b) => String(a || "").trim() === String(b || "").trim();
@@ -119,6 +125,10 @@ function actions(p, ix) {
     return `<div class="row decide"><button class="btn btn-claude" type="button" data-approve="${p.id}">Track this test</button>
       <button class="btn btn-quiet" type="button" data-decline="${p.id}">Decline</button></div>`;
   }
+  if (p.kind === "creative" && p.payload && p.payload.update_ad) {
+    return `<div class="row decide"><button class="btn btn-claude" type="button" data-approve="${p.id}">Update the ad</button>
+      <button class="btn btn-quiet" type="button" data-decline="${p.id}">Decline</button></div>`;
+  }
   if (p.kind === "creative" && p.payload) {
     return `<div class="row decide"><button class="btn btn-claude" type="button" data-approve="${p.id}">Create this ad (off)</button>
       <a class="btn" href="/new-ad.html?proposal=${p.id}">Edit first</a>
@@ -134,10 +144,11 @@ function actions(p, ix) {
     <button class="btn btn-quiet" type="button" data-decline="${p.id}">Decline</button></div>`;
 }
 
-function changeSummary(p) {
+function changeSummary(p, ix) {
   const pl = p.payload || {};
   if (p.kind === "tags") return "Labels the ad's idea so Results can compare ideas. Nothing changes on Meta.";
   if (p.kind === "experiment") return `Tracks “${pl.name || p.title}” on the Tests page. Nothing changes on Meta.`;
+  if (p.kind === "creative" && pl.update_ad) return `Updates “${p.entity_name || (ix && ix.ads && ix.ads[pl.template_ad_id] || {}).name || "the ad"}” on Meta: Reels and Stories show Claude's 9:16 video, feeds keep the 4:5 one. Same words and form.`;
   if (p.kind === "creative") return `New ad “${pl.name || p.title}”, created switched off${pl.media && pl.media.kind !== "same" ? ", with Claude's new " + pl.media.kind : ""}.`;
   return [p.entity_name, p.field && `${p.field}: ${p.current_value || "—"} → ${p.proposed_value || "—"}`].filter(Boolean).join(" · ");
 }
@@ -145,8 +156,8 @@ function changeSummary(p) {
 export function decisionCard(p, ix) {
   const hasPreview = p.kind === "creative" && p.payload;
   const isRender = /^make a new version/i.test(p.title || "");
-  return `<article class="decision${hasPreview ? " with-preview" : ""}" id="p-${p.id}" data-proposal="${p.id}" data-title="${esc(p.title)}" data-change="${esc(changeSummary(p))}">
-    ${hasPreview ? `<div class="decision-preview" data-preview="${p.id}" aria-label="Preview of the new ad as Meta shows it"><div class="preview-skeleton"><span></span><span></span><span></span><p>Loading Meta's preview…</p></div></div>` : ""}
+  return `<article class="decision${hasPreview ? " with-preview" : ""}" id="p-${p.id}" data-proposal="${p.id}" data-title="${esc(p.title)}" data-change="${esc(changeSummary(p, ix))}">
+    ${hasPreview ? `<div class="decision-preview" data-preview="${p.id}"${p.payload.update_ad ? ' data-format="INSTAGRAM_REELS"' : ""} aria-label="Preview of the new ad as Meta shows it"><div class="preview-skeleton"><span></span><span></span><span></span><p>Loading Meta's preview…</p></div></div>` : ""}
     <div class="decision-body">
       <h3>${esc(p.title)}</h3>
       ${p.rationale ? `<p class="why">${esc(p.rationale)}</p>` : ""}
@@ -247,8 +258,9 @@ async function fillPreview(box) {
   const id = box.dataset.preview;
   try {
     let p = previewCache.get(id);
-    if (!p) { p = await api(`/api/proposals/${id}/preview?format=MOBILE_FEED_STANDARD`); previewCache.set(id, p); }
-    showPreviewFrame(box, p, { title: "New ad preview from Meta", height: p.height || 560 });
+    const fmt = box.dataset.format || "MOBILE_FEED_STANDARD";
+    if (!p) { p = await api(`/api/proposals/${id}/preview?format=${fmt}`); previewCache.set(id, p); }
+    showPreviewFrame(box, p, { title: box.dataset.format ? "How Reels will show it, from Meta" : "New ad preview from Meta", height: p.height || 560 });
   } catch (err) {
     box.innerHTML = `<p class="preview-error">${esc(err.message)}</p>`;
   }

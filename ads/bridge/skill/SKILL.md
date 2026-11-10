@@ -238,3 +238,53 @@ null). This run may edit files under `creatives/` and run node / ffmpeg (nothing
    v<n>", and the same words unless the fixes changed them. Approving it creates the ad off.
 7. Report: what changed and why (before → after), file paths, audit results. Never touch
    other ads, never activate anything.
+
+## Kind `advice`: fix Meta's advice
+
+Started by **Fix with Claude** on Today → Meta's advice. `options.advice` is Meta's suggestion as
+the console read it (`type`, `label`, `body`, `lift`, `points`, `object_ids`: the campaign, ad set or
+ads it names, `url`, and `fix`: what the console promised Eugene you would do), `options.ads` the
+running ads under it (`id`, `name`, `adset_id`). This run has the render tools (node, ffmpeg, files
+under `creatives/`, `desk upload`). Do what `fix` says, nothing wider.
+
+First check the advice is still live (`ads_get_opportunity_score`) and that it fits: the meta-ads
+library and the brief beat Meta's generic advice (e.g. Meta-picked music for a brand ad). If it
+doesn't fit, say why in the report and propose nothing.
+
+**`REELS_PC_RECOMMENDATION` (add a vertical 9:16 video for Reels):**
+
+1. For each ad in `options.ads`: read its creative (`ads_get_ad_entities` level=ad with
+   `creative_id`, then `ads_get_creatives`). Skip an ad that already shows different media per
+   placement, or isn't a single video. Note its video, words and sound.
+2. Find the source the running 4:5 video was rendered from. N1–N5: `creatives/2026-11-07-new5/`;
+   later versions live in `creatives/<date>-desk-task<id>/` (README says which ad), and
+   `reports/log.md` maps uploaded video ids to files. The old `out/N#-video-9x16.mp4` files predate
+   the final words (some still say "FREE WORKFLOW REVIEW"): never upload them as they are.
+3. Render the 9:16 version of exactly what the ad shows now: same words, scenes, timing and sound
+   bed; only the layout changes to the Reels frame (`ad-creative-render` SKILL + design rules;
+   `meta-ads` ref 08 safe zones: keep text out of the top 14%, the bottom 35% and 6% of each side, 28 px
+   minimum). Work in `creatives/<today>-desk-task<id>/`; run `textaudit.js`, the probe and a 0.3 s
+   contact sheet, and look at the frames before uploading. 1080×1920, H.264 + AAC, ≤ 30 s.
+4. `desk upload <file>` → `video_id`; append one line per upload to `reports/log.md`.
+5. One proposal per ad, `kind: "creative"`, title "9:16 for Reels: <ad name>", rationale quoting
+   Meta's lift, `expected` "Feeds keep the 4:5 video; Reels and Stories show the 9:16 one. Meta
+   reviews the ad again.", and `payload`:
+   `{"template_ad_id": "<ad id>", "update_ad": true, "vertical": {"video_id": "<9:16 id>"},
+   "name": "<ad name> · 9:16 Reels"}`. Approving it updates that running ad in place (Eugene's
+   choice, 2026-11-10): the console builds the 4:5 + 9:16 creative with the same words and lead
+   form, checks Meta's copy, then swaps it onto the ad.
+6. Never call `ads_create_creative` or `ads_update_entity` for this: the MCP can't carry the
+   Instant Form, so the console makes the creative.
+7. Report: per ad, before → after (file paths, video ids, audit results), anything skipped and why.
+   If time runs short, finish the ads you started and say which are left; "Fix with Claude" again
+   picks up the rest (skip ads that already have a waiting 9:16 proposal: `desk history`).
+
+**Creative fatigue / too few ads:** as a polish or render run on the ads named: new versions or new
+ideas as `creative` proposals (new ads, created off), never edits to the running ads.
+
+**Anything else:** a review of that one point: the numbers that bear on it (minimum-data rule), what
+the playbook says, and proposals only for what should change (status, budget, `other` with the
+exact step for Ads Manager when the console can't do it).
+
+`desk done` summary: what you made and what's waiting for Eugene ("9:16 versions of 5 ads ready
+to approve on the Claude page; N3 skipped: it's an image ad").
