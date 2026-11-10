@@ -124,6 +124,35 @@ def _run(sql, params, fetch):
             conn.close()
 
 
+def run_in_transaction(steps):
+    """Run several statements on one connection in one transaction (e.g. SELECT … FOR UPDATE, then an
+    upsert). steps = [(sql, params)]; returns each step's rows (None when it returns nothing)."""
+    if account_ctx.seeing_all():
+        conn, owned = connect(), True
+    else:
+        conn = get_db()
+        owned = conn is None
+        if owned:
+            conn = connect_app()
+        _scope(conn)
+    try:
+        out = []
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            for sql, params in steps:
+                cur.execute(sql, params)
+                out.append(cur.fetchall() if cur.description is not None else None)
+        conn.commit()
+        return out
+    except Exception:
+        conn.rollback()
+        if isinstance(conn, AppConnection):
+            conn.account_id = None
+        raise
+    finally:
+        if owned:
+            conn.close()
+
+
 def query(sql, params=None, one=False):
     rows = _run(sql, params, True) or []
     if one:

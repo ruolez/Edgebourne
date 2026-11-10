@@ -6,6 +6,7 @@ import account_info
 import db
 import meta_client
 import settings_store
+import status_history
 
 INSIGHT_FIELDS = ("ad_id,ad_name,adset_id,campaign_id,spend,impressions,reach,inline_link_clicks,clicks,actions,"
                   "video_thruplay_watched_actions,video_p25_watched_actions,video_p50_watched_actions,"
@@ -39,7 +40,8 @@ def to_cents(value):
 
 
 CREATIVE_FIELDS = "{id,object_type,title,body,call_to_action_type,video_id,image_url,thumbnail_url,effective_object_story_id}"
-AD_BASE = "id,name,campaign_id,adset_id,status,effective_status,ad_review_feedback,issues_info,created_time,"
+AD_BASE = ("id,name,campaign_id,adset_id,status,configured_status,effective_status,ad_review_feedback,issues_info,"
+           "created_time,updated_time,")
 # Larger creative thumbnails when Meta accepts the sizing parameters; plain fields otherwise.
 AD_FIELDS = AD_BASE + "creative.thumbnail_width(720).thumbnail_height(900)" + CREATIVE_FIELDS
 AD_FIELDS_PLAIN = AD_BASE + "creative" + CREATIVE_FIELDS
@@ -58,45 +60,49 @@ def video_picture(video_id, cache):
     return cache[video_id]
 
 
-def sync_ads():
-    account = settings_store.get("meta_ad_account_id")
-    n = 0
-    pictures = {}
-    try:
-        rows = list(meta_client.paged(f"act_{account}/ads", fields=AD_FIELDS, limit=100))
-    except meta_client.MetaError:
-        rows = list(meta_client.paged(f"act_{account}/ads", fields=AD_FIELDS_PLAIN, limit=100))
-    seen = [ad["id"] for ad in rows]
-    for ad in rows:
-        cr = ad.get("creative") or {}
-        image = cr.get("image_url") or (video_picture(cr["video_id"], pictures) if cr.get("video_id") else None)
-        db.execute(
-            """INSERT INTO ads (id, name, campaign_id, adset_id, status, effective_status, thumbnail_url,
-                                review_feedback, issues, creative_id, object_type, title, body, cta_type,
-                                video_id, image_url, created_time, story_id, synced_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+AD_UPSERT = """INSERT INTO ads (id, name, campaign_id, adset_id, status, configured_status, effective_status,
+                                thumbnail_url, review_feedback, issues, creative_id, object_type, title, body, cta_type,
+                                video_id, image_url, created_time, updated_time, story_id, synced_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, campaign_id = EXCLUDED.campaign_id,
                    adset_id = EXCLUDED.adset_id, status = EXCLUDED.status,
+                   configured_status = EXCLUDED.configured_status,
                    effective_status = EXCLUDED.effective_status, thumbnail_url = EXCLUDED.thumbnail_url,
                    review_feedback = EXCLUDED.review_feedback, issues = EXCLUDED.issues,
                    creative_id = EXCLUDED.creative_id, object_type = EXCLUDED.object_type,
                    title = EXCLUDED.title, body = EXCLUDED.body, cta_type = EXCLUDED.cta_type,
                    video_id = EXCLUDED.video_id, image_url = EXCLUDED.image_url,
-                   created_time = EXCLUDED.created_time, story_id = EXCLUDED.story_id, synced_at = now()""",
-            (ad["id"], ad["name"], ad.get("campaign_id"), ad.get("adset_id"), ad.get("status"),
-             ad.get("effective_status"), cr.get("thumbnail_url"),
-             json.dumps(ad.get("ad_review_feedback")) if ad.get("ad_review_feedback") else None,
-             json.dumps(ad.get("issues_info")) if ad.get("issues_info") else None,
-             cr.get("id"), cr.get("object_type"), cr.get("title"), cr.get("body"), cr.get("call_to_action_type"),
-             cr.get("video_id"), image, ad.get("created_time"), cr.get("effective_object_story_id")),
-        )
-        n += 1
+                   created_time = EXCLUDED.created_time, updated_time = EXCLUDED.updated_time,
+                   story_id = EXCLUDED.story_id, synced_at = now()"""
+
+
+def upsert_ad(ad, source, pictures):
+    """Store one ad as Meta returned it and record what changed since the last pull."""
+    cr = ad.get("creative") or {}
+    image = cr.get("image_url") or (video_picture(cr["video_id"], pictures) if cr.get("video_id") else None)
+    prev = status_history.upsert_tracked("ad", ad["id"], AD_UPSERT, (
+        ad["id"], ad["name"], ad.get("campaign_id"), ad.get("adset_id"), ad.get("status"),
+        ad.get("configured_status"), ad.get("effective_status"), cr.get("thumbnail_url"),
+        json.dumps(ad.get("ad_review_feedback")) if ad.get("ad_review_feedback") else None,
+        json.dumps(ad.get("issues_info")) if ad.get("issues_info") else None,
+        cr.get("id"), cr.get("object_type"), cr.get("title"), cr.get("body"), cr.get("call_to_action_type"),
+        cr.get("video_id"), image, ad.get("created_time"), ad.get("updated_time"), cr.get("effective_object_story_id")))
+    return status_history.track("ad", ad, prev, source)
+
+
+def sync_ads(source="poll"):
+    account = settings_store.get("meta_ad_account_id")
+    pictures = {}
+    try:
+        rows = list(meta_client.paged(f"act_{account}/ads", fields=AD_FIELDS, limit=100))
+    except meta_client.MetaError:
+        rows = list(meta_client.paged(f"act_{account}/ads", fields=AD_FIELDS_PLAIN, limit=100))
+    for ad in rows:
+        upsert_ad(ad, source, pictures)
     # Ads deleted in Ads Manager stop appearing in the listing; keep their history, hide them.
-    if seen:
-        # Meta's list leaves archived ads out; keep them archived rather than calling them deleted.
-        db.execute("UPDATE ads SET effective_status = 'DELETED', status = 'DELETED' "
-                   "WHERE NOT (id = ANY(%s)) AND COALESCE(status, '') <> 'ARCHIVED'", (seen,))
-    return n
+    # Meta's list leaves archived ads out; keep them archived rather than calling them deleted.
+    status_history.mark_missing("ad", [ad["id"] for ad in rows], source)
+    return len(rows)
 
 
 def sync_structure():

@@ -84,9 +84,22 @@ def by_id(oid):
     return ADS.get(oid) or CREATIVES.get(oid) or VIDEOS.get(oid)
 
 
+REVIEW = {}            # ad id -> Meta review state the fake reports (/fake/_review)
+REVIEW_ON_ACTIVATE = []  # when set, an ad turned on goes to IN_PROCESS first (/fake/_review_on_activate)
+REJECTED_FEEDBACK = {"global": {"PERSONAL_ATTRIBUTES": "Ads can't imply knowledge of personal attributes."},
+                     "placement_specific": {"instagram": {"PERSONAL_ATTRIBUTES": "Personal attributes"}}}
+ISSUES = [{"error_code": 1487, "error_summary": "Ad account payment failed", "error_message": "Update the payment method.",
+           "error_type": "HARD_ERROR", "level": "AD"}]
+
+
 def effective(ad):
+    review = REVIEW.get(ad.get("id"))
+    if review == "DISAPPROVED":
+        return review
     if ad["status"] != "ACTIVE":
         return ad["status"]
+    if review in ("IN_PROCESS", "PENDING_REVIEW", "WITH_ISSUES", "PREAPPROVED"):
+        return review
     camp = CAMPAIGN if ad.get("campaign_id") == CAMPAIGN["id"] else NEW_CAMPAIGNS.get(ad.get("campaign_id"), CAMPAIGN)
     aset = ADSET if ad.get("adset_id") == ADSET["id"] else NEW_ADSETS.get(ad.get("adset_id"), ADSET)
     if camp["status"] == "PAUSED":
@@ -98,7 +111,13 @@ def effective(ad):
 
 def ad_view(ad):
     cr = CREATIVES[ad["creative_id"]]
-    return {**{k: v for k, v in ad.items() if k != "creative_id"}, "effective_status": effective(ad),
+    review = REVIEW.get(ad["id"])
+    extra = {"configured_status": ad["status"]}
+    if review == "DISAPPROVED":
+        extra["ad_review_feedback"] = REJECTED_FEEDBACK
+    if review == "WITH_ISSUES":
+        extra["issues_info"] = ISSUES
+    return {**{k: v for k, v in ad.items() if k != "creative_id"}, **extra, "effective_status": effective(ad),
             "creative": {k: cr.get(k) for k in ("id", "object_type", "title", "body", "call_to_action_type",
                                                   "video_id", "image_url", "thumbnail_url", "effective_object_story_id") if cr.get(k)}}
 
@@ -306,6 +325,34 @@ def push_receive(pid):
         return "", 400
     PUSH_SENT.append({"id": pid, "ttl": request.headers.get("TTL"), "payload": json.loads(_push_decrypt(request.get_data(), dev["private"], dev["auth"]))})
     return "", 201
+
+
+@app.route("/fake/_review")
+def fake_review():
+    """Step an ad through Meta review: to=IN_PROCESS|PENDING_REVIEW|PREAPPROVED|ACTIVE|DISAPPROVED|WITH_ISSUES."""
+    ad, to = request.args["ad"], request.args.get("to", "ACTIVE")
+    if ad not in ADS:
+        return jsonify({"error": "no such ad"}), 404
+    if to == "ACTIVE":
+        REVIEW.pop(ad, None)
+    else:
+        REVIEW[ad] = to
+    return jsonify({"ad": ad, "effective_status": effective(ADS[ad])})
+
+
+@app.route("/fake/_review_on_activate")
+def fake_review_on_activate():
+    REVIEW_ON_ACTIVATE[:] = [1] if request.args.get("on", "1") == "1" else []
+    return jsonify({"on": bool(REVIEW_ON_ACTIVATE)})
+
+
+@app.route("/fake/_learning")
+def fake_learning():
+    """Set an ad set's learning stage: to=LEARNING|SUCCESS|FAIL."""
+    aset = ADSET if request.args.get("adset", ADSET["id"]) == ADSET["id"] else NEW_ADSETS[request.args["adset"]]
+    aset["learning_stage_info"] = {"status": request.args.get("to", "LEARNING"), "conversions": int(request.args.get("conversions", 9)),
+                                   "last_sig_edit_ts": 1762700000, "attribution_windows": ["CLICK_7", "VIEW_1"]}
+    return jsonify(aset["learning_stage_info"])
 
 
 @app.route("/fake/_refuse_next_ad")
@@ -603,6 +650,8 @@ def graph(path):
                 if cid not in CREATIVES:
                     return jsonify({"error": {"message": "Unknown creative (fake)", "code": 100}}), 400
                 obj["creative_id"] = cid
+            if "status" in a and parts[0] in ADS and a["status"] == "ACTIVE" and REVIEW_ON_ACTIVATE and parts[0] not in REVIEW:
+                REVIEW[parts[0]] = "IN_PROCESS"
             if "status" in a:
                 obj["effective_status"] = a["status"] if parts[0] not in ADS else effective(obj)
             return jsonify({"success": True})

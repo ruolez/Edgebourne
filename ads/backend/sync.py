@@ -1,7 +1,10 @@
 """Mirror the ad account's campaigns so teammates can be assigned to them."""
+import json
+
 import db
 import meta_client
 import settings_store
+import status_history
 
 
 def cents(value):
@@ -38,62 +41,83 @@ def summarize_targeting(t):
     return " · ".join(parts) or None
 
 
-def sync_adsets():
-    account = settings_store.get("meta_ad_account_id")
-    n = 0
-    seen = []
-    for a in meta_client.paged(
-        f"act_{account}/adsets",
-        fields="id,name,campaign_id,status,effective_status,daily_budget,lifetime_budget,"
-               "optimization_goal,learning_stage_info,targeting",
-        limit=100,
-    ):
-        db.execute(
-            """INSERT INTO adsets (id, name, campaign_id, status, effective_status, daily_budget_cents,
-                                   lifetime_budget_cents, optimization_goal, learning_stage, targeting_summary, synced_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+ADSET_FIELDS = ("id,name,campaign_id,status,configured_status,effective_status,daily_budget,lifetime_budget,"
+                "optimization_goal,learning_stage_info,targeting,issues_info,created_time,updated_time")
+ADSET_FIELDS_PLAIN = ("id,name,campaign_id,status,effective_status,daily_budget,lifetime_budget,"
+                      "optimization_goal,learning_stage_info,targeting")
+ADSET_UPSERT = """INSERT INTO adsets (id, name, campaign_id, status, configured_status, effective_status, daily_budget_cents,
+                                   lifetime_budget_cents, optimization_goal, learning_stage, learning, issues,
+                                   targeting_summary, created_time, updated_time, synced_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, campaign_id = EXCLUDED.campaign_id,
-                   status = EXCLUDED.status, effective_status = EXCLUDED.effective_status,
+                   status = EXCLUDED.status, configured_status = EXCLUDED.configured_status,
+                   effective_status = EXCLUDED.effective_status,
                    daily_budget_cents = EXCLUDED.daily_budget_cents,
                    lifetime_budget_cents = EXCLUDED.lifetime_budget_cents,
                    optimization_goal = EXCLUDED.optimization_goal, learning_stage = EXCLUDED.learning_stage,
-                   targeting_summary = EXCLUDED.targeting_summary, synced_at = now()""",
-            (a["id"], a["name"], a.get("campaign_id"), a.get("status"), a.get("effective_status"),
-             cents(a.get("daily_budget")), cents(a.get("lifetime_budget")), a.get("optimization_goal"),
-             (a.get("learning_stage_info") or {}).get("status"), summarize_targeting(a.get("targeting"))),
-        )
-        n += 1
-        seen.append(a["id"])
-    # Like ads: an ad set deleted in Ads Manager drops out of the listing; keep it, marked deleted.
-    if seen:
-        db.execute("UPDATE adsets SET effective_status = 'DELETED', status = 'DELETED' "
-                   "WHERE NOT (id = ANY(%s)) AND COALESCE(status, '') <> 'ARCHIVED'", (seen,))
-    return n
+                   learning = EXCLUDED.learning, issues = EXCLUDED.issues,
+                   targeting_summary = EXCLUDED.targeting_summary, created_time = EXCLUDED.created_time,
+                   updated_time = EXCLUDED.updated_time, synced_at = now()"""
 
 
-def sync_campaigns():
+def listing(path, fields, fallback):
+    """Meta's list with the newer fields; the older field set if Meta refuses one of them."""
+    try:
+        return list(meta_client.paged(path, fields=fields, limit=100))
+    except meta_client.MetaError:
+        return list(meta_client.paged(path, fields=fallback, limit=100))
+
+
+def upsert_adset(a, source):
+    learning = a.get("learning_stage_info") or None
+    prev = status_history.upsert_tracked("adset", a["id"], ADSET_UPSERT, (
+        a["id"], a["name"], a.get("campaign_id"), a.get("status"), a.get("configured_status"), a.get("effective_status"),
+        cents(a.get("daily_budget")), cents(a.get("lifetime_budget")), a.get("optimization_goal"),
+        (learning or {}).get("status"), json.dumps(learning) if learning else None,
+        json.dumps(a.get("issues_info")) if a.get("issues_info") else None,
+        summarize_targeting(a.get("targeting")), a.get("created_time"), a.get("updated_time")))
+    return status_history.track("adset", a, prev, source)
+
+
+def sync_adsets(source="poll"):
     account = settings_store.get("meta_ad_account_id")
-    seen = 0
-    ids = []
-    for c in meta_client.paged(f"act_{account}/campaigns",
-                               fields="id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy",
-                               limit=100):
-        db.execute(
-            """INSERT INTO campaigns (id, name, status, effective_status, objective,
-                                      daily_budget_cents, lifetime_budget_cents, bid_strategy, synced_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s, now())
+    rows = listing(f"act_{account}/adsets", ADSET_FIELDS, ADSET_FIELDS_PLAIN)
+    for a in rows:
+        upsert_adset(a, source)
+    # Like ads: an ad set deleted in Ads Manager drops out of the listing; keep it, marked deleted.
+    status_history.mark_missing("adset", [a["id"] for a in rows], source)
+    return len(rows)
+
+
+CAMPAIGN_FIELDS = ("id,name,status,configured_status,effective_status,objective,daily_budget,lifetime_budget,"
+                   "bid_strategy,issues_info,created_time,updated_time")
+CAMPAIGN_FIELDS_PLAIN = "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy"
+CAMPAIGN_UPSERT = """INSERT INTO campaigns (id, name, status, configured_status, effective_status, objective,
+                                      daily_budget_cents, lifetime_budget_cents, bid_strategy, issues,
+                                      created_time, updated_time, synced_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status,
+                   configured_status = EXCLUDED.configured_status,
                    effective_status = EXCLUDED.effective_status, objective = EXCLUDED.objective,
                    daily_budget_cents = EXCLUDED.daily_budget_cents,
                    lifetime_budget_cents = EXCLUDED.lifetime_budget_cents,
-                   bid_strategy = EXCLUDED.bid_strategy, synced_at = now()""",
-            (c["id"], c["name"], c.get("status"), c.get("effective_status"), c.get("objective"),
-             cents(c.get("daily_budget")), cents(c.get("lifetime_budget")), c.get("bid_strategy")),
-        )
-        seen += 1
-        ids.append(c["id"])
-    if ids:
-        db.execute("UPDATE campaigns SET effective_status = 'DELETED', status = 'DELETED' "
-                   "WHERE NOT (id = ANY(%s)) AND COALESCE(status, '') <> 'ARCHIVED'", (ids,))
+                   bid_strategy = EXCLUDED.bid_strategy, issues = EXCLUDED.issues,
+                   created_time = EXCLUDED.created_time, updated_time = EXCLUDED.updated_time, synced_at = now()"""
+
+
+def upsert_campaign(c, source):
+    prev = status_history.upsert_tracked("campaign", c["id"], CAMPAIGN_UPSERT, (
+        c["id"], c["name"], c.get("status"), c.get("configured_status"), c.get("effective_status"), c.get("objective"),
+        cents(c.get("daily_budget")), cents(c.get("lifetime_budget")), c.get("bid_strategy"),
+        json.dumps(c.get("issues_info")) if c.get("issues_info") else None, c.get("created_time"), c.get("updated_time")))
+    return status_history.track("campaign", c, prev, source)
+
+
+def sync_campaigns(source="poll"):
+    account = settings_store.get("meta_ad_account_id")
+    rows = listing(f"act_{account}/campaigns", CAMPAIGN_FIELDS, CAMPAIGN_FIELDS_PLAIN)
+    for c in rows:
+        upsert_campaign(c, source)
+    status_history.mark_missing("campaign", [c["id"] for c in rows], source)
     settings_store.set("last_campaign_sync", __import__("datetime").datetime.utcnow().isoformat() + "Z")
-    return seen
+    return len(rows)

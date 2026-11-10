@@ -475,7 +475,13 @@ document.addEventListener("submit", async (e) => {
 
 function renderHistory() {
   const decided = data.proposals.filter((p) => p.status !== "pending");
+  const tl = data.timeline || [];
+  const src = { poll: "Meta", webhook: "Meta", console: "This console", backfill: "First seen" };
+  const tone = (r) => (r.field === "review" || r.field === "issues") && !r.new_value ? "ok" : (r.field === "review" && r.new_value) || ["DISAPPROVED", "WITH_ISSUES"].includes(r.new_value) || (r.field === "learning" && r.new_value === "FAIL") ? "bad"
+    : ["IN_PROCESS", "PENDING_REVIEW"].includes(r.new_value) ? "warn" : r.new_value === "ACTIVE" ? "ok" : "";
   $("cr-main").innerHTML = `
+    <section class="panel"><div class="panel-head"><h2>Status from Meta</h2><p>Review, delivery and issues, as Meta reported them</p></div>
+      <div class="panel-body">${tl.length ? `<ol class="st-tl">${tl.map((r) => `<li class="st-ev ${tone(r)}"><span class="st-dot"></span><span class="st-when">${esc(when(r.at))}</span><span class="st-what"><b>${esc(r.headline)}</b>${r.by_name ? `<small>by ${esc(r.by_name)}</small>` : ""}</span><span class="st-src">${src[r.source] || ""}</span></li>`).join("")}</ol>` : '<p class="muted flush">Nothing recorded yet. Changes appear here from the next refresh.</p>'}</div></section>
     <section class="panel"><div class="panel-head"><h2>Changes</h2><p>Made from this dashboard</p></div>
       <div class="panel-body">${data.changes.length ? `<ul class="changes">${data.changes.map(changeLine).join("")}</ul>` : '<p class="muted flush">No changes yet.</p>'}</div></section>
     ${decided.length ? `<section class="panel"><div class="panel-head"><h2>Claude's earlier proposals</h2></div><div class="panel-body stack tight">${decided.map(proposalCard).join("")}</div></section>` : ""}`;

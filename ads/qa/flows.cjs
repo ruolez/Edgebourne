@@ -1239,6 +1239,26 @@ with account_ctx.use(a2):
   const scr = Object.values(fake('_creatives')).slice(crBefore)[0];
   check('a new ad can start from nothing: the Page, the chosen form, its own image or video', scratch.status === 201 && scr && scr.object_story_spec.page_id
     && (scr.object_story_spec.link_data || scr.object_story_spec.video_data).call_to_action.value.lead_gen_form_id === '1132280359202136', JSON.stringify(scr && scr.object_story_spec).slice(0, 200));
+  // 8.1 Status history: Meta's review of an ad (in review → rejected → fixed) lands on its History tab,
+  // and the console's own on/off from flow 1 is marked as made here, by whom.
+  const N3 = '120252672230740312';
+  const pull = () => sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "import insights; insights.sync_structure()"`);
+  for (const to of ['IN_PROCESS', 'DISAPPROVED', 'ACTIVE']) {
+    sh(`docker exec edgebourne-ads-backend python -c "import requests;requests.get('http://fake-meta:5001/fake/_review?ad=${N3}&to=${to}')"`);
+    pull();
+  }
+  await page.goto(BASE + `/ad.html?id=${N3}#tab=history`);
+  await page.waitForSelector('.st-tl');
+  const n3Timeline = await page.locator('.st-tl').innerText();
+  check('Meta review steps show on the ad\'s History tab in plain words', ['Sent to review', 'Rejected by Meta', 'Personal attributes', 'Fixed · delivering again'].every((w) => n3Timeline.includes(w))
+    && !/Fixed · delivering again\s*\n\s*by /.test(n3Timeline), n3Timeline.replace(/\n+/g, ' | ').slice(0, 300));
+  const again = (await call('GET', `/api/ads/ad/${N3}`)).body.timeline.length;
+  pull();
+  check('a repeat refresh records nothing new', (await call('GET', `/api/ads/ad/${N3}`)).body.timeline.length === again);
+  await page.goto(BASE + '/ad.html?id=120252672229400312#tab=history');
+  await page.waitForSelector('.st-tl');
+  const n2Timeline = await page.locator('.st-tl').innerText();
+  check('an on/off made from the console is marked as made here, by whom', n2Timeline.includes('This console') && n2Timeline.includes('by Eugene'), n2Timeline.replace(/\n+/g, ' | ').slice(0, 300));
   // Phones: no page wider than the screen.
   const phonePage = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
   await phonePage.goto(BASE + '/login.html');

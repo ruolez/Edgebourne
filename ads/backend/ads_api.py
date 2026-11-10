@@ -9,7 +9,7 @@ import os
 import re
 import tempfile
 import threading
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
 
@@ -20,6 +20,7 @@ import db
 import insights
 import meta_client
 import settings_store
+import status_history
 from auth import admin_required, current_user, login_required, visible_campaign_ids
 from util import api_error, log_activity
 
@@ -180,12 +181,27 @@ def resync_later():
 
 
 def refresh_entity(level, entity_id):
+    """Re-read the status right after a change from the console and record what moved."""
     try:
-        fresh = meta_client.get(entity_id, fields="status,effective_status")
-        db.execute(f"UPDATE {LEVELS[level]} SET status = %s, effective_status = %s WHERE id = %s",
-                   (fresh.get("status"), fresh.get("effective_status"), entity_id))
+        fresh = meta_client.get(entity_id, fields="id,name,status,configured_status,effective_status")
     except meta_client.MetaError:
-        pass
+        return
+    table = LEVELS[level]
+    prev_rows, _ = db.run_in_transaction([
+        (f"SELECT * FROM {table} WHERE id = %s FOR UPDATE", (entity_id,)),
+        (f"UPDATE {table} SET status = %s, configured_status = %s, effective_status = %s WHERE id = %s",
+         (fresh.get("status"), fresh.get("configured_status") or fresh.get("status"), fresh.get("effective_status"), entity_id))])
+    if not prev_rows:
+        return
+    prev = prev_rows[0]
+    before = status_history.stored_snapshot(level, prev)
+    after = dict(before, effective_status=fresh.get("effective_status"),
+                 configured_status=fresh.get("configured_status") or fresh.get("status"))
+    events = [e for e in status_history.diff(level, before, after, datetime.now(timezone.utc), None)
+              if e["field"] in ("effective_status", "configured_status")]
+    status_history.record(level, {"id": entity_id, "name": prev.get("name"),
+                                  "campaign_id": entity_id if level == "campaign" else prev.get("campaign_id"),
+                                  "adset_id": prev.get("adset_id")}, events, "console")
 
 
 # ---------------------------------------------------------------- fresh reads (audit A1, A20)
@@ -373,6 +389,7 @@ def ad_detail(ad_id):
     ad["can_control"] = current_user()["role"] != "client"
     return jsonify({"ad": ad, "series": series, "lifetime": {k: int(v) for k, v in totals.items()},
                     "leads": leads, "proposals": proposals, "changes": changes,
+                    "timeline": status_history.timeline("ad", ad_id),
                     "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS]})
 
 

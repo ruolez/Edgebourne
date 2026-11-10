@@ -1473,3 +1473,19 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
   }
   .switch::after { content: ""; position: absolute; inset: -9px -4px; }
 }
+
+/* Status from Meta (8.1): a vertical timeline of review, delivery and issue changes. */
+.st-tl{list-style:none;margin:0;padding:0}
+.st-ev{display:grid;grid-template-columns:14px 150px 1fr auto;gap:12px;align-items:baseline;padding:10px 0;position:relative}
+.st-ev::before{content:"";position:absolute;left:5px;top:0;bottom:0;width:2px;background:var(--line)}
+.st-ev:first-child::before{top:16px}
+.st-ev:last-child::before{bottom:auto;height:16px}
+.st-dot{width:12px;height:12px;border-radius:50%;background:var(--ink-3);position:relative;z-index:1;box-shadow:0 0 0 3px var(--surface);align-self:center}
+.st-ev.ok .st-dot{background:var(--pine)}
+.st-ev.warn .st-dot{background:var(--amber)}
+.st-ev.bad .st-dot{background:var(--rust)}
+.st-when{font-size:13px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.st-what{display:flex;flex-direction:column;gap:2px}
+.st-what small{color:var(--ink-3);font-size:13px}
+.st-src{font-size:12px;color:var(--ink-3)}
+@media (max-width:720px){.st-ev{grid-template-columns:14px 1fr auto}.st-when{grid-column:2;order:2}.st-what{grid-column:2}}

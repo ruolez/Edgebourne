@@ -1,0 +1,256 @@
+"""Status history: what Meta said about each campaign, ad set and ad, and when it changed.
+
+Sync used to overwrite status, review notes and issues on every pull. Now each upsert returns the row
+as it was (atomically, under a row lock), the two are reduced to comparable snapshots, and every
+difference is stored in status_events. The pure part (snapshots, diff, plain words) is unit tested."""
+import json
+from datetime import datetime, timedelta, timezone
+
+import db
+
+LEVELS = ("campaign", "adset", "ad")
+TABLE = {"campaign": "campaigns", "adset": "adsets", "ad": "ads"}
+FIELDS = {
+    "ad": ("effective_status", "configured_status", "review", "issues"),
+    "adset": ("effective_status", "configured_status", "issues", "learning"),
+    "campaign": ("effective_status", "configured_status", "issues"),
+}
+PREV_COLS = {
+    "ad": "status, configured_status, effective_status, review_feedback, issues",
+    "adset": "status, configured_status, effective_status, learning_stage, learning, issues",
+    "campaign": "status, configured_status, effective_status, issues",
+}
+NEW_WINDOW = timedelta(hours=48)       # first seen within 48 h of creation = a new entity, else backfill
+CONSOLE_WINDOW = timedelta(minutes=10)  # a console write this recent explains a status change
+REVIEW_STATES = ("IN_PROCESS", "PENDING_REVIEW")
+OWN_STATES = ("ACTIVE", "PAUSED", "ARCHIVED", "DELETED")
+
+
+# ---------------------------------------------------------------- pure
+
+def review_summary(feedback):
+    """Meta's ad_review_feedback as one comparable line of reason keys ('A; B; instagram: C')."""
+    if not feedback:
+        return None
+    if isinstance(feedback, str):
+        try:
+            feedback = json.loads(feedback)
+        except ValueError:
+            return feedback
+    keys = sorted((feedback.get("global") or {}).keys())
+    for placement, reasons in sorted((feedback.get("placement_specific") or {}).items()):
+        keys += [f"{placement}: {k}" for k in sorted((reasons or {}).keys())]
+    return "; ".join(keys) or None
+
+
+def issues_summary(issues):
+    if not issues:
+        return None
+    if isinstance(issues, str):
+        try:
+            issues = json.loads(issues)
+        except ValueError:
+            return issues
+    if isinstance(issues, dict):
+        issues = [issues]
+    parts = sorted({(i.get("error_summary") or i.get("error_message") or str(i.get("error_code") or "")).strip()
+                    for i in issues if isinstance(i, dict)} - {""})
+    return "; ".join(parts) or None
+
+
+def snapshot(level, meta):
+    """Comparable state of an entity as Meta returned it."""
+    snap = {"effective_status": meta.get("effective_status"),
+            "configured_status": meta.get("configured_status") or meta.get("status"),
+            "issues": issues_summary(meta.get("issues_info"))}
+    if level == "ad":
+        snap["review"] = review_summary(meta.get("ad_review_feedback"))
+    if level == "adset":
+        snap["learning"] = (meta.get("learning_stage_info") or {}).get("status")
+    return {f: snap.get(f) for f in FIELDS[level]}
+
+
+def stored_snapshot(level, row):
+    """Comparable state of an entity as the console stored it (columns added later fall back to the old ones)."""
+    snap = {"effective_status": row.get("effective_status"),
+            "configured_status": row.get("configured_status") or row.get("status"),
+            "issues": issues_summary(row.get("issues"))}
+    if level == "ad":
+        snap["review"] = review_summary(row.get("review_feedback"))
+    if level == "adset":
+        snap["learning"] = (row.get("learning") or {}).get("status") or row.get("learning_stage")
+    return {f: snap.get(f) for f in FIELDS[level]}
+
+
+def parse_time(value):
+    if value is None or isinstance(value, datetime):
+        return value
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z"):
+        try:
+            return datetime.strptime(value, fmt)
+        except (TypeError, ValueError):
+            pass
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def diff(level, before, after, now, created_time):
+    """Events between two snapshots. before=None is the first time the console sees the entity."""
+    if before is None:
+        created = parse_time(created_time)
+        if created is not None and now - created < NEW_WINDOW:
+            return [{"field": "created", "old": None, "new": after.get("effective_status"), "backfill": False}]
+        return [{"field": "effective_status", "old": None, "new": after.get("effective_status"), "backfill": True}]
+    return [{"field": f, "old": before.get(f), "new": after.get(f), "backfill": False}
+            for f in FIELDS[level] if before.get(f) != after.get(f)]
+
+
+def explained_by_console(entity_id, ev, changes, now):
+    """The meta_changes id of a recent status write from this console that explains the event, else None."""
+    if ev["field"] not in ("configured_status", "effective_status") or ev["new"] not in OWN_STATES:
+        return None
+    if ev["field"] == "effective_status" and ev.get("old") in REVIEW_STATES + ("PREAPPROVED", "DISAPPROVED", "WITH_ISSUES"):
+        return None  # leaving review or a rejection is Meta's doing, even right after our own switch
+    for ch in sorted(changes, key=lambda c: c["created_at"], reverse=True):
+        if (ch["entity_id"] == entity_id and ch["action"] == "status" and ch.get("ok")
+                and ch.get("new_value") == ev["new"] and now - ch["created_at"] <= CONSOLE_WINDOW):
+            return ch["id"]
+    return None
+
+
+STATE_WORDS = {"ACTIVE": "delivering", "IN_PROCESS": "in review", "PENDING_REVIEW": "in review", "PAUSED": "off",
+               "PREAPPROVED": "approved", "DISAPPROVED": "rejected", "WITH_ISSUES": "has issues",
+               "CAMPAIGN_PAUSED": "campaign off", "ADSET_PAUSED": "ad set off", "ARCHIVED": "archived",
+               "DELETED": "deleted", "PENDING_BILLING_INFO": "waiting for billing details"}
+
+
+def reason_words(summary):
+    """'PERSONAL_ATTRIBUTES; instagram: PERSONAL_ATTRIBUTES' -> 'Personal attributes (also on Instagram)'."""
+    seen, out = set(), []
+    for part in (summary or "").split("; "):
+        place, _, key = part.rpartition(": ")
+        words = key.replace("_", " ").strip().capitalize()
+        if words in seen:
+            if place:
+                out[[o.split(" (")[0] for o in out].index(words)] += f" (also on {place.title()})"
+            continue
+        seen.add(words)
+        out.append(words + (f" ({place.title()})" if place else ""))
+    return "; ".join(out)
+
+
+def headline(ev):
+    """One line of plain words for a timeline entry."""
+    field, old, new = ev["field"], ev.get("old"), ev.get("new")
+    if field == "created":
+        return "Created · " + STATE_WORDS.get(new, (new or "").lower())
+    if ev.get("backfill"):
+        return "First seen · " + STATE_WORDS.get(new, (new or "").lower())
+    if field == "effective_status":
+        if new == "ACTIVE":
+            if old in REVIEW_STATES or old == "PREAPPROVED":
+                return "Approved · delivering"
+            if old in ("DISAPPROVED", "WITH_ISSUES"):
+                return "Fixed · delivering again"
+            return "Delivering again" if old in ("PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED") else "Delivering"
+        return {"DISAPPROVED": "Rejected by Meta", "WITH_ISSUES": "Has issues", "PAUSED": "Turned off",
+                "IN_PROCESS": "Sent to review", "PENDING_REVIEW": "Sent to review",
+                "PREAPPROVED": "Approved · waiting to start", "CAMPAIGN_PAUSED": "Stopped: campaign is off",
+                "ADSET_PAUSED": "Stopped: ad set is off", "ARCHIVED": "Archived", "DELETED": "Deleted",
+                "PENDING_BILLING_INFO": "Waiting for billing details"}.get(new, (new or "").title())
+    if field == "configured_status":
+        return {"ACTIVE": "Switched on", "PAUSED": "Switched off", "ARCHIVED": "Archived",
+                "DELETED": "Deleted"}.get(new, f"Set to {new}")
+    if field == "review":
+        return "Meta's review notes cleared" if not new else f"Meta's reason: {reason_words(new)}"
+    if field == "issues":
+        return "Issues cleared" if not new else f"Issue: {new}"
+    if field == "learning":
+        return {"LEARNING": "Learning started", "SUCCESS": "Finished learning",
+                "FAIL": "Learning limited"}.get(new, f"Learning: {new}")
+    return f"{field}: {old} → {new}"
+
+
+# ---------------------------------------------------------------- database
+
+def upsert_tracked(level, entity_id, upsert_sql, params):
+    """Run the INSERT … ON CONFLICT upsert for one entity and return the row as it was before (None when
+    new). The row lock makes a webhook refetch, a poll and a manual refresh see each change once."""
+    prev, _ = db.run_in_transaction([
+        (f"SELECT {PREV_COLS[level]} FROM {TABLE[level]} WHERE id = %s FOR UPDATE", (entity_id,)),
+        (upsert_sql, params)])
+    return prev[0] if prev else None
+
+
+def track(level, meta, prev, source, now=None):
+    """Compare the stored row with what Meta returned and record the differences."""
+    now = now or datetime.now(timezone.utc)
+    before = stored_snapshot(level, prev) if prev else None
+    events = diff(level, before, snapshot(level, meta), now, meta.get("created_time"))
+    raw = {"review": meta.get("ad_review_feedback"), "issues": meta.get("issues_info"),
+           "learning": meta.get("learning_stage_info")}
+    for ev in events:
+        if raw.get(ev["field"]):
+            ev["detail"] = raw[ev["field"]]
+    return record(level, meta, events, source, now)
+
+
+def record(level, entity, events, source, now=None, detail=None):
+    if not events:
+        return []
+    now = now or datetime.now(timezone.utc)
+    changes = db.query(
+        """SELECT id, entity_id, action, new_value, ok, created_at FROM meta_changes
+           WHERE entity_id = %s AND action = 'status' AND created_at > now() - interval '15 minutes'""",
+        (entity["id"],))
+    out = []
+    for ev in events:
+        src, change_id = ("backfill", None) if ev.get("backfill") else (source, None)
+        if src != "backfill":
+            change_id = explained_by_console(entity["id"], ev, changes, now)
+            if change_id:
+                src = "console"
+        row = db.execute(
+            """INSERT INTO status_events (level, entity_id, entity_name, campaign_id, adset_id, field,
+                                          old_value, new_value, source, detail, change_id, meta_time)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id, at""",
+            (level, entity["id"], entity.get("name"), entity.get("campaign_id") if level != "campaign" else entity["id"],
+             entity.get("adset_id") if level == "ad" else (entity["id"] if level == "adset" else None),
+             ev["field"], ev.get("old"), ev.get("new"), src,
+             json.dumps(ev.get("detail") or detail) if (ev.get("detail") or detail) else None, change_id,
+             parse_time(entity.get("updated_time"))),
+            returning=True)
+        out.append({**ev, "id": row["id"], "source": src, "level": level, "entity_id": entity["id"],
+                    "entity_name": entity.get("name"), "campaign_id": entity.get("campaign_id"), "change_id": change_id})
+    return out
+
+
+def mark_missing(level, seen, source="poll"):
+    """Entities Meta no longer lists are kept, marked deleted (archived ones stay archived); record it."""
+    if not seen:
+        return []
+    table = TABLE[level]
+    gone = db.query(
+        f"""WITH gone AS (SELECT id, name, effective_status FROM {table}
+                          WHERE NOT (id = ANY(%s)) AND COALESCE(status, '') <> 'ARCHIVED'
+                            AND effective_status IS DISTINCT FROM 'DELETED' FOR UPDATE)
+            UPDATE {table} t SET effective_status = 'DELETED', status = 'DELETED' FROM gone
+            WHERE t.id = gone.id RETURNING t.*, gone.effective_status AS was""", (seen,))
+    out = []
+    for row in gone:
+        out += record(level, row, [{"field": "effective_status", "old": row["was"], "new": "DELETED", "backfill": False}], source)
+    return out
+
+
+def timeline(level, entity_id, limit=100):
+    rows = db.query(
+        """SELECT e.id, e.level, e.entity_id, e.field, e.old_value, e.new_value, e.source, e.detail, e.at,
+                  e.change_id, u.name AS by_name
+           FROM status_events e LEFT JOIN meta_changes c ON c.id = e.change_id LEFT JOIN users u ON u.id = c.user_id
+           WHERE e.entity_id = %s ORDER BY e.at DESC, e.id DESC LIMIT %s""", (entity_id, limit))
+    for r in rows:
+        r["headline"] = headline({"field": r["field"], "old": r["old_value"], "new": r["new_value"],
+                                  "backfill": r["source"] == "backfill"})
+    return rows
