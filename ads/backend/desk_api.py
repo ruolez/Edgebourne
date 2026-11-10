@@ -33,7 +33,7 @@ bp = Blueprint("desk", __name__, url_prefix="/api/desk")
 agent_bp = Blueprint("agent", __name__, url_prefix="/api/agent")
 
 KINDS = ("question", "review", "research", "creative")
-PROPOSAL_KINDS = ("budget", "status", "creative", "targeting", "other")
+PROPOSAL_KINDS = ("budget", "status", "creative", "targeting", "experiment", "other")
 ACTIVE = ("queued", "claimed", "running")
 ONLINE_SECONDS = 90
 STALE_MINUTES = 30
@@ -415,7 +415,25 @@ def clean_proposal(p):
                 "rationale", "expected", "rollback"):
         out[key] = text(key)
     out["payload"] = clean_payload(p.get("payload")) if kind == "creative" else None
+    if kind == "experiment":
+        out["payload"] = clean_experiment(p.get("payload"))
+        if not out["payload"]:
+            out["kind"] = "other"
     return out
+
+
+def clean_experiment(raw):
+    """A test Claude suggests tracking: same fields as the Tests page form. Invalid → None."""
+    import experiments_api
+    if not isinstance(raw, dict):
+        return None
+    fields, err = experiments_api.clean({**raw, "start_day": raw.get("start_day") or experiments_api.ex.account_today().isoformat()})
+    if err:
+        return None
+    ads, sets = experiments_api.names_for(fields["arms"])
+    for a in fields["arms"]:
+        a["names"] = [ads.get(i, "an ad") for i in a["ad_ids"]] + [f"Ad set: {sets.get(i, '')}" for i in a["adset_ids"]]
+    return {k: v.isoformat() if hasattr(v, "isoformat") else v for k, v in fields.items() if k not in ("status", "winner", "verdict")}
 
 
 def clean_payload(raw):
@@ -486,8 +504,12 @@ def snapshot():
                   percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM first_contacted_at - created_time) / 60)
                       FILTER (WHERE first_contacted_at IS NOT NULL) AS median_minutes_to_contact
            FROM leads WHERE NOT is_test AND created_time >= now() - %s * interval '1 day'""", (days,), one=True)
+    import experiments_api
+    tests = [experiments_api.summary(r) for r in db.query(
+        f"SELECT {experiments_api.COLS} FROM experiments WHERE status = 'running' OR closed_at > now() - interval '30 days' ORDER BY start_day DESC")]
     return jsonify({"performance": perf, "lead_stages_by_ad": stages, "lead_business_types": types,
-                    "speed_to_lead": speed, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name")})
+                    "speed_to_lead": speed, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
+                    "experiments": tests})
 
 
 @agent_bp.get("/history")

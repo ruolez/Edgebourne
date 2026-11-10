@@ -13,6 +13,7 @@ const ICONS = {
   home: '<path d="M4 11l8-6.5 8 6.5V20h-5.5v-5h-5v5H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   ads: '<rect x="3.5" y="4.5" width="7" height="8.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13.5" y="4.5" width="7" height="8.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 17h7M3.5 20h4.5M13.5 17h7M13.5 20h4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
   research: '<circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15 15l5 5M8 10.5h5M10.5 8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  tests: '<path d="M9 3.5h6M10 3.5v5.2L4.8 18.3A1.5 1.5 0 0 0 6.1 20.5h11.8a1.5 1.5 0 0 0 1.3-2.2L14 8.7V3.5M7.5 14.5h9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
   play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>',
   plus: '<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 5.5V5a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 5v8A1.5 1.5 0 0 0 6 14.5h.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
@@ -207,6 +208,7 @@ export async function boot({ page, admin = false }) {
     { id: "performance", href: "/performance.html", label: "Results", icon: "chart" },
   ];
   const extra = isAdmin ? [
+    { id: "experiments", href: "/experiments.html", label: "Tests", icon: "tests" },
     { id: "desk", href: "/desk.html", label: "Claude", icon: "spark", badge: "claude" },
     { id: "research", href: "/research.html", label: "Research", icon: "research" },
   ] : [];
@@ -239,7 +241,7 @@ export async function boot({ page, admin = false }) {
     </div>`;
 
   const app = document.querySelector(".app");
-  const titles = { home: "Today", leads: "Leads", ads: "Ads", ad: "Ad", "new-ad": "New ad", performance: "Results", desk: "Claude", research: "Research", team: "Team", settings: "Settings", account: "Your account" };
+  const titles = { home: "Today", leads: "Leads", ads: "Ads", ad: "Ad", "new-ad": "New ad", performance: "Results", experiments: "Tests", desk: "Claude", research: "Research", team: "Team", settings: "Settings", account: "Your account" };
   const top = document.createElement("header");
   top.className = "topbar";
   top.innerHTML = `<a class="brand" href="/home.html"><img src="/img/favicon.svg" alt="Edge Bourne"><span>${esc(titles[page] || "Edge Bourne Ads")}</span></a>

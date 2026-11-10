@@ -139,7 +139,7 @@ Found while proving Phase 0 and building 1.1. Pick with Eugene; tick here when f
 - [~] 2.3 Spend pacing and month-end forecast. Built: `pacing.py` (pure: month-to-date incl. today so far, projection = complete days + 7-day average × days left, spending limit run-out date, daily spend that lands on the monthly target), Results → "<Month> so far" panel (replaces the old limit bar; admins set the monthly target there, setting `monthly_target_cents`), two alert rules through 2.2: limit runs out within 3 days, month heading > 15% over target. Eugene: set a monthly target if he wants one
 
 ### Phase 3: Experiments
-- [ ] 3.1 Experiments tracker (hypothesis, arms, metric, dates, verdict)
+- [~] 3.1 Experiments tracker. Built: Tests page (`experiments.html`, admins; nav "Tests"), migration 012 (`experiments`; arms = ads and/or ad sets), `experiments.py` (pure `judge`: cost metrics compare results per dollar with an exact binomial test, rates a two-proportion test; "too early" until each arm spent 2× the target (test target → Settings → Alerts cost-per-lead target → the test's own average) with ≥ 3 results over ≥ 3 full days; leaning at 80%, winner at 95%), `experiments_api.py` (list, choices, create, edit, finish/stop/reopen), Desk proposal kind `experiment` (approve = start tracking, nothing on Meta), running and recent tests in the Desk snapshot, skill playbook updated (installed). Eugene: set up the first test when two ads run side by side
 - [ ] 3.2 Meta A/B tests created from approved proposals and read back
 
 ### Phase 4: Build everything from the console
@@ -528,3 +528,4 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-09 · 2.2 alerts engine built; QA 78 PASS · next: 2.3 pacing and forecast
 - 2026-11-09 · 2.3 pacing built; Phase 2 code complete (2.1 schedules, 2.2 alerts, 2.3 pacing); 120 unit tests, QA 81 PASS; committed, not pushed · next: Eugene pushes + Update, switches on schedules, links Telegram; then Phase 3 (experiments)
 - 2026-11-09 · Results: ads table sorts by any column (kept per browser), filters Spent money / Running / All, Find an ad, total row, cost from fewer than 3 leads in grey, names open the ad; figures show the change vs the same number of days before; campaign picker (when there's more than one, ?campaign= in the URL); Telegram kept, unused (email covers everything); 122 unit tests, QA 93 PASS · next: Phase 3 (3.1 experiments tracker)
+- 2026-11-09 · 3.1 experiments tracker built (Tests page, verdict rules, Claude can suggest a test); 134 unit tests, QA 104 PASS; committed, not pushed · next: 3.2 Meta A/B tests (needs Eugene's call: they split the audience and budget on Meta)

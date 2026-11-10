@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tests | Edge Bourne Ads</title>
+  <link rel="icon" href="/img/favicon.svg">
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail"></aside>
+    <main class="main">
+      <header class="page-head">
+        <h1>Tests</h1>
+        <div class="segmented" id="show" role="group" aria-label="Show tests">
+          <button type="button" data-show="running">Running <span class="n" data-n="running"></span></button>
+          <button type="button" data-show="finished">Finished <span class="n" data-n="finished"></span></button>
+          <button type="button" data-show="all">All <span class="n" data-n="all"></span></button>
+        </div>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-primary" id="new-test">New test</button>
+      </header>
+      <div class="content stack" id="tests" aria-live="polite"></div>
+    </main>
+  </div>
+  <script type="module" src="/js/experiments.js"></script>
+</body>
+</html>

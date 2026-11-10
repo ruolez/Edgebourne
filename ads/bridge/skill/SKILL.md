@@ -56,7 +56,10 @@ files; `cat`, `tail` and pipes are not allowed.
 2. Context, in parallel where possible:
    - `desk snapshot 7` (and 14/30 if the question spans longer): spend, leads, cost per lead,
      per-ad results, the spending limit, plus what Meta doesn't know: lead stages from the
-     inbox (qualified/won), business types, speed to first contact.
+     inbox (qualified/won), business types, speed to first contact, and `experiments`: the
+     tests on the Tests page (running, or closed in the last 30 days) with each arm's numbers
+     and the dashboard's verdict. Don't call a running test differently from its verdict;
+     a closed one's `verdict` is what Eugene concluded, so build on it.
    - `desk history`: what earlier Desk runs concluded and proposed; build on it, don't repeat it.
    - `briefs/edgebourne.md` (offer, audience, target: $60 per qualified lead, kill band above
      $120 after $240 spend) and the end of `reports/log.md` (recent changes and why).
@@ -86,7 +89,7 @@ files; `cat`, `tail` and pipes are not allowed.
      unless the question needs more.
 6. **Proposals**, only when something should actually change (`desk propose <id> --file
    reports/desk/tmp/task<id>-proposals.json`): a JSON list of objects with
-   `kind` (budget | status | creative | targeting | other), `title`, `entity_type`
+   `kind` (budget | status | creative | targeting | experiment | other), `title`, `entity_type`
    (campaign | adset | ad), `entity_id`, `entity_name`, `field`, `current_value`,
    `proposed_value` (budgets in dollars per day, e.g. "$20/day"), `rationale` (with the
    numbers), `expected`, `rollback` (the exact previous value). Respect the workspace rules:
@@ -97,6 +100,15 @@ files; `cat`, `tail` and pipes are not allowed.
    of the campaign or ad set that holds the daily budget (Edge Bourne: the campaign) +
    `proposed_value` like `$24/day`. Anything else (new creative, targeting, copy) is recorded
    when approved and needs a later step, so say what that step is in `expected`.
+   **experiment** = a test worth tracking (two to four ads or ad sets that already run at the
+   same time to the same people): `title`, `rationale` (the question and why it matters),
+   `payload` `{"name": "…", "hypothesis": "…", "metric": "cpl" | "cpql" | "ctr" | "hook",
+   "arms": [{"label": "A", "ad_ids": ["<ad id>"]}, {"label": "B", "adset_ids": ["<ad set id>"]}],
+   "start_day": "YYYY-MM-DD" (optional, default today), "end_day": "YYYY-MM-DD" (optional),
+   "target_cents": 6000 (optional, cost metrics)}`. Approving it only starts tracking; nothing
+   changes on Meta. A payload that doesn't validate (unknown ids, fewer than two arms) is
+   stored as `other`. The page says "too early" until each arm has spent 2× the target with
+   ≥ 3 results over ≥ 3 full days, and calls a winner only at 95% confidence.
 7. `desk done <id> --summary "<one or two sentences>"`. If you can't finish (Meta down, no
    data, a tool refused), `desk fail <id> --error "<what happened and what would fix it>"`
    rather than stopping silently.

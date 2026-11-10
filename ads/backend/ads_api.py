@@ -680,6 +680,8 @@ def decide(proposal_id, decision):
         return api_error("Proposal not found", 404)
     if p["status"] != "pending":
         return api_error("This proposal was already decided", 409)
+    if p["kind"] == "experiment" and decision == "approve":
+        return approve_experiment(user, p)
     tid = p.get("entity_id") or (p.get("payload") or {}).get("template_ad_id")
     level, row = find_entity(tid) if tid else (None, None)
     if row and not can_touch(user, row["campaign_id"]):
@@ -713,6 +715,20 @@ def decide(proposal_id, decision):
     if error:
         return api_error(f"Approved, but Meta refused the change: {error}", 400)
     return jsonify({"status": "applied", "applied": True, "ad_id": new_id})
+
+
+def approve_experiment(user, p):
+    """Approving a test Claude suggested starts tracking it on the Tests page. Nothing changes on Meta."""
+    import experiments_api
+    if user["role"] != "admin":
+        return api_error("Only admins can start tracking a test", 403)
+    fields, err = experiments_api.clean(p.get("payload") or {})
+    if err:
+        return api_error(f"This test can't be tracked as proposed: {err[0]}", 400)
+    exp_id = experiments_api.create(fields, user["id"], p["id"])
+    db.execute("UPDATE desk_proposals SET status = 'applied', decided_by = %s, decided_at = now() WHERE id = %s", (user["id"], p["id"]))
+    log_activity("proposal.applied", subject=str(p["id"]), details={"title": p["title"], "experiment_id": exp_id})
+    return jsonify({"status": "applied", "applied": True, "experiment_id": exp_id})
 
 
 @bp.get("/proposals/<int:proposal_id>/preview")

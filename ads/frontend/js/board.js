@@ -57,6 +57,8 @@ function familyHead(fam, ix) {
 
 // ---------------------------------------------------------------- what changes
 
+const TEST_METRICS = { cpl: "Cost per lead", cpql: "Cost per qualified lead", ctr: "Click rate", hook: "Hook rate" };
+
 function firstLine(text) {
   return String(text || "").split("\n")[0];
 }
@@ -78,6 +80,15 @@ function changeList(p, ix) {
     if (pl.name) rows.push(`<div><dt>Name</dt><dd>${esc(pl.name)}</dd></div>`);
     return `<dl class="facts changes">${rows.join("")}</dl>`;
   }
+  if (p.kind === "experiment" && p.payload) {
+    const arm = (a) => (a.names || []).join(", ") || "an ad";
+    const rows = (pl.arms || []).map((a) => `<div><dt>${esc(a.label)}</dt><dd>${esc(arm(a))}</dd></div>`);
+    rows.push(`<div><dt>Decided by</dt><dd>${esc(TEST_METRICS[pl.metric] || pl.metric)}</dd></div>`);
+    const day = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    rows.push(`<div><dt>Dates</dt><dd>From ${esc(day(pl.start_day))}${pl.end_day ? ` to ${esc(day(pl.end_day))}` : ", no end set"}</dd></div>`);
+    if (pl.hypothesis) rows.push(`<div><dt>Idea</dt><dd>${esc(pl.hypothesis)}</dd></div>`);
+    return `<dl class="facts changes">${rows.join("")}</dl>`;
+  }
   const rows = [];
   if (p.entity_name) rows.push(`<div><dt>On</dt><dd>${esc(p.entity_name)}</dd></div>`);
   if (p.current_value || p.proposed_value) rows.push(`<div><dt>${esc(p.field ? p.field.charAt(0).toUpperCase() + p.field.slice(1) : "Change")}</dt><dd>${p.current_value ? `<del>${esc(p.current_value)}</del> → ` : ""}<ins>${esc(p.proposed_value || "")}</ins></dd></div>`);
@@ -91,10 +102,15 @@ function sourceLine(p, ix) {
   if (!t) return "";
   const score = t.scorecard && t.scorecard.overall != null ? ` · scored ${t.scorecard.overall}/5` : "";
   const asked = p.requested_by ? "The new version you asked for · " : "";
-  return `<p class="source muted small flush">${asked}From the ${esc((RUN_WORDS[t.kind] || KIND_LABELS[t.kind] || t.kind).toLowerCase())} run, ${esc(when(t.created_at))}${score} · <a href="#ads" data-goto-run="${t.id}">See this ad's story</a></p>`;
+  const story = p.kind === "experiment" ? "" : ` · <a href="#ads" data-goto-run="${t.id}">See this ad's story</a>`;
+  return `<p class="source muted small flush">${asked}From the ${esc((RUN_WORDS[t.kind] || KIND_LABELS[t.kind] || t.kind).toLowerCase())} run, ${esc(when(t.created_at))}${score}${story}</p>`;
 }
 
 function actions(p, ix) {
+  if (p.kind === "experiment" && p.payload) {
+    return `<div class="row decide"><button class="btn btn-claude" type="button" data-approve="${p.id}">Track this test</button>
+      <button class="btn btn-quiet" type="button" data-decline="${p.id}">Decline</button></div>`;
+  }
   if (p.kind === "creative" && p.payload) {
     return `<div class="row decide"><button class="btn btn-claude" type="button" data-approve="${p.id}">Create this ad (off)</button>
       <a class="btn" href="/new-ad.html?proposal=${p.id}">Edit first</a>
@@ -112,6 +128,7 @@ function actions(p, ix) {
 
 function changeSummary(p) {
   const pl = p.payload || {};
+  if (p.kind === "experiment") return `Tracks “${pl.name || p.title}” on the Tests page. Nothing changes on Meta.`;
   if (p.kind === "creative") return `New ad “${pl.name || p.title}”, created switched off${pl.media && pl.media.kind !== "same" ? ", with Claude's new " + pl.media.kind : ""}.`;
   return [p.entity_name, p.field && `${p.field}: ${p.current_value || "—"} → ${p.proposed_value || "—"}`].filter(Boolean).join(" · ");
 }

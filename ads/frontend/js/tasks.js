@@ -157,6 +157,7 @@ export function wireTaskActions(root, onChange, openReports) {
         } : { title: `Decline “${card.dataset.title}”?`, body: "<p>Nothing changes on Meta.</p>", confirm: "Decline" });
         if (!yes) return;
         const r = await api(`/api/proposals/${id}/${approve ? "approve" : "decline"}`, { method: "POST" });
+        if (r.experiment_id) { toast("Tracking it. Opening the test…"); location.href = `/experiments.html#${r.experiment_id}`; return; }
         if (r.ad_id) { toast("Ad created (off). Opening it…"); location.href = `/ad.html?id=${encodeURIComponent(r.ad_id)}&created=1`; return; }
         toast(r.status === "applied" ? "Approved and applied on Meta" : r.status === "approved" ? (r.note || "Approved") : "Declined");
         onChange();

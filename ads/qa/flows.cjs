@@ -524,6 +524,71 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   await page.waitForSelector('#view .task');
   check('All runs folds the scorecard', !(await page.isVisible('#view .scorecard')));
 
+  // Tests (experiments): set one up, read the verdict, finish it; Claude's suggested test becomes one on approval.
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute('DELETE FROM experiments')"`);
+  await page.goto(BASE + '/experiments.html');
+  await page.waitForSelector('#tests .empty');
+  check('Tests explains itself when there are none', /calls a winner only at 95% confidence/.test(await page.textContent('#tests .empty')));
+  await page.click('#tests [data-new]');
+  await page.waitForSelector('dialog.test-dialog [data-arm-ref]');
+  const testsSeen = errors.length;
+  await page.fill('dialog #f-name', 'QA problem hook vs result hook');
+  await page.selectOption('dialog #arm-ref-0', 'ad:120252672229040312');
+  await page.click('dialog button[type=submit]');
+  await page.waitForSelector('dialog .field.error .err');
+  check('a test needs at least two arms', /at least two arms/.test(await page.textContent('dialog .field.error')));
+  errors.splice(testsSeen); // the refused test logs an expected 400
+  await page.click('dialog #arm-add');
+  await page.click('dialog #arm-add');
+  check('up to four arms can be added', (await page.locator('dialog [data-arm]').count()) === 4 && await page.isHidden('dialog #arm-add'));
+  await page.locator('dialog [data-arm-remove]').nth(3).click();
+  await page.locator('dialog [data-arm-remove]').nth(2).click();
+  await page.selectOption('dialog #arm-ref-1', 'ad:120252672230740312');
+  const weekAgo = await page.evaluate(() => { const d = new Date(Date.now() - 7 * 864e5); return d.toISOString().slice(0, 10); });
+  await page.fill('dialog #f-start', weekAgo);
+  await page.selectOption('dialog #f-metric', 'ctr');
+  check('the target cost is only asked for cost metrics', await page.isHidden('dialog #target-field'));
+  await page.selectOption('dialog #f-metric', 'cpl');
+  await page.click('dialog button[type=submit]');
+  await page.waitForSelector('.test .arms-table');
+  const card = await page.textContent('.test');
+  check('a new test compares its arms over its own days, with a verdict in words',
+    /QA problem hook vs result hook/.test(card) && (await page.locator('.test .arms-table tbody tr').count()) === 2
+    && /N1 - One simple system/.test(card) && /N3 - Same work twice/.test(card)
+    && /(Too early to call|No clear difference|looks better|wins)/.test(await page.textContent('.test .verdict')), await page.textContent('.test .verdict'));
+  await page.click('.test [data-finish]');
+  await page.waitForSelector('dialog.test-dialog [name=verdict]');
+  await page.check('dialog input[name=winner][value="A"]');
+  await page.fill('dialog #f-verdict', 'A got cheaper leads; keep the problem hook.');
+  await page.click('dialog button[type=submit]');
+  await page.waitForFunction(() => document.querySelector('[data-n="finished"]')?.textContent === '1');
+  check('finishing moves it to Finished and keeps it in view', (await page.textContent('[data-n="running"]')) === '0' && (await page.locator('.test').count()) === 1);
+  check('a finished test shows the winner and what was learned', /Finished · A won/.test(await page.textContent('.test .pill')) && /keep the problem hook/.test(await page.textContent('.test .verdict')));
+  await page.click('.test [data-reopen]');
+  await page.waitForFunction(() => document.querySelector('[data-n="running"]')?.textContent === '1');
+  check('Reopen puts it back to running without a winner', await page.evaluate(async () => (await (await fetch('/api/experiments')).json()).items[0].winner === null));
+
+  const propId = sh(`docker exec -w /app edgebourne-ads-backend python -c "
+import db, json, desk_api
+t = db.execute(\\"INSERT INTO desk_tasks (kind, prompt, status, summary) VALUES ('review', 'QA: suggest a test', 'done', 'One test to run') RETURNING id\\", returning=True)
+p = desk_api.clean_proposal({'kind': 'experiment', 'title': 'Test the order portal against the weekly report', 'rationale': 'Both run to the same people; hook rate decides which story stops the scroll.',
+  'payload': {'name': 'QA portal vs report', 'metric': 'hook', 'arms': [{'label': 'Portal', 'ad_ids': ['120252672229400312']}, {'label': 'Report', 'ad_ids': ['120252672232030312']}]}})
+r = db.execute('INSERT INTO desk_proposals (task_id, kind, title, rationale, payload) VALUES (%s, %s, %s, %s, %s) RETURNING id', (t['id'], p['kind'], p['title'], p['rationale'], json.dumps(p['payload'])), returning=True)
+print(r['id'])"`).trim();
+  await page.goto(BASE + '/desk.html', { waitUntil: 'networkidle' });
+  const sugg = page.locator(`#p-${propId}`);
+  await sugg.waitFor();
+  check('Claude can suggest a test: its arms and number show on the decision',
+    /Portal.*N2 - Order portal.*Report.*N4 - Weekly report.*Hook rate/s.test(await sugg.textContent()) && /Track this test/.test(await sugg.textContent()));
+  await sugg.locator('[data-approve]').click();
+  await page.waitForSelector('dialog.confirm');
+  await Promise.all([page.waitForURL('**/experiments.html#*'), page.click('dialog.confirm #cd-ok')]);
+  await page.waitForSelector('.test.flash');
+  check('approving it starts tracking the test and opens it', /QA portal vs report/.test(await page.textContent('.test.flash')) && /suggested by Claude/.test(await page.textContent('.test.flash')));
+  check('the suggestion is marked done', sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query('SELECT status FROM desk_proposals WHERE id = ${propId}', one=True)['status'])"`).trim() === 'applied');
+  await page.screenshot({ path: `${OUT}/flow-tests.png`, fullPage: true });
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute('DELETE FROM experiments')"`);
+
   await browser.close();
   console.log(results.join('\n'));
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');
