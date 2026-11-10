@@ -39,6 +39,9 @@ function headerFigures() {
   const keys = ["spend_cents", "leads", "qualified", "impressions", "reach", "link_clicks", "video_3s", "thruplays"];
   const m = Object.fromEntries(keys.map((k) => [k, sum(k, "m")]));
   const prev = state.vs && data.prev_range ? Object.fromEntries(keys.map((k) => [k, sum(k, "prev")])) : null;
+  // People: unique across the whole account from Meta, not the campaigns added up.
+  if (!state.campaign && data.reach_total != null) m.reach = data.reach_total;
+  if (prev && !state.campaign && data.prev_reach_total != null) prev.reach = data.prev_reach_total;
   return figuresHtml(m, prev, data.target_qualified_cents);
 }
 

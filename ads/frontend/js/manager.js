@@ -187,7 +187,7 @@ export function figuresHtml(m, prev, target) {
   const qcpl = m.qualified ? m.spend_cents / m.qualified : null;
   return `<div class="figs">
     ${f("Spent", money(m.spend_cents, { exact: true }), prev ? delta(m.spend_cents, prev.spend_cents, null).replace(/d-(good|bad)/, "d-mute") : "")}
-    ${f("Views", count(m.impressions), `${prev ? delta(m.impressions, prev.impressions, false) : ""}<span class="fig-s">${count(m.reach)} ${m.reach === 1 ? "person" : "people"} reached</span>`)}
+    ${f("Views", count(m.impressions), `${prev ? delta(m.impressions, prev.impressions, false) : ""}<span class="fig-s" title="Different people who saw it at least once">${count(m.reach)} ${m.reach === 1 ? "person" : "people"} reached${m.reach_summed ? " (approx.)" : ""}</span>`)}
     ${f("Leads", count(m.leads), prev ? delta(m.leads, prev.leads, false) : "")}
     ${f("Cost per lead", per(m.spend_cents, m.leads), prev ? delta(cpl(m), cpl(prev), true) : "")}
     ${f("Qualified", count(m.qualified), prev ? delta(m.qualified, prev.qualified, false) : "")}
@@ -318,7 +318,7 @@ function moreNumbers(r) {
     ${video ? cell("Hold rate", pct(m.thruplays, m.video_3s), "ThruPlays ÷ 3-second views") : ""}
     ${video ? cell("ThruPlays", count(m.thruplays), "Watched 15 s or to the end") : ""}
     ${cell("Lead rate", pct(m.leads, m.link_clicks), "Leads ÷ link clicks")}
-    ${r.level === "ad" ? cell("Views since it started", count(r.lifetime_impressions)) : ""}
+    ${r.level === "ad" ? cell("Views since it started", count(r.lifetime_impressions), "Includes today so far") : ""}
     ${r.level === "ad" && r.created_time ? cell("Created", esc(when(r.created_time))) : ""}
   </dl>`;
 }

@@ -115,13 +115,14 @@ function renderOverview() {
       <div class="stack">
         ${pending.length ? `<section class="panel claude-panel"><div class="panel-head"><h2>Claude suggests</h2></div><div class="panel-body stack tight" id="props">${pending.map(proposalCard).join("")}</div></section>` : ""}
         <section class="panel">
-          <div class="panel-head"><h2>Results</h2><p>Since it started</p></div>
+          <div class="panel-head"><h2>Results</h2><p>Since it started, today so far included</p></div>
           <div class="panel-body">
-            <dl class="mini-figs wide six">
+            <dl class="mini-figs wide six seven">
               <div><dt>Spent</dt><dd>${money(lifetime.spend_cents, { exact: true })}</dd></div>
               <div><dt>Leads</dt><dd>${count(lifetime.leads)}</dd></div>
               <div><dt>Per lead</dt><dd>${per(lifetime.spend_cents, lifetime.leads)}</dd></div>
-              <div><dt>Shown to</dt><dd>${count(lifetime.reach)}</dd></div>
+              <div><dt>Views</dt><dd>${count(lifetime.impressions)}</dd></div>
+              <div title="Different people who saw it at least once"><dt>People reached</dt><dd>${count(lifetime.reach)}${lifetime.reach_summed ? "*" : ""}</dd></div>
               <div><dt>Click rate</dt><dd>${pct(lifetime.link_clicks, lifetime.impressions)}</dd></div>
               ${ad.object_type === "VIDEO" ? `<div><dt>Hook rate</dt><dd>${hook}</dd></div>` : ""}
             </dl>

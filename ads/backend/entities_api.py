@@ -136,6 +136,9 @@ def compare_ads():
     cur, qual = ads_api._metrics(where, params, start, end), ads_api._quality(where, params, start, end)
     if prev:
         cur_p, qual_p = ads_api._metrics(where, params, *prev), ads_api._quality(where, params, *prev)
+    import insights
+    reach_now = insights.unique_reach("ad", start, end)
+    reach_before = insights.unique_reach("ad", *prev) if prev else None
     tags = {}
     for t in db.query("SELECT ad_id, dimension, value FROM ad_tags WHERE ad_id = ANY(%s)", (ids,)):
         tags.setdefault(t["ad_id"], {})[t["dimension"]] = t["value"]
@@ -145,6 +148,9 @@ def compare_ads():
                 "series": _series("ad_id = %s", [i], start, end)}
         if prev:
             item["prev"] = {**cur_p.get(i, {}), "qualified": qual_p.get(i, 0)}
+        insights.apply_reach([item], reach_now, "m")
+        if prev:
+            insights.apply_reach([item], reach_before, "prev")
         items.append(item)
     shaped = compare.shape(items, targets.qualified(), targets.lead())
     out = {"range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "label": ranges.label(start, end)},

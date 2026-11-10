@@ -32,3 +32,26 @@ class BreakdownShapeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UniqueReachTests(unittest.TestCase):
+    def test_meta_rows_become_people_per_id(self):
+        import insights
+        rows = [{"ad_id": "a1", "reach": "120"}, {"ad_id": "a2", "reach": "40"}, {"ad_id": "a3"}]
+        self.assertEqual(insights.reach_map("ad", rows), {"a1": 120, "a2": 40, "a3": 0})
+
+    def test_account_level_has_one_total(self):
+        import insights
+        self.assertEqual(insights.reach_map("account", [{"account_id": "1025971549903293", "reach": "510"}]), {"account": 510})
+
+    def test_apply_reach_replaces_summed_daily_reach_and_keeps_zero_for_silent_ads(self):
+        import insights
+        rows = [{"id": "a1", "m": {"reach": 300}}, {"id": "a2", "m": {"reach": 0}}]
+        insights.apply_reach(rows, {"a1": 210}, "m")
+        self.assertEqual([r["m"]["reach"] for r in rows], [210, 0])
+
+    def test_apply_reach_without_meta_keeps_the_sum_and_marks_it(self):
+        import insights
+        rows = [{"id": "a1", "m": {"reach": 300}}]
+        insights.apply_reach(rows, None, "m")
+        self.assertEqual(rows[0]["m"], {"reach": 300, "reach_summed": True})

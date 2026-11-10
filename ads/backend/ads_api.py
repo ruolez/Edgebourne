@@ -377,8 +377,16 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
             c["prev"] = _sum([{"m": s["prev"]} for s in c["adsets"]])
         c["pending_proposals"] = pending.get(c["id"], 0)
         c["can_control"] = can_touch(user, c["id"]) and user["role"] != "client"
+    # Unique people per window from Meta (daily reach can't be added up); the daily sum if Meta is quiet.
+    for level, rows_, in (("ad", ads), ("adset", adsets), ("campaign", campaigns)):
+        insights.apply_reach(rows_, insights.unique_reach(level, start, end), "m")
+        if prev:
+            insights.apply_reach(rows_, insights.unique_reach(level, *prev), "prev")
+    reach_total = (insights.unique_reach("account", start, end) or {}).get("account")
     import targets
-    out = {"range": {"start": start.isoformat(), "end": end.isoformat(), "days": days, "label": ranges.label(start, end)},
+    out = {"reach_total": reach_total if not campaign_id else None,
+           "prev_reach_total": (insights.unique_reach("account", *prev) or {}).get("account") if prev and not campaign_id else None,
+           "range": {"start": start.isoformat(), "end": end.isoformat(), "days": days, "label": ranges.label(start, end)},
            "target_qualified_cents": targets.qualified(), "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync"), "archived": archived_n}
     if prev:
         out["prev_range"] = {"start": prev[0].isoformat(), "end": prev[1].isoformat(), "label": ranges.label(*prev)}
@@ -420,6 +428,12 @@ def ad_detail(ad_id):
     totals = db.query("""SELECT COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
                                 COALESCE(SUM(reach),0) AS reach, COALESCE(SUM(link_clicks),0) AS link_clicks,
                                 COALESCE(SUM(leads),0) AS leads FROM ad_daily WHERE ad_id = %s""", (ad_id,), one=True)
+    life = {k: int(v) for k, v in totals.items()}
+    unique = insights.lifetime_reach(ad_id)
+    if unique is not None:
+        life["reach"] = unique
+    else:
+        life["reach_summed"] = True
     leads = db.query("""SELECT id, full_name, business_type, status, created_time, is_test FROM leads
                         WHERE ad_id = %s ORDER BY created_time DESC LIMIT 50""", (ad_id,))
     proposals = db.query("""SELECT p.*, t.prompt FROM desk_proposals p JOIN desk_tasks t ON t.id = p.task_id
@@ -430,7 +444,7 @@ def ad_detail(ad_id):
                           WHERE m.entity_id IN (%s, %s, %s) ORDER BY m.id DESC LIMIT 30""",
                        (ad_id, ad["adset_id"], ad["campaign_id"]))
     ad["can_control"] = current_user()["role"] != "client"
-    return jsonify({"ad": ad, "series": series, "lifetime": {k: int(v) for k, v in totals.items()},
+    return jsonify({"ad": ad, "series": series, "lifetime": life,
                     "leads": leads, "proposals": proposals, "changes": changes,
                     "timeline": status_history.timeline("ad", ad_id),
                     "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS]})

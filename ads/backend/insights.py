@@ -209,3 +209,57 @@ def sync_entities(level, ids, source="webhook"):
         for c in _fetch_many(list(ids), sync.CAMPAIGN_FIELDS, sync.CAMPAIGN_FIELDS_PLAIN).values():
             events += sync.upsert_campaign(c, source)
     return events
+
+
+# ---------------------------------------------------------------- unique reach
+# Reach is the number of different people. It can't be added up day by day (someone who saw the ad
+# on Monday and Tuesday counts once), nor across ads, so each window is asked from Meta as a whole.
+REACH_ID = {"ad": "ad_id", "adset": "adset_id", "campaign": "campaign_id", "account": "account_id"}
+
+
+def reach_map(level, rows):
+    key = REACH_ID[level]
+    if level == "account":
+        return {"account": sum(int(r.get("reach") or 0) for r in rows)}
+    return {r[key]: int(r.get("reach") or 0) for r in rows if r.get(key)}
+
+
+def apply_reach(rows, reach, field):
+    """Put Meta's unique reach on rows[field]; without it keep the daily sum and say so."""
+    for r in rows:
+        m = r.get(field)
+        if m is None:
+            continue
+        if reach is None:
+            m["reach_summed"] = True
+        else:
+            m["reach"] = reach.get(r["id"], 0)
+
+
+def unique_reach(level, start, end):
+    """{id: people} for one window (complete days), cached 30 minutes; None when Meta doesn't answer."""
+    import insights_api
+    account = settings_store.get("meta_ad_account_id")
+    if not account:
+        return None
+
+    def fetch():
+        rows = list(meta_client.paged(f"act_{account}/insights", level=level, fields=f"{REACH_ID[level]},reach", limit=500,
+                                      time_range=json.dumps({"since": start.isoformat(), "until": end.isoformat()})))
+        return reach_map(level, rows)
+    try:
+        return insights_api.cached(f"reach:{level}:{start}:{end}", 1800, fetch)
+    except meta_client.MetaError:
+        return None
+
+
+def lifetime_reach(ad_id):
+    import insights_api
+
+    def fetch():
+        rows = meta_client.get(f"{ad_id}/insights", date_preset="maximum", fields="reach").get("data", [])
+        return {"reach": int(rows[0].get("reach") or 0) if rows else 0}
+    try:
+        return insights_api.cached(f"reach:life:{ad_id}", 1800, fetch)["reach"]
+    except meta_client.MetaError:
+        return None

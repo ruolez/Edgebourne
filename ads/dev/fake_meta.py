@@ -447,8 +447,22 @@ def graph(path):
         if len(parts) == 2 and parts[1] == "insights":
             if a.get("breakdowns"):
                 return jsonify({"data": breakdown_rows(a["breakdowns"])})
+            if parts[0] == act and "reach" in (a.get("fields") or "") and "spend" not in (a.get("fields") or ""):
+                # Unique reach for a whole window: fewer people than the daily rows added up.
+                level = a.get("level", "ad")
+                key = {"ad": "ad_id", "adset": "adset_id", "campaign": "campaign_id", "account": "account_id"}[level]
+                tr = json.loads(a.get("time_range") or "{}")
+                rows = [r for r in insights_rows("ad") if tr.get("since", "") <= r["date_start"] <= tr.get("until", "9999")]
+                people = {}
+                for r in rows:
+                    ident = ACCOUNT if level == "account" else r[key]
+                    people[ident] = people.get(ident, 0) + int(r["reach"])
+                return jsonify({"data": [{key: k, "reach": str(int(v * .62))} for k, v in people.items()]})
             if parts[0] == act:
                 return jsonify({"data": insights_rows(a.get("level"))})
+            if a.get("date_preset") == "maximum" and a.get("fields") == "reach":
+                rows = [r for r in insights_rows("ad") if r["ad_id"] == parts[0]]
+                return jsonify({"data": [{"reach": str(int(sum(int(r["reach"]) for r in rows) * .62))}] if rows else []})
             return jsonify({"data": [{"quality_ranking": "AVERAGE", "engagement_rate_ranking": "ABOVE_AVERAGE",
                                       "conversion_rate_ranking": "BELOW_AVERAGE_35", "frequency": "1.42", "cpm": "13.80",
                                       "ctr": "2.9", "video_avg_time_watched_actions": [{"action_type": "video_view", "value": "4"}]}]})
