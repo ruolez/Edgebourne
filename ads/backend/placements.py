@@ -7,6 +7,8 @@ The raw shape (asset_feed_spec + asset_customization_rules, the form in call_to_
 Meta's documented one, unverified against this account until the first live approval; the
 read-back check is what keeps a wrong guess off the running ad."""
 
+import json
+
 FEED, VERTICAL = "eb_feed", "eb_vertical"
 VERTICAL_SPEC = {"publisher_platforms": ["facebook", "instagram"],
                  "facebook_positions": ["story", "facebook_reels"],
@@ -70,6 +72,14 @@ def form_ids(spec):
         for item in spec:
             found |= form_ids(item)
     return found
+
+
+def describe(made):
+    """What Meta stored, in a line for the change log: enough to see why a read-back failed."""
+    feed = (made or {}).get("asset_feed_spec") or {}
+    story = (made or {}).get("object_story_spec") or {}
+    videos = json.dumps(feed.get("videos") or [], sort_keys=True)[:800]
+    return f"feed keys: {', '.join(sorted(feed)) or 'none'}; videos: {videos}; story keys: {', '.join(sorted(story)) or 'none'}"
 
 
 def readback_problem(old_story, made, vertical_id):

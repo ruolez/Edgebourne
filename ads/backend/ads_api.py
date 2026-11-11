@@ -1062,6 +1062,11 @@ def _approve(user, p, level, row, data):
     action = proposal_action(p, row)
     if not action:
         close("approved")
+        import desk_api
+        import desk_view
+        if desk_view.needs_follow_through(p):
+            return jsonify({"status": "approved", "applied": False, "task_id": desk_api.continue_accepted(p, user["id"]),
+                            "note": "Claude is picking this up on your Mac."})
         return jsonify({"status": "approved", "applied": False,
                         "note": "Recorded. This one isn't a simple on/off or budget change, so nothing was changed on Meta."})
     kind, value = action
@@ -1133,6 +1138,21 @@ def vertical_preview_spec(user, data):
     if thumb:
         video["image_url"] = thumb
     return {**story, "video_data": video}, None
+
+
+@bp.get("/ads/creative/<creative_id>/inspect")
+@admin_required
+def inspect_creative(creative_id):
+    """Read-only: what Meta stored for one of this account's creatives, to see why an update failed."""
+    if not creative_id.isdigit():
+        return api_error("Not a creative id", 400)
+    try:
+        body = meta_client.get(creative_id, fields="name,account_id,object_type,object_story_spec,asset_feed_spec,degrees_of_freedom_spec")
+    except meta_client.MetaError as exc:
+        return api_error(str(exc), 400)
+    if str(body.get("account_id")) != str(_account()):
+        return api_error("Not a creative of this account", 404)
+    return jsonify(body)
 
 
 @bp.get("/proposals/<int:proposal_id>/preview")
@@ -1227,7 +1247,8 @@ def add_vertical(user, ad_id, video_id, proposal_id=None):
         made = meta_client.get(new["id"], fields="object_story_spec,asset_feed_spec")
         problem = placements.readback_problem(cr.get("object_story_spec"), made, video_id)
         if problem:
-            record(user, "ad", row, "placement_media", ad["creative_id"], f"creative {new['id']} not used", False, problem, proposal_id)
+            record(user, "ad", row, "placement_media", ad["creative_id"], f"creative {new['id']} not used", False,
+                   f"{problem} Meta returned {placements.describe(made)}", proposal_id)
             return f"{problem} The running ad wasn't changed."
         meta_client.post(ad["id"], data={"creative": json.dumps({"creative_id": new["id"]})})
     except meta_client.MetaError as exc:

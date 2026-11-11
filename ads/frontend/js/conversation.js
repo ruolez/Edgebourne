@@ -81,6 +81,19 @@ function row(th, data, ix, ctx, pos) {
   </li>`;
 }
 
+// One job waiting on the Mac. A follow-up shows which conversation it belongs to.
+function queueRow(t, i, data, ix, ctx) {
+  const key = t.thread_id || t.id;
+  const th = data.board.threads[key];
+  const sub = t.thread_id ? `Follow-up in: ${esc(threadTitle(th, ix))}` : `${esc(kindWord(t))} · asked ${esc(shortWhen(t.created_at))}`;
+  return `<li class="cl-item">
+    <a class="cl-row" href="#r/${t.id}" ${ctx.sel === key ? 'aria-current="true"' : ""}>
+      <span class="cl-dot pos" aria-hidden="true">${i + 1}</span>
+      <span class="cl-text"><b>${esc(turnTitle(t))}</b><small>${sub}</small></span>
+    </a><span class="cl-tools">${i ? `<button class="cl-x" type="button" data-next="${t.id}" aria-label="Run this next" title="Run next">↑</button>` : ""}<button class="cl-x" type="button" data-cancel="${t.id}" aria-label="Cancel this job" title="Cancel">${icon("close")}</button></span>
+  </li>`;
+}
+
 function matches(th, ix, q) {
   if (!q) return true;
   return th.turns.some((id) => { const t = ix.tasks.get(id); return `${t.prompt} ${t.summary || ""}`.toLowerCase().includes(q); });
@@ -92,13 +105,13 @@ export function listHtml(data, ix, ctx) {
   const shown = (ids) => ids.map(T).filter((th) => matches(th, ix, ctx.query));
   const total = Object.values(b.threads).reduce((n, th) => n + th.waiting, 0);
   const decide = total ? `<a class="cl-decide" href="#decide" ${ctx.sel === "decide" ? 'aria-current="true"' : ""}><b>${total}</b><span>${total === 1 ? "suggestion" : "suggestions"} to decide</span></a>` : "";
-  const working = shown(b.working);
-  const line = shown(b.line);
-  const onMac = working.length || line.length ? `<section class="cl-group">
-      <header class="cl-head"><h2>On your Mac</h2>${b.line.length ? '<button type="button" data-clear="queue">Clear the line</button>' : ""}</header>
-      ${!data.bridge.online && line.length ? '<p class="cl-note">Your Mac is offline. These start when it’s back.</p>' : ""}
-      <ul>${working.map((th) => row(th, data, ix, ctx)).join("")}${line.map((th) => row(th, data, ix, ctx, b.line.indexOf(th.id) + 1)).join("")}</ul>
-    </section>` : "";
+  const working = b.working.map(T);
+  const lineRows = b.queue.map((id, i) => queueRow(ix.tasks.get(id), i, data, ix, ctx)).join("");
+  const onMac = `<section class="cl-group cl-now">
+      <header class="cl-head"><h2>On your Mac</h2>${b.queue.length ? '<button type="button" data-clear="queue">Clear the line</button>' : ""}</header>
+      ${!data.bridge.online && b.queue.length ? '<p class="cl-note">Your Mac is offline. These start when it’s back.</p>' : ""}
+      ${working.length || b.queue.length ? `<ul>${working.map((th) => row(th, data, ix, ctx)).join("")}${lineRows}</ul>` : '<p class="cl-idle">Claude is idle. Anything you send starts right away.</p>'}
+    </section>`;
   const recent = shown(b.recent);
   const days = ["Today", "Yesterday", "Earlier"].map((day) => {
     const group = recent.filter((th) => dayOf(th.last_at) === day);
@@ -114,8 +127,8 @@ export function listHtml(data, ix, ctx) {
       ${ctx.showCleared ? `<ul>${shown(b.cleared).map((th) => row(th, data, ix, ctx)).join("")}</ul>` : ""}
     </section>` : "";
   const none = !data.tasks.length ? '<p class="cl-note muted">What you ask Claude shows up here.</p>'
-    : ctx.query && !working.length && !line.length && !recent.length ? '<p class="cl-note muted">No conversation matches that.</p>' : "";
-  return decide + onMac + days + cleared + none;
+    : ctx.query && !recent.length ? '<p class="cl-note muted">No conversation matches that.</p>' : "";
+  return onMac + decide + days + cleared + none;
 }
 
 // ---------------------------------------------------------------- one turn
@@ -134,7 +147,7 @@ function trail(t, live) {
 
 function asked(t) {
   const about = t.options && t.options.about;
-  const auto = (t.options && t.options.schedule) || ["polish", "render", "advice"].includes(t.kind);
+  const auto = (t.options && (t.options.schedule || t.options.accepted)) || ["polish", "render", "advice"].includes(t.kind);
   const long = t.prompt.length > 360 || (t.options && t.options.schedule);
   const body = long
     ? `<details class="cv-more"><summary>${esc(turnTitle(t))}</summary><p>${esc(t.prompt)}</p></details>`
@@ -196,7 +209,7 @@ function answer(t, th, data, ix, ctx) {
   if (t.status === "queued") {
     const ahead = data.board.queue.indexOf(t.id);
     const working = data.board.working.length > 0;
-    return `<p class="cv-note">${ahead > 0 ? `${plural(ahead, "request")} ahead of this one. Your Mac runs one at a time.` : working ? "This one is next, as soon as the current job finishes." : data.bridge.online ? "Starting…" : "Your Mac is offline, so this starts when it’s back."}</p>`;
+    return `<p class="cv-note cv-wait"><span>${ahead > 0 ? `${plural(ahead, "job")} ahead of this one. Your Mac runs one at a time.` : working ? "This one is next, as soon as the current job finishes." : data.bridge.online ? "Starting…" : "Your Mac is offline, so this starts when it’s back."}</span><button class="btn btn-small btn-quiet" type="button" data-cancel="${t.id}">Cancel</button></p>`;
   }
   if (isLive(t)) return (t.steps || []).length ? trail(t, true) : `<p class="cv-progress"><span class="dot" aria-hidden="true"></span>${esc(t.progress || "Starting…")}</p>`;
   if (t.status === "failed") return `<p class="cv-note bad">${esc(t.error || "It stopped without saying why.")}</p><div class="cv-acts"><button class="btn btn-small" type="button" data-again="${t.id}">Try again</button></div>`;
@@ -261,8 +274,10 @@ export function headHtml(sel, data, ix) {
   }
   const th = data.board.threads[sel];
   const first = ix.tasks.get(th.turns[0]);
+  const elsewhere = data.board.working.filter((id) => id !== sel).length + data.board.queue.length;
+  const now = elsewhere ? `<a class="cv-now" href="#list"><span class="cl-dot working" aria-hidden="true"></span>${data.board.working.length ? "Working" : "In line"}${data.board.queue.length ? ` · ${data.board.queue.length}` : ""}</a>` : "";
   const context = [first.options && first.options.ad_name, first.campaign_name].filter(Boolean).join(" · ") || kindWord(first);
   const busy = th.state === "working" || th.state === "queued";
-  return `${back}<h1>${esc(threadTitle(th, ix))}</h1><span class="cv-ctx">${esc(context)}</span>
+  return `${back}<h1>${esc(threadTitle(th, ix))}</h1><span class="cv-ctx">${esc(context)}</span>${now}
     <span class="cv-head-do">${th.cleared ? `<button class="btn btn-small" type="button" data-restore-thread="${th.id}">Put back</button>` : busy ? "" : `<button class="btn btn-small" type="button" data-clear-thread="${th.id}">Clear</button>`}</span>`;
 }

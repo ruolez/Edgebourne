@@ -561,14 +561,14 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   await page.click('[data-accept-all]');
   await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
   const sheet = await page.textContent('dialog.accept-sheet');
-  check('the sheet sorts across categories', ['Spending', "Changes to what's running", 'New ads, created switched off', 'New versions for Claude to make', 'Only in this console'].every((g) => sheet.includes(g)), sheet.slice(0, 200));
+  check('the sheet sorts across categories', ['Spending', "Changes to what's running", 'New ads, created switched off', 'For Claude to do on your Mac', 'Only in this console'].every((g) => sheet.includes(g)), sheet.slice(0, 200));
   const on = page.locator('dialog.accept-sheet .sheet-item', { hasText: 'Turn N2 back on' });
   check('turning on is never ticked for you', !(await on.locator('input').isChecked()) && /spends up to/.test(await on.textContent()));
   const raise = page.locator('dialog.accept-sheet .sheet-item', { hasText: 'Raise the campaign budget' });
   check('a budget that moved since Claude read it says so and waits', !(await raise.locator('input').isChecked()) && /Claude saw \$20\.00 a day/.test(await raise.textContent()), await raise.textContent());
   await page.screenshot({ path: `${OUT}/flow-5-accept-sheet.png` });
   // Later flows count running ads, tests and tags, so leave those untouched here.
-  for (const title of ['Pause N4', 'Test the order portal', 'Tag N3', 'New headline: Type it once']) await page.locator('dialog.accept-sheet .sheet-item', { hasText: title }).locator('input').uncheck();
+  for (const title of ['Pause N4', 'Test the order portal', 'Tag N3', 'New headline: Type it once', 'Narrow the age range']) await page.locator('dialog.accept-sheet .sheet-item', { hasText: title }).locator('input').uncheck();
   const ticked = await page.locator('dialog.accept-sheet [data-item]:checked').count();
   check('the button counts what is ticked', (await page.textContent('dialog.accept-sheet #cd-ok')) === `Accept ${ticked}`, String(ticked));
   await page.click('dialog.accept-sheet #cd-ok');
@@ -657,6 +657,22 @@ with account_ctx.use(1):
   d = await desk();
   check('Undo also brings its suggestions back', d.tasks.find((t) => /^Audit the whole/.test(t.prompt)).proposals.filter((p) => p.status === 'pending').length === waitingBefore, String(waitingBefore));
 
+  // Accepting what nothing else acts on starts Claude, visibly.
+  await openConv('Audit the whole');
+  await page.locator('#cv-col .sg', { hasText: 'Narrow the age range' }).locator('[data-accept]').click();
+  await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
+  check('the sheet says Claude will pick it up', /Claude picks this up on your Mac/.test(await page.textContent('dialog.accept-sheet')));
+  await page.click('dialog.accept-sheet #cd-ok');
+  await page.waitForFunction(() => document.querySelector('dialog.accept-sheet #cd-ok')?.textContent === 'Done');
+  check('accepting says Claude is on it', /Claude is on it/.test(await page.textContent('dialog.accept-sheet .sheet-result')));
+  await page.click('dialog.accept-sheet #cd-ok');
+  await page.waitForFunction(() => /I accepted your suggestion: Narrow the age range/.test(document.querySelector('#cv-col')?.textContent || ''));
+  check('the accepted suggestion becomes the next turn, and says so', /Claude is on it/.test(await page.textContent('#cv-col .prows')));
+  check('the job shows on the Mac panel', /Narrow the age range/.test(await page.textContent('#cl-list .cl-now')));
+  const nowBox = await page.locator('#cl-list .cl-now').boundingBox();
+  const rowBox = await page.locator('#cl-list .cl-now .cl-row').first().boundingBox();
+  check('the Mac panel is really on screen, not collapsed', nowBox.height > 60 && rowBox.y >= nowBox.y && rowBox.y + 10 < nowBox.y + nowBox.height, JSON.stringify(nowBox));
+
   await page.click('a.cl-decide');
   await page.waitForSelector('[data-decline-all]');
   await page.click('[data-decline-all]');
@@ -695,8 +711,10 @@ with account_ctx.use(1):
 
   await page.click('[data-clear="queue"]');
   await page.click('dialog.confirm #cd-ok');
-  await page.waitForFunction(() => ![...document.querySelectorAll('#cl-list .cl-head h2')].some((h) => h.textContent === 'On your Mac'));
-  check('Clear the line cancels everything not started', true);
+  await page.waitForFunction(() => /Claude is idle/.test(document.querySelector('#cl-list .cl-now')?.textContent || ''));
+  check('Clear the line cancels everything not started, and the panel stays', true);
+  await page.waitForFunction(() => /Claude is idle/.test(document.querySelector('.rail .claude-now')?.textContent || ''), null, { timeout: 15000 });
+  check('the status line says when Claude is idle', true);
 
   const dayCount = await page.locator('#cl-list .cl-item').count();
   await page.locator('[data-clear-day]').first().click();
@@ -717,6 +735,31 @@ with account_ctx.use(1):
   d = await desk();
   const started = d.tasks.find((t) => /^Review the last 7 days/.test(t.prompt));
   check('a starter sets what kind of help it is and opens the conversation', started.kind === 'review' && !started.thread_id, started.kind);
+
+  // Queue up a bunch: several new jobs, several follow-ups, in order, visible from any page.
+  await sendReply('First follow-up.');
+  await page.waitForFunction(() => /First follow-up/.test(document.querySelector('#cv-col')?.textContent || ''));
+  await sendReply('Second follow-up.');
+  await page.waitForFunction(() => /Second follow-up/.test(document.querySelector('#cv-col')?.textContent || ''));
+  check('several messages can wait in one conversation', /3 messages waiting/.test(await page.textContent('#cv-line')), await page.textContent('#cv-line'));
+  d = await desk();
+  const order = d.board.queue.map((id) => d.tasks.find((t) => t.id === id).prompt.split(' ').slice(0, 2).join(' '));
+  check('follow-ups keep the order they were sent', order.indexOf('First follow-up.') >= 0 && order.indexOf('First follow-up.') < order.indexOf('Second follow-up.') && order.indexOf('Review the') < order.indexOf('First follow-up.'), order.join(' | '));
+  await page.click('.cl-new');
+  await page.waitForSelector('#cv-seeds:not([hidden])');
+  for (const job of ['Job one for the line', 'Job two for the line']) {
+    await page.fill('#prompt', job);
+    await page.click('[data-add-line]');
+    await page.waitForFunction((j) => (document.querySelector('#cl-list .cl-now')?.textContent || '').includes(j), job);
+  }
+  check('Add to line stacks jobs without leaving the page', (await page.inputValue('#prompt')) === '' && await page.isVisible('#cv-seeds'));
+  await page.goto(BASE + '/leads.html');
+  await page.waitForFunction(() => /5 in line/.test(document.querySelector('.rail .claude-now')?.textContent || ''), null, { timeout: 15000 });
+  check('every page shows what Claude has going on', /5 in line/.test(await page.textContent('.rail .claude-now')));
+  await page.goto(BASE + '/desk.html#list', { waitUntil: 'networkidle' });
+  await page.click('[data-clear="queue"]');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => /Claude is idle/.test(document.querySelector('#cl-list .cl-now')?.textContent || ''));
   await page.screenshot({ path: `${OUT}/flow-5-board-cleared.png` });
   }
 

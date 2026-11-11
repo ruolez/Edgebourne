@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, onRefresh, toast } from "./ui.js";
+import { boot, confirmDialog, esc, onRefresh, refreshClaudeNow, toast } from "./ui.js";
 import { ACTIVE, wireTaskActions } from "./tasks.js";
 import { adsView, fillPreview, index, loadPreviews } from "./board.js";
 import { clock, decideHtml, decideKey, headHtml, liveTurn, listHtml, queuedTurn, threadTitle, turnHtml, turnKey, turnTitle } from "./conversation.js";
@@ -186,21 +186,19 @@ function renderDock(sel) {
   const th = typeof sel === "number" ? data.board.threads[sel] : null;
   const line = $("cv-line");
   const form = $("ask-form");
-  const queued = th && th.state === "queued" ? queuedTurn(th, ix) : th && th.state === "working" ? queuedTurn(th, ix) : null;
+  const queued = th ? queuedTurn(th, ix) : null;
   $("cv-dock").hidden = sel === "decide" || sel == null;
   $("cv-seeds").hidden = sel !== "new";
   $("campaign").hidden = sel !== "new";
+  line.hidden = !queued;
+  form.hidden = false;
   if (queued) {
     const pos = data.board.queue.indexOf(queued.id);
-    line.hidden = false;
-    form.hidden = true;
-    line.innerHTML = `<span>${th.state === "working" ? "Your follow-up runs as soon as this finishes." : pos ? `${pos + 1}${["st", "nd", "rd"][pos] || "th"} in line. Starts when your Mac is free.` : data.bridge.online ? "Next in line." : "Your Mac is offline. This starts when it’s back."}</span>
+    const mine = th.turns.filter((id) => ix.tasks.get(id).status === "queued").length;
+    line.innerHTML = `<span>${mine > 1 ? `${mine} messages waiting in this conversation.` : th.state === "working" ? "Your follow-up runs as soon as this finishes." : pos ? `${pos + 1}${["st", "nd", "rd"][pos] || "th"} in line. Starts when your Mac is free.` : data.bridge.online ? "Next in line." : "Your Mac is offline. This starts when it’s back."}</span>
       ${pos > 0 ? `<button class="btn btn-small" type="button" data-next="${queued.id}">Run next</button>` : ""}
-      <button class="btn btn-small" type="button" data-cancel="${queued.id}">Cancel</button>${th.state === "working" && data.bridge.can_stop ? stopButton(th) : ""}`;
-    return;
+      <button class="btn btn-small" type="button" data-cancel="${queued.id}">Cancel</button>`;
   }
-  line.hidden = true;
-  form.hidden = false;
   renderDockFoot(sel, th);
 }
 
@@ -229,6 +227,16 @@ function renderDockFoot(sel, th) {
       btns.innerHTML = data.bridge.can_stop ? stopButton(th) : "";
       tick();
     }
+    return;
+  }
+  if (sel === "new") {
+    hint.textContent = data.bridge.online ? "It never changes anything without your yes." : "Your Mac is offline, so this waits until it’s on.";
+    btns.innerHTML = `<button class="btn btn-small" type="button" data-add-line ${has ? "" : "disabled"}>Add to line</button><button class="btn btn-small btn-claude" type="submit" ${has ? "" : "disabled"}>Send</button>`;
+    return;
+  }
+  if (th && th.state === "queued") {
+    hint.textContent = "Waiting in line. You can add more.";
+    btns.innerHTML = `<button class="btn btn-small btn-claude" type="submit" ${has ? "" : "disabled"}>Add to line</button>`;
     return;
   }
   hint.textContent = sel === "new"
@@ -336,7 +344,7 @@ function saveDraft(sel) { drafts.set(sel ?? "default", $("prompt").value); }
 function restoreDraft() { const v = drafts.get(selected ?? "default") || ""; $("prompt").value = v; fitPrompt(); }
 function fitPrompt() { const p = $("prompt"); p.style.height = "auto"; p.style.height = `${Math.min(p.scrollHeight, 180)}px`; }
 
-const reload = () => { lastJson = ""; load(); };
+const reload = () => { lastJson = ""; load(); refreshClaudeNow(); };
 
 async function act(path, body, message) {
   try { const r = await api(path, { method: "POST", body }); if (message) toast(typeof message === "function" ? message(r) : message); reload(); return r; }
@@ -401,7 +409,7 @@ function previewProposal(id, compare) {
   openViewer({ title: p.title, panes: compare ? [now, proposed] : [proposed], format: reels ? "INSTAGRAM_REELS" : PLACEMENTS[0][0], placements: reels ? [["INSTAGRAM_REELS", "Reels"]] : PLACEMENTS });
 }
 
-async function send({ stopFirst = false } = {}) {
+async function send({ stopFirst = false, stay = false } = {}) {
   const prompt = $("prompt").value.trim();
   if (!prompt) { $("prompt").focus(); return; }
   const sel = current();
@@ -414,9 +422,17 @@ async function send({ stopFirst = false } = {}) {
       drafts.delete("new");
       kind = "question";
       fitPrompt();
+      if (stay) {
+        await load(true);
+        toast(`Added. ${data.board.queue.length} in line.`);
+        refreshClaudeNow();
+        $("prompt").focus();
+        return;
+      }
       selected = t.id;
       await load(true);
       location.hash = `r/${t.id}`;
+      refreshClaudeNow();
       return;
     }
     const th = data.board.threads[sel];
@@ -428,6 +444,7 @@ async function send({ stopFirst = false } = {}) {
     stopSure = null;
     fitPrompt();
     await load(true);
+    refreshClaudeNow();
     const you = [...$("cv-col").querySelectorAll(".cv-you")].pop();
     if (you) scrollToEl(you);
   } catch (err) { toast(err.message, "bad"); renderDock(sel); }
@@ -486,6 +503,8 @@ async function onClick(e) {
   if ((el = hit("data-stop"))) { const id = Number(el.dataset.stop); if (stopSure === id) doStop(id); else askStop(id); return; }
   if (hit("data-keep")) { clearTimeout(stopTimer); stopSure = null; renderView(); return; }
   if (hit("data-stop-send")) { send({ stopFirst: true }); return; }
+  if (hit("data-add-line")) { send({ stay: true }); return; }
+  if ((el = hit("data-continue"))) { act(`/api/desk/proposals/${el.dataset.continue}/continue`, undefined, "Claude is picking this up"); return; }
   if ((el = hit("data-clear"))) {
     const n = data.board.queue.length;
     const yes = await confirmDialog({ title: "Clear the line?", body: `<p>Cancels ${n === 1 ? "the 1 job" : `all ${n} jobs`} that haven't started. Whatever is running keeps going.</p>`, confirm: `Cancel ${n}`, danger: true });

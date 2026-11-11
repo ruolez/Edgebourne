@@ -389,6 +389,7 @@ export async function boot({ page, admin = false }) {
     <button type="button" class="icon-btn" data-refresh aria-label="Refresh">${icon("refresh")}</button>
     <a class="icon-btn" href="/account.html" aria-label="Your account"><span class="avatar">${esc(initials)}</span></a>`;
   app.prepend(top);
+  if (isAdmin) startClaudeNow(top);
   const sectionCrumb = SECTIONS[section] ? { label: SECTIONS[section].label, href: SECTIONS[section].href } : null;
   const own = PAGE_TITLE[page];
   setCrumbs(sectionCrumb && own && own !== sectionCrumb.label ? [sectionCrumb, { label: own, href: location.pathname }] : [sectionCrumb || { label: own || "", href: location.pathname }]);
@@ -480,6 +481,50 @@ function banners(me) {
   box.innerHTML = items.map((t) => `<p class="note bad">${t}</p>`).join("");
   const main = document.querySelector("main") || document.querySelector(".app");
   main.prepend(box);
+}
+
+// What Claude is doing, on every page: a line in the sidebar, and a bar under the phone's top bar
+// while there is anything going on.
+let paintClaudeNow = null;
+export const refreshClaudeNow = () => { if (paintClaudeNow) paintClaudeNow(); };
+
+function startClaudeNow(top) {
+  const card = document.createElement("a");
+  card.className = "claude-now";
+  document.querySelector(".rail-foot")?.prepend(card);
+  const bar = document.createElement("a");
+  bar.className = "claude-now-bar";
+  bar.hidden = true;
+  top.after(bar);
+  let since = null;
+  const tick = () => {
+    if (!since) return;
+    const s = Math.max(0, Math.floor((Date.now() - since) / 1000));
+    document.querySelectorAll("[data-now-clock]").forEach((el) => { el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; });
+  };
+  paintClaudeNow = async () => {
+    let n;
+    try { n = await (await fetch("/api/desk/now", { credentials: "same-origin" })).json(); } catch (e) { return; }
+    if (!n || n.error) return;
+    const w = n.working;
+    since = w ? new Date(w.since).getTime() : null;
+    const state = w ? "working" : n.queued ? "waiting" : "idle";
+    const title = w ? 'Claude working <time data-now-clock></time>' : n.queued ? (n.online ? "Claude is starting the next job" : "Your Mac is offline") : "Claude is idle";
+    const detail = w ? esc(w.progress || w.title) : n.queued ? esc(n.next[0]?.title || "") : "Nothing in line";
+    const line = n.queued ? `<em>${n.queued} in line</em>` : "";
+    const href = w ? `/desk.html#r/${w.thread}` : "/desk.html#list";
+    [card, bar].forEach((el) => {
+      el.href = href;
+      el.dataset.state = state;
+      el.innerHTML = `<span class="claude-now-dot" aria-hidden="true"></span><span class="claude-now-text"><b>${title}</b><small>${detail}</small></span>${line}`;
+    });
+    bar.hidden = state === "idle";
+    tick();
+  };
+  paintClaudeNow();
+  setInterval(() => { if (!document.hidden) paintClaudeNow(); }, 10000);
+  setInterval(tick, 1000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) paintClaudeNow(); });
 }
 
 export function setNewCount(n) {

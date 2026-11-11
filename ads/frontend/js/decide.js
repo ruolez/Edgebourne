@@ -7,7 +7,7 @@ import { money } from "./format.js";
 
 const GROUPS = {
   money: "Spending", live: "Changes to what's running", create: "New ads, created switched off",
-  mac: "New versions for Claude to make", local: "Only in this console", blocked: "Can't be accepted",
+  mac: "For Claude to do on your Mac", local: "Only in this console", blocked: "Can't be accepted",
 };
 
 function line(item) {
@@ -27,7 +27,7 @@ function line(item) {
   if (p.kind === "render") return "Joins the queue on your Mac (10–40 minutes), then comes back for a yes or no.";
   if (p.kind === "experiment") return "Starts tracking on the Tests page. Nothing changes on Meta.";
   if (p.kind === "tags") return "Saves the labels. Nothing changes on Meta.";
-  return "Recorded as approved. Nothing changes on Meta.";
+  return "Claude picks this up on your Mac and answers in the conversation.";
 }
 
 function itemRow(item, i) {
@@ -45,7 +45,7 @@ function totals(items) {
   const on = new Map(items.filter((i) => i.plan.kind === "status" && i.plan.to === "ACTIVE" && i.plan.spend && i.plan.spend.daily_cents)
     .map((i) => [i.plan.spend.where, i.plan.spend.daily_cents]));
   const spending = [...on.values()].reduce((n, c) => n + c, 0);
-  const runs = items.filter((i) => i.plan.kind === "render").length;
+  const runs = items.filter((i) => i.plan.kind === "render" || i.plan.kind === "record").length;
   return [
     budget ? `Daily budgets ${budget > 0 ? "+" : "−"}${money(Math.abs(budget), { exact: true })} a day` : "",
     spending ? `Starts spending up to ${money(spending, { exact: true })} a day` : "",
@@ -63,6 +63,7 @@ async function applyOne(item) {
 
 function resultWords(item, r) {
   if (item.plan.kind === "render") return "In the queue";
+  if (r.task_id) return `Claude is on it · <a href="/desk.html#r/${r.task_id}">Follow it</a>`;
   if (r.ad_id) return `Created, off · <a href="/ad.html?id=${encodeURIComponent(r.ad_id)}">Open it</a>`;
   if (r.experiment_id) return `Tracking · <a href="/experiments.html#${r.experiment_id}">Open it</a>`;
   return r.status === "applied" ? "Done" : "Recorded";

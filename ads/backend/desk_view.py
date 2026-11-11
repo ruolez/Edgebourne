@@ -167,7 +167,7 @@ def board(tasks):
             "cleared": newest(k for k, t in threads.items() if t["cleared"])}
 
 
-SUGGESTION_FIELDS = ("id", "kind", "title", "status", "rationale", "entity_name", "field", "current_value", "proposed_value", "payload")
+SUGGESTION_FIELDS = ("id", "kind", "title", "status", "rationale", "entity_name", "field", "current_value", "proposed_value", "payload", "failure")
 
 
 def transcript(turns, limit=6, body=6000):
@@ -181,6 +181,36 @@ def transcript(turns, limit=6, body=6000):
 def resume_from(turns):
     """The latest earlier run the Mac actually started: its Claude session is the one to continue."""
     return next((t["id"] for t in reversed(turns) if t.get("claimed_at")), None)
+
+
+def needs_follow_through(p):
+    """Accepting these changes nothing by itself, so Claude has to pick them up."""
+    return p["kind"] not in ("experiment", "tags") and not is_version_request(p)
+
+
+def accepted_prompt(p):
+    return f"I accepted your suggestion: {p['title']}" + (f"\nNext step you wrote: {p['expected']}" if p.get("expected") else "")
+
+
+def accepted_run(p, tasks):
+    """The run that accepting this suggestion started."""
+    return next((t for t in tasks if ((t.get("options") or {}).get("accepted") or {}).get("id") == p["id"]), None)
+
+
+def accepted_state(p, run):
+    if run["status"] in ("queued", "claimed", "running"):
+        return ("working", "Claude is on it")
+    return {"done": ("done", "Claude answered below"), "failed": ("failed", "Claude didn't finish")}.get(run["status"], ("declined", "Stopped"))
+
+
+def now(rows, show=5):
+    """What the Mac is doing, for the status line on every page. rows = the open runs."""
+    title = lambda t: (t.get("options") or {}).get("schedule") or str(t["prompt"]).split("\n")[0]  # noqa: E731
+    live = next((t for t in rows if t["status"] in ("claimed", "running")), None)
+    line = sorted((t for t in rows if t["status"] == "queued"), key=lambda t: (t.get("queue_rank") or 0, t["id"]))
+    return {"working": live and {"id": live["id"], "thread": thread_key(live), "title": title(live), "progress": live["progress"],
+                                 "since": live["claimed_at"] or live["created_at"]},
+            "next": [{"id": t["id"], "thread": thread_key(t), "title": title(t)} for t in line[:show]], "queued": len(line)}
 
 
 AD_CODE = re.compile(r"^([A-Z]{1,3}\d{1,3})\b")
@@ -214,7 +244,7 @@ def mentioned_ads(text, ads, limit=8):
 
 
 REVIEW_ORDER = ("money", "live", "create", "mac", "local", "blocked")
-PLAN_GROUPS = {"vertical": "live", "create": "create", "render": "mac", "experiment": "local", "tags": "local", "record": "local"}
+PLAN_GROUPS = {"vertical": "live", "create": "create", "render": "mac", "experiment": "local", "tags": "local", "record": "mac"}
 
 
 def review_item(p, plan):

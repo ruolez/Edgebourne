@@ -195,7 +195,9 @@ export function proposalRow(p, ix) {
     return `<li class="prow">${pill(["done", "Made"])}<span class="prow-title">${esc(p.title)} → <a href="#ads" data-goto-run="${run.id}">made in the New version run, ${esc(when(run.created_at))}</a></span></li>`;
   }
   const look = p.kind === "creative" && p.payload ? ` <button class="prow-look" type="button" data-view-proposal="${p.id}">Preview</button>` : "";
-  return `<li class="prow">${pill(p.state)}<span class="prow-title">${esc(p.title)}${outcome(p, ix)}${decide}${look}</span></li>`;
+  const go = p.can_continue ? ` <button class="prow-look" type="button" data-continue="${p.id}">Have Claude do this</button>` : "";
+  const why = p.failure ? `<small class="prow-why">${esc(p.failure)}</small>` : "";
+  return `<li class="prow">${pill(p.state)}<span class="prow-title">${esc(p.title)}${outcome(p, ix)}${decide}${look}${go}${why}</span></li>`;
 }
 
 function runItem(t, ix, openReports) {

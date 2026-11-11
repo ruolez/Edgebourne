@@ -178,6 +178,57 @@ class ProposalRevisedTest(unittest.TestCase):
         self.assertEqual(desk_view.proposal_state({"status": "revised"}, None, None), ("declined", "Sent back to Claude"))
 
 
+class AcceptedRunTest(unittest.TestCase):
+    def test_the_run_started_by_accepting_a_suggestion(self):
+        runs = [task(2, "question", options={"reply": True}), task(3, "question", options={"reply": True, "accepted": {"id": 7, "title": "Do it"}})]
+        self.assertEqual(desk_view.accepted_run(proposal(7, 1, status="approved"), runs)["id"], 3)
+
+    def test_no_run_means_none(self):
+        self.assertIsNone(desk_view.accepted_run(proposal(7, 1, status="approved"), [task(2, "question")]))
+
+    def test_the_state_follows_the_run(self):
+        p = proposal(7, 1, status="approved")
+        self.assertEqual([desk_view.accepted_state(p, {"status": s}) for s in ("queued", "running", "done", "failed", "cancelled")],
+                         [("working", "Claude is on it"), ("working", "Claude is on it"), ("done", "Claude answered below"),
+                          ("failed", "Claude didn't finish"), ("declined", "Stopped")])
+
+
+class NeedsFollowThroughTest(unittest.TestCase):
+    def test_what_nothing_else_acts_on_goes_to_claude(self):
+        self.assertTrue(desk_view.needs_follow_through(proposal(1, 1, title="Fix the apply step")))
+        self.assertTrue(desk_view.needs_follow_through(proposal(1, 1, kind="targeting", title="Narrow the age range")))
+
+    def test_a_new_version_has_its_own_run(self):
+        self.assertFalse(desk_view.needs_follow_through(proposal(1, 1, title="Make a new version: slower opening")))
+
+    def test_the_prompt_says_what_was_accepted_and_the_next_step(self):
+        p = proposal(1, 1, title="Fix the apply step", expected="Read the stored error.")
+        self.assertEqual(desk_view.accepted_prompt(p), "I accepted your suggestion: Fix the apply step\nNext step you wrote: Read the stored error.")
+
+    def test_the_prompt_without_a_next_step(self):
+        self.assertEqual(desk_view.accepted_prompt(proposal(1, 1, title="Fix it")), "I accepted your suggestion: Fix it")
+
+
+class NowTest(unittest.TestCase):
+    def row(self, tid, status, **kw):
+        return {"id": tid, "status": status, "prompt": f"ask {tid}\nmore", "progress": None, "options": {}, "thread_id": None,
+                "claimed_at": None, "created_at": "2026-11-10T10:00", "queue_rank": 0, **kw}
+
+    def test_nothing_going_on(self):
+        self.assertEqual(desk_view.now([]), {"working": None, "next": [], "queued": 0})
+
+    def test_what_is_running_and_the_line_in_order(self):
+        rows = [self.row(1, "queued"), self.row(2, "running", progress="Reading", claimed_at="2026-11-10T10:01", thread_id=9),
+                self.row(3, "queued", queue_rank=-1, options={"schedule": "Optimizer"})]
+        self.assertEqual(desk_view.now(rows), {
+            "working": {"id": 2, "thread": 9, "title": "ask 2", "progress": "Reading", "since": "2026-11-10T10:01"},
+            "next": [{"id": 3, "thread": 3, "title": "Optimizer"}, {"id": 1, "thread": 1, "title": "ask 1"}], "queued": 2})
+
+    def test_the_line_is_counted_in_full_but_only_the_start_is_listed(self):
+        out = desk_view.now([self.row(i, "queued") for i in range(1, 9)], show=3)
+        self.assertEqual(([n["id"] for n in out["next"]], out["queued"]), ([1, 2, 3], 8))
+
+
 class TranscriptTest(unittest.TestCase):
     def turn(self, tid, **kw):
         return {"id": tid, "kind": "review", "prompt": f"ask {tid}", "status": "done", "summary": f"said {tid}", "error": None,
@@ -185,13 +236,13 @@ class TranscriptTest(unittest.TestCase):
 
     def test_earlier_turns_in_order_with_what_was_decided(self):
         p = {"id": 7, "kind": "budget", "title": "Raise", "status": "declined", "rationale": "cheap", "entity_name": "C",
-             "field": "budget", "current_value": "$20/day", "proposed_value": "$24/day", "payload": None, "secret": "x"}
+             "field": "budget", "current_value": "$20/day", "proposed_value": "$24/day", "payload": None, "failure": "Meta said no", "secret": "x"}
         out = desk_view.transcript([self.turn(1, reports=[{"title": "R", "body": "text", "id": 3}], proposals=[p])])
         self.assertEqual(out, [{"id": 1, "kind": "review", "you": "ask 1", "status": "done", "claude": "said 1", "error": None,
                                 "reports": [{"title": "R", "body": "text"}],
                                 "suggestions": [{"id": 7, "kind": "budget", "title": "Raise", "status": "declined", "rationale": "cheap",
                                                  "entity_name": "C", "field": "budget", "current_value": "$20/day",
-                                                 "proposed_value": "$24/day", "payload": None}]}])
+                                                 "proposed_value": "$24/day", "payload": None, "failure": "Meta said no"}]}])
 
     def test_long_reports_are_cut_and_only_recent_turns_kept(self):
         turns = [self.turn(i, reports=[{"title": "R", "body": "x" * 9000}]) for i in range(1, 9)]
@@ -256,7 +307,7 @@ class ReviewItemTest(unittest.TestCase):
             ({"kind": "render", "ad_id": N1}, "mac"),
             ({"kind": "experiment"}, "local"),
             ({"kind": "tags"}, "local"),
-            ({"kind": "record"}, "local"),
+            ({"kind": "record"}, "mac"),
         ]
         for plan, group in cases:
             self.assertEqual(plan_item(plan=plan)["group"], group, plan["kind"])

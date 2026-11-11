@@ -84,5 +84,14 @@ class ReadBackTests(unittest.TestCase):
         self.assertEqual(pl.form_ids({"a": [{"b": {"lead_gen_form_id": 7}}], "c": {"lead_gen_form_id": "8"}}), {"7", "8"})
 
 
+class DescribeTests(unittest.TestCase):
+    def test_says_what_meta_stored_for_the_videos(self):
+        made = {"id": "9", "asset_feed_spec": {"videos": [{"video_id": "1", "thumbnail_url": "x"}], "bodies": [{"text": "hi"}]}, "object_story_spec": {"page_id": "2"}}
+        self.assertEqual(pl.describe(made), 'feed keys: bodies, videos; videos: [{"thumbnail_url": "x", "video_id": "1"}]; story keys: page_id')
+
+    def test_says_when_meta_stored_no_feed_at_all(self):
+        self.assertEqual(pl.describe({"id": "9"}), "feed keys: none; videos: []; story keys: none")
+
+
 if __name__ == "__main__":
     unittest.main()

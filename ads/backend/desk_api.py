@@ -133,6 +133,12 @@ def tasks_with_results(where="TRUE", params=(), limit=50):
     reports = db.query("SELECT id, task_id, title, body, created_at FROM desk_reports "
                        "WHERE task_id = ANY(%s) ORDER BY id", (ids,))
     proposals = db.query("SELECT * FROM desk_proposals WHERE task_id = ANY(%s) ORDER BY id", (ids,))
+    failed = [p["id"] for p in proposals if p["status"] == "failed"]
+    reasons = {r["proposal_id"]: r["error"] for r in db.query(
+        """SELECT DISTINCT ON (proposal_id) proposal_id, error FROM meta_changes
+           WHERE NOT ok AND proposal_id = ANY(%s) ORDER BY proposal_id, id DESC""", (failed,))} if failed else {}
+    for p in proposals:
+        p["failure"] = reasons.get(p["id"])
     for t in tasks:
         t["reports"] = [r for r in reports if r["task_id"] == t["id"]]
         t["proposals"] = [p for p in proposals if p["task_id"] == t["id"]]
@@ -176,6 +182,12 @@ def desk_story(tasks):
                 q["requested_by"] = p["id"]
         p["result_ad"] = made
         p["state"] = desk_view.proposal_state(p, ads.get(made), follow, made_state)
+        if p["status"] == "approved" and desk_view.needs_follow_through(p):
+            run = desk_view.accepted_run(p, tasks)
+            p["accepted_task"] = run and run["id"]
+            p["can_continue"] = not run
+            if run:
+                p["state"] = desk_view.accepted_state(p, run)
 
     for t in tasks:
         for p in t["proposals"]:
@@ -341,8 +353,6 @@ def reply(task_id):
     root = anchor["root"]
     last = db.query(f"SELECT id, kind, campaign_id, status, options FROM desk_tasks WHERE {THREAD_SQL} = %s ORDER BY id DESC LIMIT 1",
                     (root,), one=True)
-    if last["status"] == "queued":
-        return api_error("Your last message is still waiting to start. Cancel it or wait for it.", 409)
     if last["status"] in ("claimed", "running") and data.get("stop_first"):
         if not bridge_status()["can_stop"]:
             return api_error("This Mac helper is too old to stop a run. Re-run ads/bridge/install.sh on the Mac.", 426)
@@ -359,15 +369,57 @@ def reply(task_id):
         if not sent:
             return api_error("That suggestion was already decided", 409)
         options["about"] = {"id": sent["id"], "title": sent["title"]}
+    task_id_new = queue_reply(root, last["kind"], last["campaign_id"], prompt, options, current_user()["id"])
+    task = {"id": task_id_new}
+    log_activity("desk.task_created", subject=str(task["id"]), details={"kind": last["kind"], "reply_to": root})
+    return jsonify(tasks_with_results("t.id = %s", [task["id"]], 1)[0]), 201
+
+
+def queue_reply(root, kind, campaign_id, prompt, options, user_id):
+    """Adds a run to a conversation. It goes to the front of the line, behind anything else
+    already waiting in the same conversation, so its messages stay in the order they were sent."""
     task = db.execute(
-        """INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options, thread_id, queue_rank)
-           VALUES (%s, %s, %s, %s, %s, %s, (SELECT COALESCE(MIN(queue_rank), 0) - 1 FROM desk_tasks WHERE status = 'queued')) RETURNING id""",
-        (last["kind"], prompt, last["campaign_id"], current_user()["id"], json.dumps(options), root), returning=True)
+        f"""INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options, thread_id, queue_rank)
+            VALUES (%s, %s, %s, %s, %s, %s,
+                    COALESCE((SELECT MAX(queue_rank) FROM desk_tasks WHERE status = 'queued' AND {THREAD_SQL} = %s),
+                             (SELECT COALESCE(MIN(queue_rank), 0) - 1 FROM desk_tasks WHERE status = 'queued'))) RETURNING id""",
+        (kind, prompt, campaign_id, user_id, json.dumps(options), root, root), returning=True)
     db.execute(f"""UPDATE desk_tasks SET archived_at = NULL WHERE {THREAD_SQL} = %s
                    AND NOT EXISTS (SELECT 1 FROM desk_tasks o WHERE COALESCE(o.thread_id, o.id) = %s AND o.archived_at IS NULL AND o.id <> %s)""",
                (root, root, task["id"]))
-    log_activity("desk.task_created", subject=str(task["id"]), details={"kind": last["kind"], "reply_to": root})
-    return jsonify(tasks_with_results("t.id = %s", [task["id"]], 1)[0]), 201
+    return task["id"]
+
+
+def continue_accepted(p, user_id):
+    """An accepted suggestion nothing else acts on: Claude picks it up in the same conversation."""
+    t = db.query("SELECT kind, campaign_id, options, COALESCE(thread_id, id) AS root FROM desk_tasks WHERE id = %s", (p["task_id"],), one=True)
+    old = t["options"] or {}
+    options = {**{k: old[k] for k in ("ad_id", "ad_name") if old.get(k)}, "reply": True, "accepted": {"id": p["id"], "title": p["title"]}}
+    task_id = queue_reply(t["root"], t["kind"], t["campaign_id"], desk_view.accepted_prompt(p), options, user_id)
+    log_activity("desk.task_created", subject=str(task_id), details={"kind": t["kind"], "accepted": p["id"]})
+    return task_id
+
+
+@bp.post("/proposals/<int:proposal_id>/continue")
+@admin_required
+def continue_proposal(proposal_id):
+    """Starts Claude on a suggestion accepted before accepting did that."""
+    p = db.query("SELECT * FROM desk_proposals WHERE id = %s", (proposal_id,), one=True)
+    if not p or p["status"] != "approved" or not desk_view.needs_follow_through(p):
+        return api_error("Only an accepted suggestion can be picked up", 409)
+    if db.query("SELECT 1 FROM desk_tasks WHERE (options->'accepted'->>'id')::int = %s", (proposal_id,), one=True):
+        return api_error("Claude already picked this one up", 409)
+    return jsonify({"task_id": continue_accepted(p, current_user()["id"])}), 201
+
+
+@bp.get("/now")
+@admin_required
+def now():
+    """What the Mac is doing right now, for the status line on every page."""
+    expire_stale()
+    rows = db.query("""SELECT id, status, prompt, progress, options, thread_id, claimed_at, created_at, queue_rank FROM desk_tasks
+                       WHERE status IN ('queued', 'claimed', 'running')""")
+    return jsonify({**desk_view.now(rows), "online": bridge_status()["online"]})
 
 
 @bp.post("/tasks/<int:task_id>/next")

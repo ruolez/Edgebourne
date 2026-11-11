@@ -171,7 +171,7 @@ function approvalDialog(card, plan) {
   }
   const words = { status: "It's switched off on Meta right away. Nothing is deleted.", create: "The new ad is created switched off; nothing spends until you turn it on.",
     experiment: "It starts tracking on the Tests page. Nothing changes on Meta.", tags: "The labels are saved. Nothing changes on Meta.",
-    record: "Recorded as approved. Nothing changes on Meta." };
+    record: "Claude picks it up on your Mac and answers in the conversation." };
   return {
     dialog: { title, claude: true, confirm: "Approve", body: `<p>${esc(card.dataset.change || "")}</p><p class="muted">${words[plan.kind] || ""}</p>` },
     body: {},

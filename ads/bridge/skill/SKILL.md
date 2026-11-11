@@ -64,6 +64,12 @@ own session, so you may remember them already.
 - A short reply earns a short answer: often the `--summary` is enough, with no report. Post a
   report only when there are real findings to lay out. Still finish with `desk done`.
 
+`options.accepted` (`{id, title}`) means he accepted that suggestion of yours and nothing else acts on
+it, so it's yours to carry out. Do every part your tools allow, then say plainly what was done and
+what is left. If part of it needs something you can't do from here (a change to the console's own
+code, a click in Ads Manager), give the exact step and who has to do it; don't imply it happened.
+A failed suggestion carries `failure`, the exact error: read it before explaining why something failed.
+
 ## Steps for one task
 
 1. `desk task <id>`. Read `kind`, `prompt`, `campaign_id`, and `options.reply`. Then
