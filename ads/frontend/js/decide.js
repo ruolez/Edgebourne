@@ -23,6 +23,7 @@ function line(item) {
   }
   if (p.kind === "status") return `Turns off <b>${esc(p.name)}</b> right away. Nothing is deleted.`;
   if (p.kind === "vertical") return `<b>${esc(p.name)}</b>: Reels and Stories get Claude's 9:16 video. Meta reviews the ad again.`;
+  if (p.kind === "update") return `Goes on <b>${esc(p.name)}</b> itself: same ad, results kept. Meta reviews the ad again.`;
   if (p.kind === "create") return "Nothing spends until you turn it on.";
   if (p.kind === "render") return "Joins the queue on your Mac (10–40 minutes), then comes back for a yes or no.";
   if (p.kind === "experiment") return "Starts tracking on the Tests page. Nothing changes on Meta.";
@@ -64,6 +65,7 @@ async function applyOne(item) {
 function resultWords(item, r) {
   if (item.plan.kind === "render") return "In the queue";
   if (r.task_id) return `Claude is on it · <a href="/desk.html#r/${r.task_id}">Follow it</a>`;
+  if (r.updated_ad) return `Updated, Meta reviews it next · <a href="/ad.html?id=${encodeURIComponent(r.updated_ad)}">Open it</a>`;
   if (r.ad_id) return `Created, off · <a href="/ad.html?id=${encodeURIComponent(r.ad_id)}">Open it</a>`;
   if (r.experiment_id) return `Tracking · <a href="/experiments.html#${r.experiment_id}">Open it</a>`;
   return r.status === "applied" ? "Done" : "Recorded";

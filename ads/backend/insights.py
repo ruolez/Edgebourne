@@ -87,6 +87,9 @@ def upsert_ad(ad, source, pictures):
         json.dumps(ad.get("issues_info")) if ad.get("issues_info") else None,
         cr.get("id"), cr.get("object_type"), cr.get("title"), cr.get("body"), cr.get("call_to_action_type"),
         cr.get("video_id"), image, ad.get("created_time"), ad.get("updated_time"), cr.get("effective_object_story_id")))
+    if prev and prev.get("creative_id") and cr.get("id") and prev["creative_id"] != cr["id"]:
+        import versions_api
+        versions_api.save_switch({**prev, "id": ad["id"]}, cr["id"], versions_api.OUTSIDE, title=cr.get("title"), body=cr.get("body"))
     return status_history.track("ad", ad, prev, source)
 
 

@@ -56,6 +56,24 @@ class CreativeProposalTests(unittest.TestCase):
         self.assertEqual(ads_api.proposal_action({"kind": "creative", "payload": payload, "entity_id": None}, AD),
                          ("vertical", payload))
 
+    def test_update_payload_with_words_becomes_an_update_of_that_ad(self):
+        payload = {"template_ad_id": "a1", "update_ad": True, "title": "T", "body": "B", "media": {"kind": "same"}}
+        self.assertEqual(ads_api.proposal_action({"kind": "creative", "payload": payload, "entity_id": None}, AD),
+                         ("update", payload))
+
+    def test_either_kind_can_be_applied_the_other_way(self):
+        words = {"template_ad_id": "a1", "title": "T", "body": "B", "media": {"kind": "same"}}
+        update, new = {**words, "update_ad": True}, words
+        cases = [(update, "new", "create"), (new, "update", "update"), (update, "update", "update"), (new, "new", "create"),
+                 (update, None, "update"), (new, None, "create"), (new, "nonsense", "create")]
+        self.assertEqual([ads_api.proposal_action({"kind": "creative", "payload": p, "entity_id": None}, AD, a)[0] for p, a, _ in cases],
+                         [want for _, _, want in cases])
+
+    def test_a_vertical_update_cannot_become_a_new_ad(self):
+        payload = {"template_ad_id": "a1", "update_ad": True, "vertical": {"video_id": "77"}}
+        self.assertEqual(ads_api.proposal_action({"kind": "creative", "payload": payload, "entity_id": None}, AD, "new"),
+                         ("vertical", payload))
+
     def test_creative_without_payload_is_not_applied(self):
         self.assertIsNone(ads_api.proposal_action({"kind": "creative", "payload": None, "entity_id": "a1"}, AD))
 

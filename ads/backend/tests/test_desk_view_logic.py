@@ -353,6 +353,20 @@ class ReviewTest(unittest.TestCase):
         self.assertEqual([(i["id"], i["tick"], i["conflict"]) for i in items],
                          [(1, False, "budget:c1"), (2, False, "budget:c1"), (3, True, None)])
 
+    def test_two_updates_of_one_ad_are_never_ticked_together(self):
+        update = {"kind": "update", "name": "N3", "live": True, "ad_id": "a1"}
+        other = {"kind": "update", "name": "N4", "live": True, "ad_id": "a2"}
+        items = desk_view.review([(proposal(1, 9, title="A", kind="creative"), update),
+                                  (proposal(2, 9, title="B", kind="creative"), update),
+                                  (proposal(3, 9, title="C", kind="creative"), other)])
+        self.assertEqual([(i["id"], i["group"], i["tick"], i["conflict"]) for i in items],
+                         [(1, "live", False, "creative:a1"), (2, "live", False, "creative:a1"), (3, "live", True, None)])
+
+    def test_a_words_update_and_a_9_16_update_of_one_ad_conflict(self):
+        items = desk_view.review([(proposal(1, 9, title="A", kind="creative"), {"kind": "update", "name": "N3", "ad_id": "a1"}),
+                                  (proposal(2, 9, title="B", kind="creative", payload={"template_ad_id": "a1"}), {"kind": "vertical", "name": "N3"})])
+        self.assertEqual([i["conflict"] for i in items], ["creative:a1", "creative:a1"])
+
     def test_money_comes_first_and_blocked_last(self):
         items = desk_view.review([
             (proposal(1, 9, title="A"), {"kind": "unclear", "problem": "x"}),

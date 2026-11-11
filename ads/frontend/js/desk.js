@@ -403,7 +403,7 @@ function previewCr(id) {
 
 function previewProposal(id, compare) {
   const p = ix.proposals.get(id);
-  const reels = p.payload.update_ad;
+  const reels = p.payload.vertical;
   const proposed = { label: "Proposed", url: (f) => `/api/proposals/${id}/preview?format=${f}` };
   const now = { label: "Running now", url: (f) => `/api/ads/ad/${encodeURIComponent(p.about_ad)}/preview?format=${f}` };
   openViewer({ title: p.title, panes: compare ? [now, proposed] : [proposed], format: reels ? "INSTAGRAM_REELS" : PLACEMENTS[0][0], placements: reels ? [["INSTAGRAM_REELS", "Reels"]] : PLACEMENTS });

@@ -1238,6 +1238,79 @@ print(r['id'])"`).trim();
   await page.waitForSelector('.advice-list');
   check('after the run, Today offers to fix it again', /Fix again with Claude/.test(await page.locator('.advice-list li', { hasText: 'vertical 9:16' }).textContent()));
 
+  // Polish and new versions update the ad itself: same ad, results kept, each version's numbers apart.
+  const n5 = '120252672233160312';
+  const dbq = (code) => sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;${code}"`).trim();
+  const polished = await page.evaluate(async (id) => (await (await fetch(`/api/ads/ad/${id}/polish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passes: ['headline'], variants: true, direction: 'qa' }) })).json()), n5);
+  const polishTask = polished.task_id;
+  const macU = JSON.parse(sh(`docker cp dev/qa_agent_update.py edgebourne-ads-backend:/app/qa_agent_update.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_agent_update.py ${polishTask} ${mac.picks[0][0]}; docker exec edgebourne-ads-backend rm -f /app/qa_agent_update.py`));
+  check('copy from a polish run is marked as an update of that ad', macU.proposals.A.update === true && macU.proposals.B.update === true && macU.added.added === 4, JSON.stringify(macU));
+  const n5creative = fakeAd(n5).creative_id;
+  const adsBefore = dbq("print(db.query('SELECT count(*) AS n FROM ads', one=True)['n'])");
+  const seenB = errors.length; // the refusals below log expected errors, and so does the preview of the ad that can't be updated
+  await page.goto(BASE + '/desk.html#waiting');
+  const cardOf = (l) => page.locator('#cv-col .sg', { hasText: `New headline ${l}` });
+  await cardOf('A').waitFor();
+  check('the suggestion says the ad is updated, not copied', /Update ad/.test(await cardOf('A').locator('.sg-type').textContent()) && /updated, not copied/.test(await cardOf('A').textContent()) && /Make a new ad instead/.test(await cardOf('A').textContent()));
+  await cardOf('A').locator('[data-preview] iframe').waitFor({ timeout: 15000 });
+  check("Meta's preview of the update loads", /MOBILE_FEED_STANDARD/.test(await cardOf('A').locator('[data-preview] iframe').getAttribute('src')));
+  await page.locator('[data-accept-all]').first().click();
+  await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
+  const ticked = await page.$$eval('dialog.accept-sheet [data-item]', (b) => b.filter((x) => x.checked).map((x) => x.getAttribute('aria-label')));
+  check('variants of one ad are never ticked together', !ticked.some((t) => /New headline [ABC]/.test(t)) && /Tick one/.test(await page.textContent('dialog.accept-sheet')), ticked.join('|'));
+  await page.click('dialog.accept-sheet #cd-cancel');
+  await cardOf('A').locator('[data-accept]').click();
+  await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
+  check('accepting explains it stays the same ad', /same ad, results kept/.test(await page.textContent('dialog.accept-sheet')) && /Meta reviews the ad again/.test(await page.textContent('dialog.accept-sheet')));
+  await page.click('dialog.accept-sheet #cd-ok');
+  await page.waitForFunction(() => document.querySelector('dialog.accept-sheet #cd-ok')?.textContent === 'Done', null, { timeout: 30000 });
+  await page.click('dialog.accept-sheet #cd-ok');
+  await page.waitForFunction(() => ![...document.querySelectorAll('#cv-col .sg b')].some((h) => /New headline A/.test(h.textContent)));
+  const n5v2 = fakeAd(n5).creative_id;
+  const n5made = fakeCreative(n5v2).object_story_spec;
+  check('the same ad now carries the new words, video and form', n5v2 !== n5creative && n5made.video_data.title === 'Headline A' && n5made.video_data.message === 'Primary text A.'
+    && n5made.video_data.video_id === fakeCreative(n5creative).object_story_spec.video_data.video_id && JSON.stringify(n5made).includes('lead_gen_form_id'), `${n5creative} → ${n5v2}`);
+  check('no new ad was made and the name did not change', dbq("print(db.query('SELECT count(*) AS n FROM ads', one=True)['n'])") === adsBefore && !/Variant/.test(fakeAd(n5).name), fakeAd(n5).name);
+  check('the update is logged', dbq("r=db.query('SELECT action, ok, entity_id FROM meta_changes ORDER BY id DESC LIMIT 1', one=True);print(r['action'], r['ok'], r['entity_id'])") === `update_creative True ${n5}`);
+  // A copy Meta stores without the form never reaches the ad, and the suggestion is marked failed.
+  sh('docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(\'http://localhost:5001/fake/_drop_form?on=1\')"');
+  const lostForm = await page.evaluate(async (id) => { const r = await fetch(`/api/proposals/${id}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); return { status: r.status, body: await r.json() }; }, macU.proposals.B.id);
+  sh('docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(\'http://localhost:5001/fake/_drop_form?on=0\')"');
+  check('an update that lost the lead form leaves the ad alone', lostForm.status === 400 && /lost the lead form/.test(lostForm.body.error) && fakeAd(n5).creative_id === n5v2, JSON.stringify(lostForm));
+  const placedBefore = fakeAd(mac.picks[0][0]).creative_id;
+  const placed = await page.evaluate(async (id) => { const r = await fetch(`/api/proposals/${id}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); return { status: r.status, body: await r.json() }; }, macU.proposals.D.id);
+  errors.splice(seenB); // both refusals log an expected error
+  check('an ad with different media per placement is refused, not flattened', placed.status === 409 && /different media per placement/.test(placed.body.error) && fakeAd(mac.picks[0][0]).creative_id === placedBefore, JSON.stringify(placed));
+  await page.evaluate(async (id) => fetch(`/api/proposals/${id}/decline`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }), macU.proposals.D.id);
+  // Results per version: the switch happened 3 days ago, and Meta approved it the next day.
+  dbq(`import account_info as a, datetime as d;t=a.today();s=t-d.timedelta(days=3);db.execute('UPDATE ad_versions SET started_on=%s, started_at=now()-interval \\'3 days\\' WHERE ad_id=%s AND number=2',(s,'${n5}'));db.execute(\\"INSERT INTO status_events (level, entity_id, field, old_value, new_value, source, at) VALUES ('ad', %s, 'effective_status', 'IN_PROCESS', 'ACTIVE', 'poll', now()-interval '2 days')\\",('${n5}',))`);
+  await page.goto(BASE + `/ad.html?id=${n5}`);
+  await page.waitForSelector('.ver-tbl');
+  const verRows = await page.$$eval('.ver-tbl tbody tr', (rows) => rows.map((r) => [...r.cells].map((c) => c.textContent.trim())));
+  const expected = JSON.parse(dbq(`import account_info as a, datetime as d, json;t=a.today();r=db.query('SELECT day, spend_cents FROM ad_daily WHERE ad_id=%s AND day<%s',('${n5}',t));tz=lambda n:t-d.timedelta(days=n);print(json.dumps({'old':sum(x['spend_cents'] for x in r if x['day']<tz(3)),'old_days':len([x for x in r if x['day']<tz(3)]),'new':sum(x['spend_cents'] for x in r if x['day']>tz(2)),'new_days':len([x for x in r if x['day']>tz(2)]),'mid_days':len([x for x in r if tz(3)<=x['day']<=tz(2)])}))`));
+  const verDollars = (c) => (c / 100).toFixed(2);
+  check('each version shows only its own days and spend', verRows.length === 2 && /Version 2/.test(verRows[0][0]) && Number(verRows[0][1]) === expected.new_days && verRows[0][2].includes(verDollars(expected.new))
+    && /Version 1/.test(verRows[1][0]) && Number(verRows[1][1]) === expected.old_days && verRows[1][2].includes(verDollars(expected.old)), JSON.stringify([verRows, expected]));
+  check('the versions table fits its panel, so Switch back is never scrolled out of sight', await page.$eval('.ver-tbl', (t) => t.parentElement.scrollWidth <= t.parentElement.clientWidth));
+  check('the current version is marked and the days around the switch are explained', /Running now/.test(verRows[0][0]) && new RegExp(`${expected.mid_days} days around a switch`).test(await page.textContent('.ver-tbl >> xpath=ancestor::section')));
+  await page.screenshot({ path: `${OUT}/flow-versions.png`, fullPage: true });
+  // Switching back puts the old creative on the same ad.
+  await page.click('[data-restore="1"]');
+  await page.waitForSelector('dialog.confirm');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => document.querySelectorAll('.ver-tbl tbody tr').length === 3);
+  check('switching back restores the original creative as a new version', fakeAd(n5).creative_id === n5creative && /Back to version 1/.test(await page.locator('.ver-tbl tbody tr').first().textContent()) && /Running now/.test(await page.locator('.ver-tbl tbody tr').first().textContent()));
+  // The other way round stays possible: a separate new ad, the current one untouched.
+  await page.goto(BASE + '/desk.html#waiting');
+  await cardOf('C').waitFor();
+  await cardOf('C').locator('[data-as="new"]').click();
+  await page.waitForSelector('dialog.confirm');
+  check('making a separate ad says the current one stays', /separate new ad/.test(await page.textContent('dialog.confirm')));
+  await Promise.all([page.waitForURL('**created=1**'), page.click('dialog.confirm #cd-ok')]);
+  // By name: the fake's ids restart each run, so a row count can't see a new ad reusing an old id.
+  const variantAd = dbq(`r=db.query(\\"SELECT m.entity_id, a.status FROM meta_changes m JOIN ads a ON a.id = m.entity_id WHERE m.action = 'create' AND m.ok AND m.new_value = 'Variant C' ORDER BY m.id DESC LIMIT 1\\", one=True);print(r['entity_id'], r['status'])`).split(' ');
+  check('it creates a new ad, off, and leaves the original alone', variantAd[0] !== n5 && variantAd[1] === 'PAUSED' && fakeAd(n5).creative_id === n5creative, variantAd.join(' '));
+
   // Comments: reply as the Page and hide / show, never delete; only comments on the ad's own post.
   await page.goto(BASE + '/ad.html?id=120252672229400312#tab=comments');
   await page.waitForSelector('.comment');

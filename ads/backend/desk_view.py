@@ -244,7 +244,7 @@ def mentioned_ads(text, ads, limit=8):
 
 
 REVIEW_ORDER = ("money", "live", "create", "mac", "local", "blocked")
-PLAN_GROUPS = {"vertical": "live", "create": "create", "render": "mac", "experiment": "local", "tags": "local", "record": "mac"}
+PLAN_GROUPS = {"vertical": "live", "update": "live", "create": "create", "render": "mac", "experiment": "local", "tags": "local", "record": "mac"}
 
 
 def review_item(p, plan):
@@ -277,7 +277,9 @@ def review_item(p, plan):
 
 def _conflict_key(p, plan):
     target = p.get("entity_id") or plan.get("ad_id") or (p.get("payload") or {}).get("template_ad_id")
-    return f"{plan['kind']}:{target}" if plan["kind"] in ("budget", "status", "vertical", "render") and target else None
+    if plan["kind"] in ("vertical", "update") and target:
+        return f"creative:{target}"  # one creative per ad: a 9:16 and a words update can't both go on
+    return f"{plan['kind']}:{target}" if plan["kind"] in ("budget", "status", "render") and target else None
 
 
 def review(pairs):

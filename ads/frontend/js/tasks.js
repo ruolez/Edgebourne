@@ -44,7 +44,7 @@ export function scorecardHtml(card) {
 function creativeProposal(p) {
   const pl = p.payload || {};
   const decided = DECIDED[p.status];
-  if (pl.update_ad) {
+  if (pl.vertical) {
     const change = "Reels and Stories show Claude's 9:16 video, feeds keep the 4:5 one. Same words and form.";
     return `<article class="proposal variant" data-proposal="${p.id}" data-title="${esc(p.title)}" data-change="${esc(change)}">
       <header><span class="tag">9:16 for Reels</span><b>${esc(p.title)}</b></header>
@@ -54,16 +54,18 @@ function creativeProposal(p) {
         : `<p class="flush"><span class="pill ${decided ? decided[0] : ""}">${esc(decided ? decided[1] : p.status)}</span></p>`}
     </article>`;
   }
+  const update = pl.update_ad;
+  const instead = pl.template_ad_id ? `<button class="btn btn-small btn-quiet" type="button" data-approve="${p.id}" data-as="${update ? "new" : "update"}">${update ? "Make a new ad instead" : "Update the ad instead"}</button>` : "";
   const foot = p.status === "pending"
-    ? `<div class="row"><button class="btn btn-claude btn-small" type="button" data-approve="${p.id}">Create this ad (off)</button>
-       <a class="btn btn-small" href="/new-ad.html?proposal=${p.id}">Edit first</a><button class="btn btn-small" type="button" data-decline="${p.id}">Decline</button></div>`
+    ? `<div class="row"><button class="btn btn-claude btn-small" type="button" data-approve="${p.id}">${update ? "Update this ad" : "Create this ad (off)"}</button>
+       ${update ? "" : `<a class="btn btn-small" href="/new-ad.html?proposal=${p.id}">Edit first</a>`}${instead}<button class="btn btn-small" type="button" data-decline="${p.id}">Decline</button></div>`
     : `<p class="flush"><span class="pill ${decided ? decided[0] : ""}">${esc(decided ? decided[1] : p.status)}</span></p>`;
   return `<article class="proposal variant" data-proposal="${p.id}" data-title="${esc(p.title)}" data-change="${esc(`New ad “${pl.name || ""}”, switched off, ${pl.media && pl.media.kind !== "same" ? "with new media" : "same image or video"}`)}">
-    <header><span class="tag">new ad</span><b>${esc(p.title)}</b></header>
+    <header><span class="tag">${update ? "update ad" : "new ad"}</span><b>${esc(p.title)}</b></header>
     <div class="variant-copy">
       <p class="v-headline">${esc(pl.title || "")}</p>
       <p class="v-body">${esc(pl.body || "")}</p>
-      <p class="muted small flush">${pl.media && pl.media.kind !== "same" ? `New ${esc(pl.media.kind)} from Claude` : "Same image or video"}${pl.name ? ` · named “${esc(pl.name)}”` : ""}</p>
+      <p class="muted small flush">${pl.media && pl.media.kind !== "same" ? `New ${esc(pl.media.kind)} from Claude` : "Same image or video"}${pl.name && !update ? ` · named “${esc(pl.name)}”` : ""}</p>
     </div>
     ${p.rationale ? `<p class="muted small flush">${esc(p.rationale)}</p>` : ""}
     ${foot}
@@ -169,6 +171,18 @@ function approvalDialog(card, plan) {
       body: {},
     };
   }
+  if (plan.kind === "update") {
+    return {
+      dialog: {
+        title, claude: true, confirm: "Update the ad",
+        body: `<p><b>${esc(plan.name)}</b> gets this version on Meta. It stays the same ad and keeps its results.</p>
+          <ul class="muted small"><li>Meta reviews it again${plan.live ? " (usually minutes, sometimes up to a day), and it may not show until that's done" : ""}. ${plan.live ? "Once approved it runs by itself, with no switch to flip." : "It stays off until you turn it on."}</li>
+          <li>Learning can restart, and earlier comments and likes may no longer be visible.</li>
+          <li>You can switch back from the ad's Overview. The console checks Meta's copy first; if anything is off, the ad isn't touched.</li></ul>`,
+      },
+      body: {},
+    };
+  }
   const words = { status: "It's switched off on Meta right away. Nothing is deleted.", create: "The new ad is created switched off; nothing spends until you turn it on.",
     experiment: "It starts tracking on the Tests page. Nothing changes on Meta.", tags: "The labels are saved. Nothing changes on Meta.",
     record: "Claude picks it up on your Mac and answers in the conversation." };
@@ -189,7 +203,7 @@ export function wireTaskActions(root, onChange, openReports) {
       const card = render.closest("[data-proposal]");
       const yes = await confirmDialog({
         title: "Make the new version now?",
-        body: "<p>Claude rebuilds the creative on your Mac with these fixes (10–40 minutes), uploads it to your media library and sends it back as a new ad for you to approve. Nothing changes on the live ad.</p>",
+        body: "<p>Claude rebuilds the creative on your Mac with these fixes (10–40 minutes), uploads it to your media library and sends it back for you to approve. Nothing changes on the live ad until you say yes.</p>",
         confirm: "Make it", claude: true,
       });
       if (!yes) return;
@@ -225,17 +239,19 @@ export function wireTaskActions(root, onChange, openReports) {
         }
         approve.disabled = true;
         let plan;
-        try { plan = await api(`/api/proposals/${id}/check`); }
+        const as = approve.dataset.as;
+        try { plan = await api(`/api/proposals/${id}/check${as ? `?as=${as}` : ""}`); }
         catch (err) { approve.disabled = false; throw err; }
-        const ask = approvalDialog(card, plan);
+        const ask = approvalDialog(as === "new" ? { dataset: { title: card.dataset.title, change: "A separate new ad with this version. The current ad stays as it is." } } : card, plan);
         if (!ask) { approve.disabled = false; return; }
         const yes = await confirmDialog(ask.dialog);
         if (!yes) { approve.disabled = false; return; }
         let r;
-        try { r = await api(`/api/proposals/${id}/approve`, { method: "POST", body: ask.body }); }
+        try { r = await api(`/api/proposals/${id}/approve`, { method: "POST", body: as ? { ...ask.body, apply_as: as } : ask.body }); }
         catch (err) { approve.disabled = false; throw err; }
         if (r.experiment_id) { toast("Tracking it. Opening the test…"); location.href = `/experiments.html#${r.experiment_id}`; return; }
         if (r.ad_id) { toast("Ad created (off). Opening it…"); location.href = `/ad.html?id=${encodeURIComponent(r.ad_id)}&created=1`; return; }
+        if (r.updated_ad) { toast("Ad updated. Meta reviews it next."); onChange(); return; }
         toast(r.status === "applied" ? "Approved and applied on Meta" : r.status === "approved" ? (r.note || "Approved") : "Declined");
         onChange();
       }

@@ -232,8 +232,9 @@ dashboard promised. Check exactly those, nothing vaguer.
    `title` ("New headline: Type it once"), `rationale` (which checks it fixes), and
    `payload: {"template_ad_id": "<ad_id>", "media": {"kind": "same"}, "name": "<ad name> ·
    <what changed>", "title": "<headline>", "body": "<full primary text>", "cta_type":
-   "<same unless the CTA pass says otherwise>"}`. Approving one creates that ad, switched
-   off, with the same image or video. Never invent facts in the copy.
+   "<same unless the CTA pass says otherwise>"}`. Approving one puts those words on that same
+   ad (Eugene's choice, 2026-11-10: it keeps its ID and results; the console adds `update_ad` for
+   you). They are alternatives: only one can go on. Never invent facts in the copy.
 6. Fixes that need new pixels (visual, AI signal, placements, motion): one proposal, kind
    `other`, titled "Make a new version: <the fixes in a few words>", `expected`: "Use 'Make
    a new version' on the ad page; Claude rebuilds the creative and sends it back for approval."
@@ -260,7 +261,9 @@ null). This run may edit files under `creatives/` and run node / ffmpeg (nothing
    `mkdir -p` first), or a small node script if `cp` is refused.
 6. `desk propose <id> --file …` with one `creative` proposal: `payload.template_ad_id` = the ad,
    `media` = `{"kind": "video", "video_id": "..."}` (or image + hash), `name` "<ad name> ·
-   v<n>", and the same words unless the fixes changed them. Approving it creates the ad off.
+   v<n>", and the same words unless the fixes changed them. Approving it updates that same ad
+   (the console adds `update_ad`; Meta reviews it again). Add `"new_ad": true` only if Eugene's
+   direction asks for a separate ad.
 7. Report: what changed and why (before → after), file paths, audit results. Never touch
    other ads, never activate anything.
 
@@ -304,8 +307,11 @@ doesn't fit, say why in the report and propose nothing.
    If time runs short, finish the ads you started and say which are left; "Fix with Claude" again
    picks up the rest (skip ads that already have a waiting 9:16 proposal: `desk history`).
 
-**Creative fatigue / too few ads:** as a polish or render run on the ads named: new versions or new
-ideas as `creative` proposals (new ads, created off), never edits to the running ads.
+**Creative fatigue / too few ads:** genuinely new ideas are `creative` proposals without `update_ad`
+(new ads, created off). A better version of an existing ad is an update of it: `"update_ad": true`.
+
+**Any other run that improves an existing ad** (a question, a follow-up): set `"update_ad": true` in
+the `creative` payload so it lands on that ad. A new ad is only for a new idea or a side-by-side test.
 
 **Anything else:** a review of that one point: the numbers that bear on it (minimum-data rule), what
 the playbook says, and proposals only for what should change (status, budget, `other` with the

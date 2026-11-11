@@ -55,6 +55,32 @@ class CleanPayloadTests(unittest.TestCase):
     def test_update_flag_must_be_a_real_true(self):
         self.assertIsNone(desk_api.clean_payload({"template_ad_id": "1", "update_ad": "yes", "vertical": {"video_id": "2"}}))
 
+    def test_words_can_update_the_ad_instead_of_making_a_new_one(self):
+        self.assertEqual(desk_api.clean_payload({**self.BASE, "update_ad": True})["update_ad"], True)
+
+    def test_a_plain_payload_carries_no_update_or_new_ad_flag(self):
+        out = desk_api.clean_payload(dict(self.BASE))
+        self.assertEqual(("update_ad" in out, "new_ad" in out), (False, False))
+
+    def test_new_ad_flag_is_kept_when_claude_means_a_separate_ad(self):
+        self.assertEqual(desk_api.clean_payload({**self.BASE, "new_ad": True})["new_ad"], True)
+
+    def test_a_polish_or_render_of_an_ad_updates_that_ad(self):
+        payload = {"template_ad_id": "a1", "title": "T", "body": "B"}
+        for kind in ("polish", "render"):
+            self.assertEqual(desk_api.stamp_update(dict(payload), {"kind": kind, "options": {"ad_id": "a1"}}), {**payload, "update_ad": True})
+
+    def test_other_runs_and_other_ads_and_separate_ads_are_left_alone(self):
+        payload = {"template_ad_id": "a1", "title": "T", "body": "B"}
+        cases = [(payload, {"kind": "creative", "options": {"ad_id": "a1"}}),
+                 (payload, {"kind": "polish", "options": {"ad_id": "other"}}),
+                 (payload, {"kind": "polish", "options": None}),
+                 ({**payload, "new_ad": True}, {"kind": "render", "options": {"ad_id": "a1"}})]
+        self.assertEqual([desk_api.stamp_update(dict(p), t) for p, t in cases], [p for p, _ in cases])
+
+    def test_stamping_leaves_an_empty_payload_empty(self):
+        self.assertIsNone(desk_api.stamp_update(None, {"kind": "polish", "options": {"ad_id": "a1"}}))
+
     def test_payload_only_kept_on_creative_proposals(self):
         self.assertIsNone(desk_api.clean_proposal({"kind": "budget", "title": "x", "payload": dict(self.BASE)})["payload"])
 

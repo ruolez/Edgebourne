@@ -555,6 +555,8 @@ def graph(path):
                 return jsonify({"error": {"message": "Unsupported get request (fake)", "code": 100}}), 400
             if parts[0] in VIDEOS:
                 return jsonify({**obj, "thumbnails": {"data": [{"uri": obj["picture"], "is_preferred": True, "width": 1080}]}})
+            if parts[0] in ADS:
+                return jsonify({**obj, "creative": {"id": obj["creative_id"]}})
             return jsonify(obj)
     else:
         if parts == [act, "adimages"]:
@@ -599,6 +601,9 @@ def graph(path):
                                   "effective_object_story_id": f"{PAGE}_{next(ids)}"}
                 return jsonify({"id": cid})
             media = spec.get("video_data") or spec.get("link_data")
+            if FAKE_FLAGS.get("drop_form"):
+                spec = json.loads(json.dumps(spec))
+                ((spec.get("video_data") or spec.get("link_data")).get("call_to_action") or {}).get("value", {}).pop("lead_gen_form_id", None)
             cid = str(next(ids))
             CREATIVES[cid] = {"id": cid, "object_type": "VIDEO" if "video_data" in spec else "SHARE",
                               "title": media.get("title") or media.get("name"), "body": media.get("message"),

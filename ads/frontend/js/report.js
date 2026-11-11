@@ -9,7 +9,7 @@ let kind = params.get("kind") === "month" ? "month" : "week";
 let start = params.get("start") || "";
 
 const LEVEL = { campaign: "Campaign", adset: "Ad set", ad: "Ad", form: "Lead form", study: "A/B test", account: "Account" };
-const ACTION = { status: "turned", budget: "budget", create: "created", duplicate: "copied", enhancement: "automatic change", placement_media: "9:16 video for Reels added", recommendation: "Meta's suggestion applied",
+const ACTION = { status: "turned", budget: "budget", create: "created", duplicate: "copied", enhancement: "automatic change", placement_media: "9:16 video for Reels added", update_creative: "new version put on the ad", restore_creative: "earlier version put back", recommendation: "Meta's suggestion applied",
   comment_reply: "replied to a comment", comment_hide: "hid a comment", comment_show: "showed a comment", end: "ended early" };
 
 function changeLine(c) {

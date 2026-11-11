@@ -16,7 +16,7 @@ FIELDS = {
     "campaign": ("effective_status", "configured_status", "issues"),
 }
 PREV_COLS = {
-    "ad": "status, configured_status, effective_status, review_feedback, issues",
+    "ad": "status, configured_status, effective_status, review_feedback, issues, creative_id, title, body",
     "adset": "status, configured_status, effective_status, learning_stage, learning, issues",
     "campaign": "status, configured_status, effective_status, issues",
 }

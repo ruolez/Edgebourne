@@ -136,6 +136,8 @@ function changeWords(c, LEVEL) {
     case "recommendation": return ["", "spark", `<b>Applied Meta's suggestion</b> “${short(c.new_value)}”`];
     case "recommendation_check": return ["", "spark", `<b>Meta set a different amount</b> than shown: ${short(c.error)}`];
     case "placement_media": return ["", "spark", c.ok === false ? `<b>9:16 for Reels not added</b> to “${name}”: ${short(c.error)}` : `<b>Added a 9:16 video for Reels</b> to “${name}”`];
+    case "update_creative": return ["", "spark", c.ok === false ? `<b>Update not made</b> on “${name}”: ${short(c.error)}` : `<b>Updated</b> “${name}”: ${short(String(c.new_value).replace(/ \(creative .*\)$/, ""))}`];
+    case "restore_creative": return ["", "spark", c.ok === false ? `<b>Couldn't switch back</b> “${name}”: ${short(c.error)}` : `<b>Switched back</b> “${name}”: ${short(String(c.new_value).replace(/ \(creative .*\)$/, ""))}`];
     case "enhancement": return ["", "spark", `<b>Changed Meta's automatic changes</b> on “${name}”: ${short(String(c.new_value).replace(/ \(creative .*\)$/, ""))}`];
     case "end": return ["", "tests", `<b>Ended the A/B test</b> “${name}”`];
     case "upload": return ["", "image", `<b>Uploaded</b> ${short(c.new_value)} to the media library`];

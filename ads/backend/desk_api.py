@@ -714,7 +714,7 @@ def tell_finished(task_id):
 
 
 def _open_task(task_id):
-    return db.query("SELECT id FROM desk_tasks WHERE id = %s AND status IN ('claimed', 'running')",
+    return db.query("SELECT id, kind, options FROM desk_tasks WHERE id = %s AND status IN ('claimed', 'running')",
                     (task_id,), one=True)
 
 
@@ -791,7 +791,7 @@ def clean_payload(raw):
         v = raw.get(key)
         return str(v).strip()[:n] if v not in (None, "") else None
     vertical = raw.get("vertical") if isinstance(raw.get("vertical"), dict) else {}
-    if "update_ad" in raw or vertical:
+    if vertical or raw.get("update_ad") not in (None, True):
         # Meta's Reels advice: put a 9:16 video on the running ad itself (same words, same form).
         vid = str(vertical.get("video_id") or "")
         if raw.get("update_ad") is not True or not vid.isdigit() or not text("template_ad_id", 32):
@@ -810,7 +810,19 @@ def clean_payload(raw):
     out = {"template_ad_id": text("template_ad_id", 32), "adset_id": text("adset_id", 32),
            "name": text("name", 200), "title": text("title", 255), "body": text("body", 5000),
            "cta_type": text("cta_type", 32), "media": clean_media, "preview_url": text("preview_url", 1000)}
+    for flag in ("update_ad", "new_ad"):
+        if raw.get(flag) is True:
+            out[flag] = True
     return out if out["template_ad_id"] and out["title"] and out["body"] else None
+
+
+def stamp_update(payload, task):
+    """A polish or new version of an ad updates that ad, whatever the run forgot to say; only an
+    explicit new_ad makes it a separate one."""
+    if (payload and task["kind"] in ("polish", "render") and not payload.get("new_ad")
+            and payload.get("template_ad_id") == (task.get("options") or {}).get("ad_id")):
+        return {**payload, "update_ad": True}
+    return payload
 
 
 @agent_bp.post("/tasks/<int:task_id>/proposals")
@@ -821,8 +833,12 @@ def add_proposals(task_id):
     items = [clean_proposal(p) for p in items[:20] if isinstance(p, dict)]
     if not items or any(not p["title"] for p in items):
         return api_error("Each proposal needs at least a title", 400)
-    if not _open_task(task_id):
+    task = _open_task(task_id)
+    if not task:
         return api_error("This task isn't open any more", 409)
+    for p in items:
+        if p["kind"] == "creative":
+            p["payload"] = stamp_update(p["payload"], task)
     cols = list(items[0].keys())
     for p in items:
         values = [json.dumps(p[c]) if c == "payload" and p[c] is not None else p[c] for c in cols]

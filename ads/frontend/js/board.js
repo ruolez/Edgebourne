@@ -70,7 +70,7 @@ export function firstLine(text) {
 function changeList(p, ix) {
   const pl = p.payload || {};
   const from = ix.ads[p.about_ad] || {};
-  if (p.kind === "creative" && pl.update_ad) {
+  if (p.kind === "creative" && pl.vertical) {
     return `<dl class="facts changes"><div><dt>Ad</dt><dd>${esc(from.name || pl.template_ad_id)} <span class="muted">(updated, not copied)</span></dd></div>
       <div><dt>Reels, Stories</dt><dd><ins>New 9:16 video Claude made</ins></dd></div>
       <div><dt>Feeds</dt><dd class="muted">Same 4:5 video as now</dd></div>
@@ -78,6 +78,7 @@ function changeList(p, ix) {
   }
   if (p.kind === "creative") {
     const rows = [];
+    if (pl.update_ad) rows.push(`<div><dt>Ad</dt><dd>${esc(from.name || pl.template_ad_id)} <span class="muted">(updated, not copied)</span></dd></div>`);
     const same = (a, b) => String(a || "").trim() === String(b || "").trim();
     rows.push(same(pl.title, from.title)
       ? `<div><dt>Headline</dt><dd>${esc(pl.title)} <span class="muted">(same as now)</span></dd></div>`
@@ -87,7 +88,7 @@ function changeList(p, ix) {
       : `<div><dt>Text</dt><dd><details class="fulltext"><summary><ins>${esc(firstLine(pl.body))}</ins></summary><p class="v-body">${esc(pl.body)}</p>${from.body ? `<p class="muted small">Now: ${esc(from.body)}</p>` : ""}</details></dd></div>`);
     const media = pl.media && pl.media.kind !== "same";
     rows.push(`<div><dt>${pl.media && pl.media.kind === "image" ? "Image" : "Video"}</dt><dd>${media ? `<ins>New ${esc(pl.media.kind)} Claude made</ins>` : '<span class="muted">Same as now</span>'}</dd></div>`);
-    if (pl.name) rows.push(`<div><dt>Name</dt><dd>${esc(pl.name)}</dd></div>`);
+    if (pl.name && !pl.update_ad) rows.push(`<div><dt>Name</dt><dd>${esc(pl.name)}</dd></div>`);
     return `<dl class="facts changes">${rows.join("")}</dl>`;
   }
   if (p.kind === "tags" && p.payload) {
@@ -115,7 +116,9 @@ function changeSummary(p, ix) {
   const pl = p.payload || {};
   if (p.kind === "tags") return "Labels the ad's idea so Results can compare ideas. Nothing changes on Meta.";
   if (p.kind === "experiment") return `Tracks “${pl.name || p.title}” on the Tests page. Nothing changes on Meta.`;
-  if (p.kind === "creative" && pl.update_ad) return `Updates “${p.entity_name || (ix && ix.ads && ix.ads[pl.template_ad_id] || {}).name || "the ad"}” on Meta: Reels and Stories show Claude's 9:16 video, feeds keep the 4:5 one. Same words and form.`;
+  const adName = p.entity_name || (ix && ix.ads && ix.ads[pl.template_ad_id] || {}).name || "the ad";
+  if (p.kind === "creative" && pl.vertical) return `Updates “${adName}” on Meta: Reels and Stories show Claude's 9:16 video, feeds keep the 4:5 one. Same words and form.`;
+  if (p.kind === "creative" && pl.update_ad) return `Updates “${adName}” on Meta with this version. It stays the same ad and keeps its results.`;
   if (p.kind === "creative") return `New ad “${pl.name || p.title}”, created switched off${pl.media && pl.media.kind !== "same" ? ", with Claude's new " + pl.media.kind : ""}.`;
   if (p.kind === "status") return [p.entity_name, /^(paused|off|pause)$/i.test(p.proposed_value || "") ? "turns off" : /^(active|on|resume)$/i.test(p.proposed_value || "") ? "turns on" : p.proposed_value].filter(Boolean).join(" · ");
   return [p.entity_name, p.field && `${p.field}: ${p.current_value || "—"} → ${p.proposed_value || "—"}`].filter(Boolean).join(" · ");
@@ -141,7 +144,7 @@ const PREVIEW_TABS = [["MOBILE_FEED_STANDARD", "Feed"], ["INSTAGRAM_REELS", "Ree
 // What a suggestion shows beside its words: Meta's preview of a new ad, or the ad it would change.
 function suggestionMedia(p, ix) {
   if (p.kind === "creative" && p.payload) {
-    const reels = p.payload.update_ad;
+    const reels = p.payload.vertical;
     return `<div class="sg-media">
       ${reels ? '<p class="sg-media-label">How Reels will show it</p>' : `<div class="sg-tabs" role="tablist" aria-label="Placement">${PREVIEW_TABS.map(([f, l], i) => `<button type="button" role="tab" data-pf="${f}" aria-selected="${!i}">${l}</button>`).join("")}</div>`}
       <div class="decision-preview" data-preview="${p.id}"${reels ? ' data-format="INSTAGRAM_REELS"' : ""} aria-label="Preview of the ad as Meta shows it"><div class="preview-skeleton"><span></span><span></span><span></span><p>Loading Meta's preview…</p></div></div>
@@ -159,6 +162,7 @@ export function suggestion(p, ix) {
   const change = changeSummary(p, ix);
   const media = suggestionMedia(p, ix);
   const big = p.kind === "creative" && p.payload;
+  const other = big && !p.payload.vertical && p.payload.template_ad_id ? (p.payload.update_ad ? ["new", "Make a new ad instead"] : ["update", "Update the ad instead"]) : null;
   return `<article class="sg ${big ? "with-media" : media ? "with-thumb" : ""}" id="p-${p.id}" data-proposal="${p.id}" data-title="${esc(p.title)}" data-change="${esc(change)}">
     ${media}
     <div class="sg-main">
@@ -166,11 +170,12 @@ export function suggestion(p, ix) {
       ${changeList(p, ix)}
       ${p.rationale ? `<p class="why">${esc(p.rationale)}</p>` : ""}
       ${p.kind === "tags" || p.kind === "experiment" ? `<p class="muted small flush">${esc(change)}</p>` : ""}
-      ${isVersion(p) ? '<p class="muted small flush">Claude rebuilds the video on your Mac (10–40 minutes) and brings it back here for a yes or no. Nothing changes on the live ad.</p>' : ""}
+      ${isVersion(p) ? '<p class="muted small flush">Claude rebuilds the video on your Mac (10–40 minutes) and brings it back here for a yes or no. Nothing changes on the live ad until you say yes.</p>' : ""}
       <div class="sg-do">
         <button class="btn btn-small btn-claude" type="button" data-accept="${p.id}">Accept</button>
         <button class="btn btn-small" type="button" data-revise="${p.id}">Ask to change</button>
         ${editable ? `<a class="btn btn-small" href="/new-ad.html?proposal=${p.id}">Edit first</a>` : ""}
+        ${other ? `<button class="btn btn-small btn-quiet" type="button" data-approve="${p.id}" data-as="${other[0]}">${other[1]}</button>` : ""}
         <button class="btn btn-small btn-quiet" type="button" data-decline-one="${p.id}">Decline</button>
       </div>
     </div>

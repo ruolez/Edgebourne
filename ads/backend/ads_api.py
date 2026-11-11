@@ -49,14 +49,16 @@ MAX_VIDEO = 250 * 1024 * 1024
 
 # ---------------------------------------------------------------- pure helpers
 
-def proposal_action(p, entity):
+def proposal_action(p, entity, apply_as=None):
     """What approving a proposal does on Meta: ("status", "PAUSED"), ("budget", cents)
-    or None when it isn't something the dashboard can apply by itself."""
+    or None when it isn't something the dashboard can apply by itself. New words or media
+    update the ad or make a new one as Claude proposed; `apply_as` ("update" / "new") overrides."""
     payload = p.get("payload") or {}
     if p["kind"] == "creative" and payload.get("update_ad") and (payload.get("vertical") or {}).get("video_id"):
         return ("vertical", payload)
     if p["kind"] == "creative" and payload.get("template_ad_id") and payload.get("body") and payload.get("title"):
-        return ("create", payload)
+        update = apply_as == "update" or (payload.get("update_ad") and apply_as != "new")
+        return ("update" if update else "create", payload)
     if not entity or not p.get("entity_id"):
         return None
     if p["kind"] == "status":
@@ -467,7 +469,8 @@ def ad_detail(ad_id):
                           WHERE m.entity_id IN (%s, %s, %s) ORDER BY m.id DESC LIMIT 30""",
                        (ad_id, ad["adset_id"], ad["campaign_id"]))
     ad["can_control"] = current_user()["role"] != "client"
-    return jsonify({"ad": ad, "series": series, "lifetime": life,
+    import versions_api
+    return jsonify({"ad": ad, "series": series, "lifetime": life, "versions": versions_api.for_ad(ad),
                     "leads": leads, "proposals": proposals, "changes": changes,
                     "timeline": status_history.timeline("ad", ad_id),
                     "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS]})
@@ -929,17 +932,22 @@ def proposal_target(p):
     return find_entity(tid) if tid else (None, None)
 
 
-def proposal_plan(p):
+def proposal_plan(p, apply_as=None):
     """What approving does, read fresh from Meta, for the confirmation (audit A1, A20)."""
     if p["kind"] in ("experiment", "tags"):
         return {"kind": p["kind"]}
     level, row = proposal_target(p)
-    action = proposal_action(p, row)
+    action = proposal_action(p, row, apply_as)
     if not action:
         return {"kind": "record"}
     kind, value = action
     if kind == "create":
         return {"kind": "create"}
+    if kind == "update":
+        ad = db.query("SELECT name, effective_status FROM ads WHERE id = %s", (value["template_ad_id"],), one=True)
+        if not ad:
+            return {"kind": "unclear", "problem": "The ad this was made for isn't there any more."}
+        return {"kind": "update", "name": ad["name"], "live": ad["effective_status"] == "ACTIVE", "ad_id": value["template_ad_id"]}
     if kind == "vertical":
         ad = db.query("SELECT name, effective_status FROM ads WHERE id = %s", (value["template_ad_id"],), one=True)
         if not ad:
@@ -969,7 +977,7 @@ def check_proposal(proposal_id):
     if row and not can_touch(current_user(), row["campaign_id"]):
         return api_error("Proposal not found", 404)
     try:
-        return jsonify(proposal_plan(p))
+        return jsonify(proposal_plan(p, request.args.get("as")))
     except meta_client.MetaError as exc:
         return api_error(f"Couldn't read the live budget from Meta: {exc}", 400)
 
@@ -1059,7 +1067,7 @@ def _approve(user, p, level, row, data):
                    (status, user["id"], proposal_id))
         log_activity(f"proposal.{status}", subject=str(proposal_id), details={"title": p["title"]})
 
-    action = proposal_action(p, row)
+    action = proposal_action(p, row, data.get("apply_as"))
     if not action:
         close("approved")
         import desk_api
@@ -1090,8 +1098,13 @@ def _approve(user, p, level, row, data):
     except meta_client.MetaError as exc:
         return api_error(f"Couldn't read the live budget from Meta, so nothing was changed: {exc}", 400)
     if kind == "create":
-        new_id, err = create_ad_from(user, value, proposal_id)
+        new_id, err = create_ad_from(user, {**value, "name": value.get("name") or p["title"]}, proposal_id)
         error = err[0] if err else None
+    elif kind == "update":
+        import versions_api
+        error = versions_api.update_ad(user, value, proposal_id)
+        if error and error.startswith(NOT_SENT):
+            return api_error(error[len(NOT_SENT):], 409)
     elif kind == "vertical":
         error = add_vertical(user, value["template_ad_id"], value["vertical"]["video_id"], proposal_id)
         if error and error.startswith(NOT_SENT):
@@ -1103,7 +1116,8 @@ def _approve(user, p, level, row, data):
     close("failed" if error else "applied")
     if error:
         return api_error(f"Approved, but Meta refused the change: {error}", 400)
-    return jsonify({"status": "applied", "applied": True, "ad_id": new_id})
+    return jsonify({"status": "applied", "applied": True, "ad_id": new_id,
+                    "updated_ad": value["template_ad_id"] if kind == "update" else None})
 
 
 def approve_experiment(user, p):
@@ -1167,7 +1181,7 @@ def proposal_preview(proposal_id):
         return api_error("Unknown preview format", 400)
     data = {**p["payload"], "name": p["payload"].get("name") or p["title"]}
     try:
-        if data.get("update_ad"):
+        if (data.get("vertical") or {}).get("video_id"):
             spec, err = vertical_preview_spec(current_user(), data)
         else:
             ctx, err = prepare_creative(current_user(), data)
@@ -1219,7 +1233,7 @@ def add_vertical(user, ad_id, video_id, proposal_id=None):
     lead form stay. A new creative is made and read back first, so a copy Meta stored wrongly never
     reaches the running ad. Returns None, or what went wrong."""
     import placements
-    ad = db.query("SELECT id, name, campaign_id, creative_id FROM ads WHERE id = %s", (ad_id,), one=True)
+    ad = db.query("SELECT id, name, campaign_id, creative_id, title, body FROM ads WHERE id = %s", (ad_id,), one=True)
     if not ad or not ad["creative_id"]:
         return NOT_SENT + "That ad has no creative Meta can show yet."
     row = {"id": ad["id"], "name": ad["name"], "campaign_id": ad["campaign_id"]}
@@ -1255,6 +1269,8 @@ def add_vertical(user, ad_id, video_id, proposal_id=None):
         record(user, "ad", row, "placement_media", ad["creative_id"], f"9:16 video {video_id}", False, str(exc), proposal_id)
         return f"{exc}. The running ad wasn't changed."
     db.execute("UPDATE ads SET creative_id = %s WHERE id = %s", (new["id"], ad["id"]))
+    import versions_api
+    versions_api.save_switch(ad, new["id"], "9:16 video for Reels and Stories", user["id"], proposal_id, ad["title"], ad["body"])
     record(user, "ad", row, "placement_media", ad["creative_id"],
            f"9:16 video {video_id} in Reels and Stories (creative {new['id']})", True, proposal_id=proposal_id)
     resync_later()
@@ -1264,7 +1280,7 @@ def add_vertical(user, ad_id, video_id, proposal_id=None):
 # ---------------------------------------------------------------- Meta's automatic changes (roadmap 4.4)
 
 def _creative_of(user, ad_id):
-    ad = db.query("SELECT id, name, campaign_id, creative_id, effective_status FROM ads WHERE id = %s", (ad_id,), one=True)
+    ad = db.query("SELECT id, name, campaign_id, creative_id, effective_status, title, body FROM ads WHERE id = %s", (ad_id,), one=True)
     if not ad or not can_touch(user, ad["campaign_id"]):
         return None, None
     if not ad["creative_id"]:
@@ -1323,6 +1339,8 @@ def change_enhancement(ad_id):
         record(user, "ad", row, "enhancement", None, f"{label} {'on' if on else 'off'}", False, str(exc))
         return api_error(f"Meta refused: {exc}", 400)
     db.execute("UPDATE ads SET creative_id = %s WHERE id = %s", (new["id"], ad["id"]))
+    import versions_api
+    versions_api.save_switch(ad, new["id"], f"Meta's automatic change: {label} {'on' if on else 'off'}", user["id"], None, ad["title"], ad["body"])
     record(user, "ad", row, "enhancement", ad["creative_id"], f"{label} {'on' if on else 'off'} (creative {new['id']})", True)
     resync_later()
     return enhancements(ad_id)

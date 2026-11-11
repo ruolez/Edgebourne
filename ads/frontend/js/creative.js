@@ -28,6 +28,8 @@ function changeLine(c) {
   else if (c.action === "duplicate") what = `Duplicated as “${c.new_value}”`;
   else if (c.action === "archive") what = "Archived the ad";
   else if (c.action === "delete") what = "Deleted the ad";
+  else if (c.action === "update_creative") what = c.ok ? `Updated the ad: ${String(c.new_value).replace(/ \(creative .*\)$/, "")}` : "Tried to update the ad";
+  else if (c.action === "restore_creative") what = String(c.new_value).replace(/ \(creative .*\)$/, "");
   else what = `Created “${c.new_value || ""}”`;
   return `<li><span>${esc(what)}${c.ok ? "" : ` <b class="bad-text">(Meta refused: ${esc(c.error || "")})</b>`}</span><small>${esc(when(c.created_at))}${c.user_name ? ` · ${esc(c.user_name)}` : ""}${c.proposal_id ? " · Claude's proposal" : ""}</small></li>`;
 }
@@ -91,6 +93,25 @@ async function loadPreview() {
   }
 }
 
+function versionsHtml(v, ad) {
+  if (!v) return "";
+  const video = ad.object_type === "VIDEO";
+  const day = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const rows = [...v.versions].reverse().map((x) => `<tr>
+    <td class="ver-name"><b>Version ${x.number}</b><small>${esc(x.label || "")}${x.started_on ? ` · from ${esc(day(x.started_on))}` : ""}</small>${x.current ? '<span class="pill ok">Running now</span>' : ad.can_control ? `<button class="btn btn-small" type="button" data-restore="${x.number}">Switch back</button>` : ""}</td>
+    <td class="num">${x.days}</td><td class="num">${money(x.spend_cents, { exact: true })}</td><td class="num">${count(x.leads)}</td>
+    <td class="num">${per(x.spend_cents, x.leads)}</td><td class="num">${pct(x.link_clicks, x.impressions)}</td>
+    ${video ? `<td class="num">${x.impressions ? pct(x.video_3s, x.impressions) : "—"}</td>` : ""}</tr>`).join("");
+  const c = v.changeover;
+  return `<section class="panel">
+    <div class="panel-head"><h2>Versions</h2><p>Complete days only</p></div>
+    <div class="panel-body stack tight">
+      <div class="tbl-wrap"><table class="tbl ver-tbl"><thead><tr><th>Version</th><th class="num">Days</th><th class="num">Spent</th><th class="num">Leads</th><th class="num">Per lead</th><th class="num">Click rate</th>${video ? '<th class="num">Hook rate</th>' : ""}</tr></thead><tbody>${rows}</tbody></table></div>
+      ${c.days ? `<p class="muted small flush">${c.days} ${c.days === 1 ? "day" : "days"} around a switch count for neither version, because either could have been showing: ${money(c.spend_cents, { exact: true })}, ${count(c.leads)} ${c.leads === 1 ? "lead" : "leads"}.</p>` : ""}
+      ${v.versions.some((x) => !x.enough) ? '<p class="muted small flush">Too early to judge: a version needs at least 3 leads and twice your target cost per lead in spend.</p>' : ""}
+    </div></section>`;
+}
+
 function renderOverview() {
   const { ad, lifetime, series } = data;
   const budgetLevel = ad.adset_budget_cents ? "adset" : ad.campaign_budget_cents ? "campaign" : null;
@@ -130,6 +151,7 @@ function renderOverview() {
             <div><h3 class="chart-title">Leads per day</h3><div class="chart" id="c-leads"></div></div></div>
           </div>
         </section>
+        ${versionsHtml(data.versions, ad)}
         <section class="panel">
           <div class="panel-head"><h2>Words</h2><span class="spacer"></span>${ad.can_control ? '<button class="btn btn-small" type="button" data-goto="polish">Improve the words</button>' : ""}</div>
           <div class="panel-body">
@@ -268,17 +290,17 @@ async function renderPolish() {
           <div class="field"><label for="direction">Your direction <span class="muted">(optional)</span></label>
             <textarea class="input" id="direction" rows="2" placeholder="e.g. The headline feels long. Keep the AI chip but make it calmer."></textarea></div>
           <div class="row">
-            <label class="check"><input type="checkbox" id="variants" checked> Write new copy versions I can turn into ads</label>
+            <label class="check"><input type="checkbox" id="variants" checked> Write new copy versions I can put on this ad</label>
             <span class="spacer"></span>
             <button class="btn btn-claude" type="submit" id="run-polish">${icon("spark")}<span>Run polish</span></button>
           </div>
-          <p class="muted small flush">Claude runs this on your Mac with your Meta access and the design rules from our rounds. Nothing changes on Meta: new versions come back as proposals you approve.</p>
+          <p class="muted small flush">Claude runs this on your Mac with your Meta access and the design rules from our rounds. Nothing changes on Meta until you approve: a new version goes on this same ad, so it keeps its results.</p>
         </form>
       </section>
       <section class="panel render-panel">
         <div class="panel-head"><h2>Make a new version</h2></div>
         <form class="panel-body stack tight" id="render-form" novalidate>
-          <p class="flush muted small">Claude rebuilds the creative on your Mac (same pipeline as N1–N5), uploads it and sends it back as a new ad for you to approve. Takes 10–40 minutes.</p>
+          <p class="flush muted small">Claude rebuilds the creative on your Mac (same pipeline as N1–N5), uploads it and sends it back for you to approve. Approving updates this ad. Takes 10–40 minutes.</p>
           ${last ? `<label class="check"><input type="checkbox" id="use-fixes" checked> Apply the fixes from the latest polish (score ${last.scorecard.overall}/5)</label>` : ""}
           <div class="field"><label for="render-direction">What should change</label>
             <textarea class="input" id="render-direction" rows="3" placeholder="e.g. Shorter headline, bigger Tap below note, AI chip inside the report card."></textarea></div>
@@ -287,7 +309,7 @@ async function renderPolish() {
       </section>
     </div>
     <h2 class="section-h">Runs</h2>
-    <div class="stack" id="runs">${runs.length ? runs.map((t) => taskCard(t, openReports)).join("") : '<section class="panel empty"><h3>No polish runs yet</h3><p>Pick the passes above and run them. Results show here with a score per pass, the fixes, and new versions of the copy you can turn into ads.</p></section>'}</div>`;
+    <div class="stack" id="runs">${runs.length ? runs.map((t) => taskCard(t, openReports)).join("") : '<section class="panel empty"><h3>No polish runs yet</h3><p>Pick the passes above and run them. Results show here with a score per pass, the fixes, and new versions of the copy you can put on this ad.</p></section>'}</div>`;
 
   const form = $("polish-form");
   const sync = () => {
@@ -323,7 +345,7 @@ async function renderPolish() {
     const useFixes = $("use-fixes") && $("use-fixes").checked;
     const ok = await confirmDialog({
       title: "Make a new version?",
-      body: "<p>Claude rebuilds the creative on your Mac and uploads it to your Meta media library. You get it back as a proposal; nothing is shown to anyone until you approve it and switch the new ad on.</p>",
+      body: "<p>Claude rebuilds the creative on your Mac and uploads it to your Meta media library. You get it back as a proposal; nothing changes on this ad until you approve it.</p>",
       confirm: "Make it", claude: true,
     });
     if (!ok) return;
@@ -516,6 +538,16 @@ if (me) {
     if (g) { showTab(g.dataset.goto); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     const f = e.target.closest("#formats button[data-format]");
     if (f) { format = f.dataset.format; try { localStorage.setItem("ebads-preview", format); } catch (err) {} loadPreview(); return; }
+    const back = e.target.closest("[data-restore]");
+    if (back) {
+      const yes = await confirmDialog({ title: `Switch back to version ${back.dataset.restore}?`, body: "<p>That version goes back on this ad. Meta reviews it again and learning can restart. The current version stays in the list, so you can switch to it later.</p>", confirm: "Switch back" });
+      if (!yes) return;
+      back.disabled = true;
+      try { await api(`/api/ads/ad/${encodeURIComponent(adId)}/versions/${back.dataset.restore}/restore`, { method: "POST" }); toast("Switched back. Meta reviews it next."); }
+      catch (err) { toast(err.message, "bad"); }
+      load();
+      return;
+    }
     const sw = e.target.closest("[data-toggle]");
     if (sw) { toggleEntity(sw, load); return; }
     if (e.target.closest("#archive")) {

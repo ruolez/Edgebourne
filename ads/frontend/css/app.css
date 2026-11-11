@@ -1315,3 +1315,9 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 @media (max-width:720px){.st-ev{grid-template-columns:14px 1fr auto}.st-when{grid-column:2;order:2}.st-what{grid-column:2}}
 .status-hooks{align-items:center;gap:10px;flex-wrap:wrap}
 .status-hooks #sw-status{display:inline-flex;align-items:center;gap:10px}
+
+/* Versions of one ad (Overview) */
+.ver-tbl th, .ver-tbl td { padding-left: 8px; padding-right: 8px; }
+.ver-tbl td.ver-name { white-space: normal; min-width: 130px; padding-top: 8px; padding-bottom: 8px; }
+.ver-tbl .ver-name b { display: block; font-weight: 600; }
+.ver-tbl .ver-name small { display: block; color: var(--ink-3); font-size: 12px; margin-bottom: 6px; }
