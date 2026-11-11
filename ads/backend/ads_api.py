@@ -1012,6 +1012,19 @@ def review_proposals():
     return jsonify({"items": desk_view.review(pairs), "gone": len(ids) - len(rows)})
 
 
+@bp.post("/proposals/<int:proposal_id>/undecline")
+@login_required
+def undecline(proposal_id):
+    """The Undo after a decline: only the person who declined, within ten minutes."""
+    done = db.execute("""UPDATE desk_proposals SET status = 'pending', decided_by = NULL, decided_at = NULL
+                         WHERE id = %s AND status = 'declined' AND decided_by = %s AND decided_at > now() - interval '10 minutes'
+                         RETURNING id""", (proposal_id, current_user()["id"]), returning=True)
+    if not done:
+        return api_error("It's too late to undo that", 409)
+    log_activity("proposal.undeclined", subject=str(proposal_id))
+    return jsonify({"status": "pending"})
+
+
 @bp.post("/proposals/<int:proposal_id>/<decision>")
 @login_required
 def decide(proposal_id, decision):

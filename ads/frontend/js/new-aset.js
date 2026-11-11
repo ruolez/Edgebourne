@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, fieldError, icon, toast } from "./ui.js";
+import { boot, confirmDialog, esc, fieldError, icon, toast, guardLeaving, markSaved } from "./ui.js";
 import { money } from "./format.js";
 import { placeLabel, placesHtml, placesWidget } from "./places.js";
 
@@ -93,6 +93,7 @@ async function loadTemplate() {
 }
 
 const me = await boot({ page: "new-adset", admin: true });
+if (me) guardLeaving();
 if (me) {
   $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
   try { opts = await api("/api/adsets/new/options"); } catch (err) { toast(err.message, "bad"); }
@@ -124,6 +125,7 @@ if (me) {
       try {
         const r = await api("/api/adsets", { method: "POST", body: { campaign_id: c.id, template_adset_id: $("template").value, spec: s } });
         toast("Ad set created, switched off. Add an ad to it next.");
+        markSaved();
         location.href = `/new-ad.html?adset=${encodeURIComponent(r.id)}`;
       } catch (err) {
         $("create").disabled = false;

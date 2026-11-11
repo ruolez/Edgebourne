@@ -1,6 +1,6 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, icon, onRefresh, previewSkeleton, setCrumbs, shortWait, showPreviewFrame, switchHtml, toast, when } from "./ui.js";
-import { CTA_LABELS, count, money, pct, per, statusOf } from "./format.js";
+import { boot, confirmDialog, esc, icon, onRefresh, previewSkeleton, setCrumbs, shortWait, showPreviewFrame, switchHtml, toast, when, errorState } from "./ui.js";
+import { CTA_LABELS, count, money, pct, per, statusOf, moneyWhole } from "./format.js";
 import { barList, columnChart } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
 import { ACTIVE, proposalCard, taskCard, wireTaskActions } from "./tasks.js";
@@ -190,7 +190,7 @@ function renderOverview() {
       </div>
     </div>`;
   columnChart({ el: $("c-spend"), series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 160,
-    format: (v) => money(v, { exact: true }), axisFormat: (v) => `$${Math.round(v / 100)}` });
+    format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v) });
   columnChart({ el: $("c-leads"), series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true, height: 160,
     format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
   loadPreview();
@@ -525,7 +525,7 @@ async function load() {
     showTab(tab);
     api(`/api/insights/ad/${encodeURIComponent(adId)}/comments`).then((c) => { data.comment_total = c.total; renderHead(); }).catch(() => {});
   } catch (err) {
-    $("cr-main").innerHTML = `<section class="panel empty"><h3>Ad not found</h3><p>${esc(err.message)}</p><a class="btn" href="/ads.html">Back to ads</a></section>`;
+    errorState($("cr-main"), err, load, { href: "/ads.html", label: "Back to Ads" });
   }
 }
 

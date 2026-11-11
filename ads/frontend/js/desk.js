@@ -133,7 +133,7 @@ function resolveAddress() {
 // What the right side shows: the choice in the address, else whatever most needs looking at.
 function current() {
   const b = data.board;
-  if (selected === "list") return null;
+  if (selected === "list" && phone.matches) return null;
   if (selected === "new" || selected === "decide") return selected;
   if (selected != null && b.threads[selected]) return selected;
   if (phone.matches) return null;
@@ -352,14 +352,18 @@ async function act(path, body, message) {
 }
 
 function offerUndo(message, result) {
-  const bar = $("undo-bar");
   if (!result || !result.task_ids || !result.task_ids.length) { toast(message); return; }
+  showUndo(message, () => api("/api/desk/restore", { method: "POST", body: { task_ids: result.task_ids, proposal_ids: result.proposal_ids || [] } }));
+}
+
+function showUndo(message, undo) {
+  const bar = $("undo-bar");
   bar.innerHTML = `<span>${esc(message)}</span><button type="button" data-undo>Undo</button>`;
   bar.hidden = false;
   bar.querySelector("[data-undo]").addEventListener("click", async () => {
     bar.hidden = true;
     clearTimeout(undoTimer);
-    try { await api("/api/desk/restore", { method: "POST", body: { task_ids: result.task_ids, proposal_ids: result.proposal_ids || [] } }); toast("Put back"); }
+    try { await undo(); toast("Put back"); }
     catch (err) { toast(err.message, "bad"); }
     reload();
   }, { once: true });
@@ -456,7 +460,11 @@ async function onClick(e) {
   if ((el = hit("data-accept"))) { acceptSheet([Number(el.dataset.accept)], reload); return; }
   if ((el = hit("data-accept-task"))) { acceptSheet(pendingOf(Number(el.dataset.acceptTask)), reload); return; }
   if (hit("data-accept-all")) { acceptSheet(pendingAll().map((p) => p.id), reload); return; }
-  if ((el = hit("data-decline-one"))) { act(`/api/proposals/${el.dataset.declineOne}/decline`, undefined, "Declined"); return; }
+  if ((el = hit("data-decline-one"))) {
+    const id = el.dataset.declineOne;
+    if (await act(`/api/proposals/${id}/decline`)) showUndo("Declined", () => api(`/api/proposals/${id}/undecline`, { method: "POST" }));
+    return;
+  }
   if ((el = hit("data-decline-task"))) { declineMany(pendingOf(Number(el.dataset.declineTask)), reload); return; }
   if (hit("data-decline-all")) { declineMany(pendingAll().map((p) => p.id), reload); return; }
   if ((el = hit("data-revise"))) {

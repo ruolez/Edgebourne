@@ -2,9 +2,9 @@
 // change against the period before, a verdict that waits for enough data, and one chart with a line
 // per ad. Reached from the Ads manager's selection bar (Compare) or Insights → Compare.
 import { api } from "./api.js";
-import { boot, esc, icon, onRefresh, toast } from "./ui.js";
+import { boot, esc, icon, onRefresh, toast, errorState } from "./ui.js";
 import { lineChart } from "./charts.js";
-import { count, money, statusOf } from "./format.js";
+import { count, money, statusOf, moneyWhole } from "./format.js";
 import * as UrlState from "./urlstate.js";
 
 const $ = (id) => document.getElementById(id);
@@ -92,7 +92,7 @@ function render() {
   const money2 = (v) => money(v, { exact: true });
   lineChart({ el: $("cmp-chart"), series: chartSeries(), title: "Compare chart", height: 240, integer: state.chart === "leads",
     format: state.chart === "leads" ? (v) => `${v} leads` : money2,
-    axisFormat: state.chart === "leads" ? (v) => String(Math.round(v)) : (v) => `$${Math.round(v / 100)}` });
+    axisFormat: state.chart === "leads" ? (v) => String(Math.round(v)) : (v) => moneyWhole(v) });
 }
 
 async function pickerHtml() {
@@ -120,7 +120,7 @@ async function load() {
   try {
     data = await api(`/api/compare?ids=${encodeURIComponent(state.ids)}&range=${encodeURIComponent(state.range)}${state.vs ? "&vs=prev" : ""}`);
     render();
-  } catch (err) { toast(err.message, "bad"); pickerHtml(); }
+  } catch (err) { errorState($("cmp"), err, load); }
 }
 
 const me = await boot({ page: "compare" });

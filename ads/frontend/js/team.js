@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, fieldError, toast, when } from "./ui.js";
+import { boot, esc, fieldError, toast, when, confirmDialog, errorState, onRefresh } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let data = { members: [], campaigns: [] };
@@ -60,7 +60,6 @@ function showPassword(name, pw) {
 
 me = await boot({ page: "team", admin: true });
 if (me) {
-  await load();
   $("add-btn").addEventListener("click", () => openDialog(null));
   $("m-cancel").addEventListener("click", () => $("member-dialog").close());
   $("member-form").addEventListener("submit", async (e) => {
@@ -90,13 +89,17 @@ if (me) {
     try {
       if (b.dataset.edit) openDialog(m);
       else if (b.dataset.reset) {
+        if (!(await confirmDialog({ title: `Reset ${m.name}'s password?`, body: "<p>Their current password stops working. You get a temporary one to pass on.</p>", confirm: "Reset password", danger: true }))) return;
         const res = await api(`/api/team/${id}`, { method: "PATCH", body: { reset_password: true } });
         showPassword(m.name, res.temporary_password);
       } else if (b.dataset.active) {
+        if (m.is_active && !(await confirmDialog({ title: `Deactivate ${m.name}?`, body: "<p>They can't sign in any more. Their notes and history stay, and you can reactivate them later.</p>", confirm: "Deactivate", danger: true }))) return;
         await api(`/api/team/${id}`, { method: "PATCH", body: { is_active: !m.is_active } });
         toast(m.is_active ? `${m.name} can no longer sign in` : `${m.name} can sign in again`);
         load();
       }
     } catch (err) { toast(err.message, "bad"); }
   });
+  onRefresh(load);
+  load().catch((err) => errorState(document.querySelector(".content"), err, () => location.reload()));
 }

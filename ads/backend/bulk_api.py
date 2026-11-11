@@ -37,6 +37,8 @@ def _plan(user, data):
     action, level = data.get("action"), data.get("level")
     if action not in ACTIONS or level not in ACTIONS[action]:
         return None, api_error("That change can't be made to a selection", 400)
+    if action == "archive" and user["role"] != "admin":
+        return None, api_error("Only admins can archive ads", 403)
     ids = [str(i) for i in (data.get("ids") or [])][:bulk.MAX_ITEMS]
     rows = _rows(user, level, ids)
     if not rows:

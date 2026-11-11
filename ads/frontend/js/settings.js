@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { money, currencySymbol } from "./format.js";
-import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when } from "./ui.js";
+import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when, errorState, guardLeaving, markSaved } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let s;
@@ -22,9 +22,19 @@ function fill(form, section) {
   }
 }
 
-function renderMeta() {
+function fillApp() {
   const m = s.meta;
   fill($("app-form"), { meta_app_id: m.meta_app_id, meta_app_secret: m.meta_app_secret, meta_verify_token: m.meta_verify_token, meta_graph_version: m.meta_graph_version });
+}
+
+// After an action that only changes status lines: what's typed in the forms stays.
+async function refreshStatus() {
+  s = await api("/api/settings");
+  renderMeta();
+}
+
+function renderMeta() {
+  const m = s.meta;
   const inherit = $("token-inherit");
   inherit.hidden = s.account.id === 1 || s.account.own_token;
   inherit.textContent = "Uses Edge Bourne's System User token. Paste this business's own token if its ad account isn't shared with Edge Bourne's System User.";
@@ -43,13 +53,13 @@ function renderMeta() {
     : "Off: approvals and rejections show at the next refresh. On: within seconds (needs the Meta app step in part I of the setup guide).";
   $("sw-status").querySelector("[role=switch]")?.addEventListener("click", async (e) => {
     const on = e.currentTarget.getAttribute("aria-checked") !== "true";
-    try { await api("/api/settings/meta/status-updates", { method: "POST", body: { on } }); toast(on ? "Meta will tell the console about status changes" : "Instant status updates are off"); load(); }
+    try { await api("/api/settings/meta/status-updates", { method: "POST", body: { on } }); toast(on ? "Meta will tell the console about status changes" : "Instant status updates are off"); refreshStatus(); }
     catch (err) { toast(err.message, "bad"); }
   });
   $("retry")?.addEventListener("click", async () => {
     const r = await api("/api/settings/webhooks/retry", { method: "POST" });
     toast(`${r.processed} lead(s) fetched`);
-    load();
+    refreshStatus();
   });
 }
 
@@ -219,14 +229,8 @@ async function load() {
   s = await api("/api/settings");
   fill($("meta-form"), s.meta);
   fill($("smtp-form"), s.smtp);
-  const use = s.smtp_in_use || { source: "none" };
-  const note = $("smtp-source");
-  note.hidden = false;
-  note.textContent = use.source === "website"
-    ? `Using the website's email settings: ${use.host}, sending from ${use.from_email}. Nothing to fill in here. Change them in the website admin under Email, or enter a different mailbox below to send ad alerts from it instead.`
-    : use.source === "own"
-      ? `Using the mailbox below (${use.host}). Clear the SMTP server and save to go back to the website's email settings.`
-      : "Email isn't set up yet. Set it up once in the website admin under Email and it's used here too, or enter a mailbox below.";
+  fillApp();
+  renderSmtp();
   renderMeta();
   renderTargets();
   renderConsole();
@@ -243,6 +247,17 @@ async function load() {
   $("activity").innerHTML = rows.length ? `<thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${rows.map((r) =>
     `<tr><td class="muted">${when(r.at)}</td><td>${esc(r.who || ({ meta: "Meta", claude: "Claude", system: "System" }[r.actor] || r.actor))}</td><td>${esc(describe(r))}${r.subject && !r.action.startsWith("lead.") ? ` <span class="muted">${esc(r.subject)}</span>` : ""}</td></tr>`).join("")}</tbody>`
     : '<tbody><tr><td class="muted">Nothing yet.</td></tr></tbody>';
+}
+
+function renderSmtp() {
+  const use = s.smtp_in_use || { source: "none" };
+  const note = $("smtp-source");
+  note.hidden = false;
+  note.textContent = use.source === "website"
+    ? `Using the website's email settings: ${use.host}, sending from ${use.from_email}. Nothing to fill in here. Change them in the website admin under Email, or enter a different mailbox below to send ad alerts from it instead.`
+    : use.source === "own"
+      ? `Using the mailbox below (${use.host}). Clear the SMTP server and save to go back to the website's email settings.`
+      : "Email isn't set up yet. Set it up once in the website admin under Email and it's used here too, or enter a mailbox below.";
 }
 
 function renderTargets() {
@@ -323,11 +338,15 @@ const describe = (r) => ACTIONS[r.action] || r.action;
 
 const me = await boot({ page: "settings", admin: true });
 if (me) {
-  await load();
-  $("meta-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); toast("Meta settings saved"); load(); }); });
-  $("app-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); toast("Meta app saved"); load(); }); });
+  guardLeaving();
+  document.addEventListener("submit", markSaved);
+  $("meta-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); toast("Meta settings saved"); fill($("meta-form"), s.meta); renderMeta(); }); });
+  $("app-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); toast("Meta app saved"); fillApp(); renderMeta(); }); });
   $("tg-targets").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     fieldError(e.target);
+    const raisedTo = Math.round(Number($("t-max").value) * 100);
+    if (raisedTo > s.targets.max_daily_cents && !(await confirmDialog({ title: "Raise the highest daily budget?",
+      body: `<p>No budget in this account can go above this. It goes from <b>${money(s.targets.max_daily_cents, { exact: true })}</b> to <b>${money(raisedTo, { exact: true })}</b> a day.</p>`, confirm: `Raise to ${money(raisedTo, { exact: true })}` }))) return;
     try { s = await api("/api/settings/targets", { method: "PUT", body: values(e.target) }); }
     catch (err) { if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; } throw err; }
     toast("Targets saved"); renderTargets(); renderAlerts();
@@ -357,7 +376,7 @@ if (me) {
     if (!yes) return;
     try { await api("/api/reports/revoke", { method: "POST" }); toast("Old links stopped"); } catch (err) { toast(err.message, "bad"); }
   });
-  $("smtp-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/smtp", { method: "PUT", body: values(e.target) }); toast("Email settings saved"); load(); }); });
+  $("smtp-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/smtp", { method: "PUT", body: values(e.target) }); toast("Email settings saved"); fill($("smtp-form"), s.smtp); renderSmtp(); }); });
   $("tg-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     fieldError(e.target);
     try {
@@ -460,7 +479,7 @@ if (me) {
   });
   $("crm-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     s = await api("/api/settings/meta", { method: "PUT", body: { meta_dataset_id: $("meta_dataset_id").value, crm_send_enabled: $("crm_send_enabled").checked ? "1" : "" } });
-    toast($("crm_send_enabled").checked ? "Lead stages now go to Meta" : "Lead stages are no longer sent"); load();
+    toast($("crm_send_enabled").checked ? "Lead stages now go to Meta" : "Lead stages are no longer sent"); renderCrm();
   }); });
   $("crm-test").addEventListener("click", (e) => run(e.currentTarget, async () => {
     const r = await api("/api/settings/meta/crm-test", { method: "POST", body: { code: $("crm-code").value } });
@@ -471,6 +490,7 @@ if (me) {
     const r = await api("/api/settings/meta/test", { method: "POST" });
     $("meta-result").innerHTML = `<p class="note ok">Connected as <b>${esc(r.system_user)}</b>. Page: ${esc(r.page)}${r.page_token ? "" : " (can't act for it)"}. Ad account: ${esc(r.ad_account)} (${esc(r.currency)}).</p>`;
   }));
-  $("meta-connect").addEventListener("click", (e) => run(e.currentTarget, async () => { await api("/api/settings/meta/connect-page", { method: "POST" }); toast("The Page now sends new leads here"); load(); }));
-  $("meta-sync").addEventListener("click", (e) => run(e.currentTarget, async () => { const r = await api("/api/settings/meta/sync", { method: "POST", body: { days: 30 } }); toast(`${r.campaigns} campaign(s) synced, ${r.new_leads} new lead(s)`); load(); }));
+  $("meta-connect").addEventListener("click", (e) => run(e.currentTarget, async () => { await api("/api/settings/meta/connect-page", { method: "POST" }); toast("The Page now sends new leads here"); await refreshStatus(); }));
+  $("meta-sync").addEventListener("click", (e) => run(e.currentTarget, async () => { const r = await api("/api/settings/meta/sync", { method: "POST", body: { days: 30 } }); toast(`${r.campaigns} campaign(s) synced, ${r.new_leads} new lead(s)`); await refreshStatus(); }));
+  load().catch((err) => errorState(document.querySelector(".content"), err, () => location.reload()));
 }

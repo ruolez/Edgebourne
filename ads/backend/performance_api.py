@@ -10,6 +10,7 @@ import account_info
 import db
 import insights
 import pacing
+import ranges
 import meta_client
 import settings_store
 from auth import admin_required, current_user, login_required, visible_campaign_ids
@@ -17,7 +18,7 @@ from util import api_error, log_activity
 
 bp = Blueprint("performance", __name__, url_prefix="/api/performance")
 
-RANGES = {"7": 7, "14": 14, "30": 30}
+RANGE_KEYS = ("7", "14", "30", "mtd", "lastmonth")
 BAD_STATUSES = {"DISAPPROVED", "WITH_ISSUES"}
 
 
@@ -58,10 +59,10 @@ def campaign_choices(user, start, end):
             ORDER BY spend_cents DESC, c.name""", [start, end] + params)]
 
 
-def overview_data(user, days, campaign_id=None):
+def overview_data(user, days, campaign_id=None, span=None):
     """Everything the Performance page shows; also the AI desk's snapshot. `campaign_id`
-    narrows it to one campaign the person can see."""
-    (start, end), (prev_start, prev_end) = periods(account_info.today(), days)
+    narrows it to one campaign the person can see; `span` gives explicit windows, for months."""
+    (start, end), (prev_start, prev_end) = span or periods(account_info.today(), days)
     where, params = _scope_sql(user, "d.campaign_id")
     if campaign_id:
         where, params = f"({where}) AND d.campaign_id = %s", params + [campaign_id]
@@ -183,14 +184,15 @@ def pacing_data(scope_ids=None):
 @login_required
 def overview():
     user = current_user()
-    days = RANGES.get(request.args.get("range", "7"), 7)
+    key = request.args.get("range", "7")
+    start, end = ranges.window(key if key in RANGE_KEYS else "7", account_info.today())
+    days = (end - start).days + 1
     campaign_id = request.args.get("campaign") or None
     if campaign_id:
         ids = visible_campaign_ids(user)
         if ids is not None and campaign_id not in ids:
             return api_error("Not found", 404)
-    out = overview_data(user, days, campaign_id)
-    (start, end), _ = periods(account_info.today(), days)
+    out = overview_data(user, days, campaign_id, span=((start, end), ranges.previous(start, end)))
     out["campaigns"] = campaign_choices(user, start, end)
     out["campaign"] = campaign_id
     out["pacing"] = pacing_data(visible_campaign_ids(user))

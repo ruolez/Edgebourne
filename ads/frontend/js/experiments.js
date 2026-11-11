@@ -1,6 +1,6 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, fieldError, onRefresh, toast, when } from "./ui.js";
-import { count, dayLabel, money } from "./format.js";
+import { boot, confirmDialog, esc, fieldError, onRefresh, toast, when, showLoadError } from "./ui.js";
+import { count, dayLabel, money, currencySymbol } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
@@ -120,7 +120,7 @@ async function load() {
   try {
     const d = await api("/api/experiments");
     items = d.items; metrics = d.metrics; metaEnabled = d.meta_enabled;
-  } catch (err) { toast(err.message, "bad"); return; }
+  } catch (err) { showLoadError($("tests"), err, load); return; }
   const focus = Number(location.hash.slice(1));
   const hit = focus && items.find((t) => t.id === focus);
   if (hit && !SHOWS[show](hit)) show = "all";
@@ -188,7 +188,7 @@ async function openForm(t = null) {
       <div class="field"><label for="f-end">Ends <span class="muted">(optional)</span></label><input class="input" type="date" id="f-end" name="end_day" value="${esc(t && t.end_day ? t.end_day : "")}"></div>
     </div>
     <div class="field" id="target-field"><label for="f-target">Target cost <span class="muted">(optional)</span></label>
-      <span class="money-input">$<input class="input" id="f-target" name="target" inputmode="decimal" value="${t && t.target_cents ? t.target_cents / 100 : ""}" placeholder="60" autocomplete="off"></span>
+      <span class="money-input">${currencySymbol()}<input class="input" id="f-target" name="target" inputmode="decimal" value="${t && t.target_cents ? t.target_cents / 100 : ""}" placeholder="60" autocomplete="off"></span>
       <span class="hint">Each arm has to spend twice this before it's judged. Left empty: the cost-per-lead target from Settings → Alerts, or the test's own average.</span></div>
     ${t ? `<div class="field"><label for="f-notes">Notes</label><textarea class="input" id="f-notes" name="notes" rows="2">${esc(t.notes || "")}</textarea></div>` : ""}
     <div class="row end"><button class="btn" type="button" data-close>Cancel</button><button class="btn btn-primary" type="submit">${t ? "Save" : "Start tracking"}</button></div>
@@ -255,7 +255,7 @@ function openMeta(t) {
       <div class="field"><label for="m-end">Ends</label><input class="input" type="date" id="m-end" name="end_day" value="${isoPlus(8)}"></div>
     </div>
     ${ads ? `<div class="field"><label for="m-budget">Test budget per day</label>
-      <span class="money-input">$<input class="input" id="m-budget" name="budget" inputmode="decimal" placeholder="10" autocomplete="off"></span>
+      <span class="money-input">${currencySymbol()}<input class="input" id="m-budget" name="budget" inputmode="decimal" placeholder="10" autocomplete="off"></span>
       <span class="hint">Spent on top of the campaign's budget while the test runs.</span></div>` : ""}
     <div class="note" id="m-plan" role="status">Pick the dates${ads ? " and a daily budget" : ""} to see what it does and costs.</div>
     <div class="row end"><button class="btn" type="button" data-close>Cancel</button>

@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from flask import Blueprint, jsonify, request
 
 import account_info
+import ranges
 import db
 import insights
 import meta_client
@@ -95,9 +96,7 @@ def shape_breakdown(by, rows):
 def time_params(range_key):
     if range_key == "lifetime":
         return {"date_preset": "maximum"}, "lifetime"
-    days = {"7": 7, "14": 14, "30": 30}.get(range_key, 7)
-    end = account_info.today() - timedelta(days=1)
-    start = end - timedelta(days=days - 1)
+    start, end = ranges.window(range_key, account_info.today())
     return {"time_range": json.dumps({"since": start.isoformat(), "until": end.isoformat()})}, f"{start}..{end}"
 
 

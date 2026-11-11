@@ -11,6 +11,7 @@ export const money = (cents, { exact = false } = {}) => {
   const digits = exact || Math.abs(v) < 100 ? 2 : 0;
   return v.toLocaleString(undefined, { style: "currency", currency: CURRENCY, minimumFractionDigits: digits, maximumFractionDigits: digits });
 };
+export const moneyWhole = (cents) => ((cents || 0) / 100).toLocaleString(undefined, { style: "currency", currency: CURRENCY, minimumFractionDigits: 0, maximumFractionDigits: 0 });
 export const count = (n) => Number(n || 0).toLocaleString();
 export const per = (cents, n) => (n ? money(cents / n, { exact: true }) : "—");
 export const pct = (a, b) => (b ? `${((a / b) * 100).toFixed(2)}%` : "—");

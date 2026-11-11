@@ -1,7 +1,7 @@
 // Inbox: everything that changed or waits for someone: Meta's approvals and rejections, issues,
 // learning limited, new leads, Claude's proposals, money and tracking alerts. Read/unread per person.
 import { api } from "./api.js";
-import { boot, esc, icon, onRefresh, toast, when } from "./ui.js";
+import { boot, esc, icon, onRefresh, toast, when, errorState } from "./ui.js";
 
 const FILTERS = [["unread", "Unread"], ["all", "All"], ["status", "Ad status"], ["leads", "Leads"], ["claude", "Claude"], ["money", "Money"], ["system", "Tracking"]];
 const ICON = { status: "ads", leads: "leads", claude: "spark", money: "chart", system: "alarm" };
@@ -119,5 +119,5 @@ $("ib-all").addEventListener("click", async () => {
 const me = await boot({ page: "inbox" });
 if (me) {
   onRefresh(load);
-  load().catch((err) => { $("ib-list").innerHTML = `<li class="ib-empty">${esc(err.message)}</li>`; });
+  load().catch((err) => errorState($("ib-list"), err, load));
 }

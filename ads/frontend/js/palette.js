@@ -19,9 +19,9 @@ function baseItems(me, pages) {
     if (s.admin && !admin) continue;
     out.push({ type: "page", title: s.label, sub: "Go to", href: s.href, icon: s.icon });
   }
-  const sub = [["compare", "Compare ads"], ["report", "Reports"], ["forms", "Lead forms", true], ["experiments", "Tests", true],
+  const sub = [["compare", "Compare ads"], ["report", "Reports", "report"], ["forms", "Lead forms", true], ["experiments", "Tests", true],
     ["research", "Research", true], ["team", "Team", true]];
-  for (const [p, label, adm] of sub) if (!adm || admin) out.push({ type: "page", title: label, sub: "Go to", href: PAGE_HREF[p] });
+  for (const [p, label, adm] of sub) if (!adm || admin || (adm === "report" && me && me.role === "client")) out.push({ type: "page", title: label, sub: "Go to", href: PAGE_HREF[p] });
   if (admin) {
     out.push({ type: "action", title: "New ad", sub: "Create", href: "/new-ad.html", icon: "plus" });
     out.push({ type: "action", title: "New ad set", sub: "Create", href: "/new-adset.html", icon: "plus" });

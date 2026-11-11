@@ -223,7 +223,7 @@ Decisions: new visual direction (3 mockups, he picks), stay vanilla multi-page, 
 ### Phase 9: UI/UX audit (Eugene, 2026-11-10: "research the web… improve our app design in all sections, close gaps, easy seamless navigation from everywhere"; plan in `ads/docs/UX-AUDIT.md`)
 Decisions: design + workflows (no automation rules), new Creative section (Research moves out of Claude), keep Signal and refine, clickable mockup first, then phase by phase. Money rules do not loosen.
 - [~] 9.0 Baseline shots of every tab + clickable mockup (`.superdesign/audit/`). **[Eugene]** reviews before 9.2
-- [ ] 9.1 Fix what's broken
+- [x] 9.1 Fix what's broken: Compare keeps vs before; Results takes This month / Last month through `ranges.py` and ignores a bad saved range; Leads follows `#lead=`; Claude `#list` on desktop; fix run links; danger buttons readable on hover; class collisions renamed (`.rp-doc`, `.cw-card`, `.chg-list`); Refresh no longer reloads a form; leave warning (`guardLeaving`/`markSaved`); typed notes and email survive a stage move; each Settings save touches its own panel; shared `errorState`/`showLoadError` with Try again, network errors in plain words; unfinished builds on Ads (`GET /api/builds/open`); Reports hidden from team members; bulk Archive admin only; confirm on Team reset/deactivate and raising the ceiling; Undo on Decline (`/undecline`, 10 minutes, same person); sign-in refuses `//host`; account currency and name instead of `$` and Edge Bourne
 - [ ] 9.2 One design system (tokens, components, one vocabulary, accessibility)
 - [ ] 9.3 Navigation from everywhere
 - [ ] 9.4 Every tab redesigned on the new parts
@@ -634,3 +634,4 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-10 · 8.8 finish pass (screens, docs, inventory); 317 unit tests, QA 267 PASS; Phase 8 code complete, pushed 2026-11-10 (d24efac…37547ca) · next: Eugene → Update on the VPS → live checks 8.8 (1)–(6)
 - 2026-11-10 · 5.4 Fix Meta's advice with Claude (advice runs, 9:16 update proposals, placement creative with read-back), bridge 1.7 installed on the Mac; 344 unit tests, QA 279 PASS; not committed · next: Eugene says commit/push → Update → first live Fix with Claude on the Reels advice
 - 2026-11-10 · 5.5 update ads in place (same ad keeps its ID and results, per-version results, switch back, either way round); 418 unit tests; not committed · next: Eugene says push, runs Update, then `bridge/install.sh`; first live test on one ad with his yes
+- 2026-11-10 · Phase 9 started (UI/UX audit, plan in `docs/UX-AUDIT.md`): 9.0 baseline shots + clickable mockup in `.superdesign/audit/` waiting for Eugene; 9.1 broken items fixed, QA 364 PASS, 418 unit tests, leak test clean; next: Eugene's mockup review, then 9.2

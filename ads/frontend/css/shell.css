@@ -217,6 +217,7 @@ dialog.palette::backdrop { background: rgba(10, 12, 14, .35); }
 /* Signal density for the shared components (app.css keeps their structure). */
 .btn { min-height: 34px; padding: 0 12px; border-radius: var(--radius-s); font-weight: 500; font-size: 13.5px; gap: 7px; }
 .btn:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.btn-danger:hover { background: var(--rust); border-color: var(--rust); color: #fff; filter: brightness(.92); }
 .btn-primary:hover, .btn-call:hover { background: color-mix(in srgb, var(--seal) 86%, var(--canvas)); }
 .btn-claude:hover { background: var(--violet); opacity: .9; }
 .btn-claude-outline { color: var(--violet); border-color: color-mix(in srgb, var(--violet) 40%, transparent); }

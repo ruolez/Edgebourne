@@ -6,11 +6,11 @@ import { api } from "./api.js";
 import { confirmDialog, esc, icon, switchHtml, toast, when } from "./ui.js";
 import { columnChart } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
-import { LEARNING, PROBLEM_STATES, REVIEW_STATES, count, money, pct, per, statusOf } from "./format.js";
+import { LEARNING, PROBLEM_STATES, REVIEW_STATES, count, money, moneyWhole, pct, per, statusOf } from "./format.js";
 
 export const LEVEL_WORDS = { campaign: ["campaign", "campaigns"], adset: ["ad set", "ad sets"], ad: ["ad", "ads"] };
 const isOn = (s) => s === "ACTIVE";
-export const isTest = (r) => /\b(test|qa)\b|copy\)?$|flow copy/i.test(r.name || "");
+export const isTest = (r) => /\b(test|qa)\b|flow copy/i.test(r.name || "");
 const learningOf = (r) => (r.level === "adset" ? r.learning_stage : r.adset?.learning_stage);
 const lifetimeQuiet = (r) => r.level === "ad" && r.effective_status === "ACTIVE" && !r.lifetime_impressions;
 
@@ -214,7 +214,7 @@ const BULK = {
 export function bulkBarHtml(level, picked, canControl) {
   if (!picked.length) return "";
   const thumbs = level === "ad" ? `<span class="bk-film">${picked.slice(0, 6).map((r) => thumb(r)).join("")}</span>` : "";
-  const actions = BULK[level].filter(([k]) => k === "compare" || canControl).map(([k, label, ic]) => {
+  const actions = BULK[level].filter(([k]) => k === "compare" || (canControl && (k !== "archive" || window.ebadsMe?.role === "admin"))).map(([k, label, ic]) => {
     const disabled = k === "compare" && (picked.length < 2 || picked.length > 6);
     return `<button type="button" class="btn ${k === "compare" ? "btn-primary" : "btn-quiet"} btn-small" data-bulk="${k}" ${disabled ? `disabled title="Pick 2 to 6 ads to compare"` : ""}>${icon(ic)}<span>${label}</span></button>`;
   }).join("");
@@ -285,7 +285,7 @@ export function wire(root, ctx) {
       const ids = picked.map((r) => r.id);
       const level = ctx.level();
       if (k.dataset.bulk === "clear") { ctx.clear(); return; }
-      if (k.dataset.bulk === "compare") { location.href = `/compare.html?ids=${ids.map(encodeURIComponent).join(",")}&range=${ctx.range()}&vs=prev`; return; }
+      if (k.dataset.bulk === "compare") { location.href = `/compare.html?ids=${ids.map(encodeURIComponent).join(",")}&range=${ctx.range()}&vs=1`; return; }
       if (k.dataset.bulk === "budget") { const v = await askBudget(level, ids.length); if (v) bulkRun(level, ids, "budget", v, ctx.reload); return; }
       bulkRun(level, ids, k.dataset.bulk, null, ctx.reload);
       return;
@@ -406,7 +406,7 @@ export async function peek(r, { onClose } = {}) {
   };
   if ((r.spark || []).length) {
     columnChart({ el: drawer.querySelector("#pk-spend"), series: r.spark, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 120,
-      format: (v) => money(v, { exact: true }), axisFormat: (v) => `$${Math.round(v / 100)}` });
+      format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v) });
     columnChart({ el: drawer.querySelector("#pk-leads"), series: r.spark, key: "leads", color: "var(--chart-leads)", title: "Leads per day", height: 120, integer: true,
       format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
   }

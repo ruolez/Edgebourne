@@ -183,6 +183,16 @@ def options():
                                for r in db.query("SELECT id, spec, status, created_at FROM campaign_builds ORDER BY id DESC LIMIT 5")]})
 
 
+@bp.get("/open")
+@admin_required
+def open_builds():
+    """Builds left unfinished in the last two weeks, so leaving the page doesn't lose them."""
+    rows = db.query("""SELECT id, spec, status, created_at FROM campaign_builds
+                       WHERE status IN ('partial', 'created') AND created_at > now() - interval '14 days'
+                       ORDER BY id DESC LIMIT 10""")
+    return jsonify({"items": [{"id": r["id"], "name": r["spec"].get("name"), "status": r["status"]} for r in rows]})
+
+
 @bp.post("/check")
 @admin_required
 def check_only():

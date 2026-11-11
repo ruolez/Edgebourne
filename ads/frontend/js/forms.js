@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, fieldError, icon, toast, when } from "./ui.js";
+import { boot, confirmDialog, esc, fieldError, icon, toast, when, errorState, guardLeaving, markSaved } from "./ui.js";
 import { count } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -13,7 +13,7 @@ const SAMPLE = { FULL_NAME: "Maria Lopez", EMAIL: "maria@example.com", PHONE: "(
 const blank = () => ({
   name: "", intro_title: "", intro_bullets: [], standard: [], custom: [], higher_intent: false,
   privacy_url: meta.privacy_default, thanks_title: "Thanks, you're all set", thanks_body: "",
-  thanks_button: "website", thanks_button_text: "Visit our website", thanks_url: "https://edgebourne.com",
+  thanks_button: "website", thanks_button_text: "Visit our website", thanks_url: me.account.id === 1 ? "https://edgebourne.com" : "",
 });
 
 // ---------------------------------------------------------------- list
@@ -32,7 +32,7 @@ async function loadList() {
     </tr>`).join("");
     $("list").innerHTML = d.items.length ? `<div class="scroll-x"><table class="table middle"><thead><tr><th>Form</th><th>Status</th><th class="num">Leads</th><th>Made</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody></table></div>`
       : '<p class="muted flush">No forms on the Page yet. Start one with New form.</p>';
-  } catch (err) { $("list").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
+  } catch (err) { errorState($("list"), err, loadList); }
 }
 
 // ---------------------------------------------------------------- builder
@@ -72,7 +72,7 @@ function editor() {
       <div class="field" data-step="questions"><label for="f-privacy">Privacy policy page</label><input class="input" id="f-privacy" name="privacy_url" value="${esc(spec.privacy_url)}" inputmode="url"><span class="hint">Meta requires a web page (not a PDF).</span></div>
       <h3 class="b-h" data-step="thanks">After they send it</h3>
       <div class="field" data-step="thanks"><label for="f-thanks">Thank-you headline</label><input class="input" id="f-thanks" name="thanks_title" value="${esc(spec.thanks_title)}" autocomplete="off">${counter("f-thanks", "thanks_title")}</div>
-      <div class="field" data-step="thanks"><label for="f-thanks-body">Message</label><textarea class="input" id="f-thanks-body" name="thanks_body" rows="2" placeholder="Eugene will call you today from (909) …">${esc(spec.thanks_body)}</textarea></div>
+      <div class="field" data-step="thanks"><label for="f-thanks-body">Message</label><textarea class="input" id="f-thanks-body" name="thanks_body" rows="2" placeholder="We'll call you today.">${esc(spec.thanks_body)}</textarea></div>
       <fieldset class="field" data-step="thanks"><legend class="label">Button</legend>
         <label class="check"><input type="radio" name="thanks_button" value="website" ${spec.thanks_button === "website" ? "checked" : ""}> Opens a web page (your site or a booking link)</label>
         <label class="check"><input type="radio" name="thanks_button" value="none" ${spec.thanks_button === "website" ? "" : "checked"}> No button</label>
@@ -110,13 +110,14 @@ function readSpec() {
 
 function phone() {
   const s = spec;
-  const head = '<div class="ph-brand"><span class="ph-logo">EB</span><b>Edge Bourne Consulting</b></div>';
+  const biz = me.account.name;
+  const head = `<div class="ph-brand"><span class="ph-logo">${esc(biz.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase())}</span><b>${esc(biz)}</b></div>`;
   const btn = (t) => `<span class="ph-btn">${esc(t)}</span>`;
   const screens = {
     intro: `${head}<h4>${esc(s.intro_title || "Your headline")}</h4>${s.intro_bullets.length ? `<ul>${s.intro_bullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}${btn("Continue")}`,
     questions: `${head}<p class="ph-sub">Contact information</p>${["FULL_NAME", "EMAIL", "PHONE", ...s.standard].map((t) => `<label class="ph-field"><small>${esc(meta.standard[t] || t)}</small><span>${esc(SAMPLE[t] || "")}</span></label>`).join("")}
       ${s.custom.map((q) => `<p class="ph-q">${esc(q.label || "Your question")}</p>${q.options.length ? q.options.map((o) => `<span class="ph-opt">${esc(o)}</span>`).join("") : '<span class="ph-field"><span class="muted">Type your answer</span></span>'}`).join("")}
-      <p class="ph-legal">By clicking Submit, you agree to send your info to Edge Bourne Consulting, who agrees to use it according to their <u>privacy policy</u>.</p>${btn(s.higher_intent ? "Next" : "Submit")}`,
+      <p class="ph-legal">By clicking Submit, you agree to send your info to ${esc(biz)}, who agrees to use it according to their <u>privacy policy</u>.</p>${btn(s.higher_intent ? "Next" : "Submit")}`,
     review: `${head}<h4>Review your info</h4><p class="ph-sub">Make sure everything is correct before you submit.</p>${["FULL_NAME", "EMAIL", "PHONE"].map((t) => `<p class="ph-review"><small>${esc(meta.standard[t] || t)}</small>${esc(SAMPLE[t])}</p>`).join("")}${btn("Submit")}`,
     thanks: `${head}<div class="ph-done">✓</div><h4>${esc(s.thanks_title || "Thanks, you're all set")}</h4>${s.thanks_body ? `<p>${esc(s.thanks_body)}</p>` : ""}${s.thanks_button === "website" ? btn(s.thanks_button_text || "Visit our website") : ""}`,
   };
@@ -216,6 +217,7 @@ async function create(e) {
   if (!yes) return;
   try {
     const r = await api("/api/forms", { method: "POST", body: spec });
+    markSaved();
     createdId = r.id;
     $("builder").hidden = true; $("builder").innerHTML = "";
     toast("Form created on the Page");
@@ -227,6 +229,7 @@ async function create(e) {
 
 const me = await boot({ page: "forms", admin: true });
 if (me) {
+  guardLeaving();
   $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
   await loadList();
   $("new-form").addEventListener("click", () => openBuilder(blank()));

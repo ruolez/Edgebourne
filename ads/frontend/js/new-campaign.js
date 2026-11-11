@@ -1,6 +1,6 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, fieldError, icon, toast } from "./ui.js";
-import { STATUS as FORMAT_STATUS, CTA_LABELS, money } from "./format.js";
+import { boot, confirmDialog, esc, fieldError, icon, toast, guardLeaving, markSaved } from "./ui.js";
+import { STATUS as FORMAT_STATUS, CTA_LABELS, money, currencySymbol } from "./format.js";
 import { placesHtml, placesWidget } from "./places.js";
 
 const CLIENT_KEY = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -37,7 +37,7 @@ function mediaOptions(ad) {
 }
 
 function adCard(ad, i) {
-  return `<fieldset class="cr-card" data-ad="${i}"><legend>Ad ${i + 1}</legend>
+  return `<fieldset class="cw-card" data-ad="${i}"><legend>Ad ${i + 1}</legend>
     <div class="grid-2">
       <div class="field"><label for="a-tpl-${i}">Starts from</label><select class="input" id="a-tpl-${i}" data-k="template_ad_id"><option value="" ${ad.template_ad_id ? "" : "selected"}>Nothing: new words and media</option>${opts.templates.map((t) => `<option value="${esc(t.id)}" ${t.id === ad.template_ad_id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></div>
       <div class="field"><label for="a-media-${i}">Image or video</label><select class="input" id="a-media-${i}" data-k="media">${mediaOptions(ad)}</select></div>
@@ -170,7 +170,7 @@ function buildView(b) {
       <div class="panel-head"><h2>Publish</h2><p>Turns on the ads, then the ad set, then the campaign last, so nothing spends until everything is on.</p></div>
       <form class="panel-body stack tight" id="pub-form" novalidate>
         <p class="flush">It will spend up to <b>${esc(money(r.budget_cents, { exact: true }))} a day</b> (Meta may go up to 75% over on a good day and evens out over the week). Meta reviews the ads first, usually within a day.</p>
-        <div class="field"><label for="pub-typed">Type the daily budget to confirm</label><span class="money-input">$<input class="input" id="pub-typed" name="typed" inputmode="decimal" autocomplete="off"></span></div>
+        <div class="field"><label for="pub-typed">Type the daily budget to confirm</label><span class="money-input">${currencySymbol()}<input class="input" id="pub-typed" name="typed" inputmode="decimal" autocomplete="off"></span></div>
         <div class="row"><button class="btn btn-primary" type="submit">Publish</button><span class="muted small">Check each ad's preview first (links above).</span></div>
       </form></section>`
     : b.status === "partial" ? `<section class="panel"><div class="panel-body stack tight"><p class="note bad flush">${esc(b.error || "It stopped halfway.")}</p>
@@ -204,6 +204,7 @@ function buildView(b) {
 // ---------------------------------------------------------------- start
 
 const me = await boot({ page: "new-campaign", admin: true });
+if (me) guardLeaving();
 if (me) {
   $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
   const buildId = new URLSearchParams(location.search).get("build");
@@ -257,6 +258,7 @@ if (me) {
         try {
           // One key per wizard: a double click or a retry after a timeout returns the same build.
           const b = await api("/api/builds", { method: "POST", body: { ...s, client_key: CLIENT_KEY } });
+          markSaved();
           history.replaceState(null, "", `?build=${b.id}`);
           buildView(b);
           toast(b.status === "created" ? "Created, switched off" : "Stopped halfway; see below", b.status === "created" ? "" : "bad");

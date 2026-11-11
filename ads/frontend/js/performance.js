@@ -1,15 +1,16 @@
 import { api } from "./api.js";
-import { boot, esc, icon, onRefresh, toast, when } from "./ui.js";
+import { boot, esc, icon, onRefresh, toast, when, showLoadError } from "./ui.js";
 import { barList, columnChart } from "./charts.js";
-import { STATUS as FORMAT_STATUS, count, dayLabel, money, pct, per } from "./format.js";
+import { STATUS as FORMAT_STATUS, count, dayLabel, money, pct, per, moneyWhole, currencySymbol } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
 let data;
 let range = "7";
-try { range = localStorage.getItem("ebads-range") || "7"; } catch (e) {}
+const RANGE_KEYS = ["7", "14", "30", "mtd", "lastmonth"];
+try { const saved = localStorage.getItem("ebads-range"); if (RANGE_KEYS.includes(saved)) range = saved; } catch (e) {}
 const qs = new URLSearchParams(location.search);
-if (["7", "14", "30"].includes(qs.get("range"))) range = qs.get("range");
+if (RANGE_KEYS.includes(qs.get("range"))) range = qs.get("range");
 let campaign = qs.get("campaign") || "";
 
 // The ads table: which ads, in what order. Kept per browser.
@@ -49,11 +50,12 @@ function yesterdayLine(y) {
 // "▲ 18% vs prior 7 days": `better` says which direction is good news (null: neither).
 function change(now, before, better, prev) {
   const span = `${dayLabel(prev.start)} – ${dayLabel(prev.end)}`;
-  const vs = `vs prior ${data.range.days} days`;
+  const prior = ["mtd", "lastmonth"].includes(range) ? "the month before" : `prior ${data.range.days} days`;
+  const vs = `vs ${prior}`;
   if (now == null) return "";
-  if (before == null || before === 0) return `<span class="delta" title="${esc(span)}">none in prior ${data.range.days} days</span>`;
+  if (before == null || before === 0) return `<span class="delta" title="${esc(span)}">none in ${prior}</span>`;
   const d = Math.round(((now - before) / before) * 100);
-  if (d === 0) return `<span class="delta" title="${esc(span)}">same as prior ${data.range.days} days</span>`;
+  if (d === 0) return `<span class="delta" title="${esc(span)}">same as ${prior}</span>`;
   const tone = better === null ? "" : (d < 0) === (better === "down") ? "good" : "bad";
   return `<span class="delta ${tone}" title="${esc(span)}">${d > 0 ? "▲" : "▼"} ${Math.abs(d)}% ${vs}</span>`;
 }
@@ -110,7 +112,7 @@ function render() {
   if (me.role === "admin") loadActivity();
   fixInlineWidths();
   columnChart({ el: $("c-spend"), series: data.series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day",
-    format: (v) => money(v, { exact: true }), axisFormat: (v) => `$${Math.round(v / 100)}` });
+    format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v) });
   columnChart({ el: $("c-leads"), series: data.series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true,
     format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
 }
@@ -247,7 +249,7 @@ function pacingPanel(data) {
     : `<span class="value muted">—</span><span class="sub">Not set${data.can_set_target ? "" : " (an admin sets it)"}</span>`;
   const edit = data.can_set_target ? `<button type="button" class="btn btn-quiet small" id="target-edit">${p.target_cents ? "Change" : "Set a target"}</button>
       <form class="target-form" id="target-form" hidden novalidate><label class="sr-only" for="target-dollars">Monthly target in dollars</label>
-        <span class="money-input">$<input class="input" id="target-dollars" name="dollars" inputmode="decimal" value="${p.target_cents ? p.target_cents / 100 : ""}" placeholder="600"></span>
+        <span class="money-input">${currencySymbol()}<input class="input" id="target-dollars" name="dollars" inputmode="decimal" value="${p.target_cents ? p.target_cents / 100 : ""}" placeholder="600"></span>
         <button class="btn btn-primary" type="submit">Save</button></form>` : "";
   return `<h2 class="section-title pace-title">${esc(p.month)} so far</h2>
     <section class="panel figures pace" aria-label="This month's pace">
@@ -334,7 +336,7 @@ async function load() {
     data = await api(`/api/performance?range=${range}${campaign ? `&campaign=${encodeURIComponent(campaign)}` : ""}`);
   } catch (err) {
     if (campaign) { campaign = ""; return load(); }
-    toast(err.message, "bad"); return;
+    showLoadError($("perf"), err, load); return;
   }
   if (campaign && !data.campaigns.some((c) => c.id === campaign)) { campaign = ""; return load(); }
   campaignPicker();

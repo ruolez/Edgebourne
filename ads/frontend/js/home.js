@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, icon, onRefresh, toast, when } from "./ui.js";
+import { boot, confirmDialog, esc, icon, onRefresh, toast, when, editing, showLoadError } from "./ui.js";
 import { money, per, plural } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -89,7 +89,7 @@ function render(d) {
 
   const LEVEL = { campaign: "campaign", adset: "ad set", ad: "ad", study: "A/B test", form: "lead form", account: "account" };
   const changes = d.changes.length
-    ? `<ul class="changes">${d.changes.slice(0, 4).map((c) => {
+    ? `<ul class="chg-list">${d.changes.slice(0, 4).map((c) => {
         const [cls, ic, what] = changeWords(c, LEVEL);
         return `<li class="ic ${cls}">${icon(ic)}<span>${what}${c.ok ? "" : ' <b class="bad-text">(Meta refused)</b>'}<small>${esc(when(c.created_at))}${c.user_name ? `, ${esc(c.user_name)}` : ""}</small></span></li>`;
       }).join("")}</ul>`
@@ -147,7 +147,7 @@ function changeWords(c, LEVEL) {
 }
 
 async function load() {
-  try { render(await api("/api/home")); } catch (err) { toast(err.message, "bad"); }
+  try { render(await api("/api/home")); } catch (err) { showLoadError($("home"), err, load); }
 }
 
 me = await boot({ page: "home" });
@@ -158,7 +158,7 @@ if (me) {
   $("new-ad").innerHTML = `${icon("plus")}<span>New ad</span>`;
   onRefresh(load);
   load();
-  setInterval(() => { if (!document.hidden) load(); }, 60000);
+  setInterval(() => { if (!document.hidden && !editing()) load(); }, 60000);
 }
 
 
@@ -197,7 +197,7 @@ function adviceHtml(a) {
 function fixButton(r) {
   const run = r.fix_run;
   if (run && ["queued", "claimed", "running"].includes(run.status)) {
-    return `<a class="btn btn-quiet btn-small" href="/desk.html#runs">${icon("spark")}${run.status === "queued" ? "Waiting for your Mac" : "Claude is on it"}</a>`;
+    return `<a class="btn btn-quiet btn-small" href="/desk.html#r/${run.id}">${icon("spark")}${run.status === "queued" ? "Waiting for your Mac" : "Claude is on it"}</a>`;
   }
   if (run && run.waiting) {
     return `<a class="btn btn-claude btn-small" href="/desk.html#waiting">${icon("spark")}${run.waiting} to approve</a>`;

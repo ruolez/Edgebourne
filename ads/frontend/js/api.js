@@ -4,13 +4,14 @@ export class ApiError extends Error {
 }
 
 export async function api(path, { method = "GET", body } = {}) {
-  const res = await fetch(path, {
+  let res;
+  try { res = await fetch(path, {
     method,
     // X-Requested-With: the server refuses writes without it (cross-site request guard).
     headers: { "X-Requested-With": "ebads", ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: "same-origin",
-  });
+  }); } catch (e) { throw new ApiError("Can't reach the server. Check your connection and try again.", 0); }
   let data = null;
   try { data = await res.json(); } catch (e) { data = null; }
   if (res.status === 401 && !path.startsWith("/api/auth/login")) {

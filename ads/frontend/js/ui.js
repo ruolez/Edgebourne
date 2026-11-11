@@ -1,6 +1,6 @@
 // Shared UI: app frame, icons, toasts, formatting.
 import { api } from "./api.js";
-import { setCurrency } from "./format.js";
+import { setCurrency, currencySymbol, money, moneyWhole } from "./format.js";
 
 const ICONS = {
   close: '<path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -147,7 +147,7 @@ function paintUpdated() {
 }
 
 // Typing, a dialog or an open menu: reloading now would throw the person's work away.
-function editing() {
+export function editing() {
   const a = document.activeElement;
   return Boolean((a && a.matches("input, textarea, select, [contenteditable]")) || document.querySelector("dialog[open]"));
 }
@@ -172,7 +172,7 @@ async function doRefresh() {
     clockSkew = r.server_now ? r.server_now - Date.now() / 1000 : 0;
     if (r.ran) toast(r.new_leads ? `Up to date. ${r.new_leads} new lead${r.new_leads === 1 ? "" : "s"} found.` : "Up to date with Meta");
     else if (r.busy) toast("Already refreshing, one moment");
-    if (refreshHandler) await refreshHandler(); else location.reload();
+    if (refreshHandler) await refreshHandler();
     shownAt = updatedAt;
     frameStatus();
   } catch (err) {
@@ -196,7 +196,7 @@ async function frameStatus() {
     const card = document.getElementById("cap-card");
     if (card && cap && cap.limit_cents) {
       const used = Math.min(cap.spent_cents / cap.limit_cents, 1);
-      const $$ = (c) => { const d = c % 100 ? 2 : 0; return `$${(c / 100).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })}`; };
+      const $$ = (c) => (c % 100 ? money(c, { exact: true }) : moneyWhole(c));
       card.hidden = false;
       card.innerHTML = `<span class="cap-top"><span>Spending limit</span><b>${$$(cap.spent_cents)} / ${$$(cap.limit_cents)}</b></span>
         <span class="bar ${used >= 1 ? "bad" : used >= 0.8 ? "warn" : ""}"><i data-w="${(used * 100).toFixed(1)}"></i></span>
@@ -278,7 +278,7 @@ const SECTIONS = {
 // Section tabs: [page, label, who] (who: "admin" = admins only, "all" = everyone signed in).
 const SUBNAV = {
   ads: [["ads", "Ads", "all"], ["forms", "Lead forms", "admin"]],
-  insights: [["performance", "Results", "all"], ["compare", "Compare", "all"], ["experiments", "Tests", "admin"], ["report", "Reports", "all"]],
+  insights: [["performance", "Results", "all"], ["compare", "Compare", "all"], ["experiments", "Tests", "admin"], ["report", "Reports", "report"]],
   claude: [["desk", "Claude", "admin"], ["research", "Research", "admin"]],
   settings: [["settings", "Settings", "admin"], ["team", "Team", "admin"]],
 };
@@ -304,9 +304,37 @@ export function setCrumbs(items) {
   if (title && items.length) title.firstChild.textContent = items[items.length - 1].label;
 }
 
+// A page whose data didn't arrive: says what happened and offers another try, instead of staying blank.
+export function errorState(el, err, retry, back) {
+  const missing = err && err.status === 404;
+  const body = `<h3>${missing ? "Not found" : "This didn't load"}</h3><p>${esc((err && err.message) || "Something went wrong.")}</p>
+    <div class="row">${retry && !missing ? '<button type="button" class="btn" data-retry>Try again</button>' : ""}${back ? `<a class="btn btn-quiet" href="${esc(back.href)}">${esc(back.label)}</a>` : ""}</div>`;
+  el.innerHTML = el.tagName === "UL" ? `<li class="empty" role="alert">${body}</li>` : `<section class="panel empty" role="alert">${body}</section>`;
+  el.querySelector("[data-retry]")?.addEventListener("click", () => retry());
+}
+
+// First load fails: the error state. Data already on screen stays, with a toast.
+export function showLoadError(el, err, retry) {
+  if (el.querySelector("section, .panel, table, li, .card")) toast(err.message, "bad");
+  else errorState(el, err, retry);
+}
+
+// Half-typed forms: warn before the page goes away. Pages call markSaved() once the work is safe.
+let unsaved = false;
+export const markSaved = () => { unsaved = false; };
+export function guardLeaving() {
+  document.addEventListener("input", (e) => {
+    if (e.target.matches('input:not([type=checkbox]):not([type=radio]):not([type=search]), textarea') && e.target.closest("form") && !e.target.closest("dialog")) unsaved = true;
+  });
+  window.addEventListener("beforeunload", (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ""; } });
+}
+
 export async function boot({ page, admin = false }) {
   let me;
-  try { me = await api("/api/auth/me"); } catch (e) { return null; }
+  try { me = await api("/api/auth/me"); } catch (e) {
+    if (e.status !== 401) errorState(document.querySelector("main") || document.body, e, () => location.reload());
+    return null;
+  }
   if (!me) { location.href = "/login.html"; return null; }
   if (me.must_change_password && page !== "account") {
     location.href = "/account.html?first=1";
@@ -328,6 +356,7 @@ export async function boot({ page, admin = false }) {
   if (me.role === "client") document.documentElement.classList.add("read-only");
   if (me.role === "client" && me.account.clients_update_leads) document.documentElement.classList.add("client-leads");
   setCurrency(me.account.currency);
+  document.querySelectorAll(".money-input").forEach((el) => { if (el.firstChild && el.firstChild.nodeType === 3) el.firstChild.textContent = currencySymbol(); });
   window.ebadsMe = me;
   const isAdmin = me.role === "admin";
   const section = PAGE_SECTION[page] || page;
@@ -371,7 +400,8 @@ export async function boot({ page, admin = false }) {
   line.className = "topline";
   line.innerHTML = `<nav class="crumbs" aria-label="Breadcrumb"></nav><span class="grow"></span>${refreshButton()}`;
   main.prepend(line);
-  const tabsFor = (SUBNAV[section] || []).filter(([, , who]) => who === "all" || isAdmin);
+  const canSee = (who) => who === "all" || isAdmin || (who === "report" && me.role === "client");
+  const tabsFor = (SUBNAV[section] || []).filter(([, , who]) => canSee(who));
   if (tabsFor.length > 1 && tabsFor.some(([p]) => p === page)) {
     const sub = document.createElement("nav");
     sub.className = "subnav";
@@ -409,7 +439,7 @@ export async function boot({ page, admin = false }) {
   sheet.setAttribute("aria-label", "More");
   sheet.innerHTML = `<div class="grab"></div>${accountSwitch(me, "sheet")}<nav>
       ${moreKeys.map((k) => { const l = SECTIONS[k]; return `<a href="${l.href}" ${cur(k)}>${icon(l.icon)}${l.label}${badge(l.badge)}</a>`; }).join("")}
-      ${(SUBNAV.insights).filter(([p, , who]) => p !== "performance" && (who === "all" || isAdmin)).map(([p, label]) => `<a href="${PAGE_HREF[p]}" ${p === page ? 'aria-current="page"' : ""}>${icon(p === "compare" ? "compare" : p === "experiments" ? "tests" : "table")}${label}</a>`).join("")}
+      ${(SUBNAV.insights).filter(([p, , who]) => p !== "performance" && canSee(who)).map(([p, label]) => `<a href="${PAGE_HREF[p]}" ${p === page ? 'aria-current="page"' : ""}>${icon(p === "compare" ? "compare" : p === "experiments" ? "tests" : "table")}${label}</a>`).join("")}
       <a href="/account.html" ${cur("account")}>${icon("user")}Your account</a>
       <div class="sep"></div>
       <button type="button" class="item" data-theme-btn>${icon("moon")}<span>${themeLabel(currentTheme())}</span></button>

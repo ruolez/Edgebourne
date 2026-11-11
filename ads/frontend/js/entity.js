@@ -1,9 +1,9 @@
 // Campaign and ad set pages: their numbers with "vs before", a daily chart, (ad sets) learning progress
 // and who sees it, the ad sets / ads inside in the manager table, and one History timeline.
 import { api } from "./api.js";
-import { boot, esc, icon, onRefresh, setCrumbs, switchHtml, toast, when } from "./ui.js";
+import { boot, esc, icon, onRefresh, setCrumbs, switchHtml, toast, when, errorState } from "./ui.js";
 import { columnChart } from "./charts.js";
-import { count, dayLabel, money } from "./format.js";
+import { count, dayLabel, money, moneyWhole } from "./format.js";
 import * as UrlState from "./urlstate.js";
 import { bulkBarHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, statusCell, tableHtml, wire } from "./manager.js";
 
@@ -67,7 +67,7 @@ function render() {
     <p class="muted small flush">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}).</p>`;
   document.querySelectorAll("#cr-all [data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
   columnChart({ el: $("c-spend"), series: data.series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 170,
-    format: (v) => money(v, { exact: true }), axisFormat: (v) => `$${Math.round(v / 100)}` });
+    format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v) });
   columnChart({ el: $("c-leads"), series: data.series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true, height: 170,
     format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
   if (LEVEL === "adset" && $("estimate")) api(`/api/insights/adset/${encodeURIComponent(e.id)}/estimate`).then((x) => { if (x.lower && x.upper) $("estimate").textContent = `Meta estimates ${count(x.lower)}–${count(x.upper)} people could see these ads.`; }).catch(() => {});
@@ -79,7 +79,7 @@ async function load() {
   try {
     data = await api(`/api/${LEVEL === "campaign" ? "campaigns" : "adsets"}/${encodeURIComponent(id)}?range=${encodeURIComponent(state.range)}${state.vs ? "&vs=prev" : ""}`);
   } catch (err) {
-    $("cr-all").innerHTML = `<section class="panel empty"><h3>Not found</h3><p>${esc(err.message)}</p><a class="btn" href="/ads.html">Back to Ads</a></section>`;
+    errorState($("cr-all"), err, load, { href: "/ads.html", label: "Back to Ads" });
     return;
   }
   rows = flatten({ campaigns: data.campaigns });

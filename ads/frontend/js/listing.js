@@ -1,7 +1,7 @@
 // Ads page: the manager table at three levels with views, saved views, range + "vs before",
 // columns, search, selection → bulk bar / compare, and a peek drawer. Everything is in the URL.
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, icon, onRefresh, toast } from "./ui.js";
+import { boot, confirmDialog, esc, icon, onRefresh, toast, showLoadError } from "./ui.js";
 import { count, dayLabel } from "./format.js";
 import * as UrlState from "./urlstate.js";
 import { COLUMN_SETS, LEVEL_WORDS, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, tableHtml, wire } from "./manager.js";
@@ -83,7 +83,7 @@ function render() {
     : state.level === "ad" && state.display === "cards" ? cardsHtml(list)
     : narrow() ? listHtml({ rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), selected, sort: state.sort, dir: state.dir })
     : tableHtml({ level: state.level, rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: state.cols, sort: state.sort, dir: state.dir, selected, selectable: true });
-  $("cr-all").innerHTML = headerFigures() + toolbar() + body
+  $("cr-all").innerHTML = buildsNote() + headerFigures() + toolbar() + body
     + `<p class="muted small flush cr-foot">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}); today is left out because Meta reports late. Click a row for a quick look.</p>`;
   if (state.level === "campaign" && me.role === "admin") {
     document.querySelectorAll('#cr-all tr[data-row^="campaign:"] .c-name small').forEach((sm) => {
@@ -101,10 +101,17 @@ async function loadSaved() {
   try { saved = (await api("/api/views?page=ads")).views; } catch (e) { saved = []; }
 }
 
+let openBuilds = [];
+async function loadOpenBuilds() {
+  if (me.role !== "admin") return;
+  try { openBuilds = (await api("/api/builds/open")).items; } catch (e) { openBuilds = []; }
+}
+const buildsNote = () => (openBuilds.length ? `<p class="note">Not finished: ${openBuilds.map((b) => `<a href="/new-campaign.html?build=${b.id}">${esc(b.name || "Untitled campaign")}</a>`).join(", ")}. Open to finish or publish.</p>` : "");
+
 async function load() {
   try {
     data = await api(`/api/ads?range=${encodeURIComponent(state.range)}${state.vs ? "&vs=prev" : ""}${state.archived ? "&archived=1" : ""}`);
-  } catch (err) { toast(err.message, "bad"); return; }
+  } catch (err) { showLoadError($("cr-all"), err, load); return; }
   rows = flatten(data);
   for (const id of [...selected]) if (!(rows[state.level] || []).some((r) => r.id === id)) selected.delete(id);
   render();

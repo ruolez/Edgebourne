@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, icon, toast } from "./ui.js";
+import { boot, esc, icon, toast, guardLeaving, markSaved } from "./ui.js";
 import { CTA_LABELS } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -135,6 +135,7 @@ async function loadForms() {
 }
 
 const me = await boot({ page: "new-ad" });
+if (me) guardLeaving();
 if (me && me.role === "client") location.replace("/ads.html");
 else if (me) {
   $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
@@ -206,6 +207,7 @@ else if (me) {
           body: $("body").value, title: $("title").value, cta_type: $("cta").value, form_id: $("form").value || null,
           media: media.kind === "same" ? { kind: "same" } : { kind: media.kind, hash: media.hash, video_id: media.video_id },
         } });
+        markSaved();
         location.href = `/ad.html?id=${encodeURIComponent(r.id)}&created=1`;
       } catch (err) { toast(err.message, "bad"); btn.disabled = false; btn.textContent = "Create ad (off)"; }
     });

@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, fieldError, icon, onRefresh, phoneDisplay, setNewCount, shortWait, toast, waited, when } from "./ui.js";
+import { boot, esc, fieldError, icon, onRefresh, phoneDisplay, setNewCount, shortWait, toast, waited, when, showLoadError } from "./ui.js";
 
 const STAGES = [
   { id: "new", label: "New" },
@@ -104,7 +104,7 @@ async function load({ quiet = false } = {}) {
       select(state.leads[0].id, { push: false });
     }
   } catch (err) {
-    if (!quiet) toast(err.message, "bad");
+    if (!quiet) showLoadError($("list"), err, load);
   }
 }
 
@@ -273,8 +273,11 @@ async function select(id, { push = true } = {}) {
   }
 }
 
-function renderDetail(lead) {
+// keep = true when only the stage or owner moved: what's being typed stays.
+function renderDetail(lead, { keep = false } = {}) {
   const detail = $("detail");
+  const typed = keep ? { note: $("note")?.value, reply: $("reply-form") && !$("reply-form").hidden
+    ? { subject: $("reply-subject").value, body: $("reply-body").value, template: $("reply-template").value } : null } : {};
   detail.innerHTML = detailHtml(lead);
   $("back")?.addEventListener("click", () => {
     $("layout").classList.remove("showing-detail");
@@ -292,6 +295,12 @@ function renderDetail(lead) {
       toast("Note added");
     } catch (err) { toast(err.message, "bad"); }
   });
+  if (typed.note) $("note").value = typed.note;
+  if (typed.reply && $("reply-form")) {
+    $("reply-form").hidden = false;
+    $("reply-open").setAttribute("aria-expanded", "true");
+    loadDraft(lead, typed.reply.template).then(() => { $("reply-subject").value = typed.reply.subject; $("reply-body").value = typed.reply.body; }).catch(() => {});
+  }
 }
 
 // Stage events go to Meta from the background worker within seconds; refresh just that line.
@@ -314,7 +323,7 @@ function followMetaStages(id, tries = 0) {
 async function patch(id, body) {
   try {
     const lead = await api(`/api/leads/${id}`, { method: "PATCH", body });
-    renderDetail(lead);
+    renderDetail(lead, { keep: true });
     if ((lead.meta_stages || []).some((r) => r.status === "pending")) followMetaStages(id);
     if (body.status) toast(`Moved to ${STAGES.find((s) => s.id === body.status).label}`);
     load({ quiet: true });
@@ -361,6 +370,12 @@ async function main() {
   if (fromHash) state.selected = fromHash; // so the list doesn't open the newest lead instead
   await load();
   if (fromHash) select(fromHash, { push: false });
+  // ⌘K or a notification can point at another lead while this page is open.
+  window.addEventListener("hashchange", () => {
+    const id = Number((location.hash.match(/lead=(\d+)/) || [])[1]);
+    if (id && id !== state.selected) select(id, { push: false });
+    else if (!id) $("layout").classList.remove("showing-detail");
+  });
   // New leads appear without a reload; the clocks keep counting.
   setInterval(() => { if (!document.hidden) load({ quiet: true }); }, 30000);
 }

@@ -45,7 +45,7 @@ export async function editBudget({ level, id, name, current }, after) {
       label: "New daily budget", prefix: currencySymbol(), suffix: "/day", inputmode: "decimal", value: now.toFixed(2),
       validate: (v) => {
         const n = Number(String(v).replace(/[$,\s]/g, ""));
-        if (!Number.isFinite(n) || n < 1) return "Enter at least $1";
+        if (!Number.isFinite(n) || n < 1) return `Enter at least ${money(100)}`;
         if (Math.round(n * 100) === current) return "That's the current budget";
         return null;
       },
