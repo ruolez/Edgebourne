@@ -26,6 +26,10 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   page.on('dialog', (d) => (d.type() === 'beforeunload' ? d.accept() : d.dismiss()));
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error' && !/facebook\.com|preview_iframe/.test(m.text())) errors.push(m.text()); });
+  const sh = (cmd) => require('child_process').execSync(cmd).toString();
+  // What the fake Meta holds for an object now (checks read Meta's side, not only the screen).
+  const metaObj = (id) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/v24.0/?ids=${id}').read().decode())"`))[id];
+  const getJson = (url) => page.evaluate(async (u) => (await fetch(u)).json(), url);
   await page.goto(BASE + '/login.html');
   await page.fill('#email', 'eugene@edgebourne.com');
   await page.fill('#password', 'localdev-pass-123');
@@ -41,21 +45,24 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   await page.screenshot({ path: `${OUT}/flow-1-confirm-off.png` });
   await page.click('dialog.confirm #cd-ok');
   await page.waitForFunction(() => document.querySelector('[data-toggle="ad:120252672229400312"]')?.getAttribute('aria-checked') === 'false');
-  check('switch turns an ad off after confirming', before === 'true');
+  const offOnMeta = metaObj('120252672229400312').status;
+  check('switch turns an ad off after confirming', before === 'true' && offOnMeta === 'PAUSED', `Meta: ${offOnMeta}`);
   // Cancel leaves it alone.
   await page.locator('[data-toggle="ad:120252672229400312"]').click();
   await page.click('dialog.confirm #cd-cancel');
   await page.waitForTimeout(400);
-  check('cancel changes nothing', (await page.locator('[data-toggle="ad:120252672229400312"]').getAttribute('aria-checked')) === 'false');
+  check('cancel changes nothing', (await page.locator('[data-toggle="ad:120252672229400312"]').getAttribute('aria-checked')) === 'false' && metaObj('120252672229400312').status === 'PAUSED');
   // Back on.
   await page.locator('[data-toggle="ad:120252672229400312"]').click();
   await page.click('dialog.confirm #cd-ok');
   await page.waitForFunction(() => document.querySelector('[data-toggle="ad:120252672229400312"]')?.getAttribute('aria-checked') === 'true');
-  check('switch turns it back on', true);
+  const onOnMeta = metaObj('120252672229400312').status;
+  check('switch turns it back on', onOnMeta === 'ACTIVE', `Meta: ${onOnMeta}`);
 
   // 2. Budget: validation, +20% warning, then a real change (campaign budgets live on the Campaigns level).
   await page.goto(BASE + '/ads.html?level=campaign');
   await page.waitForSelector('[data-budget^="campaign:"]');
+  const budgetCampaign = (await page.getAttribute('[data-budget^="campaign:"]', 'data-budget')).split(':')[1];
   await page.click('[data-budget^="campaign:"]');
   await page.waitForSelector('dialog.confirm #cd-input');
   await page.fill('#cd-input', '0.5');
@@ -68,7 +75,8 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   await page.fill('#cd-input', '26');
   await page.click('dialog.confirm #cd-ok');
   await page.waitForFunction(() => /\$26\.00\/day/.test(document.querySelector('[data-budget^="campaign:"]')?.textContent || ''));
-  check('campaign budget changes to $26/day', true);
+  const budgetOnMeta = Number(metaObj(budgetCampaign).daily_budget);
+  check('campaign budget changes to $26/day', budgetOnMeta === 2600, `Meta: ${budgetOnMeta} cents`);
 
   // 3. Ad page: format switch, duplicate.
   await page.goto(BASE + '/ad.html?id=120252672232030312');
@@ -109,12 +117,15 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   check('quick preset picks 4 passes', (await page.textContent('#run-polish')).includes('Run 4 passes'));
   await page.click('#run-polish');
   await page.waitForSelector('#runs .task.queued');
-  check('polish run is queued for the Mac', true);
+  const polishRun = () => getJson('/api/ads/ad/120252672230740312/polish-runs').then((r) => r.tasks.filter((t) => t.kind === 'polish').sort((a, b) => b.id - a.id)[0]);
+  const queuedRun = await polishRun();
+  check('polish run is queued for the Mac', queuedRun?.status === 'queued' && queuedRun.options?.passes?.length === 4, `${queuedRun?.status} ${queuedRun?.options?.passes?.length} passes`);
   await page.screenshot({ path: `${OUT}/flow-polish.png`, fullPage: true });
   // Don't leave a real run for a connected Mac to pick up.
   await page.locator('#runs .task.queued [data-cancel]').first().click();
   await page.waitForSelector('#runs .task.cancelled');
-  check('a queued polish run can be cancelled', true);
+  const cancelledRun = await polishRun();
+  check('a queued polish run can be cancelled', cancelledRun?.id === queuedRun?.id && cancelledRun.status === 'cancelled', cancelledRun?.status);
   const create = page.locator('.proposal.variant [data-approve]').first();
   if (await create.count()) {
     await create.click();
@@ -131,7 +142,8 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   await page.waitForSelector('.topline [data-refresh]');
   await page.click('.topline [data-refresh]');
   await page.waitForFunction(() => /Updated just now/.test(document.querySelector('.topline [data-updated]')?.textContent || ''), null, { timeout: 60000 });
-  check('Refresh pulls from Meta and shows when', true, await page.textContent('.topline [data-updated]'));
+  const pulledAt = Number(sh(`docker exec -w /app edgebourne-ads-backend python -c "import settings_store;print(settings_store.get('last_refresh_at'))"`));
+  check('Refresh pulls from Meta and shows when', Date.now() / 1000 - pulledAt < 90, `${await page.textContent('.topline [data-updated]')} (pulled ${Math.round(Date.now() / 1000 - pulledAt)} s ago)`);
   const again = await page.evaluate(() => fetch('/api/refresh', { method: 'POST' }).then((r) => r.json()));
   check('a second Refresh within a minute does not hit Meta again', again.ran === false);
   for (const p of ['leads', 'performance', 'desk', 'research', 'settings', 'team', 'account']) {
@@ -183,7 +195,7 @@ print(r['id'])"`).toString().trim());
   if (!(await page.isChecked('#crm_send_enabled'))) await page.check('#crm_send_enabled');
   await page.click('#crm-form button[type=submit]');
   await page.waitForSelector('#crm-state .pill.ok');
-  check('Settings turns lead stages on', true, await page.textContent('#crm-state'));
+  check('Settings turns lead stages on', (await getJson('/api/settings')).meta.crm_send_enabled === '1', await page.textContent('#crm-state'));
   await page.goto(`${BASE}/leads.html#lead=${leadId}`);
   await page.waitForSelector('[data-stage="qualified"]');
   await page.click('[data-stage="qualified"]');
@@ -208,13 +220,13 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   await page.uncheck('#crm_send_enabled');
   await page.click('#crm-form button[type=submit]');
   await page.waitForFunction(() => document.querySelector('#crm-state')?.textContent === 'Off');
-  check('Settings turns lead stages off again', true);
+  check('Settings turns lead stages off again', !(await getJson('/api/settings')).meta.crm_send_enabled);
 
   // Automatic refresh: the interval is set in Settings; open pages reload when the server has newer data.
   await page.selectOption('#auto-minutes', '5');
   await page.click('#auto-form button[type=submit]');
   await page.waitForFunction(() => document.querySelector('#auto-state')?.textContent === 'Every 5 minutes');
-  check('Settings sets the automatic refresh interval', true);
+  check('Settings sets the automatic refresh interval', (await getJson('/api/settings')).auto_refresh_minutes === 5);
   await page.goto(BASE + '/ads.html', { waitUntil: 'networkidle' });
   check('the Refresh button says how often it updates by itself', /every 5 min/.test(await page.getAttribute('.topline [data-refresh]', 'title')));
   const stampPull = () => require('child_process').execSync(`docker exec edgebourne-ads-backend sh -c "cd /app && python -c \\"import settings_store,time;settings_store.set('last_refresh_at',str(time.time()))\\""`);
@@ -239,7 +251,6 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   await page.waitForFunction(() => document.querySelector('#auto-state')?.textContent === 'Every 15 minutes');
 
   // Telegram: the admin adds the bot, a person connects their chat, a new lead reaches it within seconds.
-  const sh = (cmd) => require('child_process').execSync(cmd).toString();
   const tgSent = () => JSON.parse(sh(`docker exec edgebourne-ads-backend python -c "import requests;print(requests.get('http://fake-meta:5001/telegram/_sent').text)"`));
   sh(`docker exec edgebourne-ads-backend python -c "import db;db.execute('UPDATE users SET telegram_chat_id=NULL, telegram_name=NULL, telegram_link_code=NULL');db.execute(\\"DELETE FROM leads WHERE full_name = 'Telegram QA Lead'\\")"`);
   await page.goto(BASE + '/settings.html');
@@ -258,7 +269,8 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   await page.fill('#telegram_bot_token', '123456:FAKE-token');
   await page.click('#tg-form button[type=submit]');
   await page.waitForFunction(() => document.querySelector('#tg-state')?.textContent === '@EdgeBourneAdsBot');
-  check('Settings connects the Telegram bot', true);
+  const tgSet = (await getJson('/api/settings')).telegram;
+  check('Settings connects the Telegram bot', tgSet.set && tgSet.username === 'EdgeBourneAdsBot', JSON.stringify(tgSet));
   await page.goto(BASE + '/account.html');
   await page.click('#tg-link');
   await page.waitForSelector('#tg-open');
@@ -300,8 +312,11 @@ print(requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'
   await page.fill('#booking_link', 'cal.com/eugene');
   await page.click('#rp-form button[type=submit]');
   await page.waitForSelector('#rp-form .field.error .err');
-  errors.splice(rpSeen); // the refused link logs an expected 400
-  check('a booking link without https is refused', true);
+  const rawLink = await page.evaluate(async () => (await fetch('/api/settings/replies', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ booking_link: 'cal.com/eugene' }) })).status);
+  const keptLink = (await getJson('/api/settings')).replies.booking_link;
+  await page.waitForTimeout(300);
+  errors.splice(rpSeen); // the refused links log an expected 400
+  check('a booking link without https is refused (by the server too)', rawLink === 400 && !keptLink, `${rawLink} ${keptLink}`);
   await page.fill('#booking_link', 'https://cal.com/eugene');
   await page.click('#rp-form button[type=submit]');
   await page.waitForFunction(() => document.querySelector('#rp-state')?.textContent === 'By hand');
@@ -324,9 +339,12 @@ print(requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'
   await page.waitForSelector('#rp-auto');
   await page.check('#rp-auto');
   await page.click('#rp-form button[type=submit]');
+  await page.waitForSelector('dialog.confirm #cd-ok');
+  const autoBeforeYes = (await getJson('/api/settings')).replies.auto;
   await page.click('dialog.confirm #cd-ok');
   await page.waitForFunction(() => document.querySelector('#rp-state')?.textContent === 'Automatic reply on');
-  check('the automatic reply needs a confirmation to turn on', true);
+  const autoAfterYes = (await getJson('/api/settings')).replies.auto;
+  check('the automatic reply needs a confirmation to turn on', autoBeforeYes === false && autoAfterYes === true, `${autoBeforeYes} → ${autoAfterYes}`);
   const autoLead = '7700' + String(Date.now() + 7).slice(-12);
   const mailsBeforeAuto = mailSent().length;
   sh(`docker exec edgebourne-ads-backend python -c "
@@ -377,7 +395,8 @@ for name, mins in (('Reminder QA Five', 7), ('Reminder QA Hour', 61)):
   await page.fill('#at-1', '07:15');
   await page.click('#sched-1 .sched-rule button[type=submit]');
   await page.waitForFunction(() => /Every 2 days at 7:15 AM/.test(document.querySelector('#sched-1 .sched-when')?.textContent || ''));
-  check('the time can be changed', true);
+  const rule1 = JSON.parse(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,json;print(json.dumps(db.query('SELECT rule FROM desk_schedules WHERE id = 1', one=True)['rule']))"`));
+  check('the time can be changed', rule1.every === 'days' && rule1.days === 2 && rule1.at === '07:15', JSON.stringify(rule1));
   const tasksBefore = Number(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query('SELECT COUNT(*) AS n FROM desk_tasks', one=True)['n'])"`));
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE desk_schedules SET next_run_at = now() - interval '1 minute' WHERE id = 1\\")"`);
   let made = 0;
@@ -398,7 +417,9 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   check('a finished scheduled run reaches Telegram with its summary', Boolean(deskMsg) && /4 leads yesterday/.test(deskMsg.text), deskMsg ? deskMsg.text.split('\n').slice(0, 2).join(' | ') : 'none');
   await page.click('.subnav [data-sub="chat"]');
   await page.waitForFunction(() => /Daily health check/.test(document.querySelector('#cl-list')?.textContent || ''));
-  check('the run is labelled with its schedule', true);
+  const schedRun = (await getJson('/api/desk')).tasks.find((t) => t.id === sched.last_task_id);
+  check('the run is labelled with its schedule', schedRun?.options?.schedule === 'Daily health check'
+    && /Daily health check/.test(await page.textContent(`#cl-list .cl-row[href="#r/${sched.last_task_id}"]`)), JSON.stringify(schedRun?.options));
   await page.screenshot({ path: `${OUT}/flow-schedules.png`, fullPage: true });
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,json;db.execute('UPDATE desk_schedules SET enabled=FALSE, next_run_at=NULL, skipped=0, last_task_id=NULL, rule=%s WHERE id = 1', (json.dumps({'every': 'day', 'at': '08:30'}),))"`);
 
@@ -517,7 +538,8 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   check('the suggestions sit in the conversation they came from', /Polish .N1 - One simple system/.test(await page.textContent('#cv-col .cv-you')));
   check('a new-ad suggestion shows what changes', /Everything in one system → No more digging for numbers/.test(await page.textContent('#cv-col .sg .changes')));
   await page.waitForSelector('#cv-col .decision-preview iframe', { timeout: 10000 });
-  check('a new-ad suggestion loads Meta\'s preview of the ad', true);
+  const decisionFrame = await page.getAttribute('#cv-col .decision-preview iframe', 'src');
+  check('a new-ad suggestion loads Meta\'s preview of the ad', /^https:\/\/[^/]*facebook\.com\//.test(decisionFrame || ''), decisionFrame);
   check('the reply box is always there', await page.isVisible('#prompt'));
   await page.screenshot({ path: `${OUT}/flow-5-claude-waiting.png` });
   await page.click('.subnav [data-sub="ads"]');
@@ -525,16 +547,19 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   const story = await page.textContent('#view .family');
   check('By ad tells the ad\'s story with outcomes', /Created, off/.test(story) && /made in the New version run/.test(story) && /Not about one ad/.test(await page.textContent('#view')), story.replace(/\s+/g, ' ').trim().slice(0, 60));
   await page.screenshot({ path: `${OUT}/flow-5-claude-ads.png`, fullPage: true });
+  const decideTo = (await page.locator('#view .decide-link').first().getAttribute('href')).replace('#p/', '');
   await page.locator('#view .decide-link').first().click();
   await page.waitForSelector('#cv-col .sg.flash');
-  check('Decide jumps to the suggestion', true);
+  const flashed = await page.evaluate(() => { const el = document.querySelector('#cv-col .sg.flash'); const r = el.getBoundingClientRect(); return { id: el.dataset.proposal, inView: r.top < innerHeight && r.bottom > 0 }; });
+  check('Decide jumps to the suggestion', flashed.id === decideTo && flashed.inView, `${decideTo} ${JSON.stringify(flashed)}`);
   const second = page.locator('#cv-col .sg', { hasText: 'the next hire' });
   await second.locator('[data-decline-one]').click();
   await page.waitForFunction(() => document.querySelectorAll('#cv-col .sg').length === 1);
   check('declining removes it from the list', /1/.test(await page.textContent('.cl-decide')));
   await page.click('#undo-bar [data-undo]');
   await page.waitForFunction(() => document.querySelectorAll('#cv-col .sg').length === 2);
-  check('Undo brings a declined suggestion back', true);
+  const hire = (await getJson('/api/desk')).tasks.flatMap((t) => t.proposals || []).find((p) => /the next hire/.test(p.title));
+  check('Undo brings a declined suggestion back', hire?.status === 'pending', hire?.status);
   await page.locator('#cv-col .sg', { hasText: 'the next hire' }).locator('[data-decline-one]').click();
   await page.waitForFunction(() => document.querySelectorAll('#cv-col .sg').length === 1);
   await page.locator('#cv-col .sg [data-accept]').click();
@@ -583,7 +608,9 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   check('one Accept applies everything ticked, each reported', okRows === ticked, `${okRows} of ${ticked}: ${(await page.textContent('dialog.accept-sheet #sheet-title'))}`);
   await page.click('dialog.accept-sheet #cd-ok');
   await page.waitForFunction((n) => document.querySelectorAll('#cv-col .sg').length === n, 10 - ticked);
-  check('what you did not tick stays waiting', true);
+  const deskProposals = (await getJson('/api/desk')).tasks.flatMap((t) => t.proposals || []); // newest first
+  const unticked = ['Pause N4', 'Test the order portal', 'Tag N3', 'New headline: Type it once', 'Narrow the age range'].map((x) => deskProposals.find((p) => p.title.startsWith(x)));
+  check('what you did not tick stays waiting', unticked.every((p) => p?.status === 'pending'), unticked.map((p) => `${p?.title}: ${p?.status}`).join(' | '));
   const madeRun = await page.evaluate(async () => (await (await fetch('/api/desk')).json()).tasks.find((t) => t.kind === 'render' && t.status === 'queued' && t.options.from_proposal));
   check('a new version joins the queue, linked to its suggestion', !!madeRun);
   const desk = () => page.evaluate(async () => (await fetch('/api/desk')).json());
@@ -603,7 +630,8 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   check("a tile opens Meta's preview, with the placements to switch between", (await page.locator('dialog.viewer [data-f]').count()) === 4);
   await page.locator('dialog.viewer [data-f="INSTAGRAM_REELS"]').click();
   await page.waitForFunction(() => /INSTAGRAM_REELS/.test(document.querySelector('dialog.viewer iframe')?.src || ''));
-  check('switching placement loads that placement', true);
+  check('switching placement loads that placement', /INSTAGRAM_REELS/.test(await page.getAttribute('dialog.viewer iframe', 'src')) && (await page.locator('dialog.viewer iframe').count()) === 1
+    && (await page.getAttribute('dialog.viewer [data-f="INSTAGRAM_REELS"]', 'aria-selected')) === 'true');
   await page.click('dialog.viewer [data-viewer-close]');
   await page.screenshot({ path: `${OUT}/flow-5-conversation.png` });
 
@@ -620,7 +648,8 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   await headlines.locator('[data-preview] iframe').waitFor({ timeout: 15000 });
   await headlines.locator('[data-pf="INSTAGRAM_STORY"]').click();
   await page.waitForFunction(() => /INSTAGRAM_STORY/.test(document.querySelector('#cv-col .sg [data-preview] iframe')?.src || ''));
-  check('a suggested ad can be previewed per placement in place', true);
+  check('a suggested ad can be previewed per placement in place', /INSTAGRAM_STORY/.test(await headlines.locator('[data-preview] iframe').getAttribute('src'))
+    && (await page.isVisible('#cv-col')) && !(await page.locator('dialog.viewer[open]').count()));
   await headlines.locator('[data-compare]').click();
   await page.waitForFunction(() => document.querySelectorAll('dialog.viewer .viewer-panes figure').length === 2);
   check('a suggested ad can be compared with what runs now', /Running now.*Proposed/s.test(await page.textContent('dialog.viewer .viewer-panes')));
@@ -645,12 +674,14 @@ with account_ctx.use(1):
 
   // Clearing: one tap, Undo, and suggestions are only declined when you say so.
   const removed = await page.locator('#cv-col .cv-turn').count();
+  const removedId = Number(await page.locator('#cv-col .cv-turn').last().locator('[data-clear-turn]').getAttribute('data-clear-turn'));
   await page.locator('#cv-col .cv-turn').last().locator('[data-clear-turn]').click();
   await page.waitForFunction((n) => document.querySelectorAll('#cv-col .cv-turn').length === n - 1, removed);
-  check('one reply can be removed from a conversation', /Reply removed/.test(await page.textContent('#undo-bar')));
+  check('one reply can be removed from a conversation', /Reply removed/.test(await page.textContent('#undo-bar')) && !!(await desk()).tasks.find((t) => t.id === removedId)?.archived_at);
   await page.click('[data-undo]');
   await page.waitForFunction((n) => document.querySelectorAll('#cv-col .cv-turn').length === n, removed);
-  check('Undo puts the reply back', true);
+  const putBack = (await desk()).tasks.find((t) => t.id === removedId);
+  check('Undo puts the reply back', !!putBack && !putBack.archived_at, JSON.stringify(putBack && putBack.archived_at));
   const waitingBefore = (await desk()).tasks.find((t) => /^Audit the whole/.test(t.prompt)).proposals.filter((p) => p.status === 'pending').length;
   const waitingRow = page.locator('#cl-list .cl-item', { hasText: 'Audit the whole' });
   await waitingRow.locator('[data-clear-thread]').click();
@@ -695,7 +726,8 @@ with account_ctx.use(1):
   check('Run next moves a job to the front', (await lineRows())[0].includes('restaurant owners'), before5.join(' | '));
   await page.locator('#cl-list .cl-item', { hasText: 'Why did cost per lead' }).locator('[data-cancel]').click();
   await page.waitForFunction(() => !/Why did cost per lead/.test(document.querySelector('#cl-list')?.textContent.split('Today')[0] || ''));
-  check('Cancel is on every waiting job, no hover needed', true);
+  const whyJob = (await desk()).tasks.find((t) => t.prompt.includes('Why did cost per lead'));
+  check('Cancel is on every waiting job, no hover needed', whyJob?.status === 'cancelled', whyJob?.status);
 
   await openConv('N2 - Order portal');
   check('a running job shows its steps with a live timer', (await page.locator('#cv-col .cv-trail li').count()) === 3 && /\d:\d\d/.test(await page.textContent('#cv-col .cv-trail li.now time')));
@@ -703,12 +735,15 @@ with account_ctx.use(1):
   check('typing while it works offers both choices', /Stop and send/.test(await page.textContent('#cv-btns')) && /Send when it.s done/.test(await page.textContent('#cv-btns')));
   await page.locator('#cv-btns button[type=submit]').click();
   await page.waitForFunction(() => /follow-up runs as soon as this finishes/.test(document.querySelector('#cv-line')?.textContent || ''));
-  check('a follow-up can wait for the running job', true);
+  const waitingJobs = (await desk()).tasks;
+  const followUp = waitingJobs.find((t) => t.prompt.trim() === 'And keep the sound.');
+  const runningN2 = waitingJobs.filter((t) => ['claimed', 'running'].includes(t.status));
+  check('a follow-up can wait for the running job', followUp?.status === 'queued' && runningN2.length === 1, `${followUp?.status} behind ${runningN2.length} running`);
   await page.click('#cv-line [data-cancel]');
   await page.waitForSelector('#cv-btns [data-stop]');
   await page.click('#cv-btns [data-stop]');
   await page.waitForFunction(() => /Stop this job/.test(document.querySelector('#cv-hint')?.textContent || ''));
-  check('Stop asks once, right where you clicked', true);
+  check('Stop asks once, right where you clicked', (await desk()).tasks.filter((t) => ['claimed', 'running'].includes(t.status)).length === 1 && !(await page.locator('dialog.confirm[open]').count()));
   await page.click('#cv-btns [data-stop]');
   await page.waitForFunction(() => /You stopped this after/.test(document.querySelector('#cv-col')?.textContent || ''));
   check('a stopped job stays in its conversation, ready for new directions', (await page.getAttribute('#prompt', 'placeholder')) === 'Reply to Claude…');
@@ -718,9 +753,11 @@ with account_ctx.use(1):
   await page.click('[data-clear="queue"]');
   await page.click('dialog.confirm #cd-ok');
   await page.waitForFunction(() => /Claude is idle/.test(document.querySelector('#cl-list .cl-now')?.textContent || ''));
-  check('Clear the line cancels everything not started, and the panel stays', true);
+  d = await desk();
+  check('Clear the line cancels everything not started, and the panel stays', d.tasks.filter((t) => t.status === 'queued').length === 0 && await page.isVisible('#cl-list .cl-now'),
+    d.tasks.filter((t) => t.status === 'queued').map((t) => t.prompt.slice(0, 30)).join(' | '));
   await page.waitForFunction(() => /Claude is idle/.test(document.querySelector('.rail .claude-now')?.textContent || ''), null, { timeout: 15000 });
-  check('the status line says when Claude is idle', true);
+  check('the status line says when Claude is idle', /Claude is idle/.test(await page.textContent('.rail .claude-now')) && (await desk()).tasks.every((t) => !['queued', 'claimed', 'running'].includes(t.status)));
 
   const dayCount = await page.locator('#cl-list .cl-item').count();
   await page.locator('[data-clear-day]').first().click();
@@ -730,7 +767,8 @@ with account_ctx.use(1):
   const clearedItem = page.locator('#cl-list .cl-item', { hasText: 'most qualified leads' });
   await clearedItem.locator('[data-restore-thread]').click();
   await page.waitForFunction(() => /most qualified leads/.test([...document.querySelectorAll('#cl-list .cl-group')].filter((g) => !g.querySelector('.cl-toggle')).map((g) => g.textContent).join()));
-  check('cleared conversations are kept and can be put back', true);
+  const restored = (await desk()).tasks.filter((t) => /most qualified leads/.test(t.prompt));
+  check('cleared conversations are kept and can be put back', restored.length > 0 && restored.every((t) => !t.archived_at), restored.map((t) => t.archived_at).join());
 
   // A new conversation.
   await page.click('.cl-new');
@@ -999,13 +1037,22 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   await page.waitForSelector('#nc-list li b');
   await page.waitForFunction(() => /Still to do/.test(document.getElementById('review').textContent));
   check('the wizard lists what is still missing, by step', /Goal.*Give the campaign a name.*Budget/s.test(await page.textContent('#review')) && await page.isDisabled('#nc-create'));
+  let lastCheck = null;
+  const keepCheck = (r) => { if (/\/api\/builds\/check$/.test(r.url())) lastCheck = r.postData(); };
+  page.on('request', keepCheck);
   await page.fill('#c-name', 'QA Payroll - Leads');
   await page.fill('#c-budget', '90');
   await page.fill('#s-name', 'QA SoCal - Instant form');
   await page.fill('#a-name-0', 'QA N6 - Payroll');
   await page.fill('#a-title-0', 'Payroll in one click');
   await page.waitForFunction(() => /more than 3 times what runs now/.test(document.getElementById('review').textContent));
-  check('a budget far above what runs now is refused', true);
+  page.off('request', keepCheck);
+  const hugeBuildSeen = errors.length;
+  const hugeBuild = await page.evaluate(async (b) => { const r = await fetch('/api/builds', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: b }); return { status: r.status, body: await r.json() }; }, lastCheck);
+  await page.waitForTimeout(300);
+  errors.splice(hugeBuildSeen); // the refusal logs an expected 400
+  check('a budget far above what runs now is refused (the button and the server)', await page.isDisabled('#nc-create') && hugeBuild.status === 400
+    && (hugeBuild.body.problems || []).some((p) => p.step === 'budget' && /more than 3 times/.test(p.message)), `${hugeBuild.status} ${JSON.stringify(hugeBuild.body.problems)}`);
   await page.fill('#c-budget', '15');
   await page.click('#cr-add');
   await page.selectOption('#a-tpl-1', '120252672230740312');
@@ -1416,9 +1463,18 @@ print(a[0][1] if a else '-', b[0][1] if b else '-')"`).trim();
   // Agency mode: accounts never see each other's data (every GET route, three roles), switching, read-only clients.
   const leak = JSON.parse(sh('docker cp dev/qa_leaks.py edgebourne-ads-backend:/app/qa_leaks.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_leaks.py; docker exec edgebourne-ads-backend rm -f /app/qa_leaks.py').trim().split('\n').pop());
   check(`no account's data shows in another: ${leak.routes_checked.join(' + ')} route calls as admin on each account and as a client`, leak.leaks.length === 0 && leak.routes_checked.every((n) => n > 40), leak.leaks.slice(0, 3).join(' | '));
+  check('no route of the leak walk fails with a server error', leak.routes_crashed.length === 0, leak.routes_crashed.slice(0, 4).join(' | '));
   check('a client can change nothing (every change refused) and cannot switch accounts', leak.client_writes_not_refused.length === 0 && leak.client_switch_status === 403 && leak.client_stays_on_own_account,
     leak.client_writes_not_refused.slice(0, 4).join(' | '));
   check('each account still sees its own data', leak.admin_sees_account2_on_account2 && leak.client_sees_own_leads);
+  // The walk only finds a leak where the other account has a marked row: each screen must show its own account's marks.
+  const markShown = { 'admin on account 1': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity'],
+    'admin on account 2, own ids': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/timeline/<level>/<entity_id>',
+      '/api/proposals/<int:proposal_id>', '/api/leads/<int:lead_id>', '/api/ads/ad/<ad_id>/tags', '/api/experiments/<int:exp_id>', '/api/builds/<int:build_id>'] };
+  const unmarked = Object.entries(markShown).flatMap(([who, routes]) => routes.filter((r) => !(leak.routes_showing_own_mark[who] || []).includes(r)).map((r) => `${who}: ${r}`));
+  check('the leak walk has marked rows to find in Inbox, Claude, saved views, builds, History and the timeline', unmarked.length === 0, unmarked.join(' | '));
+  check('every table that holds account data is limited to its account by the database (row-level security)',
+    leak.tables_without_isolation.length === 0 && leak.app_role_bypasses_rls === false && leak.isolated_tables >= 28, `${leak.isolated_tables} tables; missing: ${leak.tables_without_isolation.join()}`);
   await page.goto(BASE + '/ads.html');
   await page.waitForSelector('#acct-rail');
   check('admins switch accounts from the sidebar', (await page.locator('#acct-rail option').count()) >= 3 && /Edge Bourne/.test(await page.textContent('#acct-rail option:checked')));
@@ -1610,7 +1666,8 @@ with account_ctx.use(a2):
   check('closing an account stops its links and its people, reopening brings them back', `${closedLink} ${closedClient} ${reopened}` === '404 403 200', `${closedLink} ${closedClient} ${reopened}`);
   await call('POST', '/api/accounts/switch', { id: 1 });
   check('admins of one account and members stay in their account (leak test)', leak.leaks_member_and_account_admin.length === 0
-    && Object.values(leak.account_admin_limits).every((s) => s === 403) && leak.cross_account_writes.length === 0, JSON.stringify(leak.account_admin_limits) + leak.cross_account_writes.join(' | '));
+    && Object.values(leak.account_admin_limits).every((s) => s === 403) && leak.cross_account_writes.length === 0 && leak.cross_account_writes_changed_account1 === false,
+    JSON.stringify(leak.account_admin_limits) + leak.cross_account_writes.join(' | ') + (leak.cross_account_writes_changed_account1 ? ' account 1 changed' : ''));
   check('background work started from one account stays in that account', leak.resync_thread_account.join() === String(leak.account2) && leak.account2_assignments_seen_from_1 === 0);
   // A new ad from nothing: the account's Page, the chosen form, an image from the library.
   const libItem = (await call('GET', '/api/media')).body.items.find((i) => i.kind === 'image' || (i.kind === 'video' && i.ready));
@@ -1816,20 +1873,25 @@ with account_ctx.use(a2):
   await Promise.all([page.waitForURL('**/compare.html**'), page.click('[data-bulk="compare"]')]);
   check('Compare from the Ads bar keeps "vs before" on', /[?&]vs=1/.test(page.url()), page.url());
   await page.evaluate(() => localStorage.setItem('ebads-range', 'mtd'));
-  await page.goto(BASE + '/performance.html');
+  const perfRange = async () => {
+    const [req] = await Promise.all([page.waitForRequest((r) => /\/api\/performance\?/.test(r.url())), page.goto(BASE + '/performance.html')]);
+    return new URL(req.url()).searchParams.get('range');
+  };
+  const mtdAsked = await perfRange();
   await page.waitForSelector('#range [data-range="mtd"][aria-pressed="true"]');
-  check('Results honours a month range picked on Ads', true);
+  check('Results honours a month range picked on Ads', mtdAsked === 'mtd', mtdAsked);
   await page.evaluate(() => localStorage.setItem('ebads-range', 'nonsense'));
-  await page.goto(BASE + '/performance.html');
+  const unknownAsked = await perfRange();
   await page.waitForSelector('#range [data-range="7"][aria-pressed="true"]');
-  check('Results ignores a range it does not know', true);
+  check('Results ignores a range it does not know', unknownAsked === '7', unknownAsked);
   await page.evaluate(() => localStorage.removeItem('ebads-range'));
   await page.goto(BASE + '/leads.html');
   await page.waitForSelector('.lead-row');
   const leadIds = await page.$$eval('.lead-row', (r) => r.map((x) => x.dataset.id));
   await Promise.all([page.waitForResponse((r) => r.url().endsWith(`/api/leads/${leadIds[1]}`)), page.evaluate((id) => { location.hash = `lead=${id}`; }, leadIds[1])]);
   await page.waitForFunction((id) => document.querySelector(`.lead-row[data-id="${id}"]`)?.getAttribute('aria-current') === 'true', leadIds[1]);
-  check('jumping to a lead while on Leads opens it', true);
+  const jumpedName = (await getJson(`/api/leads/${leadIds[1]}`)).full_name || 'No name given';
+  check('jumping to a lead while on Leads opens it', (await page.textContent('#detail .detail-top h2')) === jumpedName, jumpedName);
   await page.waitForTimeout(200);
   await page.fill('#note', 'half a thought');
   await Promise.all([page.waitForResponse((r) => r.request().method() === 'PATCH' && /api\/leads\//.test(r.url())), page.click('#stages [aria-pressed="true"]')]);
@@ -1859,7 +1921,7 @@ with account_ctx.use(a2):
   await page.unroute('**/api/home');
   await page.click('#home [data-retry]');
   await page.waitForSelector('#today-inbox li');
-  check('Try again loads the page', true);
+  check('Try again loads the page', !/didn't load/i.test(await page.textContent('#home')) && (await page.locator('#home [data-retry]').count()) === 0);
   errors.splice(seen91, errors.length - seen91, ...errors.slice(seen91).filter((e) => !/ERR_FAILED/.test(e)));
   // Phones: no page wider than the screen.
   const phonePage = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
@@ -1907,4 +1969,7 @@ with account_ctx.use(a2):
   await browser.close();
   console.log(results.join('\n'));
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');
+  const failed = results.filter((r) => r.startsWith('FAIL')).length;
+  console.log(`${results.length - failed} passed, ${failed} failed, ${errors.length} console errors`);
+  process.exit(failed || errors.length ? 1 : 0);
 })().catch((e) => { console.log(results.join('\n')); console.error(e); process.exit(1); });
