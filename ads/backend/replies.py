@@ -129,7 +129,8 @@ def auto_sender():
         row = db.query("SELECT id, name, email FROM users WHERE id = %s AND is_active", (int(uid),), one=True)
     if row or account_ctx.current() != account_ctx.DEFAULT:
         return row
-    return db.query("SELECT id, name, email FROM users WHERE role = 'admin' AND is_active ORDER BY id LIMIT 1", one=True)
+    return db.query("SELECT id, name, email FROM users WHERE role = 'admin' AND is_active "
+                    "AND (account_id IS NULL OR account_id = %s) ORDER BY id LIMIT 1", (account_ctx.DEFAULT,), one=True)
 
 
 def queue_auto(lead):

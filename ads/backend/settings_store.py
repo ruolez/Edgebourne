@@ -69,6 +69,28 @@ def own(key, account_id=None):
     return _decrypt(row["value"]) if key in SECRET_KEYS else row["value"]
 
 
+def account_values(key, rows):
+    """{account id: value} from the stored rows of `key` (plain = account 1, "key@N" = account N),
+    with account 1's built-in default where it stores none, as get() reads it."""
+    out = {}
+    for r in rows:
+        if r["value"] not in (None, ""):
+            out[int(r["key"].split("@", 1)[1]) if "@" in r["key"] else account_ctx.DEFAULT] = r["value"]
+    if account_ctx.DEFAULT not in out and config.META_DEFAULTS.get(key):
+        out[account_ctx.DEFAULT] = config.META_DEFAULTS[key]
+    return out
+
+
+def meta_holders(key):
+    """[(account id, closed, value)] in account order: every account's value of a Meta id such as
+    the Page or the ad account, account 1's built-in default included."""
+    with account_ctx.all_accounts():
+        rows = db.query("SELECT key, value FROM settings WHERE key = %s OR key LIKE %s", (key, f"{key}@%"))
+        accounts = db.query("SELECT id, archived_at IS NOT NULL AS closed FROM accounts ORDER BY id")
+    values = account_values(key, rows)
+    return [(a["id"], a["closed"], values[a["id"]]) for a in accounts if a["id"] in values]
+
+
 def set(key, value, account_id=None):  # noqa: A001 - mirrors the store's vocabulary
     name = stored_key(key, account_id)
     if value is None:

@@ -80,7 +80,8 @@ def store_lead(data, is_test=False):
             crm_events.enqueue(row["id"], "new", _parse_time(data.get("created_time")))
         return row["id"], True
     existing = db.query("SELECT id FROM leads WHERE meta_lead_id = %s", (str(data["id"]),), one=True)
-    return existing["id"], False
+    # Not visible here: the lead id is unique across accounts and another account already has it.
+    return (existing["id"] if existing else None), False
 
 
 def fetch_and_store(leadgen_id, page_token=None):
@@ -91,20 +92,16 @@ def fetch_and_store(leadgen_id, page_token=None):
     if created:
         log_activity("lead.received", subject=str(lead_id), actor="meta",
                      details={"ad": data.get("ad_name"), "test": is_test})
-        notify(lead_id)
+        try:
+            notify(lead_id)
+        except Exception:  # the lead is stored; a failed alert must not leave its webhook to be fetched again
+            log.exception("lead %s: couldn't tell the team", lead_id)
     return lead_id, created
 
 
 def recipients_for(lead):
-    """Admins plus teammates assigned to the lead's campaign, if they want emails."""
-    rows = db.query(
-        """SELECT DISTINCT u.email FROM users u
-           LEFT JOIN campaign_members cm ON cm.user_id = u.id
-           WHERE u.is_active AND u.notify_new_leads
-             AND (u.role = 'admin' OR cm.campaign_id = %s)""",
-        (lead["campaign_id"],),
-    )
-    return [r["email"] for r in rows]
+    """The lead's people (staff_for) who want new-lead emails."""
+    return [r["email"] for r in _staff(lead["campaign_id"]) if r["notify_new_leads"]]
 
 
 def render_email(lead):
@@ -148,18 +145,23 @@ def render_email(lead):
     return subject, "\n".join(lines), body_html
 
 
+def _staff(campaign_id):
+    import account_ctx
+    import notify as notify_mod
+    rows = db.query(
+        """SELECT DISTINCT u.id, u.name, u.email, u.account_id, u.notify_new_leads FROM users u
+           LEFT JOIN campaign_members cm ON cm.user_id = u.id AND cm.campaign_id = %s
+           WHERE u.is_active AND (u.role = 'admin' OR cm.campaign_id IS NOT NULL)
+           ORDER BY u.name""",
+        (campaign_id,),
+    )
+    return [r for r in rows if notify_mod.serves(r, account_ctx.current())]
+
+
 def staff_for(campaign_id):
     """Who works on this campaign: the console's owners, this account's admins and the members
     assigned to it (campaign_members is per account under row-level security)."""
-    import account_ctx
-    return db.query(
-        """SELECT DISTINCT u.id, u.name FROM users u
-           LEFT JOIN campaign_members cm ON cm.user_id = u.id AND cm.campaign_id = %s
-           WHERE u.is_active AND ((u.role = 'admin' AND (u.account_id IS NULL OR u.account_id = %s))
-                                  OR cm.campaign_id IS NOT NULL)
-           ORDER BY u.name""",
-        (campaign_id, account_ctx.current()),
-    )
+    return [{"id": r["id"], "name": r["name"]} for r in _staff(campaign_id)]
 
 
 def recipient_ids(lead):
@@ -203,12 +205,16 @@ def notify(lead_id):
     if not to:
         return False
     subject, text, body_html = render_email(lead)
-    try:
-        mailer.send(to, subject, text, body_html)
-    except mailer.MailError as exc:
-        log.warning("lead %s email failed: %s", lead_id, exc)
-        log_activity("lead.email_failed", subject=str(lead_id), actor="system",
-                     details={"error": str(exc)})
+    sent = 0
+    for address in to:  # one message each: nobody sees who else gets the lead
+        try:
+            mailer.send(address, subject, text, body_html)
+            sent += 1
+        except mailer.MailError as exc:
+            log.warning("lead %s email failed: %s", lead_id, exc)
+            log_activity("lead.email_failed", subject=str(lead_id), actor="system",
+                         details={"error": str(exc)})
+    if not sent:
         return False
     db.execute("UPDATE leads SET emailed_at = now() WHERE id = %s", (lead_id,))
     return True
@@ -240,17 +246,25 @@ def process_pending_events():
     done = 0
     for ev in pending:
         try:
-            fetch_and_store(ev["leadgen_id"], page_token=token)
-            db.execute("UPDATE webhook_events SET processed_at = now(), error = NULL WHERE id = %s",
-                       (ev["id"],))
-            done += 1
-        except meta_client.MetaError as exc:
-            if event_gives_up(exc.code, ev["received_at"], datetime.now(timezone.utc)):
+            lead_id, _ = fetch_and_store(ev["leadgen_id"], page_token=token)
+        except Exception as exc:  # anything, so one bad event can't hold up the ones behind it
+            meta = isinstance(exc, meta_client.MetaError)
+            error = str(exc) if meta else f"Couldn't store this lead ({type(exc).__name__})"
+            if not meta:
+                log.exception("webhook event %s: couldn't store the lead", ev["id"])
+            if event_gives_up(exc.code if meta else None, ev["received_at"], datetime.now(timezone.utc)):
                 db.execute("UPDATE webhook_events SET processed_at = now(), error = %s WHERE id = %s",
-                           (f"Gave up: {exc}", ev["id"]))
-                log_activity("webhook.dropped", subject=ev["leadgen_id"], actor="system", details={"error": str(exc)})
+                           (f"Gave up: {error}", ev["id"]))
+                log_activity("webhook.dropped", subject=ev["leadgen_id"], actor="system", details={"error": error})
             else:
-                db.execute("UPDATE webhook_events SET error = %s WHERE id = %s", (str(exc), ev["id"]))
+                db.execute("UPDATE webhook_events SET error = %s WHERE id = %s", (error, ev["id"]))
+            continue
+        if lead_id is None:
+            db.execute("UPDATE webhook_events SET processed_at = now(), error = %s WHERE id = %s",
+                       ("This lead is already filed under another account", ev["id"]))
+            continue
+        db.execute("UPDATE webhook_events SET processed_at = now(), error = NULL WHERE id = %s", (ev["id"],))
+        done += 1
     return done
 
 

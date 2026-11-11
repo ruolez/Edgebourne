@@ -325,6 +325,79 @@ if True:
         insights.sync_structure = orig
 with account_ctx.use(1):
     members_seen_from_1 = db.query("SELECT COUNT(*) AS n FROM campaign_members WHERE user_id = %s", (member["id"],), one=True)["n"]
+# Audit 3: who hears about an account, which account owns a Meta asset, what a client sees of Claude.
+import config
+import leads as leads_mod
+import notify as notify_mod
+import settings_store
+import webhooks
+tenant = []
+acct_admin_email = "admin-qa@burdanova.test"
+db.execute("UPDATE users SET notify_new_leads = TRUE WHERE id = %s", (acct_admin["id"],))
+with account_ctx.use(1):
+    rec1, adm1, staff1 = leads_mod.recipients_for({"campaign_id": one["campaign"]}), notify_mod.admin_ids(), leads_mod.staff_for(one["campaign"])
+with account_ctx.use(A2):
+    rec2, adm2 = leads_mod.recipients_for({"campaign_id": ids["campaign"]}), notify_mod.admin_ids()
+if acct_admin_email in rec1 or "member-qa@burdanova.test" in rec1 or acct_admin["id"] in adm1 or acct_admin["id"] in [u["id"] for u in staff1]:
+    tenant.append(f"account 1's leads and alerts reach account 2's people: {rec1} {adm1}")
+if acct_admin_email not in rec2 or acct_admin["id"] not in adm2 or admin["id"] not in adm2:
+    tenant.append(f"account 2's own admin or the owner is missing from its recipients: {rec2} {adm2}")
+before = {k: settings_store.own(k, account_id=A2) for k in ("meta_page_id", "meta_ad_account_id", "meta_dataset_id")}
+session_for(c, admin["id"], A2)
+for key, value in (("meta_page_id", config.META_DEFAULTS["meta_page_id"]), ("meta_ad_account_id", "act_" + config.META_DEFAULTS["meta_ad_account_id"]),
+                   ("meta_dataset_id", config.META_DEFAULTS["meta_dataset_id"])):
+    r = c.put("/api/settings/meta", json={key: value})
+    if r.status_code != 409:
+        tenant.append(f"the owner on account 2 could take Edge Bourne's {key}: {r.status_code}")
+r = ac.put("/api/settings/meta", json={"meta_page_id": "555000111"})
+if r.status_code != 403:
+    tenant.append(f"an account admin on the owner's token could point the account at another Page: {r.status_code}")
+for k, v in before.items():
+    if settings_store.own(k, account_id=A2) != v:
+        settings_store.set(k, v, account_id=A2)
+        tenant.append(f"account 2's {k} changed")
+# Routing: account 1's built-in Page stays its own; a closed account never wins, whatever the key order,
+# and a Page only a closed account names is dropped rather than filed under account 1.
+with account_ctx.all_accounts():
+    closed_ids = [r["id"] for r in db.query("SELECT id FROM accounts WHERE archived_at IS NOT NULL ORDER BY id")] or [
+        db.execute("INSERT INTO accounts (name, archived_at) VALUES ('QA Closed', now()) RETURNING id", returning=True)["id"]]
+# Preferably one whose settings key sorts before account 2's (the old code took the first key in text order).
+closed_first = next((x for x in closed_ids if f"meta_page_id@{x}" < f"meta_page_id@{A2}"), closed_ids[0])
+qa_page = f"9{secrets.randbelow(10**9)}"
+try:
+    settings_store.set("meta_page_id", config.META_DEFAULTS["meta_page_id"], account_id=A2)
+    routed_default = webhooks.account_for_page(config.META_DEFAULTS["meta_page_id"])
+    settings_store.set("meta_page_id", qa_page, account_id=A2)
+    settings_store.set("meta_page_id", qa_page, account_id=closed_first)
+    routed_closed = webhooks.account_for_page(qa_page)
+    settings_store.set("meta_page_id", before["meta_page_id"], account_id=A2)
+    routed_only_closed = webhooks.account_for_page(qa_page)
+finally:
+    settings_store.set("meta_page_id", before["meta_page_id"], account_id=A2)
+    settings_store.set("meta_page_id", None, account_id=closed_first)
+if routed_default != 1 or routed_closed != A2 or routed_only_closed is not None:
+    tenant.append(f"lead routing: Edge Bourne's Page → {routed_default}, a Page also named by closed account {closed_first} → "
+                  f"{routed_closed}, a Page only it names → {routed_only_closed}")
+# A client of account 2 never sees Claude's proposals (there's a pending one on its ad).
+cc_proposals = cc.get(f"/api/ads/ad/{two['ad']}").get_json().get("proposals")
+admin_proposals = c.get(f"/api/ads/ad/{two['ad']}").get_json().get("proposals")
+for url in (f"/api/proposals/{two['proposal']}", f"/api/proposals/{two['proposal']}/check", f"/api/proposals/{two['proposal']}/preview"):
+    if cc.get(url).status_code != 404:
+        tenant.append(f"a client reads {url}")
+if cc_proposals != [] or not admin_proposals or "Claude has" in cc.get("/api/home").get_data(as_text=True) \
+        or re.search(r'"pending_proposals": [1-9]', json.dumps(cc.get("/api/ads").get_json())):
+    tenant.append(f"a client sees Claude's proposals ({len(cc_proposals or [])}) or the admin doesn't ({len(admin_proposals or [])})")
+# Failed Telegram deliveries are console-wide: only the owner sees them.
+fail = db.execute("INSERT INTO notifications (user_id, channel, kind, title, status, last_error) VALUES (%s, 'telegram', 'qa', 'qa', 'failed', 'QA-TG-FAIL') "
+                  "RETURNING id", (admin["id"],), returning=True)
+try:
+    owner_failed = (c.get("/api/settings").get_json()["telegram"]["failed"] or {}).get("last_error")
+    acct_admin_failed = ac.get("/api/settings").get_json()["telegram"]["failed"]
+finally:
+    db.execute("DELETE FROM notifications WHERE id = %s", (fail["id"],))
+if acct_admin_failed != {"n": 0, "last_error": None} or not owner_failed:
+    tenant.append(f"Telegram failures: owner sees {owner_failed!r}, account admin sees {acct_admin_failed}")
+session_for(c, admin["id"], 1)
 csrf = app.test_client()
 session_for(csrf, admin["id"], 1)
 csrf_status = csrf.post("/api/refresh", data="", content_type="text/plain").status_code
@@ -336,5 +409,6 @@ out.update({"leaks": l1 + l2 + l2b + l3, "routes_checked": [n1, n2, n3], "admin_
             "tables_without_isolation": unisolated, "isolated_tables": len(tables) - len(unisolated) - len(RLS_EXEMPT),
             "app_role_bypasses_rls": app_role_bypasses,
             "resync_thread_account": seen, "account2_assignments_seen_from_1": members_seen_from_1,
-            "csrf_without_header": csrf_status, "routes_showing_own_mark": shown, "routes_crashed": crashed})
+            "csrf_without_header": csrf_status, "routes_showing_own_mark": shown, "routes_crashed": crashed,
+            "tenant_problems": tenant})
 print(json.dumps(out))

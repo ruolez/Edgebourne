@@ -355,6 +355,10 @@ requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'X-Hub-
   let autoMail = null;
   for (let i = 0; i < 30 && !autoMail; i++) { await page.waitForTimeout(1000); autoMail = mailSent().slice(mailsBeforeAuto).find((m) => /Your free intro call/.test(m.subject)); }
   check('a new lead gets the automatic reply by itself', Boolean(autoMail), autoMail ? autoMail.subject : 'none');
+  const leadMails = mailSent().slice(mailsBeforeAuto).filter((m) => /^New lead/.test(m.subject || ''));
+  check("the new-lead email goes to each person separately, never to another account's admin",
+    leadMails.length > 0 && leadMails.every((m) => m.to.length === 1 && !/burdanova\.test/.test(m.to[0])) && leadMails.some((m) => m.to[0] === 'eugene@edgebourne.com'),
+    JSON.stringify(leadMails.map((m) => m.to)));
   await page.uncheck('#rp-auto');
   await page.click('#rp-form button[type=submit]');
   await page.waitForFunction(() => document.querySelector('#rp-state')?.textContent === 'By hand');
@@ -1669,6 +1673,8 @@ with account_ctx.use(a2):
     && Object.values(leak.account_admin_limits).every((s) => s === 403) && leak.cross_account_writes.length === 0 && leak.cross_account_writes_changed_account1 === false,
     JSON.stringify(leak.account_admin_limits) + leak.cross_account_writes.join(' | ') + (leak.cross_account_writes_changed_account1 ? ' account 1 changed' : ''));
   check('background work started from one account stays in that account', leak.resync_thread_account.join() === String(leak.account2) && leak.account2_assignments_seen_from_1 === 0);
+  check("an account's leads, alerts and Meta assets stay its own (recipients, Page routing, duplicate check, Claude's proposals, Telegram errors)",
+    leak.tenant_problems.length === 0, leak.tenant_problems.join(' | '));
   // A new ad from nothing: the account's Page, the chosen form, an image from the library.
   const libItem = (await call('GET', '/api/media')).body.items.find((i) => i.kind === 'image' || (i.kind === 'video' && i.ready));
   const crBefore = Object.keys(fake('_creatives')).length;

@@ -28,12 +28,17 @@ def verify():
 def account_for_page(page_id):
     """The account whose Facebook Page the lead came from. A Page no account names goes to account 1
     (Meta sometimes sends the Page's profile id rather than the id in Settings), logged so a client's
-    Page that was never connected shows up instead of vanishing."""
+    Page that was never connected shows up instead of vanishing. Account 1's built-in Page counts, the
+    lowest account number wins and a closed account never does (its worker doesn't run). None when only
+    closed accounts name it: account 1's Page token can't read that Page's leads."""
     import account_ctx
     if page_id:
-        for r in db.query("SELECT key, value FROM settings WHERE key = 'meta_page_id' OR key LIKE 'meta_page_id@%%' ORDER BY key"):
-            if r["value"] == page_id:
-                return int(r["key"].split("@")[1]) if "@" in r["key"] else account_ctx.DEFAULT
+        holders = [(acct, closed) for acct, closed, value in settings_store.meta_holders("meta_page_id") if value == page_id]
+        open_ones = [acct for acct, closed in holders if not closed]
+        if open_ones:
+            return open_ones[0]
+        if holders:
+            return None
         log.warning("webhook for Page %s, which no account names: filed under account 1", page_id)
     return account_ctx.DEFAULT
 
@@ -97,6 +102,11 @@ def receive():
         payload = json.loads(raw)
     except ValueError:
         abort(400)
+    return queue_events(payload)
+
+
+def queue_events(payload):
+    """Files each change of a signed webhook under the account it belongs to, for the worker."""
     import account_ctx
     count = 0
     for row in parse_ad_account(payload):
@@ -114,7 +124,11 @@ def receive():
                 continue
             leadgen_id = str((change.get("value") or {}).get("leadgen_id") or "")
             page_id = str((change.get("value") or {}).get("page_id") or entry.get("id") or "")
-            with account_ctx.use(account_for_page(page_id)):
+            acct = account_for_page(page_id)
+            if acct is None:
+                log.warning("lead webhook for Page %s, which only a closed account names: dropped", page_id)
+                continue
+            with account_ctx.use(acct):
                 db.execute("INSERT INTO webhook_events (payload, leadgen_id) VALUES (%s, %s)",
                            (json.dumps(change), leadgen_id or None))
             count += 1

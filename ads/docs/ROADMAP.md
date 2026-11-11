@@ -575,6 +575,15 @@ bridge 1.3); `cp` in a chain was refused (playbook now says one command at a tim
   or fix dev by hand. Production applies the whole file.
 - Every write to `/api/` needs `X-Requested-With: ebads` or a JSON body (cross-site guard); `api.js`
   sends it, QA's direct `fetch()` calls get it from an init script.
+- The `users` table has no row-level security. Anyone told about an account's leads, alerts or Claude runs
+  comes from `notify.admin_ids()` or `leads.staff_for()` / `recipients_for()`, which keep the console's owners
+  plus that account's own people (`notify.serves`). Lead emails go out one per recipient.
+- Which account owns a Page, ad account or dataset: `settings_store.meta_holders(key)`. It includes account 1's
+  built-in `config.META_DEFAULTS`, which are usually not stored as rows. Lead routing skips closed accounts
+  (a lead for a Page only a closed account names is dropped and logged, never filed under account 1, whose
+  Page token can't read it), and the duplicate check keeps a closed account's assets taken, because ids are
+  unique across accounts. The duplicate check refuses only a change: a value the account already holds is
+  re-sent by every Settings save and stays allowed.
 - Money rules live in `money_rules.py` (ceiling, +20%, reading Claude's amounts) and the ceiling in
   Settings → Targets. Anything new that sets a budget goes through them.
 - The fake Meta's "refuse the next ad" must not use a rate-limit code (17, 4, 613, 80004): those now

@@ -76,8 +76,18 @@ def reach(user_ids, flag="notify_reminders"):
     return out
 
 
+def serves(user, account_id):
+    """Whether this person works on this account. The console's owners (admins tied to no account)
+    work on every account; everyone else only on their own. The users table has no row-level
+    security, so every query that picks people to tell about an account goes through this."""
+    return user["account_id"] is None or user["account_id"] == account_id
+
+
 def admin_ids():
-    return [r["id"] for r in db.query("SELECT id FROM users WHERE role = 'admin' AND is_active")]
+    """The active admins of the current account, the console's owners included."""
+    import account_ctx
+    rows = db.query("SELECT id, account_id FROM users WHERE role = 'admin' AND is_active ORDER BY id")
+    return [r["id"] for r in rows if serves(r, account_ctx.current())]
 
 
 def queue(user_id, channel, kind, title, lines, url=None, button="Open", ref=None, dedupe_key=None):
@@ -138,6 +148,10 @@ def process_pending(now=None):
         try:
             _deliver(row)
         except (telegram.TelegramError, mailer.MailError, push_error()) as exc:
+            if row["channel"] == "telegram" and isinstance(exc, telegram.TelegramError) and telegram.chat_gone(exc):
+                taken = _fall_back(row)
+                if taken:
+                    exc = telegram.TelegramError(f"{exc}; sent by {' and '.join(taken)} instead", status=exc.status)
             attempts = row["attempts"] + 1
             again = retry_at(attempts, row["created_at"], now, getattr(exc, "permanent", False))
             db.execute("UPDATE notifications SET attempts = %s, last_error = %s, status = %s, next_attempt_at = COALESCE(%s, next_attempt_at) WHERE id = %s",
@@ -146,6 +160,25 @@ def process_pending(now=None):
             continue
         db.execute("UPDATE notifications SET status = 'sent', sent_at = now(), attempts = attempts + 1, last_error = NULL WHERE id = %s", (row["id"],))
     return len(rows)
+
+
+def _fall_back(row):
+    """Telegram says the person blocked the bot or the chat is gone: unlink it (as /stop would) and
+    send this alert on their next channel. A new-lead alert never falls back to email: the lead
+    email goes to them anyway. Returns the channels it went to (none when nothing else reaches them)."""
+    db.execute("UPDATE users SET telegram_chat_id = NULL, telegram_name = NULL WHERE id = %s AND notify_telegram",
+               (row["user_id"],))
+    taken = []
+    for uid, channel in reach([row["user_id"]], "TRUE"):
+        if channel == "telegram" or (row["kind"] == "lead" and channel == "email"):
+            continue
+        taken.append(channel)
+        db.execute(
+            "INSERT INTO notifications (user_id, channel, kind, ref, dedupe_key, title, lines, url, button) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dedupe_key) DO NOTHING",
+            (uid, channel, row["kind"], row["ref"], f"{row['dedupe_key']}:{channel}" if row["dedupe_key"] else None,
+             row["title"], json.dumps(row["lines"]), row["url"], row["button"]))
+    return taken
 
 
 def failed_recently():

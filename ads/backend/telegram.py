@@ -36,6 +36,11 @@ class TelegramError(Exception):
         return self.status in (400, 401, 403, 404)
 
 
+def chat_gone(exc):
+    """The person blocked the bot or the chat no longer exists: this link will never work again."""
+    return exc.status == 403 or (exc.status == 400 and "chat not found" in str(exc).lower())
+
+
 def start_code(text):
     m = CODE.match((text or "").strip())
     return m.group(1) if m else None
@@ -73,7 +78,8 @@ def call(method, payload=None, tok=None):
         resp = requests.post(f"{config.TELEGRAM_API_BASE}/bot{tok}/{method}", json=payload or {}, timeout=TIMEOUT)
         data = resp.json()
     except (requests.RequestException, ValueError) as exc:
-        raise TelegramError(f"Telegram didn't answer: {exc}") from exc
+        # Never the exception's text: a connection error quotes the URL, and the URL holds the bot token.
+        raise TelegramError(f"Telegram didn't answer ({type(exc).__name__})") from None
     if not data.get("ok"):
         raise TelegramError(data.get("description") or f"Telegram refused it ({resp.status_code})", data.get("error_code") or resp.status_code)
     return data.get("result")

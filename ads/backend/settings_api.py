@@ -83,7 +83,8 @@ def get_settings():
         "crm": crm_events.summary(),
         "telegram": {"set": bool(telegram.token()), "username": settings_store.get("telegram_bot_username") if telegram.token() else None,
                      "linked": db.query("SELECT COUNT(*) AS n FROM users WHERE telegram_chat_id IS NOT NULL AND is_active", one=True)["n"],
-                     "failed": notify.failed_recently()},
+                     # Console-wide (the queue has no account) and only the owner manages the bot.
+                     "failed": notify.failed_recently() if is_owner(me) else {"n": 0, "last_error": None}},
         "replies": {"templates": replies.templates(), "booking_link": replies.booking_link(),
                     "auto": replies.auto_enabled(), "auto_template_id": int(settings_store.get("reply_auto_template_id") or 0) or None,
                     "auto_sender": (replies.auto_sender() or {}).get("name"), "placeholders": list(replies.PLACEHOLDERS),
@@ -109,24 +110,44 @@ def _save(fields, data):
     return changed
 
 
+META_ASSETS = (("meta_ad_account_id", "ad account"), ("meta_page_id", "Page"), ("meta_dataset_id", "dataset"))
+
+
+def _meta_id(value):
+    return str(value or "").strip().removeprefix("act_")
+
+
 def used_elsewhere(data):
-    """(field, message) when another account already uses this ad account or Page: two accounts on
-    the same Meta assets would fight over the same rows and leads."""
+    """(field, message) when another account already uses this ad account, Page or dataset (account 1's
+    built-in ones included): two accounts on the same Meta assets would fight over the same rows and
+    leads. A closed account keeps its rows (the ids are unique across accounts), so its assets stay
+    taken until it is reopened. Only a change is refused: a value the account already holds is kept."""
     import account_ctx
     import accounts_api
     me = account_ctx.current()
-    for key, what in (("meta_ad_account_id", "ad account"), ("meta_page_id", "Page")):
-        value = str(data.get(key) or "").strip().removeprefix("act_")
+    for key, what in META_ASSETS:
+        value = _meta_id(data.get(key))
         if not value:
             continue
-        with account_ctx.all_accounts():
-            rows = db.query("SELECT key FROM settings WHERE (key = %s OR key LIKE %s) AND value = %s",
-                            (key, f"{key}@%", value))
-        for r in rows:
-            other = int(r["key"].split("@")[1]) if "@" in r["key"] else account_ctx.DEFAULT
-            if other != me and not accounts_api.closed(other):
-                return key, f"Another account ({accounts_api.name_of(other)}) already uses this {what}."
+        holders = settings_store.meta_holders(key)
+        if any(other == me and _meta_id(held) == value for other, _, held in holders):
+            continue  # unchanged: the form re-sends it on every save, and it may predate this check
+        for other, closed, held in holders:
+            if other == me or _meta_id(held) != value:
+                continue
+            if closed:
+                return key, f"{accounts_api.name_of(other)} (a closed account) still holds this {what}: reopen that account instead."
+            return key, f"Another account ({accounts_api.name_of(other)}) already uses this {what}."
     return None
+
+
+def borrowed_connection_change(data, user):
+    """The field when someone other than the console's owner points an account that runs on the owner's
+    System User token at a different ad account, Page or dataset: that token reaches every asset of the
+    owner's business, so only the owner chooses which one an account works on."""
+    if is_owner(user) or settings_store.own("meta_system_token") or str(data.get("meta_system_token") or "").strip():
+        return None
+    return next((k for k, _ in META_ASSETS if k in data and _meta_id(data[k]) != _meta_id(settings_store.get(k))), None)
 
 
 @bp.put("/meta")
@@ -138,6 +159,11 @@ def save_meta():
     if shared and not console_editable():
         return api_error("The Meta app keys are shared by every account: the console's owner changes them in "
                          "Edge Bourne's Settings.", 403, field=shared[0])
+    borrowed = borrowed_connection_change(data, current_user())
+    if borrowed:
+        return api_error("This account uses the console owner's Meta connection: only the owner can change its ad "
+                         "account, Page or dataset. Paste the account's own System User token to manage them here.",
+                         403, field=borrowed)
     taken = used_elsewhere(data)
     if taken:
         return api_error(taken[1], 409, field=taken[0])

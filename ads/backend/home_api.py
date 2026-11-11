@@ -50,7 +50,8 @@ def attention(user, scope_ids):
     if waiting:
         items.append({"level": "warn", "text": f"{waiting} lead{'s' if waiting != 1 else ''} waiting more than an hour for a first call.",
                       "href": "/leads.html", "action": "Open leads"})
-    pend = db.query("SELECT entity_id FROM desk_proposals WHERE status = 'pending'")
+    # Claude's proposals are internal: a client isn't told they exist.
+    pend = [] if user["role"] == "client" else db.query("SELECT entity_id FROM desk_proposals WHERE status = 'pending'")
     mine = [p for p in pend if scope_ids is None or (p["entity_id"] and _campaign_of(p["entity_id"]) in scope_ids)]
     if mine:
         items.append({"level": "claude", "text": f"Claude has {len(mine)} proposal{'s' if len(mine) != 1 else ''} waiting for your decision.",

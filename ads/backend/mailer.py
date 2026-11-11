@@ -46,13 +46,17 @@ def send(to, subject, text, html=None, from_name=None, reply_to=None):
     if not (s["host"] and s["from_email"]):
         raise MailError("Email isn't set up yet. Set it up in the website admin (Email) or in Settings → Email here.")
     recipients = [to] if isinstance(to, str) else list(to)
+    one_line = lambda v: " ".join(str(v).split())  # noqa: E731 - a line break in a header is refused (and lead input can carry one)
     msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = formataddr((from_name or s["from_name"], s["from_email"]))
-    if reply_to:
-        msg["Reply-To"] = reply_to
-    msg["To"] = ", ".join(recipients)
-    msg["Message-ID"] = make_msgid(domain=s["from_email"].split("@")[-1])
+    try:
+        msg["Subject"] = one_line(subject)
+        msg["From"] = formataddr((one_line(from_name or s["from_name"]), s["from_email"]))
+        if reply_to:
+            msg["Reply-To"] = one_line(reply_to)
+        msg["To"] = ", ".join(recipients)
+        msg["Message-ID"] = make_msgid(domain=s["from_email"].split("@")[-1])
+    except ValueError as exc:
+        raise MailError(f"This message can't be sent: {exc}") from exc
     msg.set_content(text)
     if html:
         msg.add_alternative(html, subtype="html")

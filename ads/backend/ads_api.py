@@ -348,7 +348,7 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
         metrics_prev, quality_prev = _metrics(xw, xp, *prev), _quality(xw, xp, *prev)
     lifetime = {r["ad_id"]: int(r["impressions"]) for r in db.query(
         f"SELECT ad_id, SUM(impressions) AS impressions FROM ad_daily WHERE {xw} GROUP BY ad_id", xp)}
-    pending = {r["eid"]: int(r["n"]) for r in db.query(
+    pending = {} if user["role"] == "client" else {r["eid"]: int(r["n"]) for r in db.query(
         """SELECT COALESCE(entity_id, payload->>'template_ad_id') AS eid, COUNT(*) AS n FROM desk_proposals
            WHERE status = 'pending' AND COALESCE(entity_id, payload->>'template_ad_id') IS NOT NULL GROUP BY 1""")}
     daily = {}
@@ -400,14 +400,16 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
             v_ever = sum(views.get(i, (0, 0))[1] for i in ids)
             row["today"] = {"impressions": v_today, "reach": (r_today or {}).get(row["id"], 0) if r_today is not None else None}
             row["ever"] = {"impressions": v_ever, "reach": (r_ever or {}).get(row["id"], 0) if r_ever is not None else None}
-    acct_today, acct_ever = insights.reach_today_and_ever("account")
-    reach_total = (insights.unique_reach("account", start, end) or {}).get("account")
+    # The account's unique reach covers every campaign: only for people who see them all.
+    whole = not campaign_id and visible_campaign_ids(user) is None
+    acct_today, acct_ever = insights.reach_today_and_ever("account") if whole else (None, None)
+    reach_total = (insights.unique_reach("account", start, end) or {}).get("account") if whole else None
     import targets
     all_views = [views.get(a["id"], (0, 0)) for a in every]
-    out = {"reach_total": reach_total if not campaign_id else None,
+    out = {"reach_total": reach_total,
            "today_total": {"impressions": sum(v[0] for v in all_views), "reach": (acct_today or {}).get("account")} if not campaign_id else None,
            "ever_total": {"impressions": sum(v[1] for v in all_views), "reach": (acct_ever or {}).get("account")} if not campaign_id else None,
-           "prev_reach_total": (insights.unique_reach("account", *prev) or {}).get("account") if prev and not campaign_id else None,
+           "prev_reach_total": (insights.unique_reach("account", *prev) or {}).get("account") if prev and whole else None,
            "range": {"start": start.isoformat(), "end": end.isoformat(), "days": days, "label": ranges.label(start, end)},
            "target_qualified_cents": targets.qualified(), "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync"), "archived": archived_n}
     if prev:
@@ -461,10 +463,12 @@ def ad_detail(ad_id):
         life["reach_summed"] = True
     leads = db.query("""SELECT id, full_name, business_type, status, created_time, is_test FROM leads
                         WHERE ad_id = %s ORDER BY created_time DESC LIMIT 50""", (ad_id,))
-    proposals = db.query("""SELECT p.*, t.prompt FROM desk_proposals p JOIN desk_tasks t ON t.id = p.task_id
-                            WHERE p.entity_id IN (%s, %s, %s) OR p.payload->>'template_ad_id' = %s
-                            ORDER BY p.id DESC LIMIT 20""",
-                         (ad_id, ad["adset_id"], ad["campaign_id"], ad_id))
+    # Claude's proposals and the directions behind them are internal: clients never see them.
+    proposals = [] if user["role"] == "client" else db.query(
+        """SELECT p.*, t.prompt FROM desk_proposals p JOIN desk_tasks t ON t.id = p.task_id
+           WHERE p.entity_id IN (%s, %s, %s) OR p.payload->>'template_ad_id' = %s
+           ORDER BY p.id DESC LIMIT 20""",
+        (ad_id, ad["adset_id"], ad["campaign_id"], ad_id))
     changes = db.query("""SELECT m.*, u.name AS user_name FROM meta_changes m LEFT JOIN users u ON u.id = m.user_id
                           WHERE m.entity_id IN (%s, %s, %s) ORDER BY m.id DESC LIMIT 30""",
                        (ad_id, ad["adset_id"], ad["campaign_id"]))
@@ -971,7 +975,7 @@ def proposal_plan(p, apply_as=None):
 @login_required
 def check_proposal(proposal_id):
     p = db.query("SELECT * FROM desk_proposals WHERE id = %s", (proposal_id,), one=True)
-    if not p:
+    if not p or current_user()["role"] == "client":
         return api_error("Proposal not found", 404)
     level, row = proposal_target(p)
     if row and not can_touch(current_user(), row["campaign_id"]):
@@ -1191,7 +1195,7 @@ def inspect_creative(creative_id):
 def proposal_preview(proposal_id):
     """Meta's own rendering of a proposed new ad before it exists (generatepreviews)."""
     p = db.query("SELECT * FROM desk_proposals WHERE id = %s", (proposal_id,), one=True)
-    if not p or p["kind"] != "creative" or not p.get("payload"):
+    if not p or p["kind"] != "creative" or not p.get("payload") or current_user()["role"] == "client":
         return api_error("Only new-ad proposals have a preview", 404)
     fmt = request.args.get("format", "MOBILE_FEED_STANDARD")
     if fmt not in dict(PREVIEW_FORMATS):
@@ -1221,7 +1225,7 @@ def proposal_preview(proposal_id):
 @login_required
 def get_proposal(proposal_id):
     p = db.query("SELECT * FROM desk_proposals WHERE id = %s", (proposal_id,), one=True)
-    if not p:
+    if not p or current_user()["role"] == "client":
         return api_error("Proposal not found", 404)
     tid = (p.get("payload") or {}).get("template_ad_id") or p.get("entity_id")
     level, row = find_entity(tid) if tid else (None, None)
