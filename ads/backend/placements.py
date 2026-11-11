@@ -78,15 +78,27 @@ def describe(made):
     """What Meta stored, in a line for the change log: enough to see why a read-back failed."""
     feed = (made or {}).get("asset_feed_spec") or {}
     story = (made or {}).get("object_story_spec") or {}
-    videos = json.dumps(feed.get("videos") or [], sort_keys=True)[:800]
+    shown = [{k: v[k] for k in ("video_id", "adlabels") if k in v} for v in feed.get("videos") or []]
+    videos = json.dumps(shown, sort_keys=True)[:800]
     return f"feed keys: {', '.join(sorted(feed)) or 'none'}; videos: {videos}; story keys: {', '.join(sorted(story)) or 'none'}"
+
+
+def _labels(video):
+    return {str(l.get("name")) for l in video.get("adlabels") or [] if isinstance(l, dict)}
+
+
+def _has_vertical(feed, vertical_id):
+    # Meta stores each asset_feed_spec video under a new id (an untitled copy), so the uploaded id
+    # rarely comes back; the eb_vertical label it keeps is what marks the 9:16 one.
+    return any(v.get("video_id") and (str(v["video_id"]) == str(vertical_id) or VERTICAL in _labels(v))
+               for v in feed.get("videos") or [])
 
 
 def readback_problem(old_story, made, vertical_id):
     """What's wrong with the creative Meta stored, or None. Checked before it replaces the
     running ad's creative: the 9:16 video must be in it and the lead form must not change."""
     feed = (made or {}).get("asset_feed_spec") or {}
-    if str(vertical_id) not in {str(v.get("video_id")) for v in feed.get("videos") or []}:
+    if not _has_vertical(feed, vertical_id):
         return "Meta's copy of the new creative has no 9:16 video."
     want = form_ids(old_story)
     if want and form_ids(made) != want:

@@ -80,6 +80,15 @@ class ReadBackTests(unittest.TestCase):
         _, feed = pl.build(story, VERTICAL)
         self.assertIsNone(pl.readback_problem(story, {"asset_feed_spec": feed}, VERTICAL_VIDEO))
 
+    def test_meta_storing_the_videos_under_new_ids_still_passes(self):
+        copies = [{"video_id": "1676380033884145", "adlabels": [{"id": "1", "name": pl.FEED}]},
+                  {"video_id": "1676380033884146", "adlabels": [{"id": "2", "name": pl.VERTICAL}]}]
+        self.assertIsNone(pl.readback_problem(STORY, self.made(videos=copies), VERTICAL_VIDEO))
+
+    def test_a_vertical_label_without_a_video_is_caught(self):
+        videos = [{"video_id": "1676380033884145", "adlabels": [{"name": pl.FEED}]}, {"adlabels": [{"name": pl.VERTICAL}]}]
+        self.assertRegex(pl.readback_problem(STORY, self.made(videos=videos), VERTICAL_VIDEO), "9:16")
+
     def test_form_ids_are_found_anywhere_in_a_spec(self):
         self.assertEqual(pl.form_ids({"a": [{"b": {"lead_gen_form_id": 7}}], "c": {"lead_gen_form_id": "8"}}), {"7", "8"})
 
@@ -87,7 +96,7 @@ class ReadBackTests(unittest.TestCase):
 class DescribeTests(unittest.TestCase):
     def test_says_what_meta_stored_for_the_videos(self):
         made = {"id": "9", "asset_feed_spec": {"videos": [{"video_id": "1", "thumbnail_url": "x"}], "bodies": [{"text": "hi"}]}, "object_story_spec": {"page_id": "2"}}
-        self.assertEqual(pl.describe(made), 'feed keys: bodies, videos; videos: [{"thumbnail_url": "x", "video_id": "1"}]; story keys: page_id')
+        self.assertEqual(pl.describe(made), 'feed keys: bodies, videos; videos: [{"video_id": "1"}]; story keys: page_id')
 
     def test_says_when_meta_stored_no_feed_at_all(self):
         self.assertEqual(pl.describe({"id": "9"}), "feed keys: none; videos: []; story keys: none")
