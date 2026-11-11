@@ -49,9 +49,24 @@ frames and contact sheets for a look at motion go to `reports/desk/tmp/task<id>-
 (`ffmpeg` and `ffprobe` are allowed in polish and render runs). Use the Read tool to read
 files; `cat`, `tail` and pipes are not allowed.
 
+## A follow-up in a conversation
+
+The Claude page is a conversation. When `options.reply` is true, Eugene is replying to your
+earlier answer: `prompt` is his new message, `thread` holds the earlier turns (what he asked, what
+you said, every report and suggestion and what he decided), and this run usually continues your
+own session, so you may remember them already.
+
+- Do what the reply says and nothing wider. `kind` only decides your tools here; don't redo the
+  whole recipe for that kind (no new full audit, no new scorecard) unless he asks for it.
+- `options.about` is a suggestion he sent back: `{id, title}`. Its details are in `thread`. Propose
+  a revised version in this run, written from his note. The old one is already marked as sent back.
+- Numbers from earlier turns may be old. Read them again before relying on them.
+- A short reply earns a short answer: often the `--summary` is enough, with no report. Post a
+  report only when there are real findings to lay out. Still finish with `desk done`.
+
 ## Steps for one task
 
-1. `desk task <id>`. Read `kind`, `prompt`, `campaign_id`. Then
+1. `desk task <id>`. Read `kind`, `prompt`, `campaign_id`, and `options.reply`. Then
    `desk progress <id> Reading your ads`.
 2. Context, in parallel where possible:
    - `desk snapshot 7` (and 14/30 if the question spans longer): spend, leads, cost per lead,
@@ -68,8 +83,9 @@ files; `cat`, `tail` and pipes are not allowed.
      `ads_account_get_activity_logs`). Account `act_1025971549903293`, Page `1404203629446490`.
    - The `meta-ads` skill library (`~/.claude/skills/meta-ads/SKILL.md` router, then the one
      reference the question needs) before any judgement.
-3. Post short progress lines as you go (`desk progress <id> Comparing the five ads`); they
-   show live on the Desk page.
+3. Post short progress lines as you go (`desk progress <id> Comparing the five ads`); each one
+   becomes a step in the list Eugene watches, with its time, so post one per real stage of the
+   work (usually 3 to 8), in plain words.
 4. Do the work by kind:
    - **question**: answer it directly; show the numbers that prove it.
    - **review**: the operating check: tracking health, delivery and review status, results vs
@@ -84,7 +100,9 @@ files; `cat`, `tail` and pipes are not allowed.
 5. **Report** (`desk report <id> --title "…" --file reports/desk/tmp/task<id>-report.md`):
    - First line: the answer in one or two plain sentences.
    - Then `## What the numbers say` (a small table is fine), `## What I'd do` (numbered,
-     concrete), `## Data used` (periods, sources, anything missing).
+     concrete), `## Data used` (periods, sources, anything missing). The page shows each `##` as
+     its own section and folds `## Data used`, so keep to these headings where they fit.
+   - Name ads by their full name or short code (N3); the page shows a preview of every ad you name.
    - Plain words, no jargon without a gloss, dollars not cents. Keep it under ~600 words
      unless the question needs more.
 6. **Proposals**, only when something should actually change (`desk propose <id> --file
@@ -138,7 +156,8 @@ If there is no brief for it, say so in the report and keep to what the numbers s
   checked) and the Ad Library ids already in the swipe file.
 - Search with `ads_library_search` (US, active). Meta's public Ad Library API covers only
   political and EU ads, so this search is the only way to see US competitors' commercial ads.
-- Save ads with `desk swipe --file reports/desk/tmp/task<id>-swipes.json`: a JSON list of
+- Save ads with `desk swipe --task <id> --file reports/desk/tmp/task<id>-swipes.json` (`--task`
+  shows them as pictures in your answer; save the ones your report talks about): a JSON list of
   `{"library_id", "page_name", "page_id", "body", "title", "cta", "media_url" (https only),
   "started_on": "YYYY-MM-DD", "stopped_on", "platforms": [...], "notes", "tags": {"hook", "angle",
   "format", "offer"}}`. Saving an id already in the file refreshes its dates and text; nothing

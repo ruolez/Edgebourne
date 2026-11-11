@@ -43,6 +43,11 @@ def listing():
     return [sw.view(r, today) for r in db.query(f"SELECT {COLS} FROM swipes ORDER BY last_seen_at DESC, id DESC")]
 
 
+def listing_of(ids):
+    today = account_today()
+    return [sw.view(r, today) for r in db.query(f"SELECT {COLS} FROM swipes WHERE id = ANY(%s)", (ids,))]
+
+
 @bp.get("/swipes")
 @admin_required
 def get_swipes():
@@ -122,18 +127,23 @@ def agent_watched():
 @bp.post("/agent/swipes")
 @agent_required
 def agent_swipes():
-    items = (request.get_json(silent=True) or {}).get("swipes")
+    body = request.get_json(silent=True) or {}
+    items = body.get("swipes")
     if not isinstance(items, list) or not items:
         return api_error("Send {\"swipes\": [...]}", 400)
-    added, refreshed, skipped = 0, 0, []
+    added, refreshed, skipped, saved = 0, 0, [], []
     for raw in items[:100]:
         fields, err = sw.clean(raw if isinstance(raw, dict) else {})
         if err:
             skipped.append(err)
             continue
-        _, new = upsert(fields, "claude")
+        sid, new = upsert(fields, "claude")
+        saved.append(sid)
         added += new
         refreshed += not new
+    if isinstance(body.get("task_id"), int) and saved:
+        # So the run's answer can show the ads it found.
+        db.execute("UPDATE desk_tasks SET swipe_ids = ARRAY(SELECT DISTINCT unnest(swipe_ids || %s::int[])) WHERE id = %s", (saved, body["task_id"]))
     checked = {str(r.get("page_name") or "").strip().lower() for r in items if isinstance(r, dict)}
     for p in db.query("SELECT id, name FROM watched_pages"):
         if p["name"].lower() in checked:

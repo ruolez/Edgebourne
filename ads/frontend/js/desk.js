@@ -1,40 +1,43 @@
 import { api } from "./api.js";
 import { boot, confirmDialog, esc, onRefresh, toast } from "./ui.js";
 import { ACTIVE, wireTaskActions } from "./tasks.js";
-import { adsView, index, loadPreviews } from "./board.js";
-import { decideHtml, emptyDetail, requestHtml, requestTitle, traysHtml } from "./requests.js";
+import { adsView, fillPreview, index, loadPreviews } from "./board.js";
+import { clock, decideHtml, decideKey, headHtml, liveTurn, listHtml, queuedTurn, threadTitle, turnHtml, turnKey, turnTitle } from "./conversation.js";
 import { acceptSheet, declineMany } from "./decide.js";
+import { PLACEMENTS, openSwipe, openViewer } from "./viewer.js";
 import { schedulesView, wireSchedules } from "./schedules.js";
 
-let scheduleList = null;
-async function loadSchedules() {
-  try { scheduleList = (await api("/api/desk/schedules")).schedules; } catch (e) { /* the tab says Loading */ }
-  if (view === "schedules") { $("view").innerHTML = schedulesView(scheduleList, data && data.bridge); }
-}
-
 const $ = (id) => document.getElementById(id);
-const KINDS = {
-  question: { label: "Question", placeholder: "Ask anything about your ads, e.g. Why did N3 cost more per lead than N1 this week?" },
-  review: { label: "Review results", placeholder: "What should Claude look at? e.g. Review the last 7 days against a $40 target cost per lead and tell me what to change." },
-  research: { label: "Research competitors", placeholder: "Who or what to research? e.g. What are IT consultants and software agencies in Southern California running on Facebook right now?" },
-  creative: { label: "New ad ideas", placeholder: "What should the new ads do? e.g. Three new concepts for restaurant owners, same free intro call offer." },
+const SEEDS = {
+  review: "Review the last 7 days against target and tell me what to change.",
+  question: "Why did cost per lead change this week?",
+  creative: "Three genuinely different new ad ideas, same offer.",
+  research: "What are competitors running on Facebook right now?",
 };
 let kind = "question";
 let data = null;
 let ix = null;
+let scheduleList = null;
 let pollTimer;
 let freshKey = null;
 let lastJson = "";
-let lastDetail = "";
 let lastActive = null;
-let view = "requests";
-let selected = null;      // "decide", a request id, or null for the phone's list / the default
-let focusProposal = null;
+let view = "chat";
+let selected = null;        // "new", "decide", a conversation id, or null for the default
+let wantedTask = null;      // a run named in the address, until the data arrives
+let wantedProposal = null;
+let about = null;           // the suggestion the reply is about
+let stopSure = null;
+let stopTimer;
+let query = "";
 let showCleared = false;
-const openReports = new Set();
-const openRows = new Map();
-const picked = new Set();
-const phone = window.matchMedia("(max-width: 900px)");
+let colFor = null;          // what #cv-col holds right now
+let decideShown = "";
+let undoTimer;
+const turnKeys = new Map();
+const drafts = new Map();
+const openSecs = new Map();
+const phone = window.matchMedia("(max-width: 960px)");
 
 const ago = (secs) => {
   if (secs == null) return "never";
@@ -46,28 +49,17 @@ const ago = (secs) => {
   return `${Math.round(s / 86400)} days ago`;
 };
 
-function setKind(k) {
-  kind = k;
-  document.querySelectorAll("#kinds button").forEach((b) => {
-    const on = b.dataset.kind === k;
-    b.setAttribute("aria-checked", String(on));
-    b.setAttribute("aria-pressed", String(on));
-  });
-  $("prompt").placeholder = KINDS[k].placeholder;
+async function loadSchedules() {
+  try { scheduleList = (await api("/api/desk/schedules")).schedules; } catch (e) { /* the tab says Loading */ }
+  if (view === "schedules") $("view").innerHTML = schedulesView(scheduleList, data && data.bridge);
 }
 
 function renderMac(bridge) {
-  const s = $("mac-status");
-  if (!bridge.has_key) { s.className = "mac-status off"; s.textContent = "Mac not connected"; }
-  else if (bridge.online) { s.className = "mac-status on"; s.textContent = `Mac connected · checked ${ago(bridge.last_seen)}`; }
-  else { s.className = "mac-status off"; s.textContent = bridge.last_seen ? `Mac offline · last seen ${ago(bridge.last_seen)}` : "Mac not set up yet"; }
-
-  $("ask-hint").textContent = bridge.online
-    ? "Claude reads your ads, results and lead stages. It never spends money or changes ads from here: anything like that comes back as a proposal for you."
-    : "Your Mac is offline, so this waits in the queue until it's on. You can also run /ads-desk in Claude Code to pick it up. Claude never spends money or changes ads from here.";
-
-  $("mac-summary").textContent = bridge.online ? `· ${bridge.host || "connected"}` : bridge.has_key ? "· offline" : "· not set up";
-  if (!bridge.has_key || !bridge.last_seen) $("mac-panel").open = true;
+  const b = data ? data.board : null;
+  const busy = b ? [b.working.length ? "1 working" : "", b.queue.length ? `${b.queue.length} in line` : ""].filter(Boolean).join(" · ") : "";
+  $("mac-led").className = `led ${bridge.online ? "on" : "off"}`;
+  $("mac-summary").textContent = !bridge.has_key ? "Set up your Mac" : bridge.online ? `Your Mac is connected${busy ? ` · ${busy}` : ""}`
+    : bridge.last_seen ? `Mac offline · last seen ${ago(bridge.last_seen)}` : "Mac not set up yet";
   const keyBox = freshKey ? `
     <div class="note claude-note stack">
       <b>Your Mac key (shown only now)</b>
@@ -113,182 +105,394 @@ function renderMac(bridge) {
 
 function readHash() {
   const h = location.hash.slice(1);
-  focusProposal = null;
+  wantedTask = null;
+  wantedProposal = null;
   if (h === "ads" || h === "schedules") { view = h; return; }
-  view = "requests";
+  view = "chat";
   const run = h.match(/^r\/(\d+)/);
   const prop = h.match(/^p\/(\d+)/);
-  if (run) selected = Number(run[1]);
-  else if (prop) { focusProposal = Number(prop[1]); selected = "decide"; }
-  else selected = h === "decide" || h === "waiting" ? "decide" : null;
+  if (run) wantedTask = Number(run[1]);
+  else if (prop) wantedProposal = Number(prop[1]);
+  else selected = h === "decide" || h === "waiting" ? "decide" : h === "new" ? "new" : h === "list" ? "list" : null;
 }
 
-function showRun(id) {
-  location.hash = "ads";
-  setTimeout(() => {
-    const el = document.getElementById(`run-${id}`);
-    if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1600); }
-  }, 60);
-}
-
+const threadOf = (t) => t.thread_id || t.id;
 const pendingAll = () => data.tasks.flatMap((t) => t.proposals.filter((p) => p.status === "pending"));
 const pendingOf = (taskId) => ix.tasks.get(taskId).proposals.filter((p) => p.status === "pending").map((p) => p.id);
 
-// What the right side shows: the choice in the address, else what most needs looking at.
-// A phone with no choice shows only the list.
+function resolveAddress() {
+  if (wantedProposal) {
+    const t = ix.taskOf.get(wantedProposal);
+    if (t) selected = threadOf(t);
+  } else if (wantedTask) {
+    const t = ix.tasks.get(wantedTask);
+    if (t) selected = threadOf(t);
+  }
+}
+
+// What the right side shows: the choice in the address, else whatever most needs looking at.
 function current() {
-  if (selected != null || phone.matches) return selected;
   const b = data.board;
-  return pendingAll().length ? "decide" : b.working[0] ?? b.next[0] ?? b.finished[0] ?? null;
+  if (selected === "list") return null;
+  if (selected === "new" || selected === "decide") return selected;
+  if (selected != null && b.threads[selected]) return selected;
+  if (phone.matches) return null;
+  const needs = b.recent.find((id) => b.threads[id].state === "needs");
+  const fresh = b.recent.find((id) => b.threads[id].fresh.length);
+  return b.working[0] ?? needs ?? fresh ?? "new";
 }
 
-function detailKey(sel) {
-  const slim = (t) => [t.status, t.progress, t.summary, t.error, t.archived_at, t.proposals.map((p) => [p.id, p.status, p.state]), t.reports.map((r) => r.id), data.board.next.indexOf(t.id)];
-  if (sel === "decide") return JSON.stringify(["decide", data.tasks.filter((t) => t.proposals.some((p) => p.status === "pending")).map((t) => [t.id, slim(t)])]);
-  const t = ix.tasks.get(sel);
-  return JSON.stringify([sel, t ? slim(t) : null, data.bridge.online, data.bridge.can_stop]);
+function markSeen(th) {
+  th.fresh.forEach((id) => {
+    ix.tasks.get(id).seen_at = new Date().toISOString();
+    api(`/api/desk/tasks/${id}/seen`, { method: "POST" }).catch(() => {});
+  });
+  th.fresh = [];
 }
 
-function markSeen(t) {
-  if (!data.board.fresh.includes(t.id)) return;
-  data.board.fresh = data.board.fresh.filter((id) => id !== t.id);
-  t.seen_at = new Date().toISOString();
-  api(`/api/desk/tasks/${t.id}/seen`, { method: "POST" }).catch(() => {});
+function scrollToEl(el) {
+  const box = $("cv-scroll");
+  box.scrollTop = Math.max(0, el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 16);
 }
 
-function syncPicks() {
-  const live = new Set(pendingAll().map((p) => p.id));
-  [...picked].forEach((id) => { if (!live.has(id)) picked.delete(id); });
-  document.querySelectorAll("[data-pick]").forEach((c) => { c.checked = picked.has(Number(c.dataset.pick)); c.closest(".sg").classList.toggle("picked", c.checked); });
-  const set = (box, ids) => { const n = ids.filter((id) => picked.has(id)).length; box.checked = !!ids.length && n === ids.length; box.indeterminate = n > 0 && n < ids.length; };
-  document.querySelectorAll("[data-pick-task]").forEach((c) => set(c, pendingOf(Number(c.dataset.pickTask))));
-  document.querySelectorAll("[data-pick-all]").forEach((c) => set(c, [...live]));
-  const bar = $("pick-bar");
-  bar.hidden = !picked.size;
-  document.body.classList.toggle("has-bulk", picked.size > 0);
-  bar.innerHTML = picked.size ? `<div class="bk" role="toolbar" aria-label="${picked.size} selected"><span class="bk-n"><b>${picked.size}</b> selected</span>
-    <button type="button" class="btn btn-small btn-claude" data-accept-picked>Accept ${picked.size}</button>
-    <button type="button" class="btn btn-small btn-quiet" data-decline-picked>Decline ${picked.size}</button>
-    <button type="button" class="icon-btn bk-x" data-clear-picks aria-label="Clear the selection">×</button></div>` : "";
+function flash(el) {
+  el.classList.add("flash");
+  setTimeout(() => el.classList.remove("flash"), 1600);
 }
 
-function renderDetail(sel) {
-  const key = detailKey(sel);
-  if (key === lastDetail) return;
-  lastDetail = key;
-  const ctx = { openRows, picked, openReports };
-  const t = typeof sel === "number" ? ix.tasks.get(sel) : null;
-  $("detail").innerHTML = sel === "decide" ? decideHtml(data, ix, ctx) : t ? requestHtml(t, data, ix, ctx) : emptyDetail();
-  loadPreviews($("detail"));
-  if (t) markSeen(t);
+function syncTurns(th) {
+  const col = $("cv-col");
+  const opened = colFor !== th.id;
+  if (opened) { col.innerHTML = ""; turnKeys.clear(); colFor = th.id; }
+  [...col.children].forEach((el) => { if (!th.turns.includes(Number(el.dataset.turn))) el.remove(); });
+  th.turns.forEach((id, i) => {
+    const t = ix.tasks.get(id);
+    const key = turnKey(t, data);
+    const old = col.querySelector(`[data-turn="${id}"]`);
+    if (old && turnKeys.get(id) === key) return;
+    const el = document.createElement("div");
+    el.className = "cv-turn";
+    el.id = `turn-${id}`;
+    el.dataset.turn = id;
+    el.innerHTML = turnHtml(t, th, data, ix, { openSecs });
+    if (old) old.replaceWith(el); else col.insertBefore(el, col.children[i] || null);
+    turnKeys.set(id, key);
+    loadPreviews(el);
+  });
+  return opened;
 }
 
-function renderTabs() {
-  const waiting = pendingAll().length;
-  $("tab-requests").innerHTML = `Requests${waiting ? ` <span class="n claude">${waiting}</span>` : ""}`;
-  $("tab-ads").innerHTML = `By ad <span class="n">${data.families.filter((f) => f.root).length}</span>`;
-  const schedOn = scheduleList ? scheduleList.filter((x) => x.enabled).length : 0;
-  $("tab-schedules").innerHTML = `Schedules${schedOn ? ` <span class="n">${schedOn} on</span>` : ""}`;
-  document.querySelectorAll("#views [data-view]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.view === view)));
+function renderDock(sel) {
+  const th = typeof sel === "number" ? data.board.threads[sel] : null;
+  const line = $("cv-line");
+  const form = $("ask-form");
+  const queued = th && th.state === "queued" ? queuedTurn(th, ix) : th && th.state === "working" ? queuedTurn(th, ix) : null;
+  $("cv-dock").hidden = sel === "decide" || sel == null;
+  $("cv-seeds").hidden = sel !== "new";
+  $("campaign").hidden = sel !== "new";
+  if (queued) {
+    const pos = data.board.queue.indexOf(queued.id);
+    line.hidden = false;
+    form.hidden = true;
+    line.innerHTML = `<span>${th.state === "working" ? "Your follow-up runs as soon as this finishes." : pos ? `${pos + 1}${["st", "nd", "rd"][pos] || "th"} in line. Starts when your Mac is free.` : data.bridge.online ? "Next in line." : "Your Mac is offline. This starts when it’s back."}</span>
+      ${pos > 0 ? `<button class="btn btn-small" type="button" data-next="${queued.id}">Run next</button>` : ""}
+      <button class="btn btn-small" type="button" data-cancel="${queued.id}">Cancel</button>${th.state === "working" && data.bridge.can_stop ? stopButton(th) : ""}`;
+    return;
+  }
+  line.hidden = true;
+  form.hidden = false;
+  renderDockFoot(sel, th);
+}
+
+const stopButton = (th) => `<button class="btn btn-small cv-stop" type="button" data-stop="${th.id}"><span class="sq" aria-hidden="true"></span>Stop</button>`;
+
+function renderDockFoot(sel, th) {
+  const has = $("prompt").value.trim();
+  const live = th && th.state === "working";
+  const hint = $("cv-hint");
+  const btns = $("cv-btns");
+  $("prompt").placeholder = sel === "new" ? "Ask anything about your ads…" : about ? "What should Claude change about this?" : live ? "Add something for Claude…" : "Reply to Claude…";
+  $("cv-chip").hidden = !about;
+  if (about) $("cv-chip").innerHTML = `<span>About: ${esc(about.title)}</span><button type="button" data-unchip aria-label="Remove">×</button>`;
+  if (live && stopSure === th.id) {
+    hint.textContent = "Stop this job? Nothing changes on your ads.";
+    btns.innerHTML = `<button class="btn btn-small btn-quiet" type="button" data-keep>Keep going</button><button class="btn btn-small btn-danger" type="button" data-stop="${th.id}">Stop it</button>`;
+    return;
+  }
+  if (live) {
+    const t = liveTurn(th, ix);
+    if (has) {
+      hint.textContent = "Claude is still working.";
+      btns.innerHTML = `${data.bridge.can_stop ? '<button class="btn btn-small" type="button" data-stop-send>Stop and send</button>' : ""}<button class="btn btn-small btn-claude" type="submit">Send when it’s done</button>`;
+    } else {
+      hint.innerHTML = `Working · <time data-since="${new Date(t.claimed_at || t.created_at).getTime()}"></time>`;
+      btns.innerHTML = data.bridge.can_stop ? stopButton(th) : "";
+      tick();
+    }
+    return;
+  }
+  hint.textContent = sel === "new"
+    ? (data.bridge.online ? "It never changes anything without your yes." : "Your Mac is offline, so this waits until it’s on.")
+    : !data.bridge.can_reply ? "Your Mac helper needs an update before Claude can pick this up." : data.bridge.online ? "Claude remembers this conversation." : "Your Mac is offline, so this waits until it’s on.";
+  btns.innerHTML = `<button class="btn btn-small btn-claude" type="submit" ${has ? "" : "disabled"}>Send</button>`;
+}
+
+function renderConv(sel) {
+  $("cv").dataset.state = sel === "new" ? "new" : sel === "decide" ? "decide" : sel == null ? "none" : "thread";
+  $("convs").dataset.mode = sel == null ? "list" : "conv";
+  document.body.classList.toggle("in-conv", sel != null);
+  if (sel == null) { colFor = null; return; }
+  $("cv-head").innerHTML = headHtml(sel, data, ix);
+  const col = $("cv-col");
+  if (sel === "new") {
+    if (colFor !== "new") {
+      colFor = "new";
+      col.innerHTML = '<div class="cv-intro"><h2>What should Claude look at?</h2><p>It reads your ads, results and lead stages, and answers here.</p></div>';
+      $("cv-scroll").scrollTop = 0;
+    }
+  } else if (sel === "decide") {
+    const key = decideKey(data);
+    if (colFor !== "decide" || key !== decideShown) {
+      colFor = "decide";
+      decideShown = key;
+      col.innerHTML = decideHtml(data, ix);
+      loadPreviews(col);
+    }
+  } else {
+    const th = data.board.threads[sel];
+    const opened = syncTurns(th);
+    markSeen(th);
+    if (opened) {
+      const you = [...col.querySelectorAll(".cv-you")].pop();
+      if (you) scrollToEl(you);
+    }
+  }
+  renderDock(sel);
+  if (wantedProposal) {
+    const el = document.getElementById(`p-${wantedProposal}`);
+    if (el) { scrollToEl(el); flash(el); }
+  } else if (wantedTask && wantedTask !== sel) {
+    // A link to one particular reply; a conversation's own address opens on its latest message.
+    const el = document.getElementById(`turn-${wantedTask}`);
+    if (el) scrollToEl(el);
+  }
+  if (wantedProposal && ix.taskOf.has(wantedProposal)) wantedProposal = null;
+  if (wantedTask && ix.tasks.has(wantedTask)) wantedTask = null;
+}
+
+function renderSubnav() {
+  const nav = document.querySelector(".subnav");
+  if (!nav) return;
+  const mine = nav.querySelector('a[href="/desk.html"]');
+  if (mine && !nav.querySelector("[data-sub]")) {
+    mine.href = "/desk.html#list";
+    mine.textContent = "Conversations";
+    mine.dataset.sub = "chat";
+    mine.insertAdjacentHTML("afterend", '<a href="/desk.html#ads" data-sub="ads">By ad</a><a href="/desk.html#schedules" data-sub="schedules">Schedules</a>');
+  }
+  nav.querySelectorAll("[data-sub]").forEach((a) => {
+    if (a.dataset.sub === view) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  });
+}
+
+function renderList(sel) {
+  $("cl-list").innerHTML = listHtml(data, ix, { sel, query, showCleared, stopSure });
 }
 
 function renderView() {
   ix = index(data);
-  renderTabs();
-  $("work").hidden = view !== "requests";
-  $("view").hidden = view === "requests";
-  if (view === "requests") {
+  renderSubnav();
+  const chat = view === "chat";
+  $("convs").hidden = !chat;
+  $("view").hidden = chat;
+  document.body.classList.toggle("conv-page", chat);
+  if (chat) {
+    resolveAddress();
     const sel = current();
-    renderDetail(sel);
-    $("trays").innerHTML = traysHtml(data, ix, sel, showCleared);
-    $("work").dataset.mode = sel == null ? "list" : "detail";
-    syncPicks();
-    if (focusProposal) {
-      const p = ix.proposals.get(focusProposal);
-      const id = focusProposal;
-      focusProposal = null;
-      if (!p || p.status !== "pending") { if (p) location.hash = `r/${ix.taskOf.get(id).id}`; return; }
-      revealRow(id);
-    }
+    renderConv(sel);
+    renderList(sel);
+    tick();
     return;
   }
-  document.body.classList.remove("has-bulk");
-  $("pick-bar").hidden = true;
+  document.body.classList.remove("in-conv");
+  colFor = null;
   if (view === "schedules") { $("view").innerHTML = schedulesView(scheduleList, data.bridge); return; }
-  $("view").innerHTML = adsView(data, ix, openReports);
-  loadPreviews($("view"));
-}
-
-function setRowOpen(id, open) {
-  openRows.set(id, open);
-  const body = document.getElementById(`sg-body-${id}`);
-  if (!body) return;
-  body.hidden = !open;
-  document.querySelector(`[data-toggle="${id}"]`).setAttribute("aria-expanded", String(open));
-}
-
-function revealRow(id) {
-  setRowOpen(id, true);
-  const el = document.getElementById(`p-${id}`);
-  if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1600); }
+  $("view").innerHTML = adsView(data, ix, new Set());
 }
 
 function route() {
+  const before = selected;
+  saveDraft(before);
   readHash();
-  lastDetail = "";
-  if (data) renderView();
-  if (phone.matches) window.scrollTo({ top: 0 });
+  about = null;
+  stopSure = null;
+  if (data) {
+    if (view === "chat") { resolveAddress(); restoreDraft(); }
+    renderView();
+  }
 }
 
-const reload = () => { lastJson = ""; lastDetail = ""; load(); };
+function saveDraft(sel) { drafts.set(sel ?? "default", $("prompt").value); }
+function restoreDraft() { const v = drafts.get(selected ?? "default") || ""; $("prompt").value = v; fitPrompt(); }
+function fitPrompt() { const p = $("prompt"); p.style.height = "auto"; p.style.height = `${Math.min(p.scrollHeight, 180)}px`; }
+
+const reload = () => { lastJson = ""; load(); };
 
 async function act(path, body, message) {
-  try { const r = await api(path, { method: "POST", body }); if (message) toast(typeof message === "function" ? message(r) : message); reload(); }
-  catch (err) { toast(err.message, "bad"); reload(); }
+  try { const r = await api(path, { method: "POST", body }); if (message) toast(typeof message === "function" ? message(r) : message); reload(); return r; }
+  catch (err) { toast(err.message, "bad"); reload(); return null; }
 }
 
-async function onBoardClick(e) {
+function offerUndo(message, result) {
+  const bar = $("undo-bar");
+  if (!result || !result.task_ids || !result.task_ids.length) { toast(message); return; }
+  bar.innerHTML = `<span>${esc(message)}</span><button type="button" data-undo>Undo</button>`;
+  bar.hidden = false;
+  bar.querySelector("[data-undo]").addEventListener("click", async () => {
+    bar.hidden = true;
+    clearTimeout(undoTimer);
+    try { await api("/api/desk/restore", { method: "POST", body: { task_ids: result.task_ids, proposal_ids: result.proposal_ids || [] } }); toast("Put back"); }
+    catch (err) { toast(err.message, "bad"); }
+    reload();
+  }, { once: true });
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => { bar.hidden = true; }, 9000);
+}
+
+async function clearThread(id) {
+  const th = data.board.threads[id];
+  let decline = false;
+  if (th.waiting) {
+    decline = await confirmDialog({ title: "Clear this conversation?", body: `<p>${th.waiting === 1 ? "1 suggestion is" : `${th.waiting} suggestions are`} still waiting. Clearing declines ${th.waiting === 1 ? "it" : "them"}. Nothing changes on Meta.</p>`, confirm: "Clear and decline", danger: true });
+    if (!decline) return;
+  }
+  try {
+    const r = await api(`/api/desk/threads/${id}/clear`, { method: "POST", body: { decline_waiting: decline } });
+    if (selected === id) { selected = null; if (location.hash) history.replaceState(null, "", location.pathname + location.search); }
+    offerUndo("Conversation cleared", r);
+  } catch (err) { toast(err.message, "bad"); }
+  reload();
+}
+
+function askStop(id) {
+  stopSure = id;
+  clearTimeout(stopTimer);
+  stopTimer = setTimeout(() => { stopSure = null; renderView(); }, 6000);
+  renderView();
+}
+
+async function doStop(id) {
+  clearTimeout(stopTimer);
+  stopSure = null;
+  const t = liveTurn(data.board.threads[id], ix);
+  if (t) await act(`/api/desk/tasks/${t.id}/stop`, undefined, "Stopped");
+}
+
+function previewCr(id) {
+  const ad = ix.ads[id];
+  openViewer({ title: ad ? ad.name : "Ad", panes: [{ label: "Now", url: (f) => `/api/ads/ad/${encodeURIComponent(id)}/preview?format=${f}` }], link: { href: `/ad.html?id=${encodeURIComponent(id)}`, label: "Open the ad" } });
+}
+
+function previewProposal(id, compare) {
+  const p = ix.proposals.get(id);
+  const reels = p.payload.update_ad;
+  const proposed = { label: "Proposed", url: (f) => `/api/proposals/${id}/preview?format=${f}` };
+  const now = { label: "Running now", url: (f) => `/api/ads/ad/${encodeURIComponent(p.about_ad)}/preview?format=${f}` };
+  openViewer({ title: p.title, panes: compare ? [now, proposed] : [proposed], format: reels ? "INSTAGRAM_REELS" : PLACEMENTS[0][0], placements: reels ? [["INSTAGRAM_REELS", "Reels"]] : PLACEMENTS });
+}
+
+async function send({ stopFirst = false } = {}) {
+  const prompt = $("prompt").value.trim();
+  if (!prompt) { $("prompt").focus(); return; }
+  const sel = current();
+  const btns = $("cv-btns").querySelectorAll("button");
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    if (sel === "new") {
+      const t = await api("/api/desk/tasks", { method: "POST", body: { kind, prompt, campaign_id: $("campaign").value } });
+      $("prompt").value = "";
+      drafts.delete("new");
+      kind = "question";
+      fitPrompt();
+      selected = t.id;
+      await load(true);
+      location.hash = `r/${t.id}`;
+      return;
+    }
+    const th = data.board.threads[sel];
+    const lastTurn = th.turns.at(-1);
+    await api(`/api/desk/tasks/${lastTurn}/reply`, { method: "POST", body: { prompt, about_proposal: about ? about.id : undefined, stop_first: stopFirst } });
+    $("prompt").value = "";
+    drafts.delete(sel);
+    about = null;
+    stopSure = null;
+    fitPrompt();
+    await load(true);
+    const you = [...$("cv-col").querySelectorAll(".cv-you")].pop();
+    if (you) scrollToEl(you);
+  } catch (err) { toast(err.message, "bad"); renderDock(sel); }
+}
+
+async function onClick(e) {
   const hit = (name) => e.target.closest(`[${name}]`);
   let el;
-  if ((el = hit("data-toggle"))) { const id = Number(el.dataset.toggle); setRowOpen(id, el.getAttribute("aria-expanded") !== "true"); return; }
   if ((el = hit("data-accept"))) { acceptSheet([Number(el.dataset.accept)], reload); return; }
   if ((el = hit("data-accept-task"))) { acceptSheet(pendingOf(Number(el.dataset.acceptTask)), reload); return; }
   if (hit("data-accept-all")) { acceptSheet(pendingAll().map((p) => p.id), reload); return; }
-  if (hit("data-accept-picked")) { acceptSheet([...picked], reload); return; }
+  if ((el = hit("data-decline-one"))) { act(`/api/proposals/${el.dataset.declineOne}/decline`, undefined, "Declined"); return; }
   if ((el = hit("data-decline-task"))) { declineMany(pendingOf(Number(el.dataset.declineTask)), reload); return; }
   if (hit("data-decline-all")) { declineMany(pendingAll().map((p) => p.id), reload); return; }
-  if (hit("data-decline-picked")) { declineMany([...picked], reload); return; }
-  if (hit("data-clear-picks")) { picked.clear(); syncPicks(); return; }
-  if (hit("data-show-cleared")) { showCleared = !showCleared; $("trays").innerHTML = traysHtml(data, ix, current(), showCleared); return; }
+  if ((el = hit("data-revise"))) {
+    const id = Number(el.dataset.revise);
+    const p = ix.proposals.get(id);
+    const th = threadOf(ix.taskOf.get(id));
+    if (current() !== th) { location.hash = `r/${th}`; await new Promise((r) => setTimeout(r, 40)); }
+    about = p;
+    renderDock(th);
+    $("prompt").focus();
+    return;
+  }
+  if (hit("data-unchip")) { about = null; renderDock(current()); return; }
+  if ((el = hit("data-view-cr"))) { previewCr(el.dataset.viewCr); return; }
+  if ((el = hit("data-view-proposal"))) { previewProposal(Number(el.dataset.viewProposal), false); return; }
+  if ((el = hit("data-compare"))) { previewProposal(Number(el.dataset.compare), true); return; }
+  if ((el = hit("data-view-swipe"))) { openSwipe(ix.swipes.get(Number(el.dataset.viewSwipe))); return; }
+  if ((el = hit("data-pf"))) {
+    const media = el.closest(".sg-media");
+    media.querySelectorAll("[data-pf]").forEach((b) => b.setAttribute("aria-selected", String(b === el)));
+    const box = media.querySelector("[data-preview]");
+    box.dataset.format = el.dataset.pf;
+    box.innerHTML = '<div class="preview-skeleton"><span></span><span></span><span></span><p>Loading Meta\'s preview…</p></div>';
+    fillPreview(box);
+    return;
+  }
+  if ((el = hit("data-seed"))) { kind = el.dataset.seed; $("prompt").value = SEEDS[kind]; fitPrompt(); renderDock("new"); $("prompt").focus(); return; }
+  if (hit("data-show-cleared")) { showCleared = !showCleared; renderList(current()); return; }
   if ((el = hit("data-next"))) { act(`/api/desk/tasks/${el.dataset.next}/next`, undefined, "Moved to the front of the line"); return; }
-  if ((el = hit("data-clear-task"))) { act(`/api/desk/tasks/${el.dataset.clearTask}/clear`, {}, "Cleared. It's under Cleared if you need it."); return; }
-  if ((el = hit("data-restore"))) { act(`/api/desk/tasks/${el.dataset.restore}/clear`, { restore: true }, "Put back"); return; }
-  if ((el = hit("data-stop"))) {
-    const id = el.dataset.stop;
-    const yes = await confirmDialog({ title: "Stop this run?", body: `<p>${esc(requestTitle(ix.tasks.get(Number(id))))}</p><p class="muted">Your Mac ends it within about 15 seconds. Nothing has been changed on your ads, and you can ask again.</p>`, confirm: "Stop it", danger: true });
-    if (yes) act(`/api/desk/tasks/${id}/stop`, undefined, "Stopped");
+  if ((el = hit("data-clear-thread"))) { e.preventDefault(); clearThread(Number(el.dataset.clearThread)); return; }
+  if ((el = hit("data-clear-turn"))) { const r = await act(`/api/desk/tasks/${el.dataset.clearTurn}/clear`, {}); offerUndo("Reply removed", r); return; }
+  if ((el = hit("data-restore-thread"))) {
+    const th = data.board.threads[Number(el.dataset.restoreThread)];
+    act("/api/desk/restore", { task_ids: th.turns }, "Put back");
     return;
   }
+  if ((el = hit("data-clear-day"))) {
+    const threads = el.dataset.clearDay.split(",").map(Number);
+    try { const r = await api("/api/desk/clear", { method: "POST", body: { what: "finished", threads } }); selected = threads.includes(selected) ? null : selected; offerUndo(`${r.cleared} ${r.cleared === 1 ? "conversation" : "conversations"} cleared`, r); }
+    catch (err) { toast(err.message, "bad"); }
+    reload();
+    return;
+  }
+  if ((el = hit("data-stop"))) { const id = Number(el.dataset.stop); if (stopSure === id) doStop(id); else askStop(id); return; }
+  if (hit("data-keep")) { clearTimeout(stopTimer); stopSure = null; renderView(); return; }
+  if (hit("data-stop-send")) { send({ stopFirst: true }); return; }
   if ((el = hit("data-clear"))) {
-    if (el.dataset.clear === "queue") {
-      const n = data.board.next.length;
-      const yes = await confirmDialog({ title: `Clear the queue?`, body: `<p>Cancels ${n === 1 ? "the 1 request" : `all ${n} requests`} that haven't started. Whatever is running keeps going. You can ask again from Cleared.</p>`, confirm: `Cancel ${n}`, danger: true });
-      if (yes) act("/api/desk/clear", { what: "queue" }, (r) => `${r.cleared} cancelled`);
-    } else act("/api/desk/clear", { what: "finished" }, (r) => `${r.cleared} cleared. They're under Cleared if you need them.`);
+    const n = data.board.queue.length;
+    const yes = await confirmDialog({ title: "Clear the line?", body: `<p>Cancels ${n === 1 ? "the 1 job" : `all ${n} jobs`} that haven't started. Whatever is running keeps going.</p>`, confirm: `Cancel ${n}`, danger: true });
+    if (yes) act("/api/desk/clear", { what: "queue" }, (r) => `${r.cleared} cancelled`);
     return;
   }
-  if ((el = hit("data-goto-run"))) { e.preventDefault(); showRun(el.dataset.gotoRun); return; }
-  if (hit("data-ask")) openComposer(true);
-}
-
-function onBoardChange(e) {
-  const one = e.target.closest("[data-pick]");
-  const task = e.target.closest("[data-pick-task]");
-  const all = e.target.closest("[data-pick-all]");
-  if (!one && !task && !all) return;
-  const ids = one ? [Number(one.dataset.pick)] : task ? pendingOf(Number(task.dataset.pickTask)) : pendingAll().map((p) => p.id);
-  ids.forEach((id) => (e.target.checked ? picked.add(id) : picked.delete(id)));
-  syncPicks();
+  if ((el = hit("data-goto-run"))) { e.preventDefault(); location.hash = `r/${el.dataset.gotoRun}`; }
 }
 
 // Says so when something finishes while the page is open.
@@ -296,18 +500,16 @@ function announceFinished() {
   const active = new Set(data.tasks.filter((t) => ACTIVE.has(t.status)).map((t) => t.id));
   if (lastActive) {
     const done = data.tasks.filter((t) => lastActive.has(t.id) && !active.has(t.id) && t.status === "done");
-    if (done.length) toast(done.length === 1 ? `Claude finished: ${requestTitle(done[0]).slice(0, 70)}` : `Claude finished ${done.length} requests`);
+    if (done.length) toast(done.length === 1 ? `Claude finished: ${turnTitle(done[0]).slice(0, 70)}` : `Claude finished ${done.length} jobs`);
   }
   lastActive = active;
 }
 
-function openComposer(open) {
-  $("composer").hidden = !open;
-  $("ask-open").setAttribute("aria-expanded", String(open));
-  if (open) { $("composer").scrollIntoView({ block: "nearest" }); $("prompt").focus(); }
+function tick() {
+  document.querySelectorAll("[data-since]").forEach((el) => { el.textContent = clock((Date.now() - Number(el.dataset.since)) / 1000); });
 }
 
-async function load() {
+async function load(force) {
   try {
     data = await api("/api/desk");
     renderMac(data.bridge);
@@ -316,54 +518,48 @@ async function load() {
     sel.innerHTML = '<option value="">All campaigns</option>' + data.campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
     sel.value = keep || sel.dataset.want || "";
     delete sel.dataset.want;
-    if (!data.tasks.length) openComposer(true);
     announceFinished();
-    const json = JSON.stringify([data.tasks, data.ads, data.families, data.board, data.bridge.online, data.bridge.can_stop]);
-    if (json !== lastJson) { lastJson = json; renderView(); }
+    const json = JSON.stringify([data.tasks, data.ads, data.board, data.bridge.online, data.bridge.can_stop, data.bridge.can_reply]);
+    if (force || json !== lastJson) { lastJson = json; renderView(); }
   } catch (err) { toast(err.message, "bad"); }
   clearTimeout(pollTimer);
   const busy = data && data.tasks.some((t) => ACTIVE.has(t.status));
-  pollTimer = setTimeout(load, document.hidden ? 60000 : busy ? 4000 : 20000);
+  pollTimer = setTimeout(load, document.hidden ? 60000 : busy ? 3000 : 20000);
 }
 
 const me = await boot({ page: "desk", admin: true });
 if (me) {
   const q = new URLSearchParams(location.search);
-  setKind(KINDS[q.get("kind")] ? q.get("kind") : "question");
-  if (q.get("ask") || q.get("kind")) { openComposer(true); if (q.get("ask")) $("prompt").value = q.get("ask"); }
-  $("ask-open").addEventListener("click", () => openComposer($("composer").hidden));
-  $("ask-close").addEventListener("click", () => openComposer(false));
-  $("views").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-view]");
-    if (b) location.hash = b.dataset.view;
-  });
-  const main = document.querySelector(".main");
-  main.addEventListener("click", onBoardClick);
-  main.addEventListener("change", onBoardChange);
+  if (SEEDS[q.get("kind")]) kind = q.get("kind");
+  readHash();
+  if (q.get("ask") || q.get("kind")) {
+    selected = "new";
+    if (q.get("ask") && q.get("ask") !== "1") $("prompt").value = q.get("ask");
+  }
   if (q.get("campaign")) $("campaign").dataset.want = q.get("campaign");
-  $("kinds").addEventListener("click", (e) => { const b = e.target.closest("button[data-kind]"); if (b) setKind(b.dataset.kind); });
-  $("ask-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const prompt = $("prompt").value.trim();
-    if (!prompt) { $("prompt").focus(); toast("Write what you'd like Claude to do", "bad"); return; }
-    const btn = e.submitter || e.target.querySelector("button[type=submit]");
-    btn.disabled = true;
-    try {
-      await api("/api/desk/tasks", { method: "POST", body: { kind, prompt, campaign_id: $("campaign").value } });
-      $("prompt").value = "";
-      openComposer(false);
-      toast(data && data.bridge.online ? "Sent. Your Mac picks it up in a moment." : "Queued. It runs when your Mac is on.");
-      reload();
-    } catch (err) { toast(err.message, "bad"); } finally { btn.disabled = false; }
+  const main = document.querySelector(".main");
+  main.addEventListener("click", onClick);
+  main.addEventListener("toggle", (e) => {
+    const d = e.target.closest && e.target.closest("details[data-sec]");
+    if (d) openSecs.set(d.dataset.sec, d.open);
+  }, true);
+  $("ask-form").addEventListener("submit", (e) => { e.preventDefault(); send(); });
+  $("prompt").addEventListener("input", () => { fitPrompt(); if (data) renderDockFoot(current(), typeof current() === "number" ? data.board.threads[current()] : null); });
+  $("prompt").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    const coarse = window.matchMedia("(pointer: coarse)").matches;
+    if (e.metaKey || e.ctrlKey || (!e.shiftKey && !coarse)) { e.preventDefault(); $("ask-form").requestSubmit(); }
   });
-  $("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("ask-form").requestSubmit(); });
-  wireTaskActions(main, reload, openReports);
+  $("search").addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); if (data) renderList(current()); });
+  $("mac-open").addEventListener("click", () => $("mac-dialog").showModal());
+  $("mac-close").addEventListener("click", () => $("mac-dialog").close());
+  wireTaskActions(main, reload, null);
   wireSchedules($("view"), async () => { await loadSchedules(); reload(); });
   loadSchedules();
-  readHash();
   window.addEventListener("hashchange", route);
   phone.addEventListener("change", route);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+  setInterval(tick, 1000);
   onRefresh(load);
   load();
 }

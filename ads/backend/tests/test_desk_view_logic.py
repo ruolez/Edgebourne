@@ -98,38 +98,147 @@ if __name__ == "__main__":
 
 class BoardTest(unittest.TestCase):
     def board_of(self, *tasks):
-        return desk_view.board([{"queue_rank": 0, "archived_at": None, "seen_at": None, "finished_at": None, **t} for t in tasks])
+        return desk_view.board([{"queue_rank": 0, "archived_at": None, "seen_at": None, "finished_at": None, "thread_id": None, **t} for t in tasks])
 
-    def test_each_request_lands_in_one_tray(self):
+    def states(self, board):
+        return {tid: t["state"] for tid, t in board["threads"].items()}
+
+    def test_each_conversation_has_one_state_and_one_place(self):
         waiting = task(1, "review", proposals=[proposal(1, 1)], finished_at="2026-11-09T10:00")
         running = task(2, "render", status="running")
         queued = task(3, "question", status="queued")
         done = task(4, "question", finished_at="2026-11-09T11:00")
         failed = task(5, "question", status="failed", finished_at="2026-11-09T12:00")
         cleared = task(6, "question", archived_at="2026-11-09T13:00", finished_at="2026-11-09T12:30")
-        self.assertEqual(
-            {k: v for k, v in self.board_of(waiting, running, queued, done, failed, cleared).items() if k != "fresh"},
-            {"needs_you": [1], "working": [2], "next": [3], "finished": [5, 4], "cleared": [6]})
+        stopped = task(7, "question", status="cancelled", finished_at="2026-11-09T12:45")
+        board = self.board_of(waiting, running, queued, done, failed, cleared, stopped)
+        self.assertEqual({k: board[k] for k in ("working", "line", "recent", "cleared")},
+                         {"working": [2], "line": [3], "recent": [7, 5, 4, 1], "cleared": [6]})
+        self.assertEqual(self.states(board), {1: "needs", 2: "working", 3: "queued", 4: "done", 5: "failed", 6: "done", 7: "stopped"})
 
-    def test_a_running_request_stays_working_while_its_suggestions_arrive(self):
-        running = task(1, "review", status="running", proposals=[proposal(1, 1)])
-        result = self.board_of(running)
-        self.assertEqual((result["working"], result["needs_you"]), ([1], []))
+    def test_a_reply_joins_its_conversation_and_decides_its_state(self):
+        first = task(1, "review", finished_at="2026-11-09T10:00", seen_at="2026-11-09T10:01")
+        reply = task(2, "review", status="running", thread_id=1)
+        board = self.board_of(first, reply)
+        self.assertEqual((board["working"], board["recent"], list(board["threads"])), ([1], [], [1]))
+        self.assertEqual(board["threads"][1]["turns"], [1, 2])
 
-    def test_waiting_suggestions_keep_a_cleared_request_in_needs_you(self):
-        t = task(1, "review", proposals=[proposal(1, 1)], archived_at="2026-11-09T13:00")
-        self.assertEqual(self.board_of(t)["needs_you"], [1])
+    def test_a_follow_up_waiting_behind_a_running_turn_keeps_the_conversation_working(self):
+        board = self.board_of(task(1, "review", status="running"), task(2, "review", status="queued", thread_id=1))
+        self.assertEqual((board["threads"][1]["state"], board["queue"], board["line"]), ("working", [2], []))
 
-    def test_the_queue_runs_moved_up_requests_first_then_oldest(self):
+    def test_suggestions_waiting_on_an_earlier_turn_still_need_you(self):
+        first = task(1, "review", finished_at="2026-11-09T10:00", proposals=[proposal(1, 1), proposal(2, 1)])
+        reply = task(2, "review", finished_at="2026-11-09T11:00", thread_id=1, proposals=[proposal(3, 2, status="declined")])
+        board = self.board_of(first, reply)
+        self.assertEqual((board["threads"][1]["state"], board["threads"][1]["waiting"]), ("needs", 2))
+
+    def test_a_running_conversation_stays_working_while_its_suggestions_arrive(self):
+        board = self.board_of(task(1, "review", status="running", proposals=[proposal(1, 1)]))
+        self.assertEqual((board["working"], board["threads"][1]["state"]), ([1], "working"))
+
+    def test_waiting_suggestions_keep_a_cleared_turn_in_view(self):
+        board = self.board_of(task(1, "review", proposals=[proposal(1, 1)], archived_at="2026-11-09T13:00"))
+        self.assertEqual((board["recent"], board["cleared"]), ([1], []))
+
+    def test_clearing_one_turn_leaves_the_rest_of_the_conversation(self):
+        first = task(1, "review", finished_at="2026-11-09T10:00", archived_at="2026-11-09T13:00")
+        reply = task(2, "review", finished_at="2026-11-09T11:00", thread_id=1)
+        board = self.board_of(first, reply)
+        self.assertEqual((board["threads"][1]["turns"], board["recent"], board["cleared"]), ([2], [1], []))
+
+    def test_a_conversation_with_every_turn_cleared_shows_them_all_under_cleared(self):
+        first = task(1, "review", finished_at="2026-11-09T10:00", archived_at="2026-11-09T13:00")
+        reply = task(2, "review", finished_at="2026-11-09T11:00", thread_id=1, archived_at="2026-11-09T13:30")
+        board = self.board_of(first, reply)
+        self.assertEqual((board["threads"][1]["turns"], board["cleared"], board["threads"][1]["cleared"]), ([1, 2], [1], True))
+
+    def test_the_line_runs_moved_up_requests_first_then_oldest(self):
         tasks = [task(1, "question", status="queued"), task(2, "question", status="queued"),
                  task(3, "question", status="queued", queue_rank=-1)]
-        self.assertEqual(self.board_of(*tasks)["next"], [3, 1, 2])
+        board = self.board_of(*tasks)
+        self.assertEqual((board["line"], board["queue"]), ([3, 1, 2], [3, 1, 2]))
 
     def test_finished_means_new_until_opened_or_decided(self):
         new = task(1, "question", finished_at="2026-11-09T10:00")
         opened = task(2, "question", finished_at="2026-11-09T10:00", seen_at="2026-11-09T11:00")
         decided = task(3, "review", finished_at="2026-11-09T10:00", proposals=[proposal(1, 3, status="applied")])
-        self.assertEqual(self.board_of(new, opened, decided)["fresh"], [1])
+        threads = self.board_of(new, opened, decided)["threads"]
+        self.assertEqual({k: v["fresh"] for k, v in threads.items()}, {1: [1], 2: [], 3: []})
+
+    def test_recent_sorts_by_the_last_thing_said(self):
+        old_with_new_reply = task(1, "question", finished_at="2026-11-08T10:00")
+        reply = task(3, "question", finished_at="2026-11-09T18:00", thread_id=1)
+        newer = task(2, "question", finished_at="2026-11-09T09:00")
+        self.assertEqual(self.board_of(old_with_new_reply, newer, reply)["recent"], [1, 2])
+
+
+class ProposalRevisedTest(unittest.TestCase):
+    def test_a_suggestion_sent_back_says_so(self):
+        self.assertEqual(desk_view.proposal_state({"status": "revised"}, None, None), ("declined", "Sent back to Claude"))
+
+
+class TranscriptTest(unittest.TestCase):
+    def turn(self, tid, **kw):
+        return {"id": tid, "kind": "review", "prompt": f"ask {tid}", "status": "done", "summary": f"said {tid}", "error": None,
+                "options": {}, "reports": [], "proposals": [], **kw}
+
+    def test_earlier_turns_in_order_with_what_was_decided(self):
+        p = {"id": 7, "kind": "budget", "title": "Raise", "status": "declined", "rationale": "cheap", "entity_name": "C",
+             "field": "budget", "current_value": "$20/day", "proposed_value": "$24/day", "payload": None, "secret": "x"}
+        out = desk_view.transcript([self.turn(1, reports=[{"title": "R", "body": "text", "id": 3}], proposals=[p])])
+        self.assertEqual(out, [{"id": 1, "kind": "review", "you": "ask 1", "status": "done", "claude": "said 1", "error": None,
+                                "reports": [{"title": "R", "body": "text"}],
+                                "suggestions": [{"id": 7, "kind": "budget", "title": "Raise", "status": "declined", "rationale": "cheap",
+                                                 "entity_name": "C", "field": "budget", "current_value": "$20/day",
+                                                 "proposed_value": "$24/day", "payload": None}]}])
+
+    def test_long_reports_are_cut_and_only_recent_turns_kept(self):
+        turns = [self.turn(i, reports=[{"title": "R", "body": "x" * 9000}]) for i in range(1, 9)]
+        out = desk_view.transcript(turns, limit=3, body=100)
+        self.assertEqual(([t["id"] for t in out], len(out[0]["reports"][0]["body"])), ([6, 7, 8], 101))
+
+
+class ResumeFromTest(unittest.TestCase):
+    def test_the_latest_turn_the_mac_actually_started(self):
+        turns = [{"id": 1, "claimed_at": "x"}, {"id": 2, "claimed_at": "y"}, {"id": 3, "claimed_at": None}]
+        self.assertEqual(desk_view.resume_from(turns), 2)
+
+    def test_nothing_to_resume(self):
+        self.assertIsNone(desk_view.resume_from([{"id": 1, "claimed_at": None}]))
+
+
+class MentionedAdsTest(unittest.TestCase):
+    ADS = [{"id": "1", "name": "N1 - One simple system", "effective_status": "PAUSED"},
+           {"id": "2", "name": "N1 - One simple system · v2", "effective_status": "ACTIVE"},
+           {"id": "3", "name": "N3 - Same work twice", "effective_status": "ACTIVE"},
+           {"id": "4", "name": "N4 - Weekly report", "effective_status": "DELETED"},
+           {"id": "5", "name": "Summer promo", "effective_status": "ACTIVE"}]
+
+    def ids(self, text, **kw):
+        return desk_view.mentioned_ads(text, self.ADS, **kw)
+
+    def test_full_names_and_short_codes_in_reading_order(self):
+        self.assertEqual(self.ids("N3 - Same work twice beat the Summer promo."), ["3", "5"])
+        self.assertEqual(self.ids("Summer promo lost to N3 last week."), ["5", "3"])
+
+    def test_a_short_code_means_the_version_that_runs(self):
+        self.assertEqual(self.ids("N1 carried the account."), ["2"])
+
+    def test_a_named_version_wins(self):
+        self.assertEqual(self.ids("N1 · v2 carried it"), ["2"])
+
+    def test_a_full_name_is_not_also_counted_as_its_longer_sibling(self):
+        self.assertEqual(self.ids("Compare N1 - One simple system with the rest."), ["1"])
+
+    def test_codes_inside_other_words_do_not_count(self):
+        self.assertEqual(self.ids("AN3 and N33 and CN1x are not ads"), [])
+
+    def test_deleted_ads_are_left_out(self):
+        self.assertEqual(self.ids("N4 - Weekly report is gone, N4 too."), [])
+
+    def test_at_most_the_limit(self):
+        self.assertEqual(self.ids("N3 and Summer promo", limit=1), ["3"])
 
 
 def plan_item(pid=1, plan=None, **kw):

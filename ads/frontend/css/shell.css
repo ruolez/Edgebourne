@@ -567,3 +567,28 @@ body.has-bulk .content { padding-bottom: 96px; }
 .figs.pk-figs .fig { border-left: 0; border-top: 1px solid var(--line); }
 .figs.pk-figs .fig:nth-child(-n+2) { border-top: 0; }
 .figs.pk-figs .fig:nth-child(even) { border-left: 1px solid var(--line); }
+
+/* Phones keep their size: nothing wider than the screen, nothing that makes iOS zoom. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html, body { max-width: 100%; overflow-x: clip; overscroll-behavior-x: none; }
+a, button, input, select, textarea, label, summary, [role="button"] { touch-action: manipulation; }
+img, video, iframe, canvas, svg, select { max-width: 100%; }
+dialog { max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+/* iOS zooms the whole page into any field under 16px. */
+@media (pointer: coarse), (max-width: 960px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]), select, textarea, .input { font-size: 16px !important; }
+}
+@media (max-width: 960px) {
+  .app, .login-page { min-height: 100dvh; }
+  .main { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+  .main, .content, .panel, .panel-body { min-width: 0; }
+  .content p, .content li, .content dd, .content b, .content code { overflow-wrap: anywhere; }
+  .leads-bar select.tool { min-width: 0; flex: 1 1 100%; }
+  .advice-do { flex: 0 1 auto; flex-wrap: wrap; }
+  .panel-head { flex-wrap: wrap; }
+  .content .pill { white-space: normal; }
+  .tpl-list, .tpl-list li { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+  .tpl-list li { flex-wrap: wrap; }
+  .login-page { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  dialog.test-dialog form { max-height: calc(100dvh - 48px); }
+}

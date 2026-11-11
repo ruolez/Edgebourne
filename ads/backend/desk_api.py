@@ -45,7 +45,8 @@ WAIT_MAX = 25
 
 TASK_COLS = """t.id, t.kind, t.prompt, t.campaign_id, c.name AS campaign_name, t.status, t.progress,
                t.summary, t.error, t.created_at, t.claimed_at, t.finished_at, t.updated_at,
-               u.name AS created_by_name, t.options, t.scorecard, t.archived_at, t.seen_at, t.queue_rank"""
+               u.name AS created_by_name, t.options, t.scorecard, t.archived_at, t.seen_at, t.queue_rank,
+               t.thread_id, t.steps, t.swipe_ids"""
 TASK_FROM = "desk_tasks t LEFT JOIN campaigns c ON c.id = t.campaign_id LEFT JOIN users u ON u.id = t.created_by"
 
 
@@ -62,6 +63,7 @@ def bridge_status():
         "last_seen": float(seen) if seen else None,
         "online": online,
         "can_stop": not online or version_tuple(settings_store.get("bridge_version") or "0") >= STOP_BRIDGE,
+        "can_reply": not online or version_tuple(settings_store.get("bridge_version") or "0") >= REPLY_BRIDGE,
         "host": settings_store.get("bridge_host"),
         "version": settings_store.get("bridge_version"),
         "outdated": bridge_outdated(),
@@ -70,6 +72,7 @@ def bridge_status():
 
 
 STOP_BRIDGE = (1, 8)  # desk 1.8 ends the Claude run when its request is stopped here
+REPLY_BRIDGE = (1, 9)  # desk 1.9 continues the Claude session of the turn being replied to
 MIN_BRIDGE = (1, 6)  # desk 1.6 names the task's account; older ones answer every account as account 1
 SIGN_IN_TROUBLE = re.compile(r"(invalid api key|oauth token (has )?expired|authentication_error|please run /login|"
                              r"setup-token|not logged in|401 unauthorized|credit balance)", re.I)
@@ -177,7 +180,27 @@ def desk_story(tasks):
     for t in tasks:
         for p in t["proposals"]:
             state(p, t)
+    attach_previews(tasks, ads)
     return ads, desk_view.families(tasks, results)
+
+
+def attach_previews(tasks, ads):
+    """What each answer can show pictures of: the ads it talks about and the competitor ads it found."""
+    known = db.query("""SELECT id, name, status, effective_status, thumbnail_url, image_url, object_type, title, body
+                        FROM ads WHERE effective_status <> 'DELETED' ORDER BY id DESC LIMIT 500""")
+    swipe_ids = list({s for t in tasks for s in t.get("swipe_ids") or []})
+    swipes = {}
+    if swipe_ids:
+        import swipes_api
+        swipes = {s["id"]: s for s in swipes_api.listing_of(swipe_ids)}
+    for t in tasks:
+        text = "\n".join([t.get("summary") or ""] + [r["body"] for r in t["reports"]])
+        t["mentions"] = desk_view.mentioned_ads(text, known) if t["status"] == "done" else []
+        t["swipes"] = [swipes[s] for s in t.get("swipe_ids") or [] if s in swipes][:12]
+    by_id = {a["id"]: a for a in known}
+    for t in tasks:
+        for ad in t["mentions"]:
+            ads.setdefault(ad, by_id[ad])
 
 
 @bp.get("")
@@ -266,7 +289,8 @@ def run_schedule_now(sid):
 @admin_required
 def cancel_task(task_id):
     row = db.execute(
-        "UPDATE desk_tasks SET status = 'cancelled', finished_at = now(), updated_at = now(), archived_at = now() "
+        "UPDATE desk_tasks SET status = 'cancelled', finished_at = now(), updated_at = now(), "
+        "archived_at = CASE WHEN thread_id IS NULL THEN now() END "
         "WHERE id = %s AND status = 'queued' RETURNING id", (task_id,), returning=True,
     )
     if not row:
@@ -282,13 +306,68 @@ def stop_task(task_id):
     Claude tries to post after this is refused."""
     if not bridge_status()["can_stop"]:
         return api_error("This Mac helper is too old to stop a run. Re-run ads/bridge/install.sh on the Mac.", 426)
-    row = db.execute(
-        """UPDATE desk_tasks SET status = 'cancelled', progress = NULL, finished_at = now(), updated_at = now(), archived_at = now()
-           WHERE id = %s AND status IN ('claimed', 'running') RETURNING id""", (task_id,), returning=True)
-    if not row:
+    if not stop_run(task_id):
         return api_error("This request isn't running any more", 409)
-    log_activity("desk.task_stopped", subject=str(task_id))
     return jsonify({"ok": True})
+
+
+def stop_run(task_id):
+    """Stays in its conversation, so it can be picked up with new directions."""
+    row = db.execute(
+        """UPDATE desk_tasks SET status = 'cancelled', progress = NULL, finished_at = now(), updated_at = now()
+           WHERE id = %s AND status IN ('claimed', 'running') RETURNING id""", (task_id,), returning=True)
+    if row:
+        log_activity("desk.task_stopped", subject=str(task_id))
+    return bool(row)
+
+
+THREAD_SQL = "COALESCE(thread_id, id)"
+
+
+@bp.post("/tasks/<int:task_id>/reply")
+@admin_required
+def reply(task_id):
+    """A follow-up in the same conversation. It runs next, right after whatever is running now,
+    and continues the Claude session of the last turn."""
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    if not prompt:
+        return api_error("Write what you'd like Claude to do", 400, field="prompt")
+    if len(prompt) > MAX_PROMPT:
+        return api_error(f"Keep it under {MAX_PROMPT} characters", 400, field="prompt")
+    anchor = db.query(f"SELECT {THREAD_SQL} AS root FROM desk_tasks WHERE id = %s", (task_id,), one=True)
+    if not anchor:
+        return api_error("That conversation doesn't exist", 404)
+    root = anchor["root"]
+    last = db.query(f"SELECT id, kind, campaign_id, status, options FROM desk_tasks WHERE {THREAD_SQL} = %s ORDER BY id DESC LIMIT 1",
+                    (root,), one=True)
+    if last["status"] == "queued":
+        return api_error("Your last message is still waiting to start. Cancel it or wait for it.", 409)
+    if last["status"] in ("claimed", "running") and data.get("stop_first"):
+        if not bridge_status()["can_stop"]:
+            return api_error("This Mac helper is too old to stop a run. Re-run ads/bridge/install.sh on the Mac.", 426)
+        stop_run(last["id"])
+    old = last["options"] or {}
+    options = {**{k: old[k] for k in ("ad_id", "ad_name") if old.get(k)}, "reply": True}
+    about = data.get("about_proposal")
+    if about is not None:
+        sent = db.execute(
+            f"""UPDATE desk_proposals SET status = 'revised', decided_by = %s, decided_at = now()
+                WHERE id = %s AND status = 'pending'
+                  AND task_id IN (SELECT id FROM desk_tasks WHERE {THREAD_SQL} = %s) RETURNING id, title""",
+            (current_user()["id"], about, root), returning=True)
+        if not sent:
+            return api_error("That suggestion was already decided", 409)
+        options["about"] = {"id": sent["id"], "title": sent["title"]}
+    task = db.execute(
+        """INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options, thread_id, queue_rank)
+           VALUES (%s, %s, %s, %s, %s, %s, (SELECT COALESCE(MIN(queue_rank), 0) - 1 FROM desk_tasks WHERE status = 'queued')) RETURNING id""",
+        (last["kind"], prompt, last["campaign_id"], current_user()["id"], json.dumps(options), root), returning=True)
+    db.execute(f"""UPDATE desk_tasks SET archived_at = NULL WHERE {THREAD_SQL} = %s
+                   AND NOT EXISTS (SELECT 1 FROM desk_tasks o WHERE COALESCE(o.thread_id, o.id) = %s AND o.archived_at IS NULL AND o.id <> %s)""",
+               (root, root, task["id"]))
+    log_activity("desk.task_created", subject=str(task["id"]), details={"kind": last["kind"], "reply_to": root})
+    return jsonify(tasks_with_results("t.id = %s", [task["id"]], 1)[0]), 201
 
 
 @bp.post("/tasks/<int:task_id>/next")
@@ -309,35 +388,85 @@ WAITING_SQL = "EXISTS (SELECT 1 FROM desk_proposals p WHERE p.task_id = desk_tas
 @bp.post("/tasks/<int:task_id>/clear")
 @admin_required
 def clear_task(task_id):
-    """Clears a finished request off the board (or puts it back). Kept for Claude and the ad's story."""
-    if (request.get_json(silent=True) or {}).get("restore"):
-        row = db.execute("UPDATE desk_tasks SET archived_at = NULL WHERE id = %s AND status IN ('done', 'failed', 'cancelled') RETURNING id",
-                         (task_id,), returning=True)
-    else:
-        row = db.execute(f"""UPDATE desk_tasks SET archived_at = now(), seen_at = COALESCE(seen_at, now())
-                             WHERE id = %s AND status IN ('done', 'failed', 'cancelled') AND NOT {WAITING_SQL} RETURNING id""",
-                         (task_id,), returning=True)
+    """Removes one reply from its conversation. Kept for Claude and the ad's story; Undo puts it back."""
+    row = db.execute(f"""UPDATE desk_tasks SET archived_at = now(), seen_at = COALESCE(seen_at, now())
+                         WHERE id = %s AND status IN ('done', 'failed', 'cancelled') AND NOT {WAITING_SQL} RETURNING id""",
+                     (task_id,), returning=True)
     if not row:
-        return api_error("Only a finished request with nothing waiting on you can be cleared", 409)
+        return api_error("Only a finished reply with nothing waiting on you can be removed", 409)
+    return jsonify({"task_ids": [row["id"]], "proposal_ids": []})
+
+
+@bp.post("/threads/<int:root>/clear")
+@admin_required
+def clear_thread(root):
+    """Clears a whole conversation. Suggestions still waiting are declined only when the person said so."""
+    data = request.get_json(silent=True) or {}
+    turns = db.query(f"SELECT id, status FROM desk_tasks WHERE {THREAD_SQL} = %s", (root,))
+    if not turns:
+        return api_error("That conversation doesn't exist", 404)
+    ids = [t["id"] for t in turns]
+    if any(t["status"] in ACTIVE for t in turns):
+        return api_error("Claude is still on this one. Stop it first.", 409)
+    open_ones = db.query("SELECT id, status FROM desk_proposals WHERE task_id = ANY(%s) AND status IN ('pending', 'applying')", (ids,))
+    if any(p["status"] == "applying" for p in open_ones):
+        return api_error("A change from this conversation is being applied on Meta right now. Try again in a moment.", 409)
+    if open_ones and not data.get("decline_waiting"):
+        return api_error(f"{len(open_ones)} suggestion(s) are still waiting for you", 409, code="waiting")
+    declined = [p["id"] for p in open_ones]
+    if declined:
+        db.execute("UPDATE desk_proposals SET status = 'declined', decided_by = %s, decided_at = now() WHERE id = ANY(%s) AND status = 'pending'",
+                   (current_user()["id"], declined))
+    row = db.execute("""WITH c AS (UPDATE desk_tasks SET archived_at = now(), seen_at = COALESCE(seen_at, now())
+                                   WHERE id = ANY(%s) AND archived_at IS NULL RETURNING id)
+                        SELECT COALESCE(array_agg(id), '{}') AS ids FROM c""", (ids,), returning=True)
+    log_activity("desk.cleared", subject=str(root), details={"what": "conversation", "declined": len(declined)})
+    return jsonify({"task_ids": row["ids"], "proposal_ids": declined})
+
+
+@bp.post("/restore")
+@admin_required
+def restore():
+    """Undo for clearing: puts runs back, and any suggestion the clear declined back to waiting."""
+    data = request.get_json(silent=True) or {}
+    task_ids = [i for i in data.get("task_ids") or [] if isinstance(i, int)]
+    proposal_ids = [i for i in data.get("proposal_ids") or [] if isinstance(i, int)]
+    if not task_ids:
+        return api_error("Nothing to put back", 400)
+    db.execute("UPDATE desk_tasks SET archived_at = NULL WHERE id = ANY(%s)", (task_ids,))
+    if proposal_ids:
+        db.execute("UPDATE desk_proposals SET status = 'pending', decided_by = NULL, decided_at = NULL WHERE id = ANY(%s) AND status = 'declined' AND task_id = ANY(%s)",
+                   (proposal_ids, task_ids))
     return jsonify({"ok": True})
 
 
 @bp.post("/clear")
 @admin_required
 def clear_tray():
-    """Empties a tray: 'queue' cancels everything not started, 'finished' clears everything finished."""
-    what = (request.get_json(silent=True) or {}).get("what")
+    """'queue' cancels everything not started. 'finished' clears finished conversations (only the
+    ones named in `threads`, if given) and leaves any with a suggestion waiting or a run going."""
+    data = request.get_json(silent=True) or {}
+    what = data.get("what")
     if what == "queue":
-        rows = db.execute("""WITH c AS (UPDATE desk_tasks SET status = 'cancelled', finished_at = now(), updated_at = now(), archived_at = now()
+        rows = db.execute("""WITH c AS (UPDATE desk_tasks SET status = 'cancelled', finished_at = now(), updated_at = now(),
+                                               archived_at = CASE WHEN thread_id IS NULL THEN now() END
                                         WHERE status = 'queued' RETURNING id) SELECT COUNT(*) AS n FROM c""", returning=True)
-    elif what == "finished":
-        rows = db.execute(f"""WITH c AS (UPDATE desk_tasks SET archived_at = now(), seen_at = COALESCE(seen_at, now())
-                                         WHERE archived_at IS NULL AND status IN ('done', 'failed', 'cancelled') AND NOT {WAITING_SQL}
-                                         RETURNING id) SELECT COUNT(*) AS n FROM c""", returning=True)
-    else:
+        log_activity("desk.cleared", details={"what": what, "count": rows["n"]})
+        return jsonify({"cleared": rows["n"]})
+    if what != "finished":
         return api_error("what must be queue or finished", 400)
+    only = data.get("threads")
+    named = "AND COALESCE(t.thread_id, t.id) = ANY(%s)" if isinstance(only, list) else ""
+    rows = db.execute(f"""WITH c AS (UPDATE desk_tasks t SET archived_at = now(), seen_at = COALESCE(t.seen_at, now())
+                                     WHERE t.archived_at IS NULL {named}
+                                       AND NOT EXISTS (SELECT 1 FROM desk_tasks o LEFT JOIN desk_proposals p ON p.task_id = o.id AND p.status IN ('pending', 'applying')
+                                                       WHERE COALESCE(o.thread_id, o.id) = COALESCE(t.thread_id, t.id)
+                                                         AND (o.status IN ('queued', 'claimed', 'running') OR p.id IS NOT NULL))
+                                     RETURNING t.id, COALESCE(t.thread_id, t.id) AS root)
+                          SELECT COUNT(DISTINCT root) AS n, COALESCE(array_agg(id), '{{}}') AS ids FROM c""",
+                      [only] if named else None, returning=True)
     log_activity("desk.cleared", details={"what": what, "count": rows["n"]})
-    return jsonify({"cleared": rows["n"]})
+    return jsonify({"cleared": rows["n"], "task_ids": rows["ids"], "proposal_ids": []})
 
 
 @bp.post("/tasks/<int:task_id>/seen")
@@ -350,13 +479,14 @@ def mark_seen(task_id):
 @bp.post("/tasks/<int:task_id>/again")
 @admin_required
 def ask_again(task_id):
-    old = db.query("SELECT kind, prompt, campaign_id, options FROM desk_tasks WHERE id = %s", (task_id,), one=True)
+    old = db.query("SELECT kind, prompt, campaign_id, options, COALESCE(thread_id, id) AS root FROM desk_tasks WHERE id = %s", (task_id,), one=True)
     if not old:
         return api_error("Task not found", 404)
     task = db.execute(
-        "INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-        (old["kind"], old["prompt"], old["campaign_id"], current_user()["id"], json.dumps(old["options"] or {})), returning=True,
+        "INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options, thread_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (old["kind"], old["prompt"], old["campaign_id"], current_user()["id"], json.dumps(old["options"] or {}), old["root"]), returning=True,
     )
+    db.execute(f"UPDATE desk_tasks SET archived_at = NULL WHERE {THREAD_SQL} = %s AND id = %s", (old["root"], task_id))
     log_activity("desk.task_created", subject=str(task["id"]), details={"kind": old["kind"], "again_of": task_id})
     return jsonify(tasks_with_results("t.id = %s", [task["id"]], 1)[0]), 201
 
@@ -410,7 +540,8 @@ def claim_next():
     """The oldest queued task of any account (the Mac works for every account, one task at a time).
     An older Mac helper leaves advice runs waiting rather than run them without their tools."""
     import account_ctx
-    skip = "" if version_tuple(settings_store.get("bridge_version") or "0") >= ADVICE_BRIDGE else " AND kind <> 'advice'"
+    version = version_tuple(settings_store.get("bridge_version") or "0")
+    skip = ("" if version >= ADVICE_BRIDGE else " AND kind <> 'advice'") + ("" if version >= REPLY_BRIDGE else " AND options->>'reply' IS NULL")
     with account_ctx.all_accounts():
         return db.execute(
             f"""UPDATE desk_tasks SET status = 'claimed', claimed_at = now(), updated_at = now(),
@@ -424,7 +555,15 @@ def claim_next():
 
 def task_payload(task_id):
     rows = tasks_with_results("t.id = %s", [task_id], 1)
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    t = rows[0]
+    if (t.get("options") or {}).get("reply"):
+        # Newest first from the query; the conversation reads oldest first.
+        earlier = tasks_with_results("COALESCE(t.thread_id, t.id) = %s AND t.id < %s", [t["thread_id"], t["id"]], 12)[::-1]
+        t["thread"] = desk_view.transcript(earlier)
+        t["resume_from"] = desk_view.resume_from(earlier)
+    return t
 
 
 @agent_bp.get("/wait")
@@ -480,9 +619,11 @@ def set_status(task_id):
     error = (data.get("error") or "").strip()[:2000] or None
     if status == "running":
         row = db.execute(
-            """UPDATE desk_tasks SET status = 'running', updated_at = now(), progress = COALESCE(%s, progress)
-               WHERE id = %s AND status IN ('claimed', 'running') RETURNING id""",
-            (progress, task_id), returning=True)
+            """UPDATE desk_tasks SET status = 'running', updated_at = now(), progress = COALESCE(%(p)s, progress),
+                      steps = CASE WHEN %(p)s::text IS NOT NULL AND %(p)s::text IS DISTINCT FROM progress AND jsonb_array_length(steps) < 60
+                                   THEN steps || jsonb_build_object('text', %(p)s::text, 'at', now()) ELSE steps END
+               WHERE id = %(id)s AND status IN ('claimed', 'running') RETURNING id""",
+            {"p": progress, "id": task_id}, returning=True)
     else:
         row = db.execute(
             """UPDATE desk_tasks SET status = %s, finished_at = now(), updated_at = now(), progress = NULL,

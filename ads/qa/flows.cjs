@@ -395,8 +395,8 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   let deskMsg = null;
   for (let i = 0; i < 40 && !deskMsg; i++) { await page.waitForTimeout(1000); deskMsg = tgSent().slice(tgBeforeDesk).find((m) => /Daily health check: done/.test(m.text)); }
   check('a finished scheduled run reaches Telegram with its summary', Boolean(deskMsg) && /4 leads yesterday/.test(deskMsg.text), deskMsg ? deskMsg.text.split('\n').slice(0, 2).join(' | ') : 'none');
-  await page.click('#tab-requests');
-  await page.waitForFunction(() => /Daily health check/.test(document.querySelector('#trays')?.textContent || ''));
+  await page.click('.subnav [data-sub="chat"]');
+  await page.waitForFunction(() => /Daily health check/.test(document.querySelector('#cl-list')?.textContent || ''));
   check('the run is labelled with its schedule', true);
   await page.screenshot({ path: `${OUT}/flow-schedules.png`, fullPage: true });
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,json;db.execute('UPDATE desk_schedules SET enabled=FALSE, next_run_at=NULL, skipped=0, last_task_id=NULL, rule=%s WHERE id = 1', (json.dumps({'every': 'day', 'at': '08:30'}),))"`);
@@ -511,32 +511,27 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   // 5. Claude page: decisions first, then each ad's story, then every run (dev copy of the real Desk).
   require('child_process').execSync('docker cp dev/seed_desk.py edgebourne-ads-backend:/tmp/seed_desk.py && docker exec edgebourne-ads-backend sh -c "cd /app && python /tmp/seed_desk.py"', { cwd: __dirname + '/..' });
   await page.goto(BASE + '/desk.html', { waitUntil: 'networkidle' });
-  await page.waitForSelector('#detail .sg');
-  check('Claude opens on the suggestions waiting', (await page.getAttribute('#tab-requests', 'aria-selected')) === 'true' && (await page.locator('#detail .sg').count()) === 2);
-  check('each suggestion sits under what was asked', /You asked.*Polish .N1 - One simple system/s.test(await page.textContent('#detail .dg-head')));
-  check('a new-ad suggestion shows what changes', /Everything in one system → No more digging for numbers/.test(await page.textContent('#detail .sg .changes')));
-  await page.waitForSelector('#detail .decision-preview iframe', { timeout: 10000 });
+  await page.waitForSelector('#cv-col .sg');
+  check('Claude opens on the conversation with suggestions waiting', (await page.locator('#cv-col .sg').count()) === 2);
+  check('the suggestions sit in the conversation they came from', /Polish .N1 - One simple system/.test(await page.textContent('#cv-col .cv-you')));
+  check('a new-ad suggestion shows what changes', /Everything in one system → No more digging for numbers/.test(await page.textContent('#cv-col .sg .changes')));
+  await page.waitForSelector('#cv-col .decision-preview iframe', { timeout: 10000 });
   check('a new-ad suggestion loads Meta\'s preview of the ad', true);
-  check('the Ask Claude form stays folded until asked for', await page.isHidden('#composer'));
-  await page.click('#ask-open');
-  check('Ask Claude opens the form', await page.isVisible('#prompt'));
-  await page.click('#ask-close');
-  await page.screenshot({ path: `${OUT}/flow-5-claude-waiting.png`, fullPage: true });
-  await page.click('#views [data-view="ads"]');
+  check('the reply box is always there', await page.isVisible('#prompt'));
+  await page.screenshot({ path: `${OUT}/flow-5-claude-waiting.png` });
+  await page.click('.subnav [data-sub="ads"]');
   await page.waitForSelector('#view .runs');
   const story = await page.textContent('#view .family');
   check('By ad tells the ad\'s story with outcomes', /Created, off/.test(story) && /made in the New version run/.test(story) && /Not about one ad/.test(await page.textContent('#view')), story.replace(/\s+/g, ' ').trim().slice(0, 60));
   await page.screenshot({ path: `${OUT}/flow-5-claude-ads.png`, fullPage: true });
   await page.locator('#view .decide-link').first().click();
-  await page.waitForFunction(() => document.querySelector('#tab-requests')?.getAttribute('aria-selected') === 'true');
-  await page.waitForSelector('#detail .sg.flash');
+  await page.waitForSelector('#cv-col .sg.flash');
   check('Decide jumps to the suggestion', true);
-  const second = page.locator('#detail .sg', { hasText: 'the next hire' });
-  await second.locator('[data-decline]').click();
-  await page.click('dialog.confirm #cd-ok');
-  await page.waitForFunction(() => document.querySelectorAll('#detail .sg').length === 1);
-  check('declining removes it from the list', /1/.test(await page.textContent('#tab-requests')));
-  await page.locator('#detail .sg [data-accept]').click();
+  const second = page.locator('#cv-col .sg', { hasText: 'the next hire' });
+  await second.locator('[data-decline-one]').click();
+  await page.waitForFunction(() => document.querySelectorAll('#cv-col .sg').length === 1);
+  check('declining removes it from the list', /1/.test(await page.textContent('.cl-decide')));
+  await page.locator('#cv-col .sg [data-accept]').click();
   await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
   await page.click('dialog.accept-sheet #cd-ok');
   await page.waitForFunction(() => document.querySelector('dialog.accept-sheet #cd-ok')?.textContent === 'Done');
@@ -551,18 +546,18 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   // The board: a busy desk sorted into trays; one Accept across categories; clearing the queue.
   require('child_process').execSync('docker cp dev/seed_desk.py edgebourne-ads-backend:/tmp/seed_desk.py && docker cp dev/seed_board.py edgebourne-ads-backend:/tmp/seed_board.py && docker exec edgebourne-ads-backend sh -c "cd /app && python /tmp/seed_desk.py && python /tmp/seed_board.py"', { cwd: __dirname + '/..' });
   await page.goto(BASE + '/desk.html', { waitUntil: 'networkidle' });
-  await page.waitForSelector('#trays .tray');
-  const trayNames = await page.locator('#trays .tray-head h2').allTextContents();
-  check('requests sort into trays', trayNames.join() === 'Needs you,On your Mac,Up next,Finished', trayNames.join());
-  check('a finished request is marked New until opened', (await page.locator('#trays .rq-new').count()) === 3);
-  const freshRow = page.locator('#trays .rq', { hasText: 'most qualified leads' });
+  await page.waitForSelector('#cl-list .cl-group');
+  const groupNames = await page.locator('#cl-list .cl-head h2').allTextContents();
+  check('the list shows what is on the Mac, then the days', groupNames[0] === 'On your Mac' && groupNames.includes('Today'), groupNames.join());
+  check('a finished conversation is marked New until opened', (await page.locator('#cl-list .cl-new-tag').count()) === 4, String(await page.locator('#cl-list .cl-new-tag').count()));
+  const freshRow = page.locator('#cl-list .cl-row', { hasText: 'most qualified leads' });
   await freshRow.click();
-  await page.waitForFunction(() => /You asked.*most qualified leads.*Claude.*N1 v2/s.test(document.querySelector('#detail')?.textContent || ''));
-  check('a request shows the question and the answer together', await page.isVisible('#detail .thread'));
-  await page.click('a.rq-all');
-  await page.waitForSelector('#detail .dg');
-  check('opening it clears New', (await page.locator('#trays .rq-new').count()) === 2);
-  check('Review all shows every suggestion under its question', (await page.locator('#detail .dg').count()) === 3 && (await page.locator('#detail .sg').count()) === 9);
+  await page.waitForFunction(() => /most qualified leads.*Claude.*N1 v2/s.test(document.querySelector('#cv-col')?.textContent || ''));
+  check('a conversation shows the question and the answer together', await page.isVisible('#cv-col .cv-claude'));
+  await page.click('a.cl-decide');
+  await page.waitForSelector('#cv-col .cv-group');
+  check('opening it clears New', (await page.locator('#cl-list .cl-new-tag').count()) === 3);
+  check('Review all shows every suggestion under its question', (await page.locator('#cv-col .cv-group').count()) === 4 && (await page.locator('#cv-col .sg').count()) === 10, `${await page.locator('#cv-col .cv-group').count()} ${await page.locator('#cv-col .sg').count()}`);
   await page.click('[data-accept-all]');
   await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
   const sheet = await page.textContent('dialog.accept-sheet');
@@ -573,7 +568,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   check('a budget that moved since Claude read it says so and waits', !(await raise.locator('input').isChecked()) && /Claude saw \$20\.00 a day/.test(await raise.textContent()), await raise.textContent());
   await page.screenshot({ path: `${OUT}/flow-5-accept-sheet.png` });
   // Later flows count running ads, tests and tags, so leave those untouched here.
-  for (const title of ['Pause N4', 'Test the order portal', 'Tag N3']) await page.locator('dialog.accept-sheet .sheet-item', { hasText: title }).locator('input').uncheck();
+  for (const title of ['Pause N4', 'Test the order portal', 'Tag N3', 'New headline: Type it once']) await page.locator('dialog.accept-sheet .sheet-item', { hasText: title }).locator('input').uncheck();
   const ticked = await page.locator('dialog.accept-sheet [data-item]:checked').count();
   check('the button counts what is ticked', (await page.textContent('dialog.accept-sheet #cd-ok')) === `Accept ${ticked}`, String(ticked));
   await page.click('dialog.accept-sheet #cd-ok');
@@ -581,43 +576,148 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   const okRows = await page.locator('dialog.accept-sheet .sheet-item[data-state="ok"]').count();
   check('one Accept applies everything ticked, each reported', okRows === ticked, `${okRows} of ${ticked}: ${(await page.textContent('dialog.accept-sheet #sheet-title'))}`);
   await page.click('dialog.accept-sheet #cd-ok');
-  await page.waitForFunction((n) => document.querySelectorAll('#detail .sg').length === n, 9 - ticked);
+  await page.waitForFunction((n) => document.querySelectorAll('#cv-col .sg').length === n, 10 - ticked);
   check('what you did not tick stays waiting', true);
   const madeRun = await page.evaluate(async () => (await (await fetch('/api/desk')).json()).tasks.find((t) => t.kind === 'render' && t.status === 'queued' && t.options.from_proposal));
   check('a new version joins the queue, linked to its suggestion', !!madeRun);
-  await page.locator('#detail [data-pick]').first().check();
-  await page.waitForSelector('#pick-bar .bk');
-  check('ticking a suggestion brings up the bar', /1\s*selected/.test(await page.textContent('#pick-bar')));
-  await page.click('[data-clear-picks]');
+  const desk = () => page.evaluate(async () => (await fetch('/api/desk')).json());
+  const openConv = async (text) => { await page.locator('#cl-list .cl-row', { hasText: text }).first().click(); await page.waitForFunction((t) => (document.querySelector('#cv-head h1')?.textContent || '').includes(t), text); await page.waitForTimeout(200); };
+  const sendReply = async (text) => { await page.fill('#prompt', text); await page.locator('#cv-btns button[type=submit]').click(); };
+
+  // An answer reads as sections with its pictures.
+  await openConv('Audit the whole');
+  const secs = await page.locator('#cv-col .cv-sec > summary').allTextContents();
+  check('a report is split into its sections', secs.join() === "What the numbers say,What I'd do,Data used", secs.join());
+  const openSecs = await page.evaluate(() => [...document.querySelectorAll('#cv-col .cv-sec')].map((d) => d.open));
+  check('with suggestions below, only the first section starts open', openSecs.join() === 'true,false,false', openSecs.join());
+  check('numbers in a report table line up as numbers', (await page.locator('#cv-col .cv-sec table td.n').count()) >= 6);
+  check('every ad the answer names has a preview tile', (await page.locator('#cv-col .cv-cr').count()) >= 3);
+  await page.locator('#cv-col .cv-cr').first().click();
+  await page.waitForSelector('dialog.viewer iframe', { timeout: 10000 });
+  check("a tile opens Meta's preview, with the placements to switch between", (await page.locator('dialog.viewer [data-f]').count()) === 4);
+  await page.locator('dialog.viewer [data-f="INSTAGRAM_REELS"]').click();
+  await page.waitForFunction(() => /INSTAGRAM_REELS/.test(document.querySelector('dialog.viewer iframe')?.src || ''));
+  check('switching placement loads that placement', true);
+  await page.click('dialog.viewer [data-viewer-close]');
+  await page.screenshot({ path: `${OUT}/flow-5-conversation.png` });
+
+  await openConv('IT consultants');
+  check('competitor ads Claude found show in its answer', (await page.locator('#cv-col .cv-swipe').count()) === 3);
+  await page.locator('#cv-col .cv-swipe').first().click();
+  await page.waitForSelector('dialog.viewer .viewer-swipe');
+  check('a competitor ad opens with its words', /One outage/.test(await page.textContent('dialog.viewer')));
+  await page.click('dialog.viewer [data-viewer-close]');
+
+  // A suggestion can go back to Claude with a note.
+  await openConv('Two headlines');
+  const headlines = page.locator('#cv-col .sg', { hasText: 'Type it once' });
+  await headlines.locator('[data-preview] iframe').waitFor({ timeout: 15000 });
+  await headlines.locator('[data-pf="INSTAGRAM_STORY"]').click();
+  await page.waitForFunction(() => /INSTAGRAM_STORY/.test(document.querySelector('#cv-col .sg [data-preview] iframe')?.src || ''));
+  check('a suggested ad can be previewed per placement in place', true);
+  await headlines.locator('[data-compare]').click();
+  await page.waitForFunction(() => document.querySelectorAll('dialog.viewer .viewer-panes figure').length === 2);
+  check('a suggested ad can be compared with what runs now', /Running now.*Proposed/s.test(await page.textContent('dialog.viewer .viewer-panes')));
+  await page.click('dialog.viewer [data-viewer-close]');
+  await headlines.locator('[data-revise]').click();
+  check('Ask to change names the suggestion in the reply box', /About: New headline: Type it once/.test(await page.textContent('#cv-chip')));
+  const turnsBefore = await page.locator('#cv-col .cv-turn').count();
+  await sendReply('Try it as a question.');
+  await page.waitForFunction((n) => document.querySelectorAll('#cv-col .cv-turn').length === n + 1, turnsBefore);
+  let d = await desk();
+  const sentBack = d.tasks.flatMap((t) => t.proposals).find((p) => p.title === 'New headline: Type it once');
+  const revision = d.tasks.find((t) => t.prompt === 'Try it as a question.');
+  check('the suggestion is marked sent back and the reply carries it', sentBack.status === 'revised' && revision.options.about.id === sentBack.id && !!revision.thread_id, JSON.stringify(revision.options));
+  check('a follow-up goes to the front of the line', d.board.queue[0] === revision.id, d.board.queue.join());
+  const payload = JSON.parse(sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "import desk_api,json,account_ctx
+with account_ctx.use(1):
+    t=desk_api.task_payload(${revision.id}); print(json.dumps({'n':len(t['thread']),'first':t['thread'][0]['you'],'resume':t['resume_from']},default=str))"`));
+  check('the Mac gets the whole conversation and the turn to continue', payload.n === 2 && /Two headlines/.test(payload.first) && !!payload.resume, JSON.stringify(payload));
+  await page.click('#cv-line [data-cancel]');
+  await page.waitForFunction(() => /Cancelled before it started/.test(document.querySelector('#cv-col')?.textContent || ''));
+  check('a follow-up can be cancelled and stays in the conversation', await page.isVisible('#prompt'));
+
+  // Clearing: one tap, Undo, and suggestions are only declined when you say so.
+  const removed = await page.locator('#cv-col .cv-turn').count();
+  await page.locator('#cv-col .cv-turn').last().locator('[data-clear-turn]').click();
+  await page.waitForFunction((n) => document.querySelectorAll('#cv-col .cv-turn').length === n - 1, removed);
+  check('one reply can be removed from a conversation', /Reply removed/.test(await page.textContent('#undo-bar')));
+  await page.click('[data-undo]');
+  await page.waitForFunction((n) => document.querySelectorAll('#cv-col .cv-turn').length === n, removed);
+  check('Undo puts the reply back', true);
+  const waitingBefore = (await desk()).tasks.find((t) => /^Audit the whole/.test(t.prompt)).proposals.filter((p) => p.status === 'pending').length;
+  const waitingRow = page.locator('#cl-list .cl-item', { hasText: 'Audit the whole' });
+  await waitingRow.locator('[data-clear-thread]').click();
+  await page.waitForSelector('dialog.confirm');
+  check('clearing with a suggestion waiting asks first', /still waiting/.test(await page.textContent('dialog.confirm')));
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => !/Audit the whole/.test([...document.querySelectorAll('#cl-list .cl-row')].map((r) => r.textContent).join()));
+  await page.click('[data-undo]');
+  await page.waitForFunction(() => /Audit the whole/.test(document.querySelector('#cl-list')?.textContent || ''));
+  d = await desk();
+  check('Undo also brings its suggestions back', d.tasks.find((t) => /^Audit the whole/.test(t.prompt)).proposals.filter((p) => p.status === 'pending').length === waitingBefore, String(waitingBefore));
+
+  await page.click('a.cl-decide');
+  await page.waitForSelector('[data-decline-all]');
   await page.click('[data-decline-all]');
   await page.click('dialog.confirm #cd-ok');
-  await page.waitForFunction(() => /Nothing is waiting for you/.test(document.querySelector('#detail')?.textContent || ''));
-  check('Decline all empties the suggestions', !(await page.locator('a.rq-all').count()));
-  const queueRows = () => page.locator('#trays .tray', { has: page.locator('h2', { hasText: 'Up next' }) }).locator('.rq b').allTextContents();
-  const before5 = await queueRows();
-  await page.locator('#trays .rq-wrap', { hasText: 'restaurant owners' }).hover();
-  await page.locator('#trays .rq-wrap', { hasText: 'restaurant owners' }).locator('[data-next]').click();
-  await page.waitForFunction(() => /restaurant owners/.test(document.querySelector('#trays .rq-mark.pos')?.closest('.rq')?.textContent || ''));
-  check('Run next moves a request to the front', (await queueRows())[0].includes('restaurant owners'), before5.join(' | '));
-  await page.locator('#trays .rq-wrap', { hasText: 'On' , has: page.locator('[data-stop]') }).hover();
-  await page.locator('#trays [data-stop]').click();
-  await page.click('dialog.confirm #cd-ok');
-  await page.waitForFunction(() => !document.querySelector('#trays [data-stop]'));
-  check('Stop ends a running request', true);
+  await page.waitForFunction(() => /Nothing to decide/.test(document.querySelector('#cv-head')?.textContent || ''));
+  check('Decline all empties the suggestions', !(await page.locator('a.cl-decide').count()));
+
+  // The line, and stopping.
+  const lineRows = () => page.evaluate(() => [...document.querySelectorAll('#cl-list .cl-dot.pos')].map((d) => d.closest('.cl-row').querySelector('b').textContent));
+  const before5 = await lineRows();
+  await openConv('Three new ideas for restaurant');
+  await page.click('#cv-line [data-next]');
+  await page.waitForFunction(() => /restaurant owners/.test(document.querySelector('#cl-list .cl-dot.pos')?.closest('.cl-row').textContent || ''));
+  check('Run next moves a job to the front', (await lineRows())[0].includes('restaurant owners'), before5.join(' | '));
+  await page.locator('#cl-list .cl-item', { hasText: 'Why did cost per lead' }).locator('[data-cancel]').click();
+  await page.waitForFunction(() => !/Why did cost per lead/.test(document.querySelector('#cl-list')?.textContent.split('Today')[0] || ''));
+  check('Cancel is on every waiting job, no hover needed', true);
+
+  await openConv('N2 - Order portal');
+  check('a running job shows its steps with a live timer', (await page.locator('#cv-col .cv-trail li').count()) === 3 && /\d:\d\d/.test(await page.textContent('#cv-col .cv-trail li.now time')));
+  await page.fill('#prompt', 'And keep the sound.');
+  check('typing while it works offers both choices', /Stop and send/.test(await page.textContent('#cv-btns')) && /Send when it.s done/.test(await page.textContent('#cv-btns')));
+  await page.locator('#cv-btns button[type=submit]').click();
+  await page.waitForFunction(() => /follow-up runs as soon as this finishes/.test(document.querySelector('#cv-line')?.textContent || ''));
+  check('a follow-up can wait for the running job', true);
+  await page.click('#cv-line [data-cancel]');
+  await page.waitForSelector('#cv-btns [data-stop]');
+  await page.click('#cv-btns [data-stop]');
+  await page.waitForFunction(() => /Stop this job/.test(document.querySelector('#cv-hint')?.textContent || ''));
+  check('Stop asks once, right where you clicked', true);
+  await page.click('#cv-btns [data-stop]');
+  await page.waitForFunction(() => /You stopped this after/.test(document.querySelector('#cv-col')?.textContent || ''));
+  check('a stopped job stays in its conversation, ready for new directions', (await page.getAttribute('#prompt', 'placeholder')) === 'Reply to Claude…');
+  d = await desk();
+  check('the Mac is told: the run is cancelled on the server', d.tasks.filter((t) => t.status === 'running' || t.status === 'claimed').length === 0);
+
   await page.click('[data-clear="queue"]');
   await page.click('dialog.confirm #cd-ok');
-  await page.waitForFunction(() => ![...document.querySelectorAll('#trays .tray-head h2')].some((h) => h.textContent === 'Up next'));
-  check('Clear queue cancels everything not started', true);
-  await page.click('[data-clear="finished"]');
-  await page.waitForFunction(() => ![...document.querySelectorAll('#trays .tray-head h2')].some((h) => h.textContent === 'Finished'));
+  await page.waitForFunction(() => ![...document.querySelectorAll('#cl-list .cl-head h2')].some((h) => h.textContent === 'On your Mac'));
+  check('Clear the line cancels everything not started', true);
+
+  const dayCount = await page.locator('#cl-list .cl-item').count();
+  await page.locator('[data-clear-day]').first().click();
+  await page.waitForFunction((n) => document.querySelectorAll('#cl-list .cl-item').length < n, dayCount);
+  check('a whole day clears in one click, with Undo', /cleared/.test(await page.textContent('#undo-bar')));
   await page.click('[data-show-cleared]');
-  const clearedRow = page.locator('#trays .cleared .rq', { hasText: 'most qualified leads' });
-  await clearedRow.click();
-  await page.waitForSelector('#detail [data-restore]');
-  await page.click('#detail [data-restore]');
-  await page.waitForFunction(() => [...document.querySelectorAll('#trays .tray-head h2')].some((h) => h.textContent === 'Finished'));
-  check('cleared requests are kept and can be put back', true);
-  await page.screenshot({ path: `${OUT}/flow-5-board-cleared.png`, fullPage: true });
+  const clearedItem = page.locator('#cl-list .cl-item', { hasText: 'most qualified leads' });
+  await clearedItem.locator('[data-restore-thread]').click();
+  await page.waitForFunction(() => /most qualified leads/.test([...document.querySelectorAll('#cl-list .cl-group')].filter((g) => !g.querySelector('.cl-toggle')).map((g) => g.textContent).join()));
+  check('cleared conversations are kept and can be put back', true);
+
+  // A new conversation.
+  await page.click('.cl-new');
+  await page.waitForSelector('#cv-seeds:not([hidden])');
+  await page.click('[data-seed="review"]');
+  await page.locator('#cv-btns button[type=submit]').click();
+  await page.waitForFunction(() => /Review the last 7 days/.test(document.querySelector('#cv-head h1')?.textContent || ''));
+  d = await desk();
+  const started = d.tasks.find((t) => /^Review the last 7 days/.test(t.prompt));
+  check('a starter sets what kind of help it is and opens the conversation', started.kind === 'review' && !started.thread_id, started.kind);
+  await page.screenshot({ path: `${OUT}/flow-5-board-cleared.png` });
   }
 
   // Tests (experiments): set one up, read the verdict, finish it; Claude's suggested test becomes one on approval.
@@ -1051,12 +1151,11 @@ print(r['id'])"`).trim();
   await page.waitForSelector('.advice-list');
   check('Today shows the fixes waiting for a yes', /2 to approve/.test(await page.locator('.advice-list li', { hasText: 'vertical 9:16' }).textContent()));
   await page.goto(BASE + '/desk.html#waiting');
-  const vcard = page.locator('#detail .sg', { hasText: `9:16 for Reels: N3` });
+  const vcard = page.locator('#cv-col .sg', { hasText: `9:16 for Reels: N3` });
   await vcard.waitFor();
   check('the suggestion says the ad is updated, not copied, and previews it as Reels',
     /Update ad/.test(await vcard.locator('.sg-type').textContent()) && /updated, not copied/.test(await vcard.textContent())
     && (await vcard.locator('[data-preview]').getAttribute('data-format')) === 'INSTAGRAM_REELS');
-  if ((await vcard.locator('[data-toggle]').getAttribute('aria-expanded')) !== 'true') await vcard.locator('[data-toggle]').click();
   await vcard.locator('[data-preview] iframe').waitFor({ timeout: 15000 });
   check("Meta's Reels preview of the 9:16 version loads", /INSTAGRAM_REELS/.test(await vcard.locator('[data-preview] iframe').getAttribute('src')));
   const [n3id, n3vid] = mac.picks[0];
@@ -1069,7 +1168,7 @@ print(r['id'])"`).trim();
   await page.click('dialog.accept-sheet #cd-ok');
   await page.waitForFunction(() => document.querySelector('dialog.accept-sheet #cd-ok')?.textContent === 'Done', null, { timeout: 30000 });
   await page.click('dialog.accept-sheet #cd-ok');
-  await page.waitForFunction(() => ![...document.querySelectorAll('#detail .sg b')].some((h) => /N3/.test(h.textContent)));
+  await page.waitForFunction(() => ![...document.querySelectorAll('#cv-col .sg b')].some((h) => /N3/.test(h.textContent)));
   const n3after = fakeAd(n3id).creative_id;
   const n3made = fakeCreative(n3after);
   const feed = n3made.asset_feed_spec || {};
@@ -1081,7 +1180,7 @@ print(r['id'])"`).trim();
   sh('docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(\'http://localhost:5001/fake/_drop_form?on=1\')"');
   const [n4id] = mac.picks[1];
   const n4before = fakeAd(n4id).creative_id;
-  const n4card = page.locator('#detail .sg', { hasText: '9:16 for Reels: N4' });
+  const n4card = page.locator('#cv-col .sg', { hasText: '9:16 for Reels: N4' });
   const lostFormSeen = errors.length;
   await n4card.locator('[data-accept]').click();
   await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
@@ -1598,6 +1697,32 @@ with account_ctx.use(a2):
     if (sw > 391) tooWide.push(`${p} ${sw}px`);
   }
   check('on a 390px phone no page is wider than the screen', tooWide.length === 0, tooWide.join(' | '));
+  // Phones keep their size: iOS zooms into any field under 16px; anything past the edge makes the browser shrink the page.
+  const narrow = await (await browser.newContext({ viewport: { width: 320, height: 700 }, isMobile: true, hasTouch: true })).newPage();
+  await narrow.goto(BASE + '/login.html');
+  await narrow.fill('#email', 'eugene@edgebourne.com'); await narrow.fill('#password', 'localdev-pass-123');
+  await Promise.all([narrow.waitForURL('**/home.html**'), narrow.click('button[type=submit]')]);
+  const zoomers = [];
+  const spilling = [];
+  for (const p of ['/home.html', '/inbox.html', '/leads.html', '/ads.html', '/ad.html?id=120252672229400312', '/new-ad.html', '/new-campaign.html', '/performance.html', '/research.html', '/desk.html', '/settings.html', '/team.html', '/account.html']) {
+    await narrow.goto(BASE + p); await narrow.waitForTimeout(1200);
+    const r = await narrow.evaluate(() => {
+      const inScroller = (el) => { for (let e = el.parentElement; e && e !== document.body; e = e.parentElement) if (/auto|scroll|hidden|clip/.test(getComputedStyle(e).overflowX)) return true; return false; };
+      const all = [...document.querySelectorAll('body *')];
+      return { meta: document.querySelector('meta[name=viewport]').content, width: innerWidth,
+        small: all.filter((e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName) && !['checkbox', 'radio', 'hidden', 'range', 'color', 'file'].includes(e.type) && parseFloat(getComputedStyle(e).fontSize) < 16).map((e) => e.id || e.className),
+        over: all.filter((e) => getComputedStyle(e).position !== 'fixed' && e.getBoundingClientRect().width && e.getBoundingClientRect().right > innerWidth + 1 && !inScroller(e)).slice(0, 3).map((e) => `${e.tagName}:${e.textContent.slice(0, 30)}`) };
+    });
+    if (r.small.length || !/maximum-scale=1/.test(r.meta)) zoomers.push(`${p}: ${r.small.join()}`);
+    if (r.width !== 320 || r.over.length) spilling.push(`${p} ${r.width}: ${r.over.join(' / ')}`);
+  }
+  check('no field on a phone is small enough to make iOS zoom', zoomers.length === 0, zoomers.join(' | '));
+  check('on a 320px phone nothing runs past the edge', spilling.length === 0, spilling.join(' | '));
+  await narrow.goto(BASE + '/desk.html#new');
+  await narrow.waitForSelector('#cv-seeds:not([hidden])');
+  await narrow.waitForTimeout(300);
+  const fits = await narrow.evaluate(() => ({ cv: document.querySelector('#cv').getBoundingClientRect().bottom, h: innerHeight, page: document.documentElement.scrollHeight, tabs: getComputedStyle(document.querySelector('.tabbar')).display }));
+  check('a conversation fills the phone exactly, with no tab bar over the reply box', Math.abs(fits.cv - fits.h) <= 1 && fits.page <= fits.h + 1 && fits.tabs === 'none', JSON.stringify(fits));
   // The refusals above are the point of these checks; the browser logs each as a failed load. Real page errors stay.
   errors.splice(a2Seen, errors.length - a2Seen, ...errors.slice(a2Seen).filter((e) => !/Failed to load resource: the server responded with a status of 4\d\d/.test(e)));
 

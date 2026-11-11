@@ -1,6 +1,7 @@
 """How the Claude page reads Claude's work: which ad each proposal is about, what became
-of it, and which ads are versions of one another (a family). Pure functions; desk_api
-feeds them the rows."""
+of it, which ads are versions of one another (a family), and which runs make up one
+conversation. Pure functions; desk_api feeds them the rows."""
+import re
 from datetime import datetime, timedelta
 
 import money_rules
@@ -14,7 +15,7 @@ RESULT_STATES = {
 }
 DECIDED = {"pending": ("waiting", "Waiting for you"), "declined": ("declined", "Declined"),
            "expired": ("expired", "Expired"), "failed": ("failed", "Meta refused it"),
-           "applying": ("working", "Being applied on Meta")}
+           "applying": ("working", "Being applied on Meta"), "revised": ("declined", "Sent back to Claude")}
 
 
 def _time(value):
@@ -114,28 +115,102 @@ def is_fresh(t):
         and all(p["status"] == "pending" for p in t["proposals"])
 
 
+def thread_key(t):
+    """A conversation is named after its first run."""
+    return t.get("thread_id") or t["id"]
+
+
+def _waiting(t):
+    return [p for p in t["proposals"] if p["status"] == "pending"]
+
+
+def _in_view(t):
+    return not t.get("archived_at") or t["status"] in ("queued", "claimed", "running") or bool(_waiting(t))
+
+
+def _thread(key, turns):
+    """One conversation from its runs, oldest first. Cleared runs drop out; once every run is
+    cleared the whole conversation shows under Cleared."""
+    shown = [t for t in turns if _in_view(t)]
+    cleared = not shown
+    shown = shown or turns
+    statuses = {t["status"] for t in shown}
+    waiting = sum(len(_waiting(t)) for t in shown)
+    if statuses & {"claimed", "running"}:
+        state = "working"
+    elif "queued" in statuses:
+        state = "queued"
+    elif waiting:
+        state = "needs"
+    else:
+        state = {"failed": "failed", "cancelled": "stopped"}.get(shown[-1]["status"], "done")
+    return {"id": key, "turns": [t["id"] for t in shown], "state": state, "waiting": waiting, "cleared": cleared,
+            "fresh": [t["id"] for t in shown if is_fresh(t)], "last_at": shown[-1].get("finished_at") or shown[-1]["created_at"]}
+
+
 def board(tasks):
-    """Each request in exactly one tray, in reading order. tasks come newest first."""
-    out = {"needs_you": [], "working": [], "next": [], "finished": [], "cleared": [], "fresh": []}
-    finished, cleared, queued = [], [], []
-    for t in tasks:
-        waiting = any(p["status"] == "pending" for p in t["proposals"])
-        if t["status"] in ("claimed", "running"):
-            out["working"].append(t["id"])
-        elif t["status"] == "queued":
-            queued.append(t)
-        elif waiting:
-            out["needs_you"].append(t["id"])
-        elif t.get("archived_at"):
-            cleared.append(t)
-        else:
-            finished.append(t)
-            if is_fresh(t):
-                out["fresh"].append(t["id"])
-    out["next"] = [t["id"] for t in sorted(queued, key=lambda t: (t.get("queue_rank") or 0, t["id"]))]
-    out["finished"] = [t["id"] for t in sorted(finished, key=lambda t: _time(t["finished_at"] or t["created_at"]), reverse=True)]
-    out["cleared"] = [t["id"] for t in sorted(cleared, key=lambda t: _time(t["archived_at"]), reverse=True)]
-    return out
+    """Every conversation with its state, and the order the list shows them in."""
+    groups = {}
+    for t in sorted(tasks, key=lambda t: t["id"]):
+        groups.setdefault(thread_key(t), []).append(t)
+    threads = {key: _thread(key, turns) for key, turns in groups.items()}
+    queued = sorted((t for t in tasks if t["status"] == "queued"), key=lambda t: (t.get("queue_rank") or 0, t["id"]))
+    line = []
+    for t in queued:
+        key = thread_key(t)
+        if threads[key]["state"] == "queued" and key not in line:
+            line.append(key)
+    newest = lambda keys: sorted(keys, key=lambda k: _time(threads[k]["last_at"]), reverse=True)  # noqa: E731
+    return {"threads": threads, "queue": [t["id"] for t in queued], "line": line,
+            "working": [k for k, t in threads.items() if t["state"] == "working"],
+            "recent": newest(k for k, t in threads.items() if t["state"] in ("needs", "failed", "stopped", "done") and not t["cleared"]),
+            "cleared": newest(k for k, t in threads.items() if t["cleared"])}
+
+
+SUGGESTION_FIELDS = ("id", "kind", "title", "status", "rationale", "entity_name", "field", "current_value", "proposed_value", "payload")
+
+
+def transcript(turns, limit=6, body=6000):
+    """The conversation so far for a follow-up run: what was asked, said and decided, oldest first."""
+    cut = lambda text: text if len(text) <= body else text[:body] + "…"  # noqa: E731
+    return [{"id": t["id"], "kind": t["kind"], "you": t["prompt"], "status": t["status"], "claude": t.get("summary"), "error": t.get("error"),
+             "reports": [{"title": r["title"], "body": cut(r["body"])} for r in t["reports"]],
+             "suggestions": [{k: p.get(k) for k in SUGGESTION_FIELDS} for p in t["proposals"]]} for t in turns[-limit:]]
+
+
+def resume_from(turns):
+    """The latest earlier run the Mac actually started: its Claude session is the one to continue."""
+    return next((t["id"] for t in reversed(turns) if t.get("claimed_at")), None)
+
+
+AD_CODE = re.compile(r"^([A-Z]{1,3}\d{1,3})\b")
+
+
+def mentioned_ads(text, ads, limit=8):
+    """Ad ids a response talks about, in reading order: by full name, or by short code ("N3").
+    A bare code means the version that runs; "N1 · v2" means that version."""
+    ads = [a for a in ads if a.get("effective_status") != "DELETED" and a.get("name")]
+    found, lower = {}, (text or "").lower()
+    for ad in sorted(ads, key=lambda a: len(a["name"]), reverse=True):
+        name = ad["name"].lower()
+        at = lower.find(name)
+        if at >= 0:
+            found[ad["id"]] = at
+            lower = lower.replace(name, " " * len(name))
+    groups = {}
+    for ad in ads:
+        m = AD_CODE.match(ad["name"])
+        if m:
+            groups.setdefault(m.group(1), []).append(ad)
+    for code, members in groups.items():
+        hit = re.search(rf"(?<![a-z0-9]){code.lower()}(?![a-z0-9])(?:\s*·\s*v(\d+))?", lower)
+        if not hit:
+            continue
+        versioned = [a for a in members if hit.group(1) and a["name"].lower().endswith(f"v{hit.group(1)}")]
+        running = [a for a in members if a.get("effective_status") == "ACTIVE"]
+        pick = (versioned or running or members)[0]
+        found.setdefault(pick["id"], hit.start())
+    return sorted(found, key=found.get)[:limit]
 
 
 REVIEW_ORDER = ("money", "live", "create", "mac", "local", "blocked")

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Claude | Edge Bourne Ads</title>
   <link rel="icon" href="/img/favicon.svg">
   <link rel="manifest" href="/manifest.webmanifest">
@@ -14,64 +14,58 @@
   <link rel="stylesheet" href="/css/tokens.css?v=1794342631">
   <link rel="stylesheet" href="/css/app.css?v=1794342631">
   <link rel="stylesheet" href="/css/shell.css?v=1794342631">
-  <link rel="stylesheet" href="/css/desk.css?v=1794342631">
+  <link rel="stylesheet" href="/css/desk.css?v=1794358800">
 </head>
 <body>
   <div class="app">
     <aside class="rail"></aside>
     <main class="main">
-      <header class="page-head">
-        <h1>Claude</h1>
-        <span class="mac-status" id="mac-status" role="status"></span>
-        <span class="spacer"></span>
-        <button class="btn btn-claude-outline" type="button" id="ask-open" aria-expanded="false" aria-controls="composer">Ask Claude</button>
-      </header>
-      <nav class="tabs" id="views" role="tablist" aria-label="Claude's work">
-        <button type="button" role="tab" data-view="requests" id="tab-requests" aria-controls="work">Requests</button>
-        <button type="button" role="tab" data-view="ads" id="tab-ads" aria-controls="view">By ad</button>
-        <button type="button" role="tab" data-view="schedules" id="tab-schedules" aria-controls="view">Schedules</button>
-      </nav>
-      <div class="content stack desk">
-        <section class="panel composer" id="composer" aria-labelledby="ask-title" hidden>
-          <form class="panel-body stack" id="ask-form" novalidate>
-            <h2 class="composer-title" id="ask-title">Ask Claude</h2>
-            <div class="segmented kinds" id="kinds" role="radiogroup" aria-label="What kind of help">
-              <button type="button" role="radio" data-kind="question">Question</button>
-              <button type="button" role="radio" data-kind="review">Review results</button>
-              <button type="button" role="radio" data-kind="research">Research competitors</button>
-              <button type="button" role="radio" data-kind="creative">New ad ideas</button>
+      <div class="content desk">
+        <div class="convs" id="convs" data-mode="list">
+          <aside class="cl" aria-label="Conversations">
+            <div class="cl-top">
+              <a class="btn btn-claude cl-new" href="#new">New conversation</a>
+              <input class="input cl-search" id="search" type="search" placeholder="Search conversations" aria-label="Search conversations" autocomplete="off">
             </div>
-            <div class="field">
-              <label for="prompt" class="sr-only">Your direction for Claude</label>
-              <textarea class="input" id="prompt" name="prompt" rows="3" maxlength="4000"></textarea>
-            </div>
-            <div class="row composer-foot">
-              <div class="field inline-field">
-                <label for="campaign">Campaign</label>
-                <select class="input" id="campaign" name="campaign_id"><option value="">All campaigns</option></select>
+            <div class="cl-list" id="cl-list"></div>
+            <button class="cl-foot" type="button" id="mac-open"><span class="led" id="mac-led" aria-hidden="true"></span><span id="mac-summary"></span></button>
+          </aside>
+          <section class="cv" id="cv" aria-label="Conversation">
+            <header class="cv-head" id="cv-head"></header>
+            <div class="cv-scroll" id="cv-scroll"><div class="cv-col" id="cv-col" aria-live="polite"></div></div>
+            <div class="cv-dock" id="cv-dock">
+              <div class="cv-dock-in">
+                <div class="cv-line" id="cv-line" hidden></div>
+                <form class="cv-box" id="ask-form" novalidate>
+                  <div class="cv-chip" id="cv-chip" hidden></div>
+                  <label for="prompt" class="sr-only">Your message to Claude</label>
+                  <textarea id="prompt" name="prompt" rows="2" maxlength="4000"></textarea>
+                  <div class="cv-box-foot">
+                    <select class="input cv-scope" id="campaign" name="campaign_id" aria-label="Campaign"><option value="">All campaigns</option></select>
+                    <span class="cv-hint" id="cv-hint"></span>
+                    <span class="cv-btns" id="cv-btns"></span>
+                  </div>
+                </form>
+                <div class="cv-seeds" id="cv-seeds" hidden>
+                  <button type="button" data-seed="review">Review the last 7 days against target</button>
+                  <button type="button" data-seed="question">Why did cost per lead change?</button>
+                  <button type="button" data-seed="creative">Three new ad ideas</button>
+                  <button type="button" data-seed="research">What are competitors running?</button>
+                </div>
               </div>
-              <span class="spacer"></span>
-              <button class="btn" type="button" id="ask-close">Close</button>
-              <button class="btn btn-claude" type="submit">Send to Claude</button>
             </div>
-            <p class="muted small flush" id="ask-hint"></p>
-          </form>
-        </section>
-
-        <div class="work" id="work" role="tabpanel" aria-labelledby="tab-requests">
-          <aside class="trays" id="trays" aria-label="Your requests"></aside>
-          <section class="detail" id="detail" aria-label="The open request"></section>
+          </section>
         </div>
-        <div class="stack" id="view" role="tabpanel" aria-live="polite" hidden></div>
-
-        <details class="panel mac-panel" id="mac-panel">
-          <summary class="panel-body"><b>Your Mac</b> <span class="muted" id="mac-summary"></span></summary>
-          <div class="panel-body stack" id="mac-body"></div>
-        </details>
+        <div class="stack desk-view" id="view" hidden></div>
       </div>
-      <div class="bk-dock" id="pick-bar" hidden></div>
+      <div class="cv-undo" id="undo-bar" role="status" hidden></div>
     </main>
   </div>
+  <dialog class="mac-dialog" id="mac-dialog" aria-labelledby="mac-title">
+    <h2 id="mac-title">Your Mac</h2>
+    <div class="stack" id="mac-body"></div>
+    <div class="row end"><button class="btn" type="button" id="mac-close">Close</button></div>
+  </dialog>
   <script type="module" src="/js/desk.js"></script>
 </body>
 </html>

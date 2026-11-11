@@ -13,6 +13,7 @@ export const ACTIVE = new Set(["queued", "claimed", "running"]);
 const DECIDED = {
   applied: ["ok", "Approved and applied"], approved: ["ok", "Approved"], declined: ["", "Declined"],
   failed: ["bad", "Approved, but Meta refused"], expired: ["", "Expired"], applying: ["claude", "Being applied on Meta…"],
+  revised: ["", "Sent back to Claude"],
 };
 
 const SCORE_WORDS = { 5: "Ready", 4: "Small polish", 3: "Worth fixing", 2: "Hurting results", 1: "Blocking" };
@@ -113,7 +114,8 @@ export function taskCard(t, openReports = new Set()) {
     </div>` : "";
   const actions = [
     t.status === "queued" ? `<button class="btn btn-small" type="button" data-cancel="${t.id}">Cancel</button>` : "",
-    ["failed", "cancelled", "done"].includes(t.status) ? `<button class="btn btn-small" type="button" data-again="${t.id}">Ask again</button>` : "",
+    ["claimed", "running"].includes(t.status) ? `<button class="btn btn-small" type="button" data-stop-task="${t.id}">Stop</button>` : "",
+    ["failed", "cancelled", "done"].includes(t.status) ? `<a class="btn btn-small" href="/desk.html#r/${t.id}">Reply</a><button class="btn btn-small" type="button" data-again="${t.id}">Ask again</button>` : "",
   ].join("");
   return `<article class="panel task ${t.status}">
     <div class="panel-body stack tight">
@@ -201,7 +203,13 @@ export function wireTaskActions(root, onChange, openReports) {
       return;
     }
     const decline = e.target.closest("[data-decline]");
+    const stopTask = e.target.closest("[data-stop-task]");
     try {
+      if (stopTask) {
+        const yes = await confirmDialog({ title: "Stop this job?", body: "<p>Your Mac ends it within a few seconds. Nothing changes on your ads.</p>", confirm: "Stop it", danger: true });
+        if (yes) { await api(`/api/desk/tasks/${stopTask.dataset.stopTask}/stop`, { method: "POST" }); toast("Stopped"); onChange(); }
+        return;
+      }
       if (cancel) { await api(`/api/desk/tasks/${cancel.dataset.cancel}/cancel`, { method: "POST" }); toast("Cancelled"); onChange(); }
       if (again) { await api(`/api/desk/tasks/${again.dataset.again}/again`, { method: "POST" }); toast("Asked again"); onChange(); }
       if (approve || decline) {

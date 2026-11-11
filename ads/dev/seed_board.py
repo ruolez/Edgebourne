@@ -45,4 +45,50 @@ task("render", "Make a new version of “N2 - Order portal · v3”.\nDirection:
 task("question", "Why did cost per lead jump yesterday?", status="queued", mins_ago=4)
 task("creative", "Three new ideas for restaurant owners, same free intro call offer.", status="queued", mins_ago=3)
 task("review", "Scheduled: Optimizer review", status="queued", options={"schedule": "Optimizer review"}, mins_ago=2)
+
+
+# A conversation's worth of shape: a report with sections, a follow-up, the live steps, ads Claude found.
+def report(tid, title, body):
+    db.execute("INSERT INTO desk_reports (task_id, title, body) VALUES (%s, %s, %s)", (tid, title, body))
+
+
+report(audit, "Account audit, last 7 days", """Two ads carry the account and N4 is burning money. Pause N4, give the campaign +20%, and turn N2 back on; labels and one test are ready.
+
+## What the numbers say
+| Ad | Spend | Leads | Per lead |
+|---|---|---|---|
+| N1 - One simple system · v2 | $58.10 | 4 | $14.53 |
+| N3 - Same work twice | $44.20 | 2 | $22.10 |
+| N4 - Weekly report | $37.70 | 0 | none |
+
+N4 has spent 63% of the $60 target with no lead yet.
+
+## What I'd do
+1. Pause N4 now. It has the weakest hook rate of the five.
+2. Give the campaign +20%. Cost per lead is well under target.
+3. Narrow the age range only if lead quality stays low next week.
+
+## Data used
+Last 7 complete days, Meta insights; lead stages from the dashboard inbox.""")
+
+N1 = "120252672229040312"
+first = task("creative", "Two headlines for N1 that are less formal.", summary="Two options; “Type it once” is the one I’d run.", options={"ad_id": N1, "ad_name": "N1 - One simple system"}, mins_ago=30)
+proposal(first, "creative", "New headline: Stop typing it twice", "Fixes the length check.", {"template_ad_id": N1, "media": {"kind": "same"}, "name": "N1 · short headline", "title": "Stop typing it twice", "body": "Same work, entered twice. One system fixes that."}, status="revised")
+reply = task("creative", "Shorter, and keep it under 20 characters.", summary="Shorter, same offer. “Type it once” is 12 characters.", options={"ad_id": N1, "ad_name": "N1 - One simple system", "reply": True, "about": {"id": 0, "title": "New headline: Stop typing it twice"}}, mins_ago=22)
+db.execute("UPDATE desk_tasks SET thread_id = %s, steps = %s WHERE id = %s", (first, json.dumps([{"text": "Reading the earlier headline", "at": "2026-11-10T20:01:00Z"}, {"text": "Writing two shorter ones", "at": "2026-11-10T20:02:12Z"}]), reply))
+proposal(reply, "creative", "New headline: Type it once", "12 characters, and it says the benefit.", {"template_ad_id": N1, "media": {"kind": "same"}, "name": "N1 · Type it once", "title": "Type it once", "body": "Same work, entered twice. One system fixes that."})
+
+db.execute("""UPDATE desk_tasks SET steps = %s WHERE status = 'running'""", (json.dumps([
+    {"text": "Reading your ads", "at": "2026-11-11T00:00:00Z"}, {"text": "Rebuilding the opening", "at": "2026-11-11T00:01:30Z"}, {"text": "Rendering the 4:5 video", "at": "2026-11-11T00:03:00Z"}]),))
+
+found = task("research", "What are IT consultants in Southern California running?", summary="Eleven local firms run ads. Nine lead with fear of downtime and none offer a free review.", seen=False, mins_ago=11)
+report(found, "Competitor scan", "Eleven local firms run ads.\n\n## What they run\nFear of downtime: 9 of 11. Static images with a phone number.\n\n## Worth testing\nA short video of the review itself.")
+ids = []
+for i, page in enumerate(["Coastline IT", "SoCal Tech Partners", "Harbor Managed Services"]):
+    r = db.execute("""INSERT INTO swipes (library_id, page_name, body, title, cta, started_on, platforms, tags, source)
+                      VALUES (%s, %s, %s, %s, 'Learn more', current_date - %s, '["facebook"]', '{}', 'claude')
+                      ON CONFLICT DO NOTHING RETURNING id""", (f"qa{i}{found}", page, "One outage can cost a week of revenue.", "Downtime is expensive", 12 + 25 * i), returning=True)
+    if r:
+        ids.append(r["id"])
+db.execute("UPDATE desk_tasks SET swipe_ids = %s WHERE id = %s", (ids, found))
 print("board seeded")

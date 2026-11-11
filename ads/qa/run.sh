@@ -6,5 +6,5 @@ set -e
 cd "$(dirname "$0")/.."
 docker restart edgebourne-fake-meta edgebourne-ads-backend >/dev/null
 sleep 6
-docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "import db, insights; db.execute('DELETE FROM meta_cache'); db.execute('DELETE FROM status_events'); insights.sync_structure()" >/dev/null
+docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "import db, insights; db.execute('DELETE FROM meta_cache'); db.execute('DELETE FROM status_events'); db.execute('DELETE FROM alerts'); insights.sync_structure()" >/dev/null
 node qa/flows.cjs

@@ -17,8 +17,12 @@ const ACTIVE = new Set(["queued", "claimed", "running"]);
 export function index(data) {
   const proposals = new Map();
   const taskOf = new Map();
-  data.tasks.forEach((t) => t.proposals.forEach((p) => { proposals.set(p.id, p); taskOf.set(p.id, t); }));
-  return { proposals, taskOf, tasks: new Map(data.tasks.map((t) => [t.id, t])), ads: data.ads || {} };
+  const swipes = new Map();
+  data.tasks.forEach((t) => {
+    t.proposals.forEach((p) => { proposals.set(p.id, p); taskOf.set(p.id, t); });
+    (t.swipes || []).forEach((s) => swipes.set(s.id, s));
+  });
+  return { proposals, taskOf, swipes, tasks: new Map(data.tasks.map((t) => [t.id, t])), ads: data.ads || {} };
 }
 
 const pill = (state) => `<span class="pill ${STATE_PILL[state[0]] ?? ""}">${esc(state[1])}</span>`;
@@ -107,15 +111,6 @@ function changeList(p, ix) {
   return rows.length ? `<dl class="facts changes">${rows.join("")}</dl>` : "";
 }
 
-function sourceLine(p, ix) {
-  const t = ix.taskOf.get(p.id);
-  if (!t) return "";
-  const score = t.scorecard && t.scorecard.overall != null ? ` · scored ${t.scorecard.overall}/5` : "";
-  const asked = p.requested_by ? "The new version you asked for · " : "";
-  const story = p.kind === "experiment" || !p.about_ad ? "" : ` · <a href="#ads" data-goto-run="${t.id}">See this ad's story</a>`;
-  return `<p class="source muted small flush">${asked}From the ${esc((RUN_WORDS[t.kind] || KIND_LABELS[t.kind] || t.kind).toLowerCase())} run, ${esc(when(t.created_at))}${score}${story}</p>`;
-}
-
 function changeSummary(p, ix) {
   const pl = p.payload || {};
   if (p.kind === "tags") return "Labels the ad's idea so Results can compare ideas. Nothing changes on Meta.";
@@ -141,32 +136,42 @@ export function suggestionType(p) {
   return { label: "Note", rank: 7 };
 }
 
-// One suggestion: a line you can tick, accept or decline, which opens to the reason and Meta's preview.
-export function suggestion(p, ix, { open, picked }) {
-  const hasPreview = p.kind === "creative" && p.payload;
-  const editable = hasPreview && !p.payload.update_ad;
+const PREVIEW_TABS = [["MOBILE_FEED_STANDARD", "Feed"], ["INSTAGRAM_REELS", "Reels"], ["INSTAGRAM_STORY", "Stories"]];
+
+// What a suggestion shows beside its words: Meta's preview of a new ad, or the ad it would change.
+function suggestionMedia(p, ix) {
+  if (p.kind === "creative" && p.payload) {
+    const reels = p.payload.update_ad;
+    return `<div class="sg-media">
+      ${reels ? '<p class="sg-media-label">How Reels will show it</p>' : `<div class="sg-tabs" role="tablist" aria-label="Placement">${PREVIEW_TABS.map(([f, l], i) => `<button type="button" role="tab" data-pf="${f}" aria-selected="${!i}">${l}</button>`).join("")}</div>`}
+      <div class="decision-preview" data-preview="${p.id}"${reels ? ' data-format="INSTAGRAM_REELS"' : ""} aria-label="Preview of the ad as Meta shows it"><div class="preview-skeleton"><span></span><span></span><span></span><p>Loading Meta's preview…</p></div></div>
+      <div class="sg-media-do"><button class="btn btn-small btn-quiet" type="button" data-view-proposal="${p.id}">Larger</button>${ix.ads[p.about_ad] ? `<button class="btn btn-small btn-quiet" type="button" data-compare="${p.id}">Compare with current</button>` : ""}</div>
+    </div>`;
+  }
+  const ad = ix.ads[p.about_ad];
+  const src = ad && (ad.thumbnail_url || ad.image_url);
+  return ad ? `<button class="sg-thumb" type="button" data-view-cr="${esc(ad.id)}" aria-label="Preview ${esc(ad.name)}">${src ? `<img src="${esc(src)}" alt="" loading="lazy">` : icon("image")}</button>` : "";
+}
+
+// One suggestion: its preview, what would change, why, and what you can do about it.
+export function suggestion(p, ix) {
+  const editable = p.kind === "creative" && p.payload && !p.payload.update_ad;
   const change = changeSummary(p, ix);
-  return `<article class="sg" id="p-${p.id}" data-proposal="${p.id}" data-title="${esc(p.title)}" data-change="${esc(change)}">
-    <div class="sg-head">
-      <label class="sg-tick"><input type="checkbox" data-pick="${p.id}" ${picked ? "checked" : ""} aria-label="Select: ${esc(p.title)}"></label>
-      <button type="button" class="sg-open" data-toggle="${p.id}" aria-expanded="${open}" aria-controls="sg-body-${p.id}">
-        <span class="sg-type">${esc(suggestionType(p).label)}</span>
-        <span class="sg-text"><b>${esc(p.title)}</b>${change ? `<small>${esc(change)}</small>` : ""}</span>
-        <svg class="sg-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-      <span class="sg-do">
-        <button class="btn btn-small btn-claude-outline" type="button" data-accept="${p.id}">Accept</button>
-        <button class="btn btn-small btn-quiet" type="button" data-decline="${p.id}">Decline</button>
-      </span>
-    </div>
-    <div class="sg-body${hasPreview ? " with-preview" : ""}" id="sg-body-${p.id}" ${open ? "" : "hidden"}>
-      ${hasPreview ? `<div class="decision-preview" data-preview="${p.id}"${p.payload.update_ad ? ' data-format="INSTAGRAM_REELS"' : ""} aria-label="Preview of the ad as Meta shows it"><div class="preview-skeleton"><span></span><span></span><span></span><p>Loading Meta's preview…</p></div></div>` : ""}
-      <div class="sg-why">
-        ${p.rationale ? `<p class="why">${esc(p.rationale)}</p>` : ""}
-        ${changeList(p, ix)}
-        ${isVersion(p) ? '<p class="muted small flush">Claude rebuilds the video on your Mac (10–40 minutes) and brings it back here for a yes or no. Nothing changes on the live ad.</p>' : ""}
-        ${editable ? `<p class="flush"><a class="btn btn-small" href="/new-ad.html?proposal=${p.id}">Edit first</a></p>` : ""}
-        ${sourceLine(p, ix)}
+  const media = suggestionMedia(p, ix);
+  const big = p.kind === "creative" && p.payload;
+  return `<article class="sg ${big ? "with-media" : media ? "with-thumb" : ""}" id="p-${p.id}" data-proposal="${p.id}" data-title="${esc(p.title)}" data-change="${esc(change)}">
+    ${media}
+    <div class="sg-main">
+      <header class="sg-top"><span class="sg-type">${esc(suggestionType(p).label)}</span><b>${esc(p.title)}</b></header>
+      ${changeList(p, ix)}
+      ${p.rationale ? `<p class="why">${esc(p.rationale)}</p>` : ""}
+      ${p.kind === "tags" || p.kind === "experiment" ? `<p class="muted small flush">${esc(change)}</p>` : ""}
+      ${isVersion(p) ? '<p class="muted small flush">Claude rebuilds the video on your Mac (10–40 minutes) and brings it back here for a yes or no. Nothing changes on the live ad.</p>' : ""}
+      <div class="sg-do">
+        <button class="btn btn-small btn-claude" type="button" data-accept="${p.id}">Accept</button>
+        <button class="btn btn-small" type="button" data-revise="${p.id}">Ask to change</button>
+        ${editable ? `<a class="btn btn-small" href="/new-ad.html?proposal=${p.id}">Edit first</a>` : ""}
+        <button class="btn btn-small btn-quiet" type="button" data-decline-one="${p.id}">Decline</button>
       </div>
     </div>
   </article>`;
@@ -189,7 +194,8 @@ export function proposalRow(p, ix) {
     // A "make a new version" request: what it made is shown on the run that made it.
     return `<li class="prow">${pill(["done", "Made"])}<span class="prow-title">${esc(p.title)} → <a href="#ads" data-goto-run="${run.id}">made in the New version run, ${esc(when(run.created_at))}</a></span></li>`;
   }
-  return `<li class="prow">${pill(p.state)}<span class="prow-title">${esc(p.title)}${outcome(p, ix)}${decide}</span></li>`;
+  const look = p.kind === "creative" && p.payload ? ` <button class="prow-look" type="button" data-view-proposal="${p.id}">Preview</button>` : "";
+  return `<li class="prow">${pill(p.state)}<span class="prow-title">${esc(p.title)}${outcome(p, ix)}${decide}${look}</span></li>`;
 }
 
 function runItem(t, ix, openReports) {
@@ -226,26 +232,26 @@ export function adsView(data, ix, openReports) {
 // ---------------------------------------------------------------- previews
 
 const previewCache = new Map();
-let observer;
+const observer = new IntersectionObserver((entries) => entries.forEach((e) => {
+  if (!e.isIntersecting) return;
+  observer.unobserve(e.target);
+  fillPreview(e.target);
+}), { root: document.getElementById("cv-scroll"), rootMargin: "900px 0px" });
 
-async function fillPreview(box) {
+export async function fillPreview(box) {
   const id = box.dataset.preview;
+  const fmt = box.dataset.format || "MOBILE_FEED_STANDARD";
+  const key = `${id}:${fmt}`;
   try {
-    let p = previewCache.get(id);
-    const fmt = box.dataset.format || "MOBILE_FEED_STANDARD";
-    if (!p) { p = await api(`/api/proposals/${id}/preview?format=${fmt}`); previewCache.set(id, p); }
-    showPreviewFrame(box, p, { title: box.dataset.format ? "How Reels will show it, from Meta" : "New ad preview from Meta", height: p.height || 560 });
+    let p = previewCache.get(key);
+    if (!p) { p = await api(`/api/proposals/${id}/preview?format=${fmt}`); previewCache.set(key, p); }
+    if ((box.dataset.format || "MOBILE_FEED_STANDARD") !== fmt) return;
+    showPreviewFrame(box, p, { title: "New ad preview from Meta", height: p.height || 560 });
   } catch (err) {
     box.innerHTML = `<p class="preview-error">${esc(err.message)}</p>`;
   }
 }
 
 export function loadPreviews(root) {
-  if (observer) observer.disconnect();
-  observer = new IntersectionObserver((entries) => entries.forEach((e) => {
-    if (!e.isIntersecting) return;
-    observer.unobserve(e.target);
-    fillPreview(e.target);
-  }), { rootMargin: "300px" });
   root.querySelectorAll("[data-preview]").forEach((el) => observer.observe(el));
 }

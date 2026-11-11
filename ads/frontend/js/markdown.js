@@ -11,6 +11,7 @@ function inline(s) {
 }
 
 const isTableSep = (line) => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(line);
+const isNumber = (cell) => /^[-+–−]?[$€£]?[\d,.]+\s*(%|x|×|k|m|s|min|\/day)?$/i.test(cell.replace(/<[^>]+>/g, "").trim());
 const cells = (line) => line.trim().replace(/^\||\|$/g, "").split("|").map((c) => inline(c.trim()));
 
 export function renderMarkdown(src) {
@@ -35,7 +36,7 @@ export function renderMarkdown(src) {
       i += 2;
       const rows = [];
       while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(cells(lines[i++]));
-      out.push(`<div class="scroll-x"><table class="table"><thead><tr>${head.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+      out.push(`<div class="scroll-x"><table class="table"><thead><tr>${head.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td${isNumber(c) ? ' class="n"' : ""}>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
       continue;
     }
     if (/^&gt;\s?/.test(line)) {

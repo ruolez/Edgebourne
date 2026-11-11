@@ -92,8 +92,9 @@ def passes():
 
 def _task(user, kind, prompt, ad, options):
     t = db.execute(
-        "INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options) VALUES (%s,%s,%s,%s,%s) RETURNING id",
-        (kind, prompt, ad["campaign_id"], user["id"], __import__("json").dumps(options)), returning=True)
+        """INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options, thread_id)
+           VALUES (%s,%s,%s,%s,%s, (SELECT COALESCE(thread_id, id) FROM desk_tasks WHERE id = %s)) RETURNING id""",
+        (kind, prompt, ad["campaign_id"], user["id"], __import__("json").dumps(options), options.get("from_task")), returning=True)
     log_activity(f"desk.{kind}_requested", subject=str(t["id"]), details={"ad": ad["name"]})
     return t["id"]
 

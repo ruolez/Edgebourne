@@ -15,12 +15,14 @@ import datetime
 import importlib.machinery
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
 import threading
 import time
 import urllib.error
+import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 desk = importlib.machinery.SourceFileLoader("desk", os.path.join(HERE, "desk")).load_module()
@@ -28,7 +30,8 @@ desk = importlib.machinery.SourceFileLoader("desk", os.path.join(HERE, "desk")).
 RUN_LIMIT_SECONDS = 25 * 60
 RENDER_LIMIT_SECONDS = 50 * 60
 ADVICE_LIMIT_SECONDS = 90 * 60  # an advice run may cut a 9:16 version of every running ad
-KEEPALIVE_SECONDS = 15  # also how quickly Stop on the Claude page reaches a run
+KEEPALIVE_SECONDS = 5  # also how quickly Stop on the Claude page reaches a run
+RESUME_FAIL_SECONDS = 45  # a resumed run that dies this fast couldn't load its session: start fresh
 LOG_DIR = os.path.expanduser("~/Library/Logs/ads-desk")
 
 READ_TOOLS = [
@@ -116,6 +119,26 @@ def was_stopped(cfg, token, task_id):
     return bool(current) and current["status"] == "cancelled"
 
 
+def session_id(cfg, task_id):
+    """Each task's Claude session has a known id, so a follow-up can continue it."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{cfg['base_url']}/desk-task/{task_id}"))
+
+
+def session_file(cfg, sid):
+    project = re.sub(r"[^A-Za-z0-9]", "-", cfg["workdir"])
+    return os.path.expanduser(f"~/.claude/projects/{project}/{sid}.jsonl")
+
+
+def session_args(cfg, task):
+    """A follow-up continues the last turn's session; without one it starts fresh and reads the
+    conversation from `desk task`."""
+    own = session_id(cfg, task["id"])
+    previous = task.get("resume_from")
+    if previous and os.path.exists(session_file(cfg, session_id(cfg, previous))):
+        return ["--resume", session_id(cfg, previous), "--fork-session", "--session-id", own]
+    return ["--session-id", own]
+
+
 def run_task(cfg, token, task):
     task_id = task["id"]
     log(f"task {task_id} ({task['kind']}): starting Claude")
@@ -128,6 +151,7 @@ def run_task(cfg, token, task):
            "--permission-mode", "dontAsk",
            "--allowedTools", ",".join(allowed_tools(skill_dir, cfg["workdir"], task.get("kind"))),
            "--max-turns", "300" if task.get("kind") == "advice" else "200" if render else "80"]
+    session = session_args(cfg, task)
     env = dict(os.environ)
     env["DESK_ACCOUNT"] = str(task.get("account_id") or 1)  # the task's ad account (agency mode)
     claude_token = claude_oauth_token()
@@ -135,9 +159,15 @@ def run_task(cfg, token, task):
         env["CLAUDE_CODE_OAUTH_TOKEN"] = claude_token
     env["PATH"] = os.pathsep.join([os.path.dirname(cfg["claude"]), "/opt/homebrew/bin", "/usr/local/bin",
                                    "/usr/bin", "/bin", "/usr/sbin", "/sbin", env.get("PATH", "")])
-    with open(out_path, "w") as out:
-        proc = subprocess.Popen(cmd, cwd=cfg["workdir"], stdout=out, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+    def launch(extra):
+        with open(out_path, "a") as out:
+            return subprocess.Popen(cmd + extra, cwd=cfg["workdir"], stdout=out, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+
+    open(out_path, "w").close()
+    started = time.monotonic()
+    proc = launch(session)
+    live = {"proc": proc}
     stop = threading.Event()
 
     def keepalive():
@@ -149,17 +179,22 @@ def run_task(cfg, token, task):
                     # The skill finished the task (Claude is just exiting), or it was stopped from the page.
                     if was_stopped(cfg, token, task_id):
                         log(f"task {task_id}: stopped from the Claude page")
-                        end_process(proc)
+                        end_process(live["proc"])
                     return
                 log(f"task {task_id}: keepalive refused: {exc}")
             except (urllib.error.URLError, OSError) as exc:
                 log(f"task {task_id}: keepalive failed: {exc}")
 
     threading.Thread(target=keepalive, daemon=True).start()
+    limit = ADVICE_LIMIT_SECONDS if task.get("kind") == "advice" else RENDER_LIMIT_SECONDS if render else RUN_LIMIT_SECONDS
     try:
-        proc.wait(timeout=ADVICE_LIMIT_SECONDS if task.get("kind") == "advice" else RENDER_LIMIT_SECONDS if render else RUN_LIMIT_SECONDS)
+        proc.wait(timeout=limit)
+        if "--resume" in session and proc.returncode != 0 and time.monotonic() - started < RESUME_FAIL_SECONDS and not stop.is_set() and not was_stopped(cfg, token, task_id):
+            log(f"task {task_id}: could not continue the earlier session; starting fresh")
+            proc = live["proc"] = launch(["--session-id", str(uuid.uuid4())])
+            proc.wait(timeout=limit)
     except subprocess.TimeoutExpired:
-        end_process(proc)
+        end_process(live["proc"])
         log(f"task {task_id}: stopped after the time limit")
     finally:
         stop.set()
