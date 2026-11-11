@@ -28,15 +28,24 @@ def _video(video_id, thumbnail, label):
     return v
 
 
-def build(story, vertical):
-    """(object_story_spec, asset_feed_spec) for the ad with `vertical` added; ValueError says why not."""
+def instagram_of(story):
+    # Older creatives name the Instagram account instagram_actor_id; Meta wants instagram_user_id now.
+    return (story or {}).get("instagram_user_id") or (story or {}).get("instagram_actor_id")
+
+
+def build(story, vertical, instagram_user_id=None):
+    """(object_story_spec, asset_feed_spec) for the ad with `vertical` added; ValueError says why not.
+    `instagram_user_id` is the creative's own Instagram account, used when the story doesn't name one."""
     v = (story or {}).get("video_data") or {}
     if not v.get("video_id"):
         raise ValueError("Only a single-video ad can get a 9:16 video for Reels this way.")
     if str(vertical["video_id"]) == str(v["video_id"]):
         raise ValueError("The 9:16 video is the same video the ad already shows.")
     cta = v.get("call_to_action") or {}
-    identity = {k: story[k] for k in ("page_id", "instagram_user_id") if story.get(k)}
+    identity = {"page_id": story["page_id"]} if story.get("page_id") else {}
+    ig = instagram_of(story) or instagram_user_id
+    if ig:
+        identity["instagram_user_id"] = str(ig)
     feed = {
         "videos": [_video(v["video_id"], v.get("image_url"), FEED),
                    _video(vertical["video_id"], vertical.get("thumbnail_url"), VERTICAL)],
@@ -94,12 +103,15 @@ def _has_vertical(feed, vertical_id):
                for v in feed.get("videos") or [])
 
 
-def readback_problem(old_story, made, vertical_id):
+def readback_problem(old_story, made, vertical_id, instagram=False):
     """What's wrong with the creative Meta stored, or None. Checked before it replaces the
-    running ad's creative: the 9:16 video must be in it and the lead form must not change."""
+    running ad's creative: the 9:16 video must be in it, the lead form must not change, and an ad
+    that runs on Instagram (`instagram`) must keep its Instagram account."""
     feed = (made or {}).get("asset_feed_spec") or {}
     if not _has_vertical(feed, vertical_id):
         return "Meta's copy of the new creative has no 9:16 video."
+    if instagram and not instagram_of((made or {}).get("object_story_spec")) and not (made or {}).get("instagram_user_id"):
+        return "Meta's copy of the new creative has no Instagram account, so it couldn't run on Instagram."
     want = form_ids(old_story)
     if want and form_ids(made) != want:
         return "Meta's copy of the new creative lost the lead form, so the button wouldn't open your form."

@@ -38,6 +38,14 @@ class BuildTests(unittest.TestCase):
                               "instagram_positions": ["story", "reels"]}),
             (2, pl.FEED, {"publisher_platforms": ["facebook", "instagram", "messenger", "audience_network"]})])
 
+    def test_an_older_story_with_instagram_actor_id_keeps_its_instagram_account(self):
+        old = {k: v for k, v in STORY.items() if k != "instagram_user_id"} | {"instagram_actor_id": IG}
+        self.assertEqual(pl.build(old, VERTICAL)[0], {"page_id": PAGE, "instagram_user_id": IG})
+
+    def test_the_creatives_own_instagram_account_fills_a_story_without_one(self):
+        bare = {k: v for k, v in STORY.items() if k != "instagram_user_id"}
+        self.assertEqual(pl.build(bare, VERTICAL, instagram_user_id=IG)[0], {"page_id": PAGE, "instagram_user_id": IG})
+
     def test_it_is_a_placement_customized_single_video(self):
         self.assertEqual((self.feed["ad_formats"], self.feed["optimization_type"]), (["SINGLE_VIDEO"], "PLACEMENT"))
 
@@ -88,6 +96,16 @@ class ReadBackTests(unittest.TestCase):
     def test_a_vertical_label_without_a_video_is_caught(self):
         videos = [{"video_id": "1676380033884145", "adlabels": [{"name": pl.FEED}]}, {"adlabels": [{"name": pl.VERTICAL}]}]
         self.assertRegex(pl.readback_problem(STORY, self.made(videos=videos), VERTICAL_VIDEO), "9:16")
+
+    def test_a_copy_that_lost_the_instagram_account_is_caught(self):
+        made = self.made()
+        made["object_story_spec"] = {"page_id": PAGE}
+        self.assertRegex(pl.readback_problem(STORY, made, VERTICAL_VIDEO, instagram=True), "Instagram")
+
+    def test_a_copy_with_the_instagram_account_passes(self):
+        made = self.made()
+        made["object_story_spec"] = {"page_id": PAGE, "instagram_user_id": IG}
+        self.assertIsNone(pl.readback_problem(STORY, made, VERTICAL_VIDEO, instagram=True))
 
     def test_form_ids_are_found_anywhere_in_a_spec(self):
         self.assertEqual(pl.form_ids({"a": [{"b": {"lead_gen_form_id": 7}}], "c": {"lead_gen_form_id": "8"}}), {"7", "8"})

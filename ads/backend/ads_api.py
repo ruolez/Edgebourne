@@ -1252,7 +1252,7 @@ def add_vertical(user, ad_id, video_id, proposal_id=None):
     row = {"id": ad["id"], "name": ad["name"], "campaign_id": ad["campaign_id"]}
     video_id = str(video_id)
     try:
-        cr = meta_client.get(ad["creative_id"], fields="object_story_spec,asset_feed_spec,degrees_of_freedom_spec")
+        cr = meta_client.get(ad["creative_id"], fields="object_story_spec,asset_feed_spec,degrees_of_freedom_spec,instagram_user_id")
         if placements.has_placements(cr):
             return NOT_SENT + "This ad already shows different media per placement. Change it in Ads Manager."
         if not account_video(video_id):
@@ -1260,7 +1260,8 @@ def add_vertical(user, ad_id, video_id, proposal_id=None):
         state = _video_state(video_id)
         if not state["ready"]:
             return NOT_SENT + "Meta is still processing the 9:16 video. Try again in a minute."
-        story, feed = placements.build(cr.get("object_story_spec") or {}, {"video_id": video_id, "thumbnail_url": state["thumbnail_url"]})
+        story, feed = placements.build(cr.get("object_story_spec") or {}, {"video_id": video_id, "thumbnail_url": state["thumbnail_url"]},
+                                       instagram_user_id=cr.get("instagram_user_id"))
     except ValueError as exc:
         return NOT_SENT + str(exc)
     except meta_client.MetaError as exc:
@@ -1271,8 +1272,8 @@ def add_vertical(user, ad_id, video_id, proposal_id=None):
         data["degrees_of_freedom_spec"] = json.dumps(cr["degrees_of_freedom_spec"])
     try:
         new = meta_client.post(f"act_{_account()}/adcreatives", data=data)
-        made = meta_client.get(new["id"], fields="object_story_spec,asset_feed_spec")
-        problem = placements.readback_problem(cr.get("object_story_spec"), made, video_id)
+        made = meta_client.get(new["id"], fields="object_story_spec,asset_feed_spec,instagram_user_id")
+        problem = placements.readback_problem(cr.get("object_story_spec"), made, video_id, instagram="instagram_user_id" in story)
         if problem:
             record(user, "ad", row, "placement_media", ad["creative_id"], f"creative {new['id']} not used", False,
                    f"{problem} Meta returned {placements.describe(made)}", proposal_id)
