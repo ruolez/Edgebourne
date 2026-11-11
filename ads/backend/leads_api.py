@@ -15,7 +15,7 @@ bp = Blueprint("leads", __name__, url_prefix="/api/leads")
 STATUSES = ("new", "contacted", "qualified", "won", "lost")
 
 LIST_COLUMNS = """l.id, l.created_time, l.full_name, l.email, l.phone, l.business_type,
-                  l.ad_name, l.campaign_id, l.campaign_name, l.status, l.owner_id, l.is_test,
+                  l.ad_name, l.campaign_id, l.campaign_name, l.status, l.owner_id, l.is_test, l.is_organic,
                   l.first_contacted_at, l.emailed_at, u.name AS owner_name"""
 
 

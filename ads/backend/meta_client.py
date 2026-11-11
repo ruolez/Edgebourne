@@ -23,9 +23,10 @@ _token_bad = {}  # account id -> True once Meta refused the token (cleared by th
 class MetaError(Exception):
     """`unknown` is True when a write may or may not have happened (Meta didn't answer)."""
 
-    def __init__(self, message, code=None, status=None, unknown=False, raw=None):
+    def __init__(self, message, code=None, status=None, unknown=False, raw=None, subcode=None):
         super().__init__(message)
         self.code = code
+        self.subcode = subcode
         self.status = status
         self.unknown = unknown
         self.raw = raw or message
@@ -98,7 +99,8 @@ def _raise_for(resp):
             message = f"{message}: {' '.join(said)}"
         if err.get("error_subcode"):
             message = f"{message} (Meta code {code}, subcode {err['error_subcode']})"
-        raise MetaError(plain(code, message), code=code, status=resp.status_code, raw=message)
+        raise MetaError(plain(code, message), code=code, status=resp.status_code, raw=message,
+                        subcode=err.get("error_subcode"))
     return body
 
 

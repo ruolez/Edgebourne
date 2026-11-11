@@ -22,9 +22,11 @@ class DueTests(unittest.TestCase):
     def test_nothing_once_someone_acted_or_for_tests_and_old_leads(self):
         self.assertEqual(
             [reminders.due(lead(90, status="contacted"), NOW), reminders.due(lead(90, first_contacted_at=NOW), NOW),
-             reminders.due(lead(90, notes=1), NOW), reminders.due(lead(90, is_test=True), NOW),
-             reminders.due(lead(25 * 60), NOW)],
-            [[], [], [], [], []])
+             reminders.due(lead(90, is_test=True), NOW), reminders.due(lead(25 * 60), NOW)],
+            [[], [], [], []])
+
+    def test_a_note_alone_is_not_a_call_so_the_reminders_carry_on(self):
+        self.assertEqual(reminders.due(lead(90, notes=1), NOW), ["5m", "1h"])
 
 
 class DigestTests(unittest.TestCase):

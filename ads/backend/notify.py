@@ -1,13 +1,14 @@
 """Every alert to a person goes through here: queued per person and channel, sent by the
 background worker within seconds, retried a few times, never sent twice (dedupe_key).
 
-Channels: telegram (the person linked their chat and kept it on). New-lead emails still go
-out from leads.notify, as before; reminders (1.4) use both.
+Channels: telegram (the person linked their chat and kept it on), push and email. New-lead
+emails (leads.queue_emails) keep their HTML part in `html`.
 """
 import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+import account_ctx
 import db
 import mailer
 import telegram
@@ -37,7 +38,6 @@ def lead_alert(lead):
 
 def link(path, account_id=None):
     """A console link that opens in the right account: `acct=` makes the page switch to it first."""
-    import account_ctx
     import config
     acct = account_ctx.current() if account_id is None else account_id
     path = path or "/home.html"
@@ -85,19 +85,17 @@ def serves(user, account_id):
 
 def admin_ids():
     """The active admins of the current account, the console's owners included."""
-    import account_ctx
     rows = db.query("SELECT id, account_id FROM users WHERE role = 'admin' AND is_active ORDER BY id")
     return [r["id"] for r in rows if serves(r, account_ctx.current())]
 
 
-def queue(user_id, channel, kind, title, lines, url=None, button="Open", ref=None, dedupe_key=None):
-    import account_ctx
+def queue(user_id, channel, kind, title, lines, url=None, button="Open", ref=None, dedupe_key=None, html=None):
     if dedupe_key and account_ctx.current() != account_ctx.DEFAULT:
         dedupe_key = f"a{account_ctx.current()}:{dedupe_key}"  # notifications are shared; keys are per account
     db.execute(
-        "INSERT INTO notifications (user_id, channel, kind, ref, dedupe_key, title, lines, url, button) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dedupe_key) DO NOTHING",
-        (user_id, channel, kind, ref, dedupe_key, title, json.dumps(lines), url, button))
+        "INSERT INTO notifications (user_id, channel, kind, ref, dedupe_key, title, lines, url, button, html) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dedupe_key) DO NOTHING",
+        (user_id, channel, kind, ref, dedupe_key, title, json.dumps(lines), url, button, html))
 
 
 def _deliver(row):
@@ -109,7 +107,7 @@ def _deliver(row):
     elif row["channel"] == "email":
         user = db.query("SELECT email FROM users WHERE id = %s", (row["user_id"],), one=True)
         link = f"\n\n{row['button'] or 'Open'}: {row['url']}" if row["url"] else ""
-        mailer.send(user["email"], row["title"], "\n".join(row["lines"]) + link)
+        mailer.send(user["email"], row["title"], "\n".join(row["lines"]) + link, row.get("html"))
     elif row["channel"] == "push":
         import push
         push.send_to_user(row["user_id"], row["title"], row["lines"], row["url"], tag=row.get("kind"))
@@ -157,9 +155,35 @@ def process_pending(now=None):
             db.execute("UPDATE notifications SET attempts = %s, last_error = %s, status = %s, next_attempt_at = COALESCE(%s, next_attempt_at) WHERE id = %s",
                        (attempts, str(exc)[:500], "pending" if again else "failed", again, row["id"]))
             log.info("notification %s (%s) not sent: %s", row["id"], row["channel"], exc)
+            if not again and row["kind"] == "lead" and row["channel"] == "email" and row["ref"]:
+                _note_email_failed(int(row["ref"]), exc)
             continue
         db.execute("UPDATE notifications SET status = 'sent', sent_at = now(), attempts = attempts + 1, last_error = NULL WHERE id = %s", (row["id"],))
+        if row["kind"] == "lead" and row["channel"] == "email" and row["ref"]:
+            _mark_emailed(int(row["ref"]))
     return len(rows)
+
+
+def _mark_emailed(lead_id):
+    """The queue serves every account; lead ids are unique across them."""
+    try:
+        with account_ctx.all_accounts():
+            db.execute("UPDATE leads SET emailed_at = COALESCE(emailed_at, now()) WHERE id = %s", (lead_id,))
+    except Exception:  # the email went out; a missing timestamp must not stop the rest of the queue
+        log.exception("lead %s: emailed_at not recorded", lead_id)
+
+
+def _note_email_failed(lead_id, exc):
+    """A lead email the queue gave up on shows in that lead's history, under the lead's account."""
+    import util
+    try:
+        with account_ctx.all_accounts():
+            lead = db.query("SELECT account_id FROM leads WHERE id = %s", (lead_id,), one=True)
+        if lead:
+            with account_ctx.use(lead["account_id"]):
+                util.log_activity("lead.email_failed", subject=str(lead_id), actor="system", details={"error": str(exc)})
+    except Exception:
+        log.exception("lead %s: the failed email was not recorded", lead_id)
 
 
 def _fall_back(row):

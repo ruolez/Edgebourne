@@ -54,7 +54,7 @@ function rowHtml(lead) {
     <span class="who">
       <b>${esc(lead.full_name || "No name given")}</b>
       <span>${esc(lead.business_type || "Business not given")}</span>
-      <small>${lead.is_test ? '<span class="pill">Test</span> ' : ""}${isNew ? "" : `<span class="pill ${lead.status}">${esc(STAGES.find((s) => s.id === lead.status).label)}</span> `}${esc(lead.ad_name || "")}${lead.owner_name ? `, ${esc(lead.owner_name)}` : ""}</small>
+      <small>${lead.is_test ? '<span class="pill">Test</span> ' : ""}${isNew ? "" : `<span class="pill ${lead.status}">${esc(STAGES.find((s) => s.id === lead.status).label)}</span> `}${esc(lead.ad_name || (lead.is_organic ? "No ad (organic)" : ""))}${lead.owner_name ? `, ${esc(lead.owner_name)}` : ""}</small>
     </span>
   </button></li>`;
 }
@@ -145,7 +145,7 @@ function detailHtml(lead) {
       <dt>Asked</dt><dd>${when(lead.created_time)}</dd>
       <dt>Phone</dt><dd>${esc(phoneDisplay(lead.phone) || "—")}</dd>
       <dt>Email</dt><dd>${esc(lead.email || "—")}</dd>
-      <dt>Ad</dt><dd>${lead.ad_id && lead.ad_name ? `<a href="/ad.html?id=${encodeURIComponent(lead.ad_id)}">${esc(lead.ad_name)}</a>` : esc(lead.ad_name || "—")}</dd>
+      <dt>Ad</dt><dd>${lead.ad_id && lead.ad_name ? `<a href="/ad.html?id=${encodeURIComponent(lead.ad_id)}">${esc(lead.ad_name)}</a>` : esc(lead.ad_name || (lead.is_organic ? "None: filled in without an ad (organic)" : "—"))}</dd>
       <dt>Campaign</dt><dd>${esc(lead.campaign_name || "—")}</dd>
     </dl>
     ${answers ? `<h3 class="section-title">Their answers</h3><dl class="facts">${answers}</dl>` : ""}

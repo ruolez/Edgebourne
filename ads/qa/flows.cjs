@@ -353,12 +353,80 @@ body = json.dumps({'entry': [{'changes': [{'field': 'leadgen', 'value': {'leadge
 sig = 'sha256=' + hmac.new(settings_store.get('meta_app_secret').encode(), body, hashlib.sha256).hexdigest()
 requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'X-Hub-Signature-256': sig, 'Content-Type': 'application/json'})"`);
   let autoMail = null;
-  for (let i = 0; i < 30 && !autoMail; i++) { await page.waitForTimeout(1000); autoMail = mailSent().slice(mailsBeforeAuto).find((m) => /Your free intro call/.test(m.subject)); }
+  const leadMailed = () => mailSent().slice(mailsBeforeAuto).some((m) => /^New lead/.test(m.subject || '')); // sent by the alert queue, just after the reply
+  for (let i = 0; i < 30 && !(autoMail && leadMailed()); i++) { await page.waitForTimeout(1000); autoMail = mailSent().slice(mailsBeforeAuto).find((m) => /Your free intro call/.test(m.subject)); }
   check('a new lead gets the automatic reply by itself', Boolean(autoMail), autoMail ? autoMail.subject : 'none');
   const leadMails = mailSent().slice(mailsBeforeAuto).filter((m) => /^New lead/.test(m.subject || ''));
   check("the new-lead email goes to each person separately, never to another account's admin",
     leadMails.length > 0 && leadMails.every((m) => m.to.length === 1 && !/burdanova\.test/.test(m.to[0])) && leadMails.some((m) => m.to[0] === 'eugene@edgebourne.com'),
     JSON.stringify(leadMails.map((m) => m.to)));
+  // A lead the catch-up stores before its webhook is processed is still announced, once: one email per
+  // person, at most one Telegram alert, one automatic reply, one history line. Filled in without an ad
+  // (organic), it is a real lead, not a test one.
+  const formLead = '7701' + String(Date.now()).slice(-12);
+  sh(`docker exec edgebourne-ads-backend python -c "
+import db, requests
+db.execute(\\"DELETE FROM leads WHERE full_name = 'Organic QA Lead'\\")
+requests.get('http://fake-meta:5001/fake/_form_lead', params={'id': '${formLead}', 'organic': '1', 'name': 'Organic QA Lead', 'email': 'organicqa@example.com'})"`);
+  const mailsBeforeForm = mailSent().length, tgBeforeForm = tgSent().length;
+  const caughtUp = sh(`docker exec edgebourne-ads-backend python -c "import leads; print(leads.backfill(days=1))"`).trim();
+  check('the catch-up stores a form lead whose webhook has not been handled', caughtUp === '1', caughtUp);
+  sh(`docker exec edgebourne-ads-backend python -c "
+import json, hmac, hashlib, requests, settings_store
+body = json.dumps({'entry': [{'changes': [{'field': 'leadgen', 'value': {'leadgen_id': '${formLead}'}}]}]}).encode()
+sig = 'sha256=' + hmac.new(settings_store.get('meta_app_secret').encode(), body, hashlib.sha256).hexdigest()
+requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'X-Hub-Signature-256': sig, 'Content-Type': 'application/json'})"`);
+  const pingDone = () => sh(`docker exec edgebourne-ads-backend python -c "
+import db
+r = db.query(\\"SELECT processed_at IS NOT NULL AS done FROM webhook_events WHERE leadgen_id = '${formLead}'\\", one=True)
+print(bool(r and r['done']))"`).trim() === 'True';
+  let formReply = null;
+  for (let i = 0; i < 30 && !(formReply && pingDone()); i++) { await page.waitForTimeout(1000); formReply = mailSent().slice(mailsBeforeForm).find((m) => m.to.includes('organicqa@example.com')); }
+  await page.waitForTimeout(4000); // one more worker pass: anything sent twice shows up here
+  const formMails = mailSent().slice(mailsBeforeForm);
+  const formAlerts = formMails.filter((m) => /^New lead: Organic QA Lead/.test(m.subject || '')).map((m) => m.to.join(','));
+  check('a lead the catch-up found first gets its email, once per person, after its webhook too',
+    formAlerts.includes('eugene@edgebourne.com') && new Set(formAlerts).size === formAlerts.length, JSON.stringify(formAlerts));
+  check('...and one automatic reply', formMails.filter((m) => m.to.includes('organicqa@example.com')).length === 1,
+    formMails.filter((m) => m.to.includes('organicqa@example.com')).map((m) => m.subject).join(' | '));
+  const formTg = tgSent().slice(tgBeforeForm).filter((m) => /New lead: Organic QA Lead/.test(m.text)).length;
+  check('...and at most one Telegram alert', formTg <= 1, `${formTg} alerts`);
+  const formRow = (await getJson('/api/leads?q=Organic%20QA%20Lead&status=all')).leads;
+  const received = sh(`docker exec edgebourne-ads-backend python -c "
+import db
+print(db.query(\\"SELECT COUNT(*) AS n FROM activity WHERE action = 'lead.received' AND subject = %s\\", (str(${formRow[0] ? formRow[0].id : 0}),), one=True)['n'])"`).trim();
+  check('an organic form lead is a real lead in the inbox, received once in its history',
+    formRow.length === 1 && formRow[0].is_test === false && formRow[0].is_organic === true && received === '1',
+    `${JSON.stringify(formRow.map((l) => [l.is_test, l.is_organic]))}, ${received} received`);
+  await page.goto(BASE + '/leads.html');
+  await page.waitForSelector('#list .lead-row:has-text("Organic QA Lead")');
+  check('Leads says the organic lead came without an ad', /No ad \(organic\)/.test(await page.textContent('#list .lead-row:has-text("Organic QA Lead")')));
+  const toolLead = '7702' + String(Date.now()).slice(-12);
+  const toolStored = sh(`docker exec edgebourne-ads-backend python -c "
+import db, requests, leads
+requests.get('http://fake-meta:5001/fake/_form_lead', params={'id': '${toolLead}', 'organic': '1', 'name': '<test lead: dummy data for full_name>', 'email': 'toolqa@example.com'})
+leads.backfill(days=1)
+r = db.query(\\"SELECT is_test FROM leads WHERE meta_lead_id = '${toolLead}'\\", one=True)
+db.execute(\\"DELETE FROM leads WHERE meta_lead_id = '${toolLead}'\\")
+print(r and r['is_test'])"`).trim();
+  check('a Testing Tool lead (dummy answers) stays a test lead even when Meta marks it organic', toolStored === 'True', toolStored);
+  sh(`docker exec edgebourne-ads-backend python -c "
+import json, hmac, hashlib, requests, settings_store, db
+db.execute(\\"DELETE FROM webhook_events WHERE leadgen_id = '444444444444'\\")
+body = json.dumps({'entry': [{'changes': [{'field': 'leadgen', 'value': {'leadgen_id': '444444444444'}}]}]}).encode()
+sig = 'sha256=' + hmac.new(settings_store.get('meta_app_secret').encode(), body, hashlib.sha256).hexdigest()
+requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'X-Hub-Signature-256': sig, 'Content-Type': 'application/json'})"`);
+  let sample = '';
+  for (let i = 0; i < 20 && !sample.startsWith('done'); i++) {
+    await page.waitForTimeout(1000);
+    sample = sh(`docker exec edgebourne-ads-backend python -c "
+import db
+r = db.query(\\"SELECT processed_at IS NOT NULL AS done, error, attempts FROM webhook_events WHERE leadgen_id = '444444444444'\\", one=True)
+print(('done' if r and r['done'] else 'open') + '|' + str(r and r['error']) + '|' + str(r and r['attempts']))"`).trim();
+  }
+  check("Meta's webhook Test sample is closed at once, never retried", /^done\|Meta's webhook Test sample.*\|0$/.test(sample), sample);
+  await page.goto(BASE + '/settings.html');
+  await page.waitForFunction(() => document.querySelector('#rp-state')?.textContent === 'Automatic reply on');
   await page.uncheck('#rp-auto');
   await page.click('#rp-form button[type=submit]');
   await page.waitForFunction(() => document.querySelector('#rp-state')?.textContent === 'By hand');

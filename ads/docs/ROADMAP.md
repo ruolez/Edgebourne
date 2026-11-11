@@ -161,7 +161,7 @@ Four parallel reviews (security/isolation, Meta writes and money, worker/ops/dep
 - [x] A24 (fixed: 16 new unit tests (meta_client network/token/cooldown, links, report emails, clock, Mac helper, advice, money rules, worker health, scratch builds); leak test adds members, account admins, writes with the other account's ids, threads, assignments, cross-site; 22 new QA checks (230 total)) Tests: nothing imports `db`, `jobs`, `meta_client`, `webhooks`, `mailer`, `auth`; the leak test is GET-only (no members, writes, worker, notifications, threads).
 - [x] A25 (listed below under “Live checks still owed”: none can run without Eugene's yes per write) Never run against real Meta (add to 0.3-style live checks, each with Eugene's yes): budget change, campaign create, ad set create, wizard Publish, archive/delete, lead form create, comment reply/hide, CRM events, `creative_test_config.daily_budget`, plus the ones already noted (studies, recommendation apply, creative swap).
 
-**Live checks still owed (A25)**, each one with Eugene's yes, on a copy or a paused object like 0.3: budget change; campaign create; ad set create; wizard Publish; archive and delete; lead form create; comment reply and hide (needs I1); CRM events to the dataset (1.1); `creative_test_config.daily_budget` in cents; ad studies; recommendation apply (`additional_budget` units); creative swap on a live ad; a new ad from nothing (Page + form, no template); the 190 / rate-limit wording on a real error.
+**Live checks still owed (A25)**, each one with Eugene's yes, on a copy or a paused object like 0.3: budget change; campaign create; ad set create; wizard Publish; archive and delete; lead form create; comment reply and hide (needs I1); CRM events to the dataset (1.1); `creative_test_config.daily_budget` in cents; ad studies; recommendation apply (`additional_budget` units); creative swap on a live ad; a new ad from nothing (Page + form, no template); the 190 / rate-limit wording on a real error; a real organic form lead (`is_organic`, no `ad_id`) and a Lead Ads Testing Tool lead (its `is_organic` value; still filed as a test lead).
 
 Sound: RLS on all 23 tables (app role not superuser), client read-only gate, webhook signature, share-link HMAC, encrypted secrets, escaping/CSP, every create PAUSED, the only delete path guarded, sync never marks DELETED on a failed list, migrations in one transaction with backup before Update.
 
@@ -584,6 +584,17 @@ bridge 1.3); `cp` in a chain was refused (playbook now says one command at a tim
   Page token can't read it), and the duplicate check keeps a closed account's assets taken, because ids are
   unique across accounts. The duplicate check refuses only a change: a value the account already holds is
   re-sent by every Settings save and stays allowed.
+- A lead is stored only by `leads.store_lead` (webhook, catch-up, Refresh, Settings sync) and told about only
+  by `leads.announce`: email, phone alerts and automatic reply are queued under dedupe keys, then
+  `leads.alerted_at` is claimed and one `lead.received` line written; `announce_pending` in the worker
+  finishes any lead a pass left unannounced (last 24 h). The new-lead email goes through the `notifications`
+  queue (retried, HTML in `notifications.html`). `alerted_at` defaults to now(), so leads inserted any other
+  way (dev seed, QA) never alert. Test lead = Testing Tool dummy answers (`<test lead: …>`), or no ad and not
+  `is_organic`; organic form leads are real. Failed lead pings back off (`webhook_events.attempts` /
+  `next_attempt_at`); Settings' Try again forces them. Meta's webhook Test sample (lead 444444444444) is closed
+  without a Meta call. A lead email the queue gives up on writes `lead.email_failed` under the lead's account.
+  Live checks owed: a real organic Instant Form lead arrives with `is_organic` true and no `ad_id`; the
+  `is_organic` value and answers of a Lead Ads Testing Tool lead; the code/subcode of the webhook Test sample.
 - Money rules live in `money_rules.py` (ceiling, +20%, reading Claude's amounts) and the ceiling in
   Settings → Targets. Anything new that sets a budget goes through them.
 - The fake Meta's "refuse the next ad" must not use a rate-limit code (17, 4, 613, 80004): those now

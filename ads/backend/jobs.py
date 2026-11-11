@@ -43,6 +43,7 @@ def _loop():
         """What can't wait: new leads, replies, Claude's schedules, reminders, lead stages, report
         emails. Done for every account before any slow Meta pull. Errors stay inside the job."""
         for name, job in (("new leads", leads.process_pending_events),
+                          ("announcing new leads", leads.announce_pending),
                           ("Meta status webhooks", lambda: __import__("status_history").process_webhooks()),
                           ("lead replies", lambda: __import__("replies").process_pending()),
                           ("Desk schedules", lambda: __import__("schedules").run()),
@@ -53,6 +54,15 @@ def _loop():
                 job()
             except Exception:
                 log.exception("account %s: %s failed", acct, name)
+
+    def quick_all(accounts):
+        for acct in accounts:
+            with account_ctx.use(acct), db.reusing():
+                quick(acct)
+        try:
+            notify.process_pending()  # one queue for everyone
+        except Exception:
+            log.exception("sending alerts failed")
 
     def slow(conn, acct):
         """The account's Meta reads: the automatic pull, the hourly sync, alerts, tests, advice."""
@@ -109,14 +119,11 @@ def _loop():
                 except Exception as exc:
                     log.info("telegram updates skipped: %s", exc)
                 accounts = [r["id"] for r in db.query("SELECT id FROM accounts WHERE archived_at IS NULL ORDER BY id")]
+                quick_all(accounts)
                 for acct in accounts:
-                    with account_ctx.use(acct), db.reusing():
-                        quick(acct)
-                try:
-                    notify.process_pending()  # one queue for everyone
-                except Exception:
-                    log.exception("sending alerts failed")
-                for acct in accounts:
+                    if _event.is_set():  # a lead arrived while another account was pulling: tell people first
+                        _event.clear()
+                        quick_all(accounts)
                     with account_ctx.use(acct), db.reusing():
                         try:
                             slow(conn, acct)

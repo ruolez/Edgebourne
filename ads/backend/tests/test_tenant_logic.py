@@ -51,16 +51,13 @@ class RecipientsPerAccountTest(unittest.TestCase):
              [{"id": 1, "name": "Eugene"}, {"id": 4, "name": "Bea"}, {"id": 7, "name": "Cal"}]])
 
     def test_each_recipient_gets_a_message_of_their_own(self):
-        lead = {"id": 3, "campaign_id": "c1"}
-        with mock.patch.object(leads.db, "query", return_value=lead), mock.patch.object(leads.db, "execute"), \
-                mock.patch.object(leads, "alert_phones"), mock.patch("replies.queue_auto"), \
-                mock.patch.object(leads.mailer, "configured", return_value=True), \
-                mock.patch.object(leads, "recipients_for", return_value=[OWNER["email"], ADMIN_1["email"]]), \
-                mock.patch.object(leads, "render_email", return_value=("subject", "text", "html")), \
-                mock.patch.object(leads.mailer, "send") as send:
-            self.assertTrue(leads.notify(3))
-        self.assertEqual([c.args for c in send.call_args_list],
-                         [(OWNER["email"], "subject", "text", "html"), (ADMIN_1["email"], "subject", "text", "html")])
+        lead = {"id": 3, "campaign_id": "c1", "full_name": "Ann", "business_type": None, "phone": None, "email": None,
+                "ad_name": None, "is_test": False}
+        with mock.patch.object(leads.mailer, "configured", return_value=True), mock.patch.object(notify, "queue") as queue:
+            self.in_account(2, lambda: leads.queue_emails(lead), EVERYONE)
+        self.assertEqual([(c.args[0], c.args[1], c.kwargs["dedupe_key"]) for c in queue.call_args_list],
+                         [(OWNER["id"], "email", "lead:3:email:1"), (ADMIN_2["id"], "email", "lead:3:email:4"),
+                          (MEMBER_2["id"], "email", "lead:3:email:7")])
 
 
 EB_PAGE, EB_ACT, EB_DATASET = "1404203629446490", "1025971549903293", "1821497329119793"
@@ -213,15 +210,17 @@ class LeadQueueTest(unittest.TestCase):
 
     def test_one_broken_event_does_not_hold_up_the_rest(self):
         now = datetime.now(timezone.utc)
-        events = [{"id": 1, "leadgen_id": "L1", "received_at": now}, {"id": 2, "leadgen_id": "L2", "received_at": now},
-                  {"id": 3, "leadgen_id": "L3", "received_at": now - timedelta(hours=25)}]
+        events = [{"id": 1, "leadgen_id": "L1", "received_at": now, "attempts": 0}, {"id": 2, "leadgen_id": "L2", "received_at": now, "attempts": 0},
+                  {"id": 3, "leadgen_id": "L3", "received_at": now - timedelta(hours=25), "attempts": 9}]
         with mock.patch.object(leads.db, "query", return_value=events), mock.patch.object(leads.meta_client, "page_token", return_value="tok"), \
                 mock.patch.object(leads, "fetch_and_store", side_effect=[TypeError("boom"), (None, False), TypeError("boom")]), \
                 mock.patch.object(leads, "log_activity"), mock.patch.object(leads.log, "exception"), \
+                mock.patch.object(leads, "datetime", wraps=datetime) as dt, \
                 mock.patch.object(leads.db, "execute") as execute:
+            dt.now.return_value = now
             leads.process_pending_events()
         self.assertEqual([c.args[1] for c in execute.call_args_list], [
-            ("Couldn't store this lead (TypeError)", 1),
+            ("Couldn't store this lead (TypeError)", 1, now + timedelta(minutes=1), 1),
             ("This lead is already filed under another account", 2),
             ("Gave up: Couldn't store this lead (TypeError)", 3)])
 

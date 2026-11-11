@@ -362,6 +362,25 @@ def fake_refuse_next_ad():
     return jsonify({"ok": True})
 
 
+FORM_LEADS = {}
+
+
+@app.route("/fake/_form_lead")
+def fake_form_lead():
+    """A lead on the first form that only the catch-up sees until a webhook names it (QA)."""
+    from datetime import datetime, timezone
+    a = request.args
+    lead = {"id": a["id"], "created_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000"),
+            "form_id": FORM, "is_organic": a.get("organic") == "1",
+            "field_data": [{"name": "full_name", "values": [a.get("name", "Form QA Lead")]},
+                           {"name": "email", "values": [a.get("email", "formqa@example.com")]}]}
+    if a.get("organic") != "1":
+        lead.update({"ad_id": REAL_AD_IDS[1], "ad_name": "N2 - Order portal", "adset_id": ADSET["id"],
+                     "campaign_id": CAMPAIGN["id"], "campaign_name": CAMPAIGN["name"]})
+    FORM_LEADS[lead["id"]] = lead
+    return jsonify(lead)
+
+
 @app.route("/fake/_drop_form")
 def fake_drop_form():
     FAKE_FLAGS["drop_form"] = request.args.get("on", "1") == "1"
@@ -513,7 +532,9 @@ def graph(path):
         if len(parts) == 1 and parts[0] in FORMS:
             return jsonify(FORMS[parts[0]])
         if len(parts) == 2 and parts[1] == "leads":
-            return jsonify({"data": []})
+            return jsonify({"data": [l for l in FORM_LEADS.values() if l["form_id"] == parts[0]]})
+        if len(parts) == 1 and parts[0] in FORM_LEADS:
+            return jsonify(FORM_LEADS[parts[0]])
         if len(parts) == 1 and parts[0].startswith("7700") and len(parts[0]) == 16:
             # A form lead the webhook announced (QA uses 7700…); shaped like Meta's.
             from datetime import datetime, timezone

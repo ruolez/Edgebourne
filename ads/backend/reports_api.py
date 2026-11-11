@@ -240,6 +240,7 @@ def send_due(now=None):
                 log.info("report email to %s not sent: %s", p["email"], exc)
                 continue
             state["to"].append(p["email"])
+            settings_store.set("report_sent_to", _json.dumps(state))  # a pass that stops here won't mail them again
             sent += 1
     if len(state["to"]) >= len(people):
         settings_store.set("report_last_sent", key)

@@ -496,7 +496,7 @@ def run_sync():
 @bp.post("/webhooks/retry")
 @admin_required
 def retry_webhooks():
-    done = leads.process_pending_events()
+    done = leads.process_pending_events(force=True)
     return jsonify({"processed": done})
 
 

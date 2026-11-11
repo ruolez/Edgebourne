@@ -1,7 +1,8 @@
 """Leads nobody has contacted get chased: after 5 minutes the owner (or, with no owner, everyone
 who gets the lead alert) hears about it, after an hour the admins do, and at 8 AM local time the
-admins get the list of every lead still waiting. "Contacted" means a stage change, an email sent
-from the lead page or a note. Test leads and leads over a day old never trigger a reminder.
+admins get the list of every lead still waiting. "Contacted" means a stage change or an email sent
+from the lead page, as on Today and Leads; a note alone is not a call. Test leads and leads over a
+day old never trigger a reminder.
 
 Alerts go to Telegram when the person linked it, otherwise by email (notify.py queue).
 """
@@ -23,7 +24,7 @@ DIGEST_HOUR = 8
 
 
 def untouched(lead):
-    return (lead["status"] == "new" and not lead["is_test"] and not lead["first_contacted_at"] and not lead["notes"])
+    return lead["status"] == "new" and not lead["is_test"] and not lead["first_contacted_at"]
 
 
 def due(lead, now):
@@ -66,7 +67,7 @@ def digest_text(leads, now):
     return title, lines
 
 
-LEADS_SQL = """SELECT l.*, (SELECT COUNT(*) FROM lead_notes n WHERE n.lead_id = l.id) AS notes FROM leads l
+LEADS_SQL = """SELECT l.* FROM leads l
                WHERE l.status = 'new' AND NOT l.is_test AND l.first_contacted_at IS NULL"""
 
 
