@@ -55,6 +55,13 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(r["ads"], [{"name": "N6 - Payroll", "title": "Payroll in one click", "starts_from": "N1 - One simple system",
                                      "media": "same media as that ad", "warnings": []}])
 
+    def test_review_and_problems_use_the_account_currency(self):
+        r = cb.review(SPEC, "Free intro call", {"t1": "N1 - One simple system"}, currency="EUR")
+        p = cb.problems({**SPEC, "daily_budget_cents": 6100}, {"f1"}, {"t1"}, 2000, currency="EUR")
+        self.assertEqual((r["campaign"], p), (
+            "EB - Payroll - Leads · Leads (Instant Form) · €20.00 a day (about €608.00 a month), lowest cost",
+            [("budget", "€61.00 a day is more than 3 times what runs now (€20.00); start lower and raise it in steps")]))
+
     def test_copy_warnings(self):
         w = cb.copy_warnings({"title": "x" * 41, "body": "Are you struggling with paperwork? " + "y" * 100})
         self.assertEqual(len(w), 3)

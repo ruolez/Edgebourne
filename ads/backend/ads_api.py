@@ -395,14 +395,16 @@ def _metrics(where, params, start, end):
         f"""SELECT ad_id, COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
                    COALESCE(SUM(reach),0) AS reach, COALESCE(SUM(link_clicks),0) AS link_clicks,
                    COALESCE(SUM(leads),0) AS leads, COALESCE(SUM(video_3s),0) AS video_3s,
-                   COALESCE(SUM(thruplays),0) AS thruplays
+                   COALESCE(SUM(thruplays),0) AS thruplays,
+                   COALESCE(SUM(impressions) FILTER (WHERE EXISTS (SELECT 1 FROM ads v WHERE v.id = ad_daily.ad_id
+                                                                   AND (v.object_type = 'VIDEO' OR v.video_id IS NOT NULL))),0) AS video_impressions
             FROM ad_daily WHERE day BETWEEN %s AND %s AND {where} GROUP BY ad_id""",
         [start, end] + params)
     return {r["ad_id"]: {k: int(v) for k, v in r.items() if k != "ad_id"} for r in rows}
 
 
 def _sum(items):
-    keys = ("spend_cents", "impressions", "reach", "link_clicks", "leads", "qualified", "video_3s", "thruplays")
+    keys = ("spend_cents", "impressions", "reach", "link_clicks", "leads", "qualified", "video_3s", "thruplays", "video_impressions")
     return {k: sum(i["m"].get(k, 0) for i in items) for k in keys}
 
 
@@ -431,14 +433,22 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
         aw, ap = f"{aw} AND campaign_id = %s", ap + [campaign_id]
     sw, sp = (f"{aw} AND id = %s", ap + [adset_id]) if adset_id else (aw, ap)
     xw, xp = (f"{aw} AND adset_id = %s", ap + [adset_id]) if adset_id else (aw, ap)
-    campaigns = db.query(f"SELECT * FROM campaigns WHERE {cw} ORDER BY effective_status = 'ACTIVE' DESC, name", cp)
-    adsets = db.query(f"SELECT * FROM adsets WHERE {sw} ORDER BY name", sp)
     hidden = ("DELETED",) if archived else ("DELETED", "ARCHIVED")
+    # Deleted (and, unless asked for, archived) campaigns and ad sets are left out like their ads, except the
+    # one whose page this is; what they spent still counts in the totals (audit A3-104).
+    shown = "(NOT (COALESCE(effective_status, '') = ANY(%s)) OR id = %s)"
+    campaigns = db.query(f"SELECT * FROM campaigns WHERE {cw} AND {shown} ORDER BY effective_status = 'ACTIVE' DESC, name",
+                         cp + [list(hidden), campaign_id])
+    adsets = db.query(f"SELECT * FROM adsets WHERE {sw} AND {shown} ORDER BY name", sp + [list(hidden), adset_id])
     ads = db.query(f"""SELECT id, name, campaign_id, adset_id, status, configured_status, effective_status, image_url,
                               thumbnail_url, title, object_type, review_feedback, issues, created_time, updated_time
                        FROM ads WHERE {xw} AND NOT (COALESCE(effective_status, '') = ANY(%s)) ORDER BY name""",
                    xp + [list(hidden)])
-    archived_n = db.query(f"SELECT COUNT(*) AS n FROM ads WHERE {xw} AND effective_status = 'ARCHIVED'", xp, one=True)["n"]
+    # Everything "Show archived" would bring back: ads, and ad sets or campaigns archived on their own.
+    archived_n = sum(db.query(q, p, one=True)["n"] for q, p in (
+        (f"SELECT COUNT(*) AS n FROM ads WHERE {xw} AND effective_status = 'ARCHIVED'", xp),
+        (f"SELECT COUNT(*) AS n FROM adsets WHERE {sw} AND effective_status = 'ARCHIVED' AND id IS DISTINCT FROM %s", sp + [adset_id]),
+        (f"SELECT COUNT(*) AS n FROM campaigns WHERE {cw} AND effective_status = 'ARCHIVED' AND id IS DISTINCT FROM %s", cp + [campaign_id])))
     metrics = _metrics(xw, xp, start, end)
     quality = _quality(xw, xp, start, end)
     if prev:
@@ -453,17 +463,25 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
                           WHERE day BETWEEN %s AND %s AND {xw} ORDER BY day""", [start, end] + xp):
         daily.setdefault(r["ad_id"], {})[r["day"].isoformat()] = (int(r["spend_cents"]), int(r["leads"]))
     days_list = [(start + timedelta(days=i)).isoformat() for i in range(days)]
+    # The Delivery track: the last 14 complete days, whatever the window (audit A3-66, A3-132).
+    today = account_info.today()
+    track_days = [today - timedelta(days=14 - i) for i in range(14)]
+    delivered = {}
+    for r in db.query(f"SELECT ad_id, day FROM ad_daily WHERE day BETWEEN %s AND %s AND spend_cents > 0 AND {xw}",
+                      [track_days[0], track_days[-1]] + xp):
+        delivered.setdefault(r["ad_id"], set()).add(r["day"])
     for ad in ads:
         ad["m"] = {**metrics.get(ad["id"], {}), "qualified": quality.get(ad["id"], 0)}
         if prev:
             ad["prev"] = {**metrics_prev.get(ad["id"], {}), "qualified": quality_prev.get(ad["id"], 0)}
         d = daily.get(ad["id"], {})
         ad["spark"] = [{"day": k, "spend_cents": d.get(k, (0, 0))[0], "leads": d.get(k, (0, 0))[1]} for k in days_list]
+        ad["track"] = [{"day": t.isoformat(), "on": t in delivered.get(ad["id"], ())} for t in track_days]
         ad["lifetime_impressions"] = lifetime.get(ad["id"], 0)
         ad["pending_proposals"] = pending.get(ad["id"], 0)
     # Totals count every ad's spend, archived and deleted ones included (they spent real money).
     every = db.query(f"SELECT id, adset_id, campaign_id FROM ads WHERE {xw}", xp)
-    every_m = [{"adset_id": a["adset_id"], "m": {**metrics.get(a["id"], {}), "qualified": quality.get(a["id"], 0)},
+    every_m = [{"adset_id": a["adset_id"], "campaign_id": a["campaign_id"], "m": {**metrics.get(a["id"], {}), "qualified": quality.get(a["id"], 0)},
                 "p": {**metrics_prev.get(a["id"], {}), "qualified": quality_prev.get(a["id"], 0)} if prev else {}} for a in every]
     for s in adsets:
         s["ads"] = [a for a in ads if a["adset_id"] == s["id"]]
@@ -474,9 +492,10 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
         s["pending_proposals"] = pending.get(s["id"], 0)
     for c in campaigns:
         c["adsets"] = [s for s in adsets if s["campaign_id"] == c["id"]]
-        c["m"] = _sum(c["adsets"])
+        mine = [a for a in every_m if a["campaign_id"] == c["id"]]
+        c["m"] = _sum(mine)
         if prev:
-            c["prev"] = _sum([{"m": s["prev"]} for s in c["adsets"]])
+            c["prev"] = _sum([{"m": a["p"]} for a in mine])
         c["pending_proposals"] = pending.get(c["id"], 0)
         c["can_control"] = can_touch(user, c["id"]) and user["role"] != "client"
     # Unique people per window from Meta (daily reach can't be added up); the daily sum if Meta is quiet.
@@ -485,7 +504,6 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
         if prev:
             insights.apply_reach(rows_, insights.unique_reach(level, *prev), "prev")
     # Today and since it started, next to the window: views add up, people come from Meta.
-    today = account_info.today()
     views = {r["ad_id"]: (int(r["today"]), int(r["ever"])) for r in db.query(
         f"""SELECT ad_id, COALESCE(SUM(impressions) FILTER (WHERE day = %s), 0) AS today, COALESCE(SUM(impressions), 0) AS ever
             FROM ad_daily WHERE {xw} GROUP BY ad_id""", [today] + xp)}
@@ -504,6 +522,8 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
     import targets
     all_views = [views.get(a["id"], (0, 0)) for a in every]
     out = {"reach_total": reach_total,
+           # Every ad in scope, listed or not (deleted versions spent real money): the page's header figures.
+           "totals": {"m": _sum(every_m), "prev": _sum([{"m": a["p"]} for a in every_m]) if prev else None},
            "today_total": {"impressions": sum(v[0] for v in all_views), "reach": (acct_today or {}).get("account")} if not campaign_id else None,
            "ever_total": {"impressions": sum(v[1] for v in all_views), "reach": (acct_ever or {}).get("account")} if not campaign_id else None,
            "prev_reach_total": (insights.unique_reach("account", *prev) or {}).get("account") if prev and whole else None,
@@ -518,7 +538,7 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
 @login_required
 def tree():
     key, start, end = window_from(request.args)
-    prev = ranges.previous(start, end) if request.args.get("vs") == "prev" else None
+    prev = ranges.previous(start, end, key) if request.args.get("vs") == "prev" else None
     out = tree_data(current_user(), start, end, prev=prev, archived=request.args.get("archived") == "1")
     out["range"]["key"] = key
     return jsonify(out)
@@ -695,6 +715,8 @@ def set_budget(level, entity_id):
     row, err = _target(level, entity_id)
     if err:
         return err
+    if {row.get("status"), row.get("effective_status")} & {"DELETED", "ARCHIVED"}:
+        return api_error("This one is deleted or archived on Meta, so its budget can't be changed.", 409, field="budget")
     data = request.get_json(silent=True) or {}
     try:
         cents = int(data.get("daily_budget_cents"))
@@ -1114,7 +1136,7 @@ def review_proposals():
             pairs.append((p, review_plan(p)))
         except meta_client.MetaError as exc:
             pairs.append((p, {"kind": "unclear", "problem": f"Couldn't read Meta just now, so this one waits: {exc}"}))
-    return jsonify({"items": desk_view.review(pairs), "gone": len(ids) - len(rows)})
+    return jsonify({"items": desk_view.review(pairs, account_info.currency()), "gone": len(ids) - len(rows)})
 
 
 @bp.post("/proposals/<int:proposal_id>/undecline")

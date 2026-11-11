@@ -38,6 +38,17 @@ class AdRuleTests(unittest.TestCase):
         self.assertEqual([(a["rule"], a["entity_id"], a["key"]) for a in found],
                          [("ad_rejected", "a1", "ad_rejected:a1:2026-11-09"), ("no_delivery", "a2", "no_delivery:a2:2026-11-09")])
 
+    def test_an_ad_first_seen_today_is_not_called_unseen(self):
+        # Live for 30 hours, nothing on the complete days, 600 impressions so far today (audit A3-63).
+        ad = {"id": "a2", "name": "N2", "campaign_id": "c1", "effective_status": "ACTIVE", "age_hours": 30}
+        quiet = {"a2": days(1, impressions=0, reach=0, link_clicks=0, spend_cents=0, leads=0)}
+        found = [rules_of(alerts.evaluate(snap(ads=[{**ad, "today_impressions": n}], ad_days=quiet), RULES, TODAY)) for n in (600, 0)]
+        self.assertEqual(found, [[], ["no_delivery"]])
+
+    def test_alert_amounts_are_in_the_account_currency(self):
+        found = alerts.evaluate(snap(today_spend={"c1": 4000}, currency="EUR"), RULES, TODAY)
+        self.assertEqual([a["title"] for a in found], ["€40 spent today on a €20 daily budget"])
+
     def test_fatigue_needs_high_frequency_and_falling_clicks_and_rising_cost(self):
         first = days(21, impressions=1000, reach=800, link_clicks=20, spend_cents=1000, leads=1)[:7]
         tired = days(7, impressions=1000, reach=800, link_clicks=10, spend_cents=1500, leads=0)

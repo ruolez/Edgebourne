@@ -317,13 +317,14 @@ async function loadAccountBreakdown() {
   } catch (err) { $("acc-spend").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
-const fmtVal = (v) => (v == null ? "" : typeof v === "object" ? (v.new_value ?? v.value ?? JSON.stringify(v)) : v);
+// Budget amounts come in cents marked `money` (never shown as a bare 2000).
+const fmtVal = (v, isMoney) => (v == null ? "" : isMoney ? money(v, { exact: true }) : typeof v === "object" ? (v.new_value ?? v.value ?? JSON.stringify(v)) : v);
 
 async function loadActivity() {
   try {
     const d = await api("/api/insights/activity?days=14");
     $("activity").innerHTML = d.items.length ? `<ul class="changes">${d.items.map((a) => {
-      const change = a.old != null || a.new != null ? `: ${esc(String(fmtVal(a.old)))} → ${esc(String(fmtVal(a.new)))}` : "";
+      const change = a.old != null || a.new != null ? `: ${esc(String(fmtVal(a.old, a.money)))} → ${esc(String(fmtVal(a.new, a.money)))}` : "";
       return `<li><span><b>${esc(a.what || "")}</b>${a.object ? ` · ${esc(a.object)}` : ""}${change}</span><small>${esc(when(a.time))}${a.who ? ` · ${esc(a.who)}` : ""}</small></li>`;
     }).join("")}</ul>` : '<p class="muted flush">No changes in the last 14 days.</p>';
   } catch (err) { $("activity").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }

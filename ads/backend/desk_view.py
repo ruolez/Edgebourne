@@ -4,6 +4,7 @@ conversation. Pure functions; desk_api feeds them the rows."""
 import re
 from datetime import datetime, timedelta
 
+import account_info
 import money_rules
 
 VERSION_REQUEST = "make a new version"
@@ -269,7 +270,7 @@ REVIEW_ORDER = ("money", "live", "create", "mac", "local", "blocked")
 PLAN_GROUPS = {"vertical": "live", "update": "live", "create": "create", "render": "mac", "experiment": "local", "tags": "local", "record": "mac"}
 
 
-def review_item(p, plan):
+def review_item(p, plan, currency="USD"):
     """How one suggestion shows on the Accept sheet: its group, whether it starts ticked, the reason
     it can't be accepted, and the exact approval body. Starting to spend, a step over +20% and a cut
     deeper than 20% are never ticked for you, nor is a budget that moved since Claude read it."""
@@ -282,7 +283,7 @@ def review_item(p, plan):
         blocked = plan.get("problem")
         seen = money_rules.parse_budget_text(p.get("current_value"))
         if seen is not None and seen != plan["from"]:
-            note = f"Claude saw ${seen / 100:,.2f} a day. It's ${plan['from'] / 100:,.2f} now."
+            note = f"Claude saw {account_info.money(seen, currency)} a day. It's {account_info.money(plan['from'], currency)} now."
         deep_cut = plan.get("pct") is not None and plan["pct"] < -100 * money_rules.BIG_STEP
         needs_tick = bool(plan.get("big") or note or deep_cut)
         body = {"from_cents": plan["from"], "to_cents": plan["to"], "accept_big": bool(plan.get("big"))}
@@ -305,10 +306,10 @@ def _conflict_key(p, plan):
     return f"{plan['kind']}:{target}" if plan["kind"] in ("budget", "status", "render") and target else None
 
 
-def review(pairs):
+def review(pairs, currency="USD"):
     """The Accept sheet for (proposal, plan) pairs. Two suggestions that change the same thing can't
     both go through, so neither starts ticked and the sheet lets one be picked."""
-    items = [review_item(p, plan) for p, plan in pairs]
+    items = [review_item(p, plan, currency) for p, plan in pairs]
     keys = [None if i["blocked"] else _conflict_key(p, plan) for i, (p, plan) in zip(items, pairs)]
     for item, key in zip(items, keys):
         if key and keys.count(key) > 1:

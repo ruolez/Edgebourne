@@ -38,17 +38,16 @@ def window(key, today, start=None, end=None):
     return window("7", today)
 
 
-def previous(start, end):
-    """The window to compare with: a calendar month (or month to date) against the same days of the
-    month before; anything else against the same number of days just before."""
-    if start.day == 1:
+def previous(start, end, key):
+    """The window to compare with: this month or last month (`mtd`, `lastmonth`) against the same days
+    of the month before; any other window against the same number of days just before, even when it
+    happens to start on the 1st (audit A3-14)."""
+    if key in ("mtd", "lastmonth"):
         prev_end_month = start - timedelta(days=1)
         prev_start = _month_start(prev_end_month)
-        if end.month == start.month and end.year == start.year:
-            last_day = (end + timedelta(days=1)).month != end.month
-            if last_day:
-                return prev_start, prev_end_month
-            return prev_start, min(prev_start + timedelta(days=(end - start).days), prev_end_month)
+        if (end + timedelta(days=1)).month != end.month:
+            return prev_start, prev_end_month
+        return prev_start, min(prev_start + timedelta(days=(end - start).days), prev_end_month)
     days = (end - start).days + 1
     return start - timedelta(days=days), start - timedelta(days=1)
 

@@ -32,13 +32,27 @@ class WindowTests(unittest.TestCase):
 
 class PreviousTests(unittest.TestCase):
     def test_previous_is_the_same_length_just_before(self):
-        self.assertEqual(ranges.previous(date(2026, 10, 27), date(2026, 11, 9)), (date(2026, 10, 13), date(2026, 10, 26)))
+        self.assertEqual(ranges.previous(date(2026, 10, 27), date(2026, 11, 9), "14"), (date(2026, 10, 13), date(2026, 10, 26)))
 
     def test_previous_of_a_calendar_month_is_the_month_before(self):
-        self.assertEqual(ranges.previous(date(2026, 10, 1), date(2026, 10, 31)), (date(2026, 9, 1), date(2026, 9, 30)))
+        self.assertEqual(ranges.previous(date(2026, 10, 1), date(2026, 10, 31), "lastmonth"), (date(2026, 9, 1), date(2026, 9, 30)))
 
     def test_previous_of_month_to_date_is_the_same_days_last_month(self):
-        self.assertEqual(ranges.previous(date(2026, 11, 1), date(2026, 11, 9)), (date(2026, 10, 1), date(2026, 10, 9)))
+        self.assertEqual(ranges.previous(date(2026, 11, 1), date(2026, 11, 9), "mtd"), (date(2026, 10, 1), date(2026, 10, 9)))
+
+    def test_month_to_date_on_the_first_compares_the_whole_month_before(self):
+        self.assertEqual(ranges.previous(*ranges.window("mtd", date(2026, 12, 1)), "mtd"), (date(2026, 10, 1), date(2026, 10, 31)))
+
+    def test_day_windows_that_start_on_the_first_compare_with_the_days_just_before(self):
+        # Nov 8: the last 7 days are Nov 1-7; Nov 15: the last 14 are Nov 1-14 (audit A3-14).
+        cases = [("7", date(2026, 11, 8)), ("14", date(2026, 11, 15)), ("30", date(2026, 12, 1))]
+        self.assertEqual([ranges.previous(*ranges.window(k, t), k) for k, t in cases],
+                         [(date(2026, 10, 25), date(2026, 10, 31)), (date(2026, 10, 18), date(2026, 10, 31)),
+                          (date(2026, 10, 2), date(2026, 10, 31))])
+
+    def test_a_custom_window_on_the_first_compares_with_the_days_just_before(self):
+        start, end = ranges.window("custom", TODAY, "2026-11-01", "2026-11-09")
+        self.assertEqual(ranges.previous(start, end, "custom"), (date(2026, 10, 23), date(2026, 10, 31)))
 
 
 if __name__ == "__main__":

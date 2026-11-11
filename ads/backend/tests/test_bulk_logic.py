@@ -65,6 +65,12 @@ class BudgetTests(unittest.TestCase):
         lines, totals = bulk.budget_lines(self.ROWS[:2], "pct", -50, self.LIVE, CAP)
         self.assertEqual(([l["to"] for l in lines], totals["big"]), ([1550, 750], False))
 
+    def test_deleted_or_archived_ones_are_skipped(self):
+        rows = [{"id": "c1", "name": "Old", "status": "DELETED"}, {"id": "c2", "name": "Shelved", "status": "ARCHIVED"}]
+        lines, totals = bulk.budget_lines(rows, "set", 2000, self.LIVE, CAP)
+        self.assertEqual(([l["skip"] for l in lines], totals["count"]),
+                         (["Deleted or archived: its budget can't be changed"] * 2, 0))
+
     def test_below_one_dollar_is_skipped(self):
         lines, _ = bulk.budget_lines([{"id": "c2", "name": "Payroll"}], "set", 50, self.LIVE, CAP)
         self.assertEqual(lines[0]["skip"], "The new daily budget must be at least 1.00")

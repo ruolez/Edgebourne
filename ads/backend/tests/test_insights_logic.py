@@ -55,3 +55,22 @@ class UniqueReachTests(unittest.TestCase):
         rows = [{"id": "a1", "m": {"reach": 300}}]
         insights.apply_reach(rows, None, "m")
         self.assertEqual(rows[0]["m"], {"reach": 300, "reach_summed": True})
+
+
+class ActivityTests(unittest.TestCase):
+    def test_budget_changes_come_as_cents_marked_money_and_other_changes_as_they_are(self):
+        budget = {"old_value": {"new_value": 2000, "currency": "USD"}, "new_value": 2400}
+        status = {"old_value": "Active", "new_value": "Paused"}
+        self.assertEqual([insights_api.activity_values("update_campaign_budget", budget),
+                          insights_api.activity_values("update_ad_run_status", status),
+                          insights_api.activity_values("ad_review_approved", None)],
+                         [{"old": 2000, "new": 2400, "money": True}, {"old": "Active", "new": "Paused", "money": False},
+                          {"old": None, "new": None, "money": False}])
+
+    def test_spend_limits_with_a_currency_beside_plain_values_come_as_cents_marked_money(self):
+        old_cents, new_cents = 50000, 60000
+        limit = {"currency": "USD", "old_value": old_cents, "new_value": new_cents}
+        cap = {"old_value": str(old_cents), "new_value": str(new_cents)}
+        self.assertEqual([insights_api.activity_values("ad_account_update_spend_limit", limit),
+                          insights_api.activity_values("update_campaign_spend_cap", cap)],
+                         [{"old": old_cents, "new": new_cents, "money": True}] * 2)

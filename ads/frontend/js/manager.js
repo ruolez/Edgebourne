@@ -10,6 +10,8 @@ import { LEARNING, PROBLEM_STATES, REVIEW_STATES, count, money, moneyWhole, pct,
 
 export const LEVEL_WORDS = { campaign: ["campaign", "campaigns"], adset: ["ad set", "ad sets"], ad: ["ad", "ads"] };
 const isOn = (s) => s === "ACTIVE";
+// Only these can still be switched or given a budget; deleted and archived ones are history.
+export const LIVE = ["ACTIVE", "PAUSED"];
 export const isTest = (r) => /\b(test|qa)\b|flow copy/i.test(r.name || "");
 const learningOf = (r) => (r.level === "adset" ? r.learning_stage : r.adset?.learning_stage);
 const lifetimeQuiet = (r) => r.level === "ad" && r.effective_status === "ACTIVE" && !r.lifetime_impressions;
@@ -47,13 +49,13 @@ function delta(now, before, lowerBetter) {
   return `<span class="delta ${good ? "d-good" : "d-bad"}">${p > 0 ? "+" : "−"}${Math.abs(p)}%</span>`;
 }
 
-// The signature: one bar per day of the window; green = it spent that day; the last bar shows today's
-// review or rejection.
+// The signature: one bar per day of the last 14 complete days, whatever the dates picked; green = it
+// spent that day; the last bar shows the review or rejection now.
 function track(r) {
-  const days = (r.spark || []).slice(-14);
+  const days = r.track || [];
   if (!days.length) return "";
   const last = REVIEW_STATES.includes(r.effective_status) ? "d-review" : PROBLEM_STATES.includes(r.effective_status) ? "d-bad" : null;
-  return `<span class="trk" aria-hidden="true">${days.map((d, i) => `<i class="${i === days.length - 1 && last ? last : d.spend_cents ? "d-on" : ""}"></i>`).join("")}</span>`;
+  return `<span class="trk" aria-hidden="true">${days.map((d, i) => `<i class="${i === days.length - 1 && last ? last : d.on ? "d-on" : ""}"></i>`).join("")}</span>`;
 }
 
 export function statusCell(r) {
@@ -81,27 +83,29 @@ function budgetCell(r) {
   const cents = r.daily_budget_cents;
   if (!cents) return '<span class="muted">—</span>';
   const label = `${money(cents, { exact: cents % 100 !== 0 })}/day`;
-  return r.can_control ? `<button type="button" class="chip" data-budget="${r.level}:${r.id}" data-current="${cents}" data-name="${esc(r.name)}" title="Change the daily budget">${esc(label)}</button>` : esc(label);
+  return r.can_control && LIVE.includes(r.status) ? `<button type="button" class="chip" data-budget="${r.level}:${r.id}" data-current="${cents}" data-name="${esc(r.name)}" title="Change the daily budget">${esc(label)}</button>` : esc(label);
 }
 
+// "vs before" compares month ranges with the same days of the month before, other ranges with the days just before.
+export const vsTitle = (range) => `Cost per lead against ${["mtd", "lastmonth"].includes(range) ? "the same days of the month before" : "the same number of days just before"}`;
 const num = (key, label, value, show, opts = {}) => ({ key, label, num: true, sort: value, cell: (r) => show(r), ...opts });
 const C = {
   name: { key: "name", label: "Name", sort: (r) => r.name.toLowerCase(), cell: nameCell, cls: "c-name" },
-  status: { key: "status", label: "Delivery", sub: "last 14 days", sort: (r) => r.effective_status || "", cell: (r) => `${r.spark ? track(r) : ""}${statusCell(r)}`, cls: "c-st" },
+  status: { key: "status", label: "Delivery", sub: "last 14 days", sort: (r) => r.effective_status || "", cell: (r) => `${track(r)}${statusCell(r)}`, cls: "c-st" },
   budget: { key: "budget", label: "Budget", num: true, sort: (r) => r.daily_budget_cents || 0, cell: budgetCell },
   spend: num("spend", "Spent", (r) => r.m.spend_cents, (r) => money(r.m.spend_cents, { exact: true })),
   leads: num("leads", "Leads", (r) => r.m.leads || 0, (r) => count(r.m.leads)),
   cpl: num("cpl", "Per lead", (r) => cpl(r.m) ?? Infinity, (r) => `<b>${per(r.m.spend_cents, r.m.leads)}</b>`),
-  vs: num("vs", "vs before", (r) => (r.prev && cpl(r.prev) && cpl(r.m) ? cpl(r.m) / cpl(r.prev) : Infinity), (r) => delta(cpl(r.m), cpl(r.prev), true), { title: "Cost per lead against the same number of days before" }),
+  vs: num("vs", "vs before", (r) => (r.prev && cpl(r.prev) && cpl(r.m) ? cpl(r.m) / cpl(r.prev) : Infinity), (r) => delta(cpl(r.m), cpl(r.prev), true), { title: vsTitle() }),
   qualified: num("qualified", "Qualified", (r) => r.m.qualified || 0, (r) => count(r.m.qualified)),
   ctr: num("ctr", "Click rate", (r) => -(rate(r.m.link_clicks, r.m.impressions) || 0), (r) => pct(r.m.link_clicks, r.m.impressions)),
-  hook: num("hook", "Hook rate", (r) => -(rate(r.m.video_3s, r.m.impressions) || 0), (r) => (r.object_type === "VIDEO" || r.level !== "ad" ? pct(r.m.video_3s, r.m.impressions) : "—"), { title: "3-second views ÷ impressions" }),
+  hook: num("hook", "Hook rate", (r) => -(rate(r.m.video_3s, r.m.video_impressions) || 0), (r) => (r.m.video_impressions ? pct(r.m.video_3s, r.m.video_impressions) : "—"), { title: "3-second views ÷ impressions of the video ads" }),
   hold: num("hold", "Hold", (r) => -(rate(r.m.thruplays, r.m.video_3s) || 0), (r) => pct(r.m.thruplays, r.m.video_3s), { title: "ThruPlays ÷ 3-second views" }),
   impressions: num("impressions", "Views", (r) => r.m.impressions || 0, (r) => count(r.m.impressions), { title: "Times it was shown (impressions)" }),
   reach: num("reach", "People", (r) => r.m.reach || 0, (r) => count(r.m.reach), { title: "Different people who saw it at least once" }),
   freq: num("freq", "Times each", (r) => rate(r.m.impressions, r.m.reach) || 0, (r) => (r.m.reach ? (r.m.impressions / r.m.reach).toFixed(2) : "—")),
   cpm: num("cpm", "Per 1,000", (r) => rate(r.m.spend_cents * 1000, r.m.impressions) ?? Infinity, (r) => (r.m.impressions ? money((r.m.spend_cents * 1000) / r.m.impressions, { exact: true }) : "—")),
-  on: { key: "on", label: "On", cell: (r) => (r.can_control && ["ACTIVE", "PAUSED"].includes(r.status) ? switchHtml(isOn(r.status), `data-toggle="${r.level}:${r.id}" data-name="${esc(r.name)}"`, `${r.name} on or off`) : ""), cls: "c-on" },
+  on: { key: "on", label: "On", cell: (r) => (r.can_control && LIVE.includes(r.status) ? switchHtml(isOn(r.status), `data-toggle="${r.level}:${r.id}" data-name="${esc(r.name)}"`, `${r.name} on or off`) : ""), cls: "c-on" },
   spark: { key: "spark", label: "Leads / day", cell: (r) => sparkline(r.spark), cls: "c-sp" },
 };
 export const COLUMN_SETS = {
@@ -127,7 +131,7 @@ function sparkline(series) {
 
 // ---------------------------------------------------------------- the table
 
-export function tableHtml({ level, rows, cols, sort, dir, selected, selectable }) {
+export function tableHtml({ level, rows, cols, sort, dir, selected, selectable, range }) {
   const defs = COLUMN_SETS[cols]?.[1][level] || COLUMN_SETS.results[1][level];
   const columns = defs.map((k) => C[k]);
   const sorter = columns.find((c) => c.key === sort) || C.spend;
@@ -139,7 +143,8 @@ export function tableHtml({ level, rows, cols, sort, dir, selected, selectable }
   const someOn = selectable && rows.some((r) => selected.has(r.id));
   const head = `<tr>${selectable ? `<th class="c-cb"><input type="checkbox" class="tbl-cb" data-all aria-label="Select all" ${allOn ? "checked" : ""} ${someOn && !allOn ? 'data-mixed="1"' : ""}></th>` : ""}${columns.map((c) => {
     const s = c.sort ? (c.key === sorter.key ? (dir === "asc" ? "ascending" : "descending") : "none") : null;
-    return `<th class="${c.num ? "num" : ""} ${c.cls || ""}" ${s ? `aria-sort="${s}"` : ""} ${c.title ? `title="${esc(c.title)}"` : ""}>${c.sort ? `<button type="button" data-sort="${c.key}">${esc(c.label)}${c.sub ? ` <small>${esc(c.sub)}</small>` : ""}<span class="arrow">${icon("back")}</span></button>` : esc(c.label)}</th>`;
+    const title = c.key === "vs" ? vsTitle(range) : c.title;
+    return `<th class="${c.num ? "num" : ""} ${c.cls || ""}" ${s ? `aria-sort="${s}"` : ""} ${title ? `title="${esc(title)}"` : ""}>${c.sort ? `<button type="button" data-sort="${c.key}">${esc(c.label)}${c.sub ? ` <small>${esc(c.sub)}</small>` : ""}<span class="arrow">${icon("back")}</span></button>` : esc(c.label)}</th>`;
   }).join("")}</tr>`;
   const body = sorted.map((r) => `<tr data-row="${r.level}:${esc(r.id)}" class="${selected.has(r.id) ? "is-sel" : ""} ${["PAUSED", "ARCHIVED"].includes(r.status) ? "is-off" : ""}">
       ${selectable ? `<td class="c-cb"><input type="checkbox" class="tbl-cb" data-pick="${esc(r.id)}" aria-label="Select ${esc(r.name)}" ${selected.has(r.id) ? "checked" : ""}></td>` : ""}
@@ -175,12 +180,20 @@ export function cardsHtml(rows) {
         ${ad.can_control && ["ACTIVE", "PAUSED"].includes(ad.status) ? switchHtml(isOn(ad.status), `data-toggle="ad:${ad.id}" data-name="${esc(ad.name)}"`, `${ad.name} on or off`) : ""}</div>
         ${ad.title ? `<p class="cr-headline">${esc(ad.title)}</p>` : ""}
         <dl class="cr-stats"><div><dt>Spent</dt><dd>${money(m.spend_cents, { exact: true })}</dd></div><div><dt>Leads</dt><dd>${count(m.leads)}</dd></div>
-          <div><dt>Per lead</dt><dd>${per(m.spend_cents, m.leads)}</dd></div><div><dt>${ad.object_type === "VIDEO" ? "Hook rate" : "Click rate"}</dt><dd>${ad.object_type === "VIDEO" ? pct(m.video_3s, m.impressions) : pct(m.link_clicks, m.impressions)}</dd></div></dl>
+          <div><dt>Per lead</dt><dd>${per(m.spend_cents, m.leads)}</dd></div><div><dt>${ad.object_type === "VIDEO" ? "Hook rate" : "Click rate"}</dt><dd>${ad.object_type === "VIDEO" ? pct(m.video_3s, m.video_impressions) : pct(m.link_clicks, m.impressions)}</dd></div></dl>
       </div></article>`;
   }).join("")}</div>`;
 }
 
 // ---------------------------------------------------------------- figures with "vs before"
+
+// What figures hold that no listed ad shows: deleted or archived versions still spent (audit A3-36).
+export function unlistedNote(m, listed) {
+  const spend = m.spend_cents - listed.reduce((n, a) => n + (a.m.spend_cents || 0), 0);
+  const leads = m.leads - listed.reduce((n, a) => n + (a.m.leads || 0), 0);
+  if (spend <= 0 && leads <= 0) return "";
+  return ` The figures include ${money(spend, { exact: true })} and ${count(leads)} lead${leads === 1 ? "" : "s"} from ads no longer listed (deleted or archived versions).`;
+}
 
 // "today 37 · all time 1,955" under a views or people figure (null parts are left out).
 function todayEver(today, ever, key) {
@@ -317,7 +330,7 @@ const RANK_TONE = { ABOVE_AVERAGE: "ok", AVERAGE: "mute", BELOW_AVERAGE_35: "war
 function moreNumbers(r) {
   const m = r.m || {};
   const cell = (label, value, title = "") => `<div ${title ? `title="${esc(title)}"` : ""}><dt>${label}</dt><dd>${value}</dd></div>`;
-  const video = r.level !== "ad" || r.object_type === "VIDEO";
+  const video = (m.video_impressions || 0) > 0;
   return `<dl class="pk-grid">
     ${cell("Times each person saw it", m.reach ? (m.impressions / m.reach).toFixed(2) : "—", "Views ÷ people reached (frequency)")}
     ${cell("Link clicks", count(m.link_clicks))}
@@ -325,7 +338,7 @@ function moreNumbers(r) {
     ${cell("Cost per click", per(m.spend_cents, m.link_clicks))}
     ${cell("Cost per 1,000 views", m.impressions ? money((m.spend_cents * 1000) / m.impressions, { exact: true }) : "—", "CPM")}
     ${cell("Leads per 1,000 views", m.impressions ? ((m.leads * 1000) / m.impressions).toFixed(2) : "—")}
-    ${video ? cell("Hook rate", pct(m.video_3s, m.impressions), "3-second views ÷ views") : ""}
+    ${video ? cell("Hook rate", pct(m.video_3s, m.video_impressions), "3-second views ÷ views of the video ads") : ""}
     ${video ? cell("Hold rate", pct(m.thruplays, m.video_3s), "ThruPlays ÷ 3-second views") : ""}
     ${video ? cell("ThruPlays", count(m.thruplays), "Watched 15 s or to the end") : ""}
     ${cell("Lead rate", pct(m.leads, m.link_clicks), "Leads ÷ link clicks")}

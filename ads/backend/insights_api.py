@@ -278,6 +278,27 @@ def estimate(adset_id):
                     "ready": e.get("estimate_ready")})
 
 
+def _plain(v):
+    return v.get("new_value", v.get("value")) if isinstance(v, dict) else v
+
+
+def activity_values(event_type, extra):
+    """Old and new value of one of Meta's history lines. Budget and spend-limit amounts are minor units (cents)
+    and come marked `money`, so the page writes them in the account currency, never as a bare 2000 (audit A3-38)."""
+    extra = extra if isinstance(extra, dict) else {}
+    old, new = extra.get("old_value"), extra.get("new_value")
+    kind = event_type or ""
+    money = (any(w in kind for w in ("budget", "spend_cap", "spend_limit")) or "currency" in extra
+             or any(isinstance(v, dict) and "currency" in v for v in (old, new)))
+    old, new = _plain(old), _plain(new)
+    if money:
+        try:
+            return {"old": None if old is None else int(float(old)), "new": None if new is None else int(float(new)), "money": True}
+        except (TypeError, ValueError):
+            pass  # not an amount after all: shown as Meta wrote it
+    return {"old": old, "new": new, "money": False}
+
+
 @bp.get("/activity")
 @admin_required
 def activity():
@@ -299,8 +320,7 @@ def activity():
                 pass
             out.append({"time": r.get("event_time"), "what": r.get("translated_event_type") or r.get("event_type"),
                         "who": r.get("actor_name"), "object": r.get("object_name"), "type": r.get("object_type"),
-                        "old": (extra or {}).get("old_value") if isinstance(extra, dict) else None,
-                        "new": (extra or {}).get("new_value") if isinstance(extra, dict) else None})
+                        **activity_values(r.get("event_type"), extra)})
         return out
     try:
         items = cached(f"activity:{since}", 600, fetch)

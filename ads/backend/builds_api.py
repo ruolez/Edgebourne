@@ -3,6 +3,7 @@ import json
 
 from flask import Blueprint, jsonify, request
 
+import account_info
 import adset_build as ab
 import adsets_api
 import campaign_build as cb
@@ -54,7 +55,7 @@ def clean(raw):
 def check(spec, forms=None):
     forms = forms if forms is not None else forms_by_id()
     tpl = templates()
-    errs = cb.problems(spec, set(forms), set(tpl), running_daily_cents())
+    errs = cb.problems(spec, set(forms), set(tpl), running_daily_cents(), account_info.currency())
     import money_rules
     cap = money_rules.ceiling(settings_store.get("max_daily_budget_cents"))
     if spec["daily_budget_cents"] and spec["daily_budget_cents"] > cap:
@@ -67,7 +68,7 @@ def check(spec, forms=None):
         errs.append(("goal", "Add this account's Facebook Page in Settings → Meta first"))
     out = {"problems": [{"step": s, "message": m} for s, m in errs]}
     if not errs:
-        out["review"] = cb.review(spec, forms.get(spec["form_id"], ""), {k: v["name"] for k, v in tpl.items()})
+        out["review"] = cb.review(spec, forms.get(spec["form_id"], ""), {k: v["name"] for k, v in tpl.items()}, account_info.currency())
     return out
 
 
@@ -83,7 +84,7 @@ def view(b):
             status[r["id"]] = r["effective_status"]
     return {"id": b["id"], "status": b["status"], "error": b["error"], "made": made, "entity_status": status,
             "spec": b["spec"], "review": cb.review(b["spec"], forms_by_id().get(b["spec"]["form_id"], b["spec"]["form_id"]),
-                                                    {k: v["name"] for k, v in templates().items()}),
+                                                    {k: v["name"] for k, v in templates().items()}, account_info.currency()),
             "created_at": b["created_at"].isoformat(), "published_at": b["published_at"].isoformat() if b["published_at"] else None}
 
 
@@ -261,7 +262,7 @@ def resume(build_id):
 
 def typed_matches(typed, cents):
     try:
-        return round(float(str(typed).replace("$", "").replace(",", "").strip()) * 100) == int(cents)
+        return round(float(str(typed).translate(str.maketrans("", "", "$€£,")).strip().removesuffix(account_info.currency()).strip()) * 100) == int(cents)
     except ValueError:
         return False
 

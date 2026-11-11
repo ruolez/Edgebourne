@@ -105,7 +105,13 @@ if (me) {
     $("campaign").innerHTML = opts.campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}${c.effective_status === "ACTIVE" ? "" : " (off)"}</option>`).join("");
     const want = new URLSearchParams(location.search).get("campaign");
     if (want && opts.campaigns.some((c) => c.id === want)) $("campaign").value = want;
+    else if (want) {
+      // A deleted or archived campaign can't take new ad sets: never quietly build in another one (audit A3-105).
+      $("campaign").insertAdjacentHTML("afterbegin", '<option value="" disabled>Pick a campaign</option>');
+      $("campaign").value = "";
+    }
     syncCampaign();
+    if (want && !campaign()) $("budget-note").textContent = "The campaign you came from is deleted or archived, so it can't get new ad sets. Pick one that's still running.";
     await loadTemplate();
     $("campaign").addEventListener("change", () => { syncCampaign(); loadTemplate(); });
     $("template").addEventListener("change", loadTemplate);
@@ -116,6 +122,7 @@ if (me) {
       const form = $("as-form");
       fieldError(form, null);
       const c = campaign();
+      if (!c) { fieldError(form, "campaign", "Pick the campaign it goes in"); return; }
       const s = spec();
       const yes = await confirmDialog({ title: `Create “${s.name || "the ad set"}”?`,
         body: `<p>In ${esc(c.name)}, switched off and with no ads yet. ${c.daily_budget_cents != null ? "It shares the campaign's budget once it's on." : `Its budget: ${esc(money(s.daily_budget_cents || 0, { exact: true }))} a day once it's on.`}</p><p class="muted">${esc($("summary").textContent)}</p>`,

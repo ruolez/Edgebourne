@@ -20,11 +20,6 @@ LEVEL_TABLE = {"campaign": "campaigns", "adset": "adsets", "ad": "ads"}
 VIEW_PAGES = ("ads", "leads", "insights", "inbox")
 
 
-def _money(cents):
-    cur = account_info.currency()
-    return f"${cents / 100:,.2f}" if cur == "USD" else f"{cents / 100:,.2f} {cur}"
-
-
 def crumbs(level, row):
     out = []
     if level in ("adset", "ad") and row.get("campaign_id"):
@@ -45,7 +40,7 @@ def timeline_for(level, entity_id):
                           WHERE m.entity_id = %s ORDER BY m.id DESC LIMIT 100""", (entity_id,))
     proposals = db.query("""SELECT id, title, status, decided_at FROM desk_proposals
                             WHERE entity_id = %s AND decided_at IS NOT NULL ORDER BY id DESC LIMIT 50""", (entity_id,))
-    return timeline.merge(events, changes, proposals, money=_money)
+    return timeline.merge(events, changes, proposals, money=account_info.money)
 
 
 def _visible(level, entity_id):
@@ -77,7 +72,7 @@ def _detail(level, entity_id):
     if err:
         return err
     key, start, end = ads_api.window_from(request.args)
-    prev = ranges.previous(start, end) if request.args.get("vs") == "prev" else None
+    prev = ranges.previous(start, end, key) if request.args.get("vs") == "prev" else None
     campaign_id = entity_id if level == "campaign" else row["campaign_id"]
     data = ads_api.tree_data(current_user(), start, end, prev=prev, campaign_id=campaign_id,
                              adset_id=entity_id if level == "adset" else None, archived=request.args.get("archived") == "1")
@@ -131,7 +126,7 @@ def compare_ads():
     if len(ids) < 2:
         return api_error("Those ads aren't available to compare", 404)
     key, start, end = ads_api.window_from(request.args)
-    prev = ranges.previous(start, end) if request.args.get("vs") == "prev" else None
+    prev = ranges.previous(start, end, key) if request.args.get("vs") == "prev" else None
     where, params = "ad_id = ANY(%s)", [ids]
     cur, qual = ads_api._metrics(where, params, start, end), ads_api._quality(where, params, start, end)
     if prev:

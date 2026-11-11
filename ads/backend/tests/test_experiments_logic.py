@@ -29,6 +29,10 @@ class JudgeTests(unittest.TestCase):
         j = ex.judge("cpl", [arm("A", 3000, 2), arm("B", 9000, 3)], target_cents=2000, days_run=5)
         self.assertEqual((j["state"], j["needs"]), ("early", {"A": "$10 more spend and 1 more lead"}))
 
+    def test_what_an_arm_needs_is_in_the_account_currency(self):
+        j = ex.judge("cpl", [arm("A", 3000, 2), arm("B", 9000, 3)], target_cents=2000, days_run=5, currency="GBP")
+        self.assertEqual(j["needs"], {"A": "£10 more spend and 1 more lead"})
+
     def test_nothing_is_judged_before_three_full_days(self):
         j = ex.judge("cpl", [arm("A", 10000, 20), arm("B", 10000, 4)], target_cents=1000, days_run=2)
         self.assertEqual((j["state"], j["note"].startswith("Too early to call: it needs 1 more full day")), ("early", True))

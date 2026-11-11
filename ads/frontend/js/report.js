@@ -16,7 +16,7 @@ function changeLine(c) {
   const what = c.action === "status" ? `${c.new_value === "ACTIVE" ? "turned on" : "turned off"}`
     : c.action === "budget" ? `daily budget ${money(Number(c.old_value), { exact: true })} → ${money(Number(c.new_value), { exact: true })}`
     : c.action === "create" ? "created" : (ACTION[c.action] || c.action);
-  return `<li><span class="r-date">${esc(dayLabel(c.created_at.slice(0, 10)))}</span> ${esc(LEVEL[c.level] || c.level)} “${esc(c.entity_name || "")}”: ${esc(what)}${c.action === "create" && c.new_value ? "" : ""}</li>`;
+  return `<li><span class="r-date">${esc(dayLabel(c.day))}</span> ${esc(LEVEL[c.level] || c.level)} “${esc(c.entity_name || "")}”: ${esc(what)}${c.action === "create" && c.new_value ? "" : ""}</li>`;
 }
 
 function reportHtml(r) {
@@ -34,7 +34,7 @@ function reportHtml(r) {
       <p class="r-headline">${esc(r.headline)}</p>
       <div class="r-figs">
         <div><span>Spent</span><b>${money(n.spend_cents)}</b></div>
-        <div><span>Leads</span><b>${count(n.leads)}</b></div>
+        <div><span>Leads (Meta)</span><b>${count(n.leads)}</b></div>
         <div><span>Cost per lead</span><b>${cpl ? money(cpl, { exact: true }) : "—"}</b></div>
         <div><span>Qualified</span><b>${count(n.qualified)}</b></div>
         <div><span>Cost per qualified lead</span><b>${cpq ? money(cpq, { exact: true }) : "—"}</b>${r.target_cents ? `<small>target ${money(r.target_cents)}</small>` : ""}</div>
@@ -45,7 +45,8 @@ function reportHtml(r) {
     </section>
     <section class="r-sec"><h3>2. Why</h3>
       ${r.ads.length ? `<table class="table r-ads"><thead><tr><th>Ad</th><th class="num">Spent</th><th class="num">Leads</th><th class="num">Cost per lead</th><th class="num">Click rate</th><th class="num">Stopped scrolling</th></tr></thead>
-        <tbody>${r.ads.map((a) => `<tr><th scope="row">${esc(a.name || "")}</th><td class="num">${money(a.spend_cents)}</td><td class="num">${count(a.leads)}</td><td class="num">${a.cpl_cents ? money(a.cpl_cents, { exact: true }) : "—"}</td><td class="num">${a.ctr != null ? `${a.ctr}%` : "—"}</td><td class="num">${a.hook != null ? `${a.hook}%` : "—"}</td></tr>`).join("")}</tbody></table>` : '<p class="muted flush">No ad spent money in this period.</p>'}
+        <tbody>${r.ads.map((a) => `<tr><th scope="row">${esc(a.name || "")}</th><td class="num">${money(a.spend_cents)}</td><td class="num">${count(a.leads)}</td><td class="num">${a.cpl_cents ? money(a.cpl_cents, { exact: true }) : "—"}</td><td class="num">${a.ctr != null ? `${a.ctr}%` : "—"}</td><td class="num">${a.hook != null ? `${a.hook}%` : "—"}</td></tr>`).join("")}</tbody></table>
+        <p class="muted small flush" id="r-top-note">${r.ads_total > r.ads.length ? `The ${r.ads.length} that spent the most, of ${r.ads_total}. ` : ""}Earlier versions of an ad are counted under its name.</p>` : '<p class="muted flush">No ad spent money in this period.</p>'}
       ${r.ideas && r.ideas.best ? `<p class="flush">Of the ideas behind the ads, <b>${esc(r.ideas.best)}</b> brought the cheapest leads${r.ideas.clear ? ` (${r.ideas.sure}% sure)` : `, but only ${r.ideas.sure}% sure, so it could still be chance`}.</p>` : ""}
     </section>
     <section class="r-sec"><h3>3. What we did</h3>

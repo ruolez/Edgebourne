@@ -9,7 +9,7 @@ import meta_client
 import settings_store
 from auth import current_user, login_required, visible_campaign_ids
 from desk_api import bridge_status
-from performance_api import cap_snapshot, overview_data
+from performance_api import cap_snapshot, daily_budget_cents, overview_data
 
 bp = Blueprint("home", __name__, url_prefix="/api/home")
 TODAY_TTL = 300
@@ -96,13 +96,7 @@ def home():
                           WHERE NOT is_test AND status_changed_at > now() - interval '7 days' AND {lw}
                           GROUP BY status""", lp)
     waiting = db.query(f"SELECT COUNT(*) AS n FROM leads WHERE status = 'new' AND NOT is_test AND {lw}", lp, one=True)["n"]
-    bw = "TRUE" if scope_ids is None else "id = ANY(%s)"
-    budget = db.query(f"""SELECT COALESCE(SUM(daily_budget_cents), 0) AS c FROM campaigns
-                          WHERE effective_status = 'ACTIVE' AND {bw}""", lp, one=True)["c"]
-    if not budget:
-        aw = "TRUE" if scope_ids is None else "campaign_id = ANY(%s)"
-        budget = db.query(f"""SELECT COALESCE(SUM(daily_budget_cents), 0) AS c FROM adsets
-                              WHERE effective_status = 'ACTIVE' AND {aw}""", lp, one=True)["c"]
+    budget = daily_budget_cents(scope_ids)
     strip = [{"id": a["id"], "name": a["name"], "status": a["effective_status"], "thumbnail_url": a.get("thumbnail_url"),
               "spend_cents": int(a["spend_cents"]), "leads": int(a["leads"])}
              for a in perf["ads"] if a["effective_status"] not in ("DELETED", "ARCHIVED")][:8]
@@ -117,7 +111,7 @@ def home():
         "call": call,
         "waiting": int(waiting),
         "stages": {r["status"]: int(r["n"]) for r in stages},
-        "daily_budget_cents": int(budget or 0),
+        "daily_budget_cents": budget,
         "ad_strip": strip,
         "changes": changes,
         "updated_at": settings_store.get("last_refresh_at") or settings_store.get("last_performance_sync"),

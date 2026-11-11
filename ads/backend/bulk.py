@@ -50,6 +50,10 @@ def budget_lines(rows, mode, value, live, cap):
     lines = []
     for r in rows:
         cur = live.get(r["id"])
+        if r.get("status") in ("ARCHIVED", "DELETED"):
+            lines.append({"id": r["id"], "name": r["name"], "from": cur, "to": None, "big": False, "pct": None,
+                          "skip": "Deleted or archived: its budget can't be changed"})
+            continue
         if not cur:
             lines.append({"id": r["id"], "name": r["name"], "from": None, "to": None, "big": False, "pct": None,
                           "skip": "No daily budget of its own (it's set one level up)"})

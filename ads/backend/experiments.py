@@ -6,6 +6,7 @@ target cost and has at least 3 results; a winner needs 95% confidence, never Met
 import math
 from datetime import date, timedelta
 
+import account_info
 import db
 
 METRICS = {
@@ -66,18 +67,18 @@ def confidence(metric, a, b):
     return max(0, min(99, math.floor((1 - p) * 100)))
 
 
-def _money(cents):
-    return f"${cents / 100:,.0f}" if cents >= 1000 else f"${cents / 100:,.2f}"
+def _money(cents, currency):
+    return account_info.money(cents, currency, whole=cents >= 1000)
 
 
-def needs(metric, arm, target_cents):
+def needs(metric, arm, target_cents, currency="USD"):
     """What the arm still needs before it can be judged ('' when it has enough)."""
     m = METRICS[metric]
     n = arm.get(m["count"]) or 0
     out = []
     if m["kind"] == "cost":
         if target_cents and arm["spend_cents"] < SPEND_TIMES * target_cents:
-            out.append(f"{_money(SPEND_TIMES * target_cents - arm['spend_cents'])} more spend")
+            out.append(f"{_money(SPEND_TIMES * target_cents - arm['spend_cents'], currency)} more spend")
         if n < MIN_RESULTS:
             out.append(f"{MIN_RESULTS - n} more {m['result']}{'' if MIN_RESULTS - n == 1 else 's'}")
     else:
@@ -88,7 +89,7 @@ def needs(metric, arm, target_cents):
     return " and ".join(out)
 
 
-def judge(metric, arms, target_cents=None, days_run=0):
+def judge(metric, arms, target_cents=None, days_run=0, currency="USD"):
     """arms: [{label, spend_cents, impressions, link_clicks, leads, qualified, video_3s}].
     Returns the state ('early' | 'even' | 'leaning' | 'winner'), the leader, how much better it is,
     the confidence, what each arm still needs and one plain sentence."""
@@ -97,7 +98,7 @@ def judge(metric, arms, target_cents=None, days_run=0):
     if target_cents is None and lower_better:
         total_n = sum(a.get(m["count"]) or 0 for a in arms)
         target_cents = round(sum(a["spend_cents"] for a in arms) / total_n) if total_n else None
-    short = {a["label"]: needs(metric, a, target_cents) for a in arms}
+    short = {a["label"]: needs(metric, a, target_cents, currency) for a in arms}
     ranked = sorted(arms, key=lambda a: (value(metric, a) is None, (value(metric, a) or 0) * (1 if lower_better else -1)))
     out = {"state": "early", "leader": None, "runner_up": None, "diff_pct": None, "confidence": None,
            "needs": {k: v for k, v in short.items() if v}, "target_cents": target_cents}
@@ -147,7 +148,6 @@ def window(exp, today):
 
 
 def arm_numbers(arm, start, end):
-    import account_info
     ads, sets = arm.get("ad_ids") or [], arm.get("adset_ids") or []
     row = db.query(
         """SELECT COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
@@ -172,7 +172,6 @@ def default_target(metric):
 
 
 def account_today():
-    import account_info
     return account_info.today()
 
 
@@ -187,7 +186,7 @@ def with_results(exp, today=None):
         a["value"] = value(exp["metric"], a)
     target = exp.get("target_cents") or default_target(exp["metric"])
     out = {**exp, "arms": arms, "days_run": days_run, "window": {"start": start.isoformat(), "end": end.isoformat()},
-           "judgement": judge(exp["metric"], arms, target, days_run)}
+           "judgement": judge(exp["metric"], arms, target, days_run, account_info.currency())}
     for k in ("start_day", "end_day"):
         out[k] = exp[k].isoformat() if exp.get(k) else None
     return out

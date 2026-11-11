@@ -38,6 +38,20 @@ def currency(snap=None):
     return ((snapshot() if snap is None else snap).get("currency") or "USD").upper()
 
 
+SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
+
+
+def money(cents, code=None, whole=False):
+    """An amount written in the account's currency (the one given, else this account's): "$1,234.50",
+    "€20", "1,234.50 CAD". `whole` leaves the cents out. Every server-made sentence uses it."""
+    if cents is None:
+        return "—"
+    code = (code or currency()).upper()
+    amount = f"{cents / 100:,.{0 if whole else 2}f}"
+    symbol = SYMBOLS.get(code)
+    return f"{symbol}{amount}" if symbol else f"{amount} {code}"
+
+
 def currency_problem(code):
     """Why the console can't run an account in this currency, or None."""
     code = (code or "").upper()

@@ -3,9 +3,10 @@ import unittest
 import compare
 
 
-def m(spend, leads, qualified=0, impressions=4000, reach=2800, clicks=44, v3=1200, thru=300):
+def m(spend, leads, qualified=0, impressions=4000, reach=2800, clicks=44, v3=1200, thru=300, video_impressions=None):
     return {"spend_cents": spend, "leads": leads, "qualified": qualified, "impressions": impressions, "reach": reach,
-            "link_clicks": clicks, "video_3s": v3, "thruplays": thru}
+            "link_clicks": clicks, "video_3s": v3, "thruplays": thru,
+            "video_impressions": impressions if video_impressions is None else video_impressions}
 
 
 class RatesTests(unittest.TestCase):
@@ -13,6 +14,14 @@ class RatesTests(unittest.TestCase):
         r = compare.rates(m(4645, 11, 3, impressions=4084, reach=2900, clicks=44, v3=1213, thru=400))
         self.assertEqual((r["cpl_cents"], r["cpq_cents"], round(r["ctr"], 4), round(r["hook"], 4), round(r["frequency"], 2), r["cpm_cents"]),
                          (422, 1548, 0.0108, 0.297, 1.41, 1137))
+
+    def test_hook_rate_counts_only_video_impressions_and_images_have_none(self):
+        mixed, image = m(1000, 1, impressions=8000, v3=1200, video_impressions=4000), m(1000, 1, impressions=4000, v3=0, thru=0, video_impressions=0)
+        self.assertEqual((compare.rates(mixed)["hook"], compare.rates(image)["hook"]), (0.3, None))
+
+    def test_hold_is_labelled_hold_rate_like_the_video_tab(self):
+        # The Video tab's "Watched to the end" is a different number (p100 ÷ impressions; audit A3-39).
+        self.assertEqual({k: label for k, label, _ in compare.ROWS}["hold"], "Hold rate")
 
     def test_no_leads_means_no_cost_per_lead(self):
         self.assertEqual(compare.rates(m(500, 0))["cpl_cents"], None)

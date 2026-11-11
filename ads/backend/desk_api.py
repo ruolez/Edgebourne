@@ -878,21 +878,23 @@ def snapshot():
         days = 7
     days = days if days in (7, 14, 30) else 7
     perf = overview_data({"id": None, "role": "admin"}, days)
+    # Lead quality over the same complete account days as the spend (audit A3-45, A3-56), per ad id:
+    # ad names repeat across versions.
+    window = (account_info.tz_name(), perf["range"]["start"], perf["range"]["end"])
+    in_window = "NOT is_test AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s"
     stages = db.query(
-        """SELECT COALESCE(ad_name, 'unknown ad') AS ad, status, COUNT(*) AS n FROM leads
-           WHERE NOT is_test AND created_time >= now() - %s * interval '1 day'
-           GROUP BY 1, 2 ORDER BY 1, 2""", (days,))
+        f"""SELECT ad_id, COALESCE(MAX(ad_name), 'unknown ad') AS ad, status, COUNT(*) AS n FROM leads
+            WHERE {in_window} GROUP BY ad_id, status ORDER BY 2, 1, 3""", window)
     types = db.query(
-        """SELECT COALESCE(NULLIF(business_type, ''), 'not given') AS business_type, COUNT(*) AS n,
+        f"""SELECT COALESCE(NULLIF(business_type, ''), 'not given') AS business_type, COUNT(*) AS n,
                   COUNT(*) FILTER (WHERE status IN ('qualified', 'won')) AS qualified
-           FROM leads WHERE NOT is_test AND created_time >= now() - %s * interval '1 day'
-           GROUP BY 1 ORDER BY 2 DESC LIMIT 15""", (days,))
+           FROM leads WHERE {in_window} GROUP BY 1 ORDER BY 2 DESC LIMIT 15""", window)
     speed = db.query(
-        """SELECT COUNT(*) FILTER (WHERE first_contacted_at IS NOT NULL) AS contacted,
+        f"""SELECT COUNT(*) FILTER (WHERE first_contacted_at IS NOT NULL) AS contacted,
                   COUNT(*) AS total,
                   percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM first_contacted_at - created_time) / 60)
                       FILTER (WHERE first_contacted_at IS NOT NULL) AS median_minutes_to_contact
-           FROM leads WHERE NOT is_test AND created_time >= now() - %s * interval '1 day'""", (days,), one=True)
+           FROM leads WHERE {in_window}""", window, one=True)
     import experiments_api
     tests = [experiments_api.summary(r) for r in db.query(
         f"SELECT {experiments_api.COLS} FROM experiments WHERE status = 'running' OR closed_at > now() - interval '30 days' ORDER BY start_day DESC")]

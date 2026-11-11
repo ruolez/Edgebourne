@@ -3,8 +3,9 @@ import unittest
 import concepts as c
 
 
-def ad(i, spend, leads, imp=1000, v3=300, thru=60, q=0):
-    return {"id": i, "spend_cents": spend, "leads": leads, "impressions": imp, "video_3s": v3, "thruplays": thru, "qualified": q}
+def ad(i, spend, leads, imp=1000, v3=300, thru=60, q=0, video=True):
+    return {"id": i, "spend_cents": spend, "leads": leads, "impressions": imp, "video_3s": v3, "thruplays": thru, "qualified": q,
+            "video_impressions": imp if video else 0}
 
 
 ADS = [ad("n1", 2600, 5), ad("n2", 2900, 6, q=1), ad("n3", 3000, 5), ad("n4", 2800, 4), ad("n5", 3000, 7), ad("x", 500, 0)]
@@ -31,6 +32,11 @@ class GroupTests(unittest.TestCase):
     def test_rates_are_shares_of_the_right_base(self):
         g = c.group([ad("a", 1000, 4, imp=2000, v3=500, thru=100, q=1)], {"a": {"hook": "Q"}}, "hook")["groups"][0]
         self.assertEqual((g["hook_rate"], g["hold_rate"], g["qualified_rate"]), (0.25, 0.2, 0.25))
+
+    def test_image_ads_do_not_dilute_a_groups_hook_rate(self):
+        rows = [ad("v", 1000, 2, imp=1000, v3=300), ad("i", 1000, 2, imp=1000, v3=0, thru=0, video=False), ad("j", 500, 1, v3=0, thru=0, video=False)]
+        g = {x["value"]: x for x in c.group(rows, {"v": {"hook": "Q"}, "i": {"hook": "Q"}, "j": {"hook": "R"}}, "hook")["groups"]}
+        self.assertEqual((g["Q"]["hook_rate"], g["R"]["hook_rate"]), (0.3, None))
 
     def test_without_a_target_the_average_cost_sets_the_spend_bar(self):
         # 17 leads on $140 → $8.24 a lead → a group needs $16.47 and 3 leads

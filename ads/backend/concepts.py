@@ -21,22 +21,23 @@ def clean_value(v):
 
 
 def group(ads, tags, dimension, target_cents=None):
-    """ads: [{id, spend_cents, impressions, leads, qualified, video_3s, thruplays}];
+    """ads: [{id, spend_cents, impressions, leads, qualified, video_3s, thruplays, video_impressions}]
+    (video_impressions: the impressions of video ads, so image ads don't dilute the hook rate);
     tags: {ad_id: {dimension: value}}. One row per value, cheapest judged group first."""
     groups = {}
     for a in ads:
         value = (tags.get(a["id"]) or {}).get(dimension) or UNTAGGED
         g = groups.setdefault(value, {"value": value, "ads": 0, "spend_cents": 0, "impressions": 0, "leads": 0,
-                                      "qualified": 0, "video_3s": 0, "thruplays": 0})
+                                      "qualified": 0, "video_3s": 0, "thruplays": 0, "video_impressions": 0})
         g["ads"] += 1
-        for k in ("spend_cents", "impressions", "leads", "qualified", "video_3s", "thruplays"):
+        for k in ("spend_cents", "impressions", "leads", "qualified", "video_3s", "thruplays", "video_impressions"):
             g[k] += a.get(k) or 0
     total_leads = sum(g["leads"] for g in groups.values())
     target = target_cents or (round(sum(g["spend_cents"] for g in groups.values()) / total_leads) if total_leads else None)
     out = []
     for g in groups.values():
         g["cpl_cents"] = round(g["spend_cents"] / g["leads"]) if g["leads"] else None
-        g["hook_rate"] = g["video_3s"] / g["impressions"] if g["impressions"] else None
+        g["hook_rate"] = g["video_3s"] / g["video_impressions"] if g["video_impressions"] else None
         g["hold_rate"] = g["thruplays"] / g["video_3s"] if g["video_3s"] else None
         g["qualified_rate"] = g["qualified"] / g["leads"] if g["leads"] else None
         g["enough"] = g["leads"] >= MIN_LEADS and (not target or g["spend_cents"] >= SPEND_TIMES * target)

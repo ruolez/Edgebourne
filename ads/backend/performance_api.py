@@ -136,11 +136,17 @@ def overview_data(user, days, campaign_id=None, span=None):
                            "text": "The account spending limit is almost used up. Ads pause when it's reached."
                            if used < 1 else "The account spending limit is reached, so every ad is paused."})
 
-    last, prev = (series[-1], series[-2]) if len(series) >= 2 else (None, None)
+    # The real yesterday (account clock), whatever the window: "Last month" ends weeks ago (audit A3-61).
+    y = account_info.yesterday()
+    two = {r["day"]: r for r in db.query(
+        f"""SELECT day, SUM(spend_cents) AS spend_cents, SUM(leads) AS leads FROM ad_daily d
+            WHERE day BETWEEN %s AND %s AND {where} GROUP BY day""", [y - timedelta(days=1), y] + params)}
+    last, prev = ({"day": d.isoformat(), "spend_cents": int((two.get(d) or {}).get("spend_cents") or 0),
+                   "leads": int((two.get(d) or {}).get("leads") or 0)} for d in (y, y - timedelta(days=1)))
     return {
         "range": {"start": start.isoformat(), "end": end.isoformat(), "days": days},
-        "yesterday": last and {"day": last["day"], "spend_cents": last["spend_cents"], "leads": last["leads"],
-                               "prev_spend_cents": prev["spend_cents"], "prev_leads": prev["leads"]},
+        "yesterday": {"day": last["day"], "spend_cents": last["spend_cents"], "leads": last["leads"],
+                      "prev_spend_cents": prev["spend_cents"], "prev_leads": prev["leads"]},
         "totals": {**{k: int(v) for k, v in totals.items()}, "qualified": qualified_total},
         "previous": {"start": prev_start.isoformat(), "end": prev_end.isoformat(),
                      "spend_cents": int(before["spend_cents"]), "leads": int(before["leads"]),
@@ -153,6 +159,15 @@ def overview_data(user, days, campaign_id=None, span=None):
     }
 
 
+def daily_budget_cents(scope_ids=None):
+    """What the campaigns that are on may spend a day: each campaign's own budget, else its active ad
+    sets' (Today, Results pacing and the alerts count it the same way; audit A3-59)."""
+    cw, params = ("TRUE", []) if scope_ids is None else ("c.id = ANY(%s)", [scope_ids])
+    return int(db.query(f"""SELECT COALESCE(SUM(COALESCE(c.daily_budget_cents,
+                                (SELECT SUM(daily_budget_cents) FROM adsets s WHERE s.campaign_id = c.id AND s.effective_status = 'ACTIVE'))), 0) AS c
+                             FROM campaigns c WHERE c.effective_status = 'ACTIVE' AND {cw}""", params, one=True)["c"] or 0)
+
+
 def pacing_data(scope_ids=None):
     """This month's pace for the campaigns in scope (None = the whole account, with the
     monthly target and the spending limit, which are account-wide)."""
@@ -163,19 +178,18 @@ def pacing_data(scope_ids=None):
     month_days = [(r["day"], int(r["c"])) for r in db.query(
         f"SELECT day, SUM(spend_cents) AS c FROM ad_daily WHERE day >= %s AND day < %s AND {where} GROUP BY day",
         [today.replace(day=1), today] + params)]
-    recent = [int(r["c"]) for r in db.query(
+    spent = {r["day"]: int(r["c"]) for r in db.query(
         f"SELECT day, SUM(spend_cents) AS c FROM ad_daily WHERE day >= %s AND day < %s AND {where} GROUP BY day",
-        [today - timedelta(days=7), today] + params)]
-    cw = "TRUE" if scope_ids is None else "c.id = ANY(%s)"
-    budget = db.query(f"""SELECT COALESCE(SUM(COALESCE(c.daily_budget_cents,
-                             (SELECT SUM(daily_budget_cents) FROM adsets s WHERE s.campaign_id = c.id AND s.effective_status = 'ACTIVE'))), 0) AS c
-                          FROM campaigns c WHERE c.effective_status = 'ACTIVE' AND {cw}""", params, one=True)["c"]
+        [today - timedelta(days=7), today] + params)}
+    first = db.query(f"SELECT MIN(day) AS d FROM ad_daily WHERE spend_cents > 0 AND {where}", params, one=True)["d"]
+    recent = pacing.last_days(spent, today, first)
+    budget = daily_budget_cents(scope_ids)
     snap = (insights.today_for(settings_store.get("today_snapshot"), today) or {}).get("campaigns", {})
     so_far = sum(v["spend_cents"] for cid, v in snap.items() if scope_ids is None or cid in scope_ids)
     account = scope_ids is None
     cap = cap_snapshot() if account else None
     target = settings_store.get("monthly_target_cents") if account else None
-    return pacing.pace(today, month_days, recent, int(budget or 0), int(target) if target else None,
+    return pacing.pace(today, month_days, recent, budget, int(target) if target else None,
                        cap["remaining_cents"] if cap and cap["limit_cents"] else None, so_far)
 
 
@@ -184,14 +198,15 @@ def pacing_data(scope_ids=None):
 def overview():
     user = current_user()
     key = request.args.get("range", "7")
-    start, end = ranges.window(key if key in RANGE_KEYS else "7", account_info.today())
+    key = key if key in RANGE_KEYS else "7"
+    start, end = ranges.window(key, account_info.today())
     days = (end - start).days + 1
     campaign_id = request.args.get("campaign") or None
     if campaign_id:
         ids = visible_campaign_ids(user)
         if ids is not None and campaign_id not in ids:
             return api_error("Not found", 404)
-    out = overview_data(user, days, campaign_id, span=((start, end), ranges.previous(start, end)))
+    out = overview_data(user, days, campaign_id, span=((start, end), ranges.previous(start, end, key)))
     out["campaigns"] = campaign_choices(user, start, end)
     out["campaign"] = campaign_id
     out["pacing"] = pacing_data(visible_campaign_ids(user))

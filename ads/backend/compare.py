@@ -10,7 +10,7 @@ ROWS = (  # key, label, direction (+1 higher is better, -1 lower is better, 0 no
     ("cpq_cents", "Per qualified lead", -1),
     ("ctr", "Click rate", 1),
     ("hook", "Hook rate", 1),
-    ("hold", "Watched to the end", 1),
+    ("hold", "Hold rate", 1),
     ("frequency", "Times each person saw it", 0),
     ("cpm_cents", "Cost per 1,000 views", -1),
 )
@@ -27,7 +27,8 @@ def rates(t):
     out["cpl_cents"] = round(spend / leads) if leads else None
     out["cpq_cents"] = round(spend / q) if q else None
     out["ctr"] = _div(t.get("link_clicks", 0), imp)
-    out["hook"] = _div(t.get("video_3s", 0), imp)
+    # Video impressions only: an image ad has no hook rate, and doesn't pull a mixed group's down (audit A3-65).
+    out["hook"] = _div(t.get("video_3s", 0), t.get("video_impressions", 0))
     out["hold"] = _div(t.get("thruplays", 0), t.get("video_3s", 0))
     out["frequency"] = _div(imp, t.get("reach", 0))
     out["cpm_cents"] = round(spend * 1000 / imp) if imp else None

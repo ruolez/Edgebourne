@@ -63,11 +63,6 @@ def rules_with(saved):
     return out
 
 
-def money(cents):
-    d = cents / 100
-    return f"${d:,.2f}" if d % 1 else f"${d:,.0f}"
-
-
 def _sum(rows, key):
     return sum(r.get(key) or 0 for r in rows)
 
@@ -102,6 +97,9 @@ def _fatigue(rows, today, rule, people):
 def evaluate(snap, rules, today):
     found = []
 
+    def money(cents):
+        return account_info.money(cents, snap.get("currency") or "USD", whole=not cents % 100)
+
     def add(rule, entity, level, title, lines, campaign_id=None, href=None):
         found.append({"rule": rule, "entity_id": entity, "key": f"{rule}:{entity}:{today.isoformat()}", "level": level,
                       "title": title, "lines": lines, "campaign_id": campaign_id, "href": href})
@@ -113,7 +111,9 @@ def evaluate(snap, rules, today):
             add("ad_rejected", ad["id"], "bad", f"Meta stopped “{ad['name']}”",
                 [f"Status: {ad['effective_status'].replace('_', ' ').lower()}. Open the ad to see why and fix it."], ad["campaign_id"], href)
         r = rules["no_delivery"]
-        if r["on"] and ad["effective_status"] == "ACTIVE" and ad["age_hours"] >= r["hours"] and not _sum(rows, "impressions"):
+        # Today's partial day counts here: an ad first shown today has been seen (audit A3-63).
+        seen = _sum(rows, "impressions") or ad.get("today_impressions")
+        if r["on"] and ad["effective_status"] == "ACTIVE" and ad["age_hours"] >= r["hours"] and not seen:
             add("no_delivery", ad["id"], "warn", f"“{ad['name']}” is on but nobody has seen it",
                 [f"No impressions {ad['age_hours']:.0f} hours after it went live."], ad["campaign_id"], href)
         r = rules["fatigue"]
@@ -218,8 +218,11 @@ def snapshot(now):
                                  AND e.field IN ('effective_status', 'created') AND e.new_value = 'ACTIVE'
                                  AND e.source <> 'backfill')) AS live_since
                       FROM ads a WHERE a.effective_status NOT IN ('DELETED', 'ARCHIVED')""")
+    shown_today = {r["ad_id"]: int(r["n"]) for r in db.query(
+        "SELECT ad_id, SUM(impressions) AS n FROM ad_daily WHERE day = %s GROUP BY ad_id", (today,))}
     for a in ads:
         a["age_hours"] = (now - a["live_since"]).total_seconds() / 3600 if a["live_since"] else 0
+        a["today_impressions"] = shown_today.get(a["id"], 0)
     ad_days = {}
     for r in db.query("SELECT day, ad_id, spend_cents, impressions, reach, link_clicks, leads FROM ad_daily "
                       "WHERE day >= %s AND day < %s ORDER BY day", (today - timedelta(days=90), today)):
@@ -248,6 +251,7 @@ def snapshot(now):
         "cap": cap_snapshot(), "meta_leads": meta_leads, "inbox_leads": inbox,
         "last_pull_age_h": (now.timestamp() - updated) / 3600 if updated else None,
         "connected": bool(settings_store.get("meta_system_token")),
+        "currency": account_info.currency(),
         "pacing": pacing_data(None),
         "tracking": tracking_state(now),
     }

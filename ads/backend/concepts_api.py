@@ -86,7 +86,8 @@ def by_concept():
     ids = visible_campaign_ids(user)
     where, params = ("TRUE", []) if ids is None else ("a.campaign_id = ANY(%s)", [ids])
     ads = db.query(f"""SELECT a.id, a.name, COALESCE(SUM(d.spend_cents),0) AS spend_cents, COALESCE(SUM(d.impressions),0) AS impressions,
-                              COALESCE(SUM(d.leads),0) AS leads, COALESCE(SUM(d.video_3s),0) AS video_3s, COALESCE(SUM(d.thruplays),0) AS thruplays
+                              COALESCE(SUM(d.leads),0) AS leads, COALESCE(SUM(d.video_3s),0) AS video_3s, COALESCE(SUM(d.thruplays),0) AS thruplays,
+                              COALESCE(SUM(d.impressions) FILTER (WHERE a.object_type = 'VIDEO' OR a.video_id IS NOT NULL),0) AS video_impressions
                        FROM ads a JOIN ad_daily d ON d.ad_id = a.id AND d.day BETWEEN %s AND %s
                        WHERE {where} GROUP BY a.id, a.name HAVING SUM(d.spend_cents) > 0""", [start, end] + params)
     q = {r["ad_id"]: int(r["n"]) for r in db.query(

@@ -5,6 +5,7 @@ then the ad set, then the campaign, so nothing can spend before every piece is o
 import re
 from datetime import datetime, timedelta
 
+import account_info
 import adset_build as ab
 
 MIN_DAILY_CENTS = 100
@@ -13,8 +14,9 @@ DAYS_PER_MONTH = 30.4
 CTA_FOR_FORMS = ("SIGN_UP", "BOOK_TRAVEL", "LEARN_MORE", "GET_QUOTE", "APPLY_NOW", "SUBSCRIBE", "DOWNLOAD")
 
 
-def dollars(cents):
-    return f"${cents / 100:,.2f}"
+def dollars(cents, currency=None):
+    """An amount in the account's currency (`currency` given: pure)."""
+    return account_info.money(cents, currency)
 
 
 def campaign_payload(spec):
@@ -23,7 +25,7 @@ def campaign_payload(spec):
             "bid_strategy": "LOWEST_COST_WITHOUT_CAP", "status": "PAUSED"}
 
 
-def problems(spec, known_forms, known_templates, current_daily_cents=None):
+def problems(spec, known_forms, known_templates, current_daily_cents=None, currency="USD"):
     """[(step, message)] for anything that stops the build. `step` names the wizard step."""
     out = []
     if not (spec.get("name") or "").strip():
@@ -32,7 +34,7 @@ def problems(spec, known_forms, known_templates, current_daily_cents=None):
     if not budget or budget < MIN_DAILY_CENTS:
         out.append(("budget", "Give it a daily budget of at least $1"))
     elif current_daily_cents and budget > 3 * current_daily_cents:
-        out.append(("budget", f"{dollars(budget)} a day is more than 3 times what runs now ({dollars(current_daily_cents)}); start lower and raise it in steps"))
+        out.append(("budget", f"{dollars(budget, currency)} a day is more than 3 times what runs now ({dollars(current_daily_cents, currency)}); start lower and raise it in steps"))
     adset = spec.get("adset") or {}
     out += [("adset", m) for _, m in ab.problems(adset, budget)]
     if spec.get("form_id") not in known_forms:
@@ -78,13 +80,13 @@ def copy_warnings(ad):
     return out
 
 
-def review(spec, form_name, template_names):
+def review(spec, form_name, template_names, currency="USD"):
     """The plain summary shown before creating and in the confirmation."""
     b = spec["daily_budget_cents"]
     s = spec["adset"]
     places = [ab.location_label(l) for l in s["locations"]]
     return {
-        "campaign": f"{spec['name']} · Leads (Instant Form) · {dollars(b)} a day (about {dollars(round(b * DAYS_PER_MONTH))} a month), lowest cost",
+        "campaign": f"{spec['name']} · Leads (Instant Form) · {dollars(b, currency)} a day (about {dollars(round(b * DAYS_PER_MONTH), currency)} a month), lowest cost",
         "adset": f"{s['name']} · {', '.join(places[:4])}{f' +{len(places) - 4}' if len(places) > 4 else ''} · ages {s['age_min']}–{s['age_max']}"
                  + (" · Advantage+ audience" if s.get("advantage") else "") + " · Advantage+ placements",
         "form": form_name,

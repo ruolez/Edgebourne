@@ -5,6 +5,15 @@ import calendar
 from datetime import timedelta
 
 
+def last_days(spent_by_day, today, first_day, n=7):
+    """Cents for each of the last `n` complete days, 0 for a day Meta reported nothing (it sends no row
+    for a day without delivery), starting no earlier than the first day with spend (audit A3-62)."""
+    if first_day is None:
+        return []
+    start = max(today - timedelta(days=n), first_day)
+    return [spent_by_day.get(start + timedelta(days=i), 0) for i in range((today - start).days)]
+
+
 def pace(today, month_days, recent_daily, daily_budget_cents, target_cents, cap_remaining_cents, today_so_far_cents=0):
     """month_days: [(day, cents)] for complete days this month; recent_daily: last 7 complete days' cents."""
     days_in_month = calendar.monthrange(today.year, today.month)[1]

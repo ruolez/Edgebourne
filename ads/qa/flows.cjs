@@ -122,8 +122,9 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   check('polish run is queued for the Mac', queuedRun?.status === 'queued' && queuedRun.options?.passes?.length === 4, `${queuedRun?.status} ${queuedRun?.options?.passes?.length} passes`);
   await page.screenshot({ path: `${OUT}/flow-polish.png`, fullPage: true });
   // Don't leave a real run for a connected Mac to pick up.
-  await page.locator('#runs .task.queued [data-cancel]').first().click();
-  await page.waitForSelector('#runs .task.cancelled');
+  // Cancel this run (earlier cancelled runs are listed too, so wait for this one's button to go).
+  await page.click(`#runs [data-cancel="${queuedRun.id}"]`);
+  await page.waitForSelector(`#runs [data-cancel="${queuedRun.id}"]`, { state: 'detached' });
   const cancelledRun = await polishRun();
   check('a queued polish run can be cancelled', cancelledRun?.id === queuedRun?.id && cancelledRun.status === 'cancelled', cancelledRun?.status);
   const create = page.locator('.proposal.variant [data-approve]').first();
@@ -353,7 +354,7 @@ print(requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'
   check('sending moves the lead to Contacted and lists the email', (await page.getAttribute('[data-stage="contacted"]', 'aria-pressed')) === 'true' && /emailed them/.test(await page.textContent('.history')));
   await page.screenshot({ path: `${OUT}/flow-lead-reply.png`, fullPage: true });
   await page.goto(BASE + '/settings.html');
-  await page.waitForSelector('#rp-auto');
+  await page.waitForSelector('#tpl-list li'); // the settings have loaded, so rendering won't untick the box after
   await page.check('#rp-auto');
   await page.click('#rp-form button[type=submit]');
   await page.waitForSelector('dialog.confirm #cd-ok');
@@ -585,6 +586,13 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   const total = dollars((await page.textContent('.results-table tfoot td.num')).trim());
   check('the total row adds up the ads shown', Math.abs(total - spentRows.map(dollars).reduce((a, b) => a + b, 0)) < 0.01, String(total));
   check('each figure says how it compares with the days before', (await page.locator('.figures:not(.pace) .delta').count()) >= 4, (await page.textContent('.figures:not(.pace) .figure.hero .delta')) || '');
+  await page.waitForSelector('#activity .changes li');
+  check("Meta's history shows a budget change in money, not cents", /\$20\.00 → \$24\.00/.test(await page.textContent('#activity')) && !/2000 → 2400/.test(await page.textContent('#activity')),
+    await page.textContent('#activity'));
+  check('"Yesterday" under cost per lead is the real yesterday', await page.evaluate(async () => {
+    const [d, y] = [await (await fetch('/api/performance?range=lastmonth')).json(), await (await fetch('/api/performance?range=7')).json()];
+    return d.yesterday.day === y.range.end;
+  }));
   await page.click('.results-table [data-sort="cpl"]');
   let cpl = (await cells(6)).map(dollars);
   const known = cpl.filter((v) => v !== null);
@@ -1668,6 +1676,11 @@ db.execute(\\"UPDATE accounts SET archived_at = now() WHERE name = 'QA Studio'\\
   check('the report reads in the five parts, business result first, with its footnotes',
     /1\. What happened.*Cost per (qualified )?lead.*2\. Why.*3\. What we did.*4\. What's next.*5\. What we need from you/s.test(rep) && /attribution setting/.test(rep), rep.slice(0, 160));
   check('the first sentence measures against the target per qualified lead', /against the \$60\.00 target/.test(await page.textContent('.r-headline')));
+  check('the report funnel starts from the leads in the inbox, Meta\'s count shown apart',
+    /^Leads in the inbox/.test((await page.textContent('.r-funnel tbody tr th')).trim()) && /Leads \(Meta\)/.test(await page.textContent('.r-figs')));
+  const repWeek = await page.evaluate(async () => (await fetch('/api/reports?kind=week')).json());
+  check("each change in the report is dated by the account's day, inside the period",
+    repWeek.changes.every((c) => c.day >= repWeek.start && c.day <= repWeek.end), repWeek.changes.map((c) => c.day).join(' '));
   await page.click('#kind [data-kind="month"]');
   await page.waitForFunction(() => /Month/.test(document.querySelector('.r-kicker')?.textContent || ''));
   check('a month report covers the last complete month', /Oct 1 – Oct 31, 2026/.test(await page.textContent('.r-head')));
@@ -2046,6 +2059,73 @@ with account_ctx.use(a2):
   await page.click('[data-drop]');
   await page.waitForFunction(() => document.querySelectorAll('.cmp thead .cmp-th').length === 2);
   check('removing an ad from the comparison keeps the rest', (new URL(page.url())).searchParams.get('ids').split(',').length === 2);
+  // The same number everywhere (cluster 6): labels, totals, tracks and dead campaigns.
+  check('Compare calls ThruPlays ÷ 3-second views "Hold rate", as the Video tab does', /Hold rate/.test(cmpText) && !/Watched to the end/.test(cmpText));
+  const deadCamp = sh(`docker exec -w /app edgebourne-ads-backend python -c "
+import db
+r = db.query(\\"SELECT id FROM campaigns WHERE effective_status = 'DELETED' AND daily_budget_cents IS NOT NULL ORDER BY id LIMIT 1\\", one=True)
+print(r['id'] if r else '')"`).trim();
+  await page.goto(BASE + '/ads.html?level=campaign');
+  await page.waitForSelector('tr[data-row^="campaign:"]');
+  check('deleted campaigns are left out of the Campaigns view, so none offers a budget or a new ad set',
+    !deadCamp || ((await page.locator(`tr[data-row="campaign:${deadCamp}"]`).count()) === 0 && !/Deleted/.test(await page.textContent('.tbl tbody'))), deadCamp);
+  if (deadCamp) {
+    const deadBudget = await page.evaluate(async (id) => (await fetch(`/api/ads/campaign/${id}/budget`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ daily_budget_cents: 1600, from_cents: 1500 }) })).status, deadCamp);
+    check("a deleted campaign's budget can't be changed", deadBudget === 409, String(deadBudget));
+    const deadSeen = errors.length;
+    await page.goto(BASE + '/new-adset.html?campaign=' + deadCamp);
+    await page.waitForSelector('#campaign option', { state: 'attached' });
+    await page.waitForTimeout(400);
+    errors.splice(deadSeen);
+    check('a new ad set for a deleted campaign is not quietly put in another one',
+      (await page.inputValue('#campaign')) === '' && /deleted or archived/.test(await page.textContent('#budget-note')));
+  }
+  // A campaign archived in Ads Manager whose ads are not: hidden, but "Show archived" is offered to bring it back.
+  const [archCamp, archWas] = sh(`docker exec -w /app edgebourne-ads-backend python -c "
+import db
+r = db.query(\\"SELECT id, effective_status FROM campaigns WHERE effective_status IN ('ACTIVE','PAUSED') ORDER BY id LIMIT 1\\", one=True)
+print(r['id'] + ' ' + r['effective_status'] if r else '')"`).trim().split(' ');
+  if (archCamp) {
+    const setCampStatus = (st) => sh(`docker exec -w /app edgebourne-ads-backend python -c "
+import db
+db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${archCamp}'\\")"`);
+    const before = await page.evaluate(async () => (await (await fetch('/api/ads?range=7')).json()).archived);
+    setCampStatus('ARCHIVED');
+    try {
+      await page.goto(BASE + '/ads.html?level=campaign&range=7');
+      await page.waitForSelector('tr[data-row^="campaign:"]');
+      const hiddenNow = (await page.locator(`tr[data-row="campaign:${archCamp}"]`).count()) === 0;
+      const offered = await page.isVisible('#archived');
+      let back = false;
+      if (offered) {
+        await page.click('#archived');
+        await page.waitForFunction(() => /Hide archived/.test(document.querySelector('#archived')?.textContent || ''));
+        back = (await page.locator(`tr[data-row="campaign:${archCamp}"]`).count()) === 1;
+        await page.click('#archived');
+        await page.waitForFunction(() => /Show archived/.test(document.querySelector('#archived')?.textContent || ''));
+      }
+      const after = await page.evaluate(async () => (await (await fetch('/api/ads?range=7')).json()).archived);
+      check('a campaign archived on its own is hidden, counted and brought back by "Show archived"',
+        hiddenNow && offered && back && after === before + 1, `${hiddenNow} ${offered} ${back} ${before}→${after}`);
+    } finally { setCampStatus(archWas); }
+  }
+  await page.goto(BASE + '/ads.html?range=7');
+  await page.waitForSelector('tr[data-row^="ad:"] .trk');
+  check('the Delivery track shows the last 14 days whatever the range', (await page.locator('tr[data-row^="ad:"] .trk').first().locator('i').count()) === 14);
+  const vsHead = async () => page.getAttribute('th:has(button[data-sort="vs"])', 'title');
+  const vsDays = await vsHead();
+  await page.goto(BASE + '/ads.html?range=mtd');
+  await page.waitForSelector('th:has(button[data-sort="vs"])');
+  const vsMonth = await vsHead();
+  check('the "vs before" column says which period it compares with', /days just before/.test(vsDays) && /same days of the month before/.test(vsMonth), `${vsDays} | ${vsMonth}`);
+  await page.goto(BASE + '/ads.html?range=7');
+  await page.waitForSelector('tr[data-row^="ad:"] .trk');
+  const tree7 = await page.evaluate(async () => (await fetch('/api/ads?range=7')).json());
+  const listedSpend = tree7.campaigns.flatMap((c) => c.adsets.flatMap((s) => s.ads)).reduce((n, a) => n + (a.m.spend_cents || 0), 0);
+  check('the header totals count every ad, and the footer names what no listed ad shows',
+    tree7.totals.m.spend_cents >= listedSpend && (tree7.totals.m.spend_cents > listedSpend) === /from ads no longer listed/.test(await page.textContent('.cr-foot')),
+    `${tree7.totals.m.spend_cents} vs ${listedSpend}`);
   await page.goto(BASE + '/leads.html');
   await page.waitForSelector('#source option[value^="a:"]', { state: 'attached' });
   const adOpt = await page.$eval('#source option[value^="a:"]', (o) => o.value);

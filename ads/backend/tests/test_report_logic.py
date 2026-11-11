@@ -24,12 +24,16 @@ class PeriodTests(unittest.TestCase):
 class ContentTests(unittest.TestCase):
     def test_funnel_rates_are_shares_of_the_step_before(self):
         self.assertEqual([(s["step"], s["n"], s["rate"]) for s in rl.funnel(40, 30, 6, 2)],
-                         [("Leads", 40, None), ("Contacted", 30, 75), ("Qualified", 6, 20), ("Won", 2, 33)])
+                         [("Leads in the inbox", 40, None), ("Contacted", 30, 75), ("Qualified", 6, 20), ("Won", 2, 33)])
 
     def test_headline_uses_qualified_leads_when_there_are_any_and_says_when_it_is_thin(self):
         h = rl.headline({"spend_cents": 14000, "leads": 30, "qualified": 2}, {"spend_cents": 14000, "leads": 25, "qualified": 1}, 6000)
         self.assertEqual(h, "Cost per qualified lead was $70.00 against the $60.00 target (over by $10.00), down from $140.00 the period before. "
                             "2 qualified leads from $140.00 spent; at this volume the number is directional.")
+
+    def test_headline_is_written_in_the_account_currency(self):
+        h = rl.headline({"spend_cents": 9000, "leads": 18, "qualified": 0}, {"spend_cents": 0, "leads": 0}, 6000, currency="EUR")
+        self.assertEqual(h, "Cost per lead was €5.00 against the €60.00 target (under by €55.00). 18 leads from €90.00 spent.")
 
     def test_headline_falls_back_to_leads_and_to_spend(self):
         self.assertEqual(rl.headline({"spend_cents": 9000, "leads": 18, "qualified": 0}, {"spend_cents": 0, "leads": 0}),

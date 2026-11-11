@@ -7,6 +7,8 @@ import hmac
 import json
 from datetime import date, timedelta
 
+import account_info
+
 MEASUREMENT_CHANGE = date(2026, 11, 12)  # Meta starts measuring some website conversions on devices
 SHARE_DAYS = 90
 
@@ -46,9 +48,11 @@ def complete(end, today):
     return end < today
 
 
-def funnel(leads, contacted, qualified, won):
-    """Each step with its share of the step before (None when there was nothing to convert)."""
-    steps = [("Leads", leads), ("Contacted", contacted), ("Qualified", qualified), ("Won", won)]
+def funnel(inbox, contacted, qualified, won):
+    """Each step with its share of the step before (None when there was nothing to convert). Every step
+    counts inbox leads by arrival day; Meta's own lead count (attributed, maybe modelled) is shown
+    apart, or Contacted could come out above 100% (audit A3-64)."""
+    steps = [("Leads in the inbox", inbox), ("Contacted", contacted), ("Qualified", qualified), ("Won", won)]
     out = []
     for i, (name, n) in enumerate(steps):
         prev = steps[i - 1][1] if i else None
@@ -56,13 +60,12 @@ def funnel(leads, contacted, qualified, won):
     return out
 
 
-def money(cents):
-    return f"${cents / 100:,.2f}" if cents is not None else "—"
-
-
-def headline(now, before, target_cents=None):
+def headline(now, before, target_cents=None, currency="USD"):
     """Two business sentences: the KPI (cost per qualified lead when there are qualified leads,
     else cost per lead) against the target and the period before, and how many it rests on."""
+    def money(cents):
+        return account_info.money(cents, currency)
+
     def cost(p, key):
         return round(p["spend_cents"] / p[key]) if p.get(key) else None
     key, label = ("qualified", "qualified lead") if now.get("qualified") else ("leads", "lead")

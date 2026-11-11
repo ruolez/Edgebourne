@@ -5,7 +5,7 @@ import { boot, esc, icon, onRefresh, setCrumbs, switchHtml, toast, when, errorSt
 import { columnChart } from "./charts.js";
 import { count, dayLabel, money, moneyWhole } from "./format.js";
 import * as UrlState from "./urlstate.js";
-import { bulkBarHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, statusCell, tableHtml, wire } from "./manager.js";
+import { LIVE, bulkBarHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, statusCell, tableHtml, unlistedNote, wire } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
 const LEVEL = document.body.dataset.level;
@@ -43,17 +43,18 @@ function render() {
   $("en-title").textContent = e.name;
   document.title = `${e.name} | Edge Bourne Ads`;
   $("en-sub").innerHTML = `${statusCell({ ...e, level: LEVEL })} <span class="sep-dot">·</span> ${esc(data.range.label)}${state.vs && data.prev_range ? ` vs ${esc(data.prev_range.label)}` : ""}`;
-  const budget = e.daily_budget_cents ? (canControl ? `<button type="button" class="chip" data-budget="${LEVEL}:${e.id}" data-current="${e.daily_budget_cents}" data-name="${esc(e.name)}">${money(e.daily_budget_cents, { exact: true })}/day</button>` : `<span class="chip">${money(e.daily_budget_cents, { exact: true })}/day</span>`) : "";
+  const live = LIVE.includes(e.status);
+  const budget = e.daily_budget_cents ? (canControl && live ? `<button type="button" class="chip" data-budget="${LEVEL}:${e.id}" data-current="${e.daily_budget_cents}" data-name="${esc(e.name)}">${money(e.daily_budget_cents, { exact: true })}/day</button>` : `<span class="chip">${money(e.daily_budget_cents, { exact: true })}/day</span>`) : "";
   $("en-actions").innerHTML = `${budget}
-    ${me.role === "admin" ? (LEVEL === "campaign" ? `<a class="btn" href="/new-adset.html?campaign=${encodeURIComponent(e.id)}">${icon("plus")}New ad set</a>` : `<a class="btn" href="/new-ad.html?adset=${encodeURIComponent(e.id)}">${icon("plus")}New ad</a>`) : ""}
+    ${me.role === "admin" && live ? (LEVEL === "campaign" ? `<a class="btn" href="/new-adset.html?campaign=${encodeURIComponent(e.id)}">${icon("plus")}New ad set</a>` : `<a class="btn" href="/new-ad.html?adset=${encodeURIComponent(e.id)}">${icon("plus")}New ad</a>`) : ""}
     ${me.role === "admin" ? `<a class="btn btn-claude-outline" href="/desk.html?ask=1&campaign=${encodeURIComponent(data.campaign.id)}">${icon("spark")}Ask Claude</a>` : ""}
-    ${canControl && ["ACTIVE", "PAUSED"].includes(e.status) ? `<span class="pk-sw">${switchHtml(e.status === "ACTIVE", `data-toggle="${LEVEL}:${e.id}" data-name="${esc(e.name)}"`, `${e.name} on or off`)} ${e.status === "ACTIVE" ? "On" : "Off"}</span>` : ""}`;
+    ${canControl && live ? `<span class="pk-sw">${switchHtml(e.status === "ACTIVE", `data-toggle="${LEVEL}:${e.id}" data-name="${esc(e.name)}"`, `${e.name} on or off`)} ${e.status === "ACTIVE" ? "On" : "Off"}</span>` : ""}`;
   const tabs = [...(LEVEL === "campaign" ? [["adsets", "Ad sets", rows.adset.length]] : []), ["ads", "Ads", rows.ad.length], ["history", "History", data.timeline.length]];
   const list = children();
   const body = state.tab === "history"
     ? `<section class="panel"><div class="panel-body">${data.timeline.length ? `<ol class="tl">${data.timeline.map((i) => `<li class="tl-${i.tone || "n"}"><span class="tl-dot"></span><span class="tl-w">${esc(when(i.at))}</span><span class="tl-t"><b>${esc(i.title)}</b>${i.sub ? `<small>${esc(i.sub)}</small>` : ""}${i.by ? `<small>${esc(i.by)}</small>` : ""}</span></li>`).join("")}</ol>` : '<p class="muted">Nothing recorded yet.</p>'}</div></section>`
     : list.length && narrow() ? listHtml({ rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), selected, sort: state.sort, dir: state.dir })
-    : list.length ? tableHtml({ level: childLevel(), rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: "results", sort: state.sort, dir: state.dir, selected, selectable: true })
+    : list.length ? tableHtml({ level: childLevel(), rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: "results", sort: state.sort, dir: state.dir, selected, selectable: true, range: state.range })
     : `<div class="panel empty"><h3>Nothing here yet</h3><p>${LEVEL === "campaign" ? "This campaign has no ad sets." : "This ad set has no ads."}</p></div>`;
   $("cr-all").innerHTML = `${figuresHtml(e.m, state.vs ? e.prev : null, data.target_qualified_cents, { today: e.today, ever: e.ever })}
     <div class="charts"><section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
@@ -64,7 +65,7 @@ function render() {
       <select class="input tool" id="range-pick" aria-label="Dates">${RANGES.map(([k, l]) => `<option value="${k}" ${k === state.range ? "selected" : ""}>${l}</option>`).join("")}</select>
       <button type="button" class="tool-tg" id="vs" aria-pressed="${state.vs}">vs before</button></div>
     ${body}
-    <p class="muted small flush">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}).</p>`;
+    <p class="muted small flush">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}).${esc(unlistedNote(e.m, rows.ad))}</p>`;
   document.querySelectorAll("#cr-all [data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
   columnChart({ el: $("c-spend"), series: data.series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 170,
     format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v) });

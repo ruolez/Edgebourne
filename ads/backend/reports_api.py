@@ -50,17 +50,19 @@ def build(kind, start=None, for_admin=False):
     now, before = totals(s, e), totals(ps, pe)
     target = settings_store.get("kpi_target_cents")
     target = int(target) if target else None
-    ads = db.query("""SELECT a.id, COALESCE(a.name, MAX(d.ad_name)) AS name, SUM(d.spend_cents) AS spend_cents, SUM(d.leads) AS leads,
-                             SUM(d.impressions) AS impressions, SUM(d.link_clicks) AS link_clicks, SUM(d.video_3s) AS video_3s
-                      FROM ad_daily d LEFT JOIN ads a ON a.id = d.ad_id WHERE d.day BETWEEN %s AND %s
-                      GROUP BY a.id, a.name HAVING SUM(d.spend_cents) > 0 ORDER BY 3 DESC LIMIT 6""", (s, e))
+    # By name: a new version of an ad (the old one deleted) keeps the name and is the same ad to a client.
+    every = db.query("""SELECT COALESCE(a.name, d.ad_name, 'Unnamed ad') AS name, SUM(d.spend_cents) AS spend_cents, SUM(d.leads) AS leads,
+                               SUM(d.impressions) AS impressions, SUM(d.link_clicks) AS link_clicks, SUM(d.video_3s) AS video_3s
+                        FROM ad_daily d LEFT JOIN ads a ON a.id = d.ad_id WHERE d.day BETWEEN %s AND %s
+                        GROUP BY 1 HAVING SUM(d.spend_cents) > 0 ORDER BY 2 DESC, 1""", (s, e))
     ads = [{"name": a["name"], "spend_cents": int(a["spend_cents"]), "leads": int(a["leads"]),
             "cpl_cents": round(int(a["spend_cents"]) / int(a["leads"])) if a["leads"] else None,
             "ctr": round(100 * int(a["link_clicks"]) / int(a["impressions"]), 2) if a["impressions"] else None,
-            "hook": round(100 * int(a["video_3s"]) / int(a["impressions"]), 1) if a["impressions"] and a["video_3s"] else None} for a in ads]
-    changes = db.query("""SELECT m.created_at, m.level, m.entity_name, m.action, m.old_value, m.new_value
+            "hook": round(100 * int(a["video_3s"]) / int(a["impressions"]), 1) if a["impressions"] and a["video_3s"] else None}
+           for a in every[:6]]
+    changes = db.query("""SELECT m.created_at, (m.created_at AT TIME ZONE %s)::date AS day, m.level, m.entity_name, m.action, m.old_value, m.new_value
                           FROM meta_changes m WHERE m.ok AND (m.created_at AT TIME ZONE %s)::date BETWEEN %s AND %s
-                          ORDER BY m.created_at""", (account_info.tz_name(), s, e))
+                          ORDER BY m.created_at""", (account_info.tz_name(), account_info.tz_name(), s, e))
     import experiments_api
     tests = [experiments_api.summary(r) for r in db.query(
         f"SELECT {experiments_api.COLS} FROM experiments WHERE status = 'running' OR (closed_at AT TIME ZONE %s)::date BETWEEN %s AND %s",
@@ -70,10 +72,17 @@ def build(kind, start=None, for_admin=False):
     try:
         import concepts
         import concepts_api
-        rows = db.query("""SELECT ad_id AS id, SUM(spend_cents) AS spend_cents, SUM(impressions) AS impressions, SUM(leads) AS leads,
-                                  SUM(video_3s) AS video_3s, SUM(thruplays) AS thruplays FROM ad_daily WHERE day BETWEEN %s AND %s GROUP BY ad_id""", (s, e))
-        rows = [{k: (int(v) if k != "id" else v) for k, v in r.items()} | {"qualified": 0} for r in rows]
-        g = concepts.group(rows, concepts_api.tags_for([r["id"] for r in rows]), "hook", target)
+        import targets
+        rows = db.query("""SELECT d.ad_id AS id, SUM(d.spend_cents) AS spend_cents, SUM(d.impressions) AS impressions, SUM(d.leads) AS leads,
+                                  SUM(d.video_3s) AS video_3s, SUM(d.thruplays) AS thruplays,
+                                  SUM(d.impressions) FILTER (WHERE a.object_type = 'VIDEO' OR a.video_id IS NOT NULL) AS video_impressions
+                           FROM ad_daily d LEFT JOIN ads a ON a.id = d.ad_id WHERE d.day BETWEEN %s AND %s GROUP BY d.ad_id""", (s, e))
+        q = {r["ad_id"]: int(r["n"]) for r in db.query(
+            """SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND status IN ('qualified', 'won')
+               AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s GROUP BY ad_id""", (account_info.tz_name(), s, e))}
+        rows = [{k: (int(v or 0) if k != "id" else v) for k, v in r.items()} | {"qualified": q.get(r["id"], 0)} for r in rows]
+        # Judged like Results › By idea: the cost-per-lead target, else the groups' own average (audit A3-57).
+        g = concepts.group(rows, concepts_api.tags_for([r["id"] for r in rows]), "hook", targets.lead_own())
         ideas = {"best": g["best"], "sure": g["best_confidence"], "clear": g["best_is_clear"],
                  "groups": [{"value": x["value"], "ads": x["ads"], "leads": x["leads"], "cpl_cents": x["cpl_cents"]} for x in g["groups"]]}
     except Exception:
@@ -82,10 +91,10 @@ def build(kind, start=None, for_admin=False):
     return {
         "account": accounts_api.name_of(account_ctx.current()), "currency": account_info.currency(), "kind": kind, "start": s.isoformat(), "end": e.isoformat(),
         "previous": {"start": ps.isoformat(), "end": pe.isoformat()}, "complete": rl.complete(e, t),
-        "headline": rl.headline(now, before, target), "target_cents": target, "now": now, "before": before,
-        "funnel": rl.funnel(now["leads"], now["contacted"], now["qualified"], now["won"]),
-        "ads": ads, "ideas": ideas,
-        "changes": [{**c, "created_at": c["created_at"].isoformat()} for c in changes],
+        "headline": rl.headline(now, before, target, account_info.currency()), "target_cents": target, "now": now, "before": before,
+        "funnel": rl.funnel(now["inbox"], now["contacted"], now["qualified"], now["won"]),
+        "ads": ads, "ads_total": len(every), "ideas": ideas,
+        "changes": [{**c, "created_at": c["created_at"].isoformat(), "day": c["day"].isoformat()} for c in changes],
         "tests": [{"name": x["name"], "status": x["status"], "note": x["judgement"]["note"] if x["status"] == "running" else (x["verdict"] or "")} for x in tests],
         # Claude's pending ideas are internal: clients and share links don't see their titles.
         "needs": [p["title"] for p in pending] if for_admin else [],

@@ -4,11 +4,12 @@ import { api } from "./api.js";
 import { boot, confirmDialog, esc, icon, onRefresh, toast, showLoadError } from "./ui.js";
 import { count, dayLabel } from "./format.js";
 import * as UrlState from "./urlstate.js";
-import { COLUMN_SETS, LEVEL_WORDS, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, tableHtml, wire } from "./manager.js";
+import { COLUMN_SETS, LEVEL_WORDS, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, tableHtml, unlistedNote, wire } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = { level: "ad", view: "all", range: "7", vs: true, cols: "results", sort: "spend", dir: "desc", q: "", campaign: "", archived: false, display: "table", peek: "" };
 const RANGES = [["7", "7 days"], ["14", "14 days"], ["30", "30 days"], ["mtd", "This month"], ["lastmonth", "Last month"]];
+const MONTHS = ["mtd", "lastmonth"];
 // One-time move of the old saved preferences into the URL defaults.
 try {
   const old = JSON.parse(localStorage.getItem("ebads-adsview") || "null");
@@ -33,12 +34,18 @@ function visibleRows() {
 
 function picked() { return (rows[state.level] || []).filter((r) => selected.has(r.id)); }
 
-function headerFigures() {
+// The header counts every ad in scope, deleted versions and closed campaigns too (they spent real money);
+// one campaign picked: that campaign's figures, which count its unlisted ads the same way.
+function headerTotals() {
   const camps = (rows.campaign || []).filter((c) => !state.campaign || c.id === state.campaign);
   const sum = (key, which) => camps.reduce((n, c) => n + ((c[which] || {})[key] || 0), 0);
   const keys = ["spend_cents", "leads", "qualified", "impressions", "reach", "link_clicks", "video_3s", "thruplays"];
-  const m = Object.fromEntries(keys.map((k) => [k, sum(k, "m")]));
-  const prev = state.vs && data.prev_range ? Object.fromEntries(keys.map((k) => [k, sum(k, "prev")])) : null;
+  const pick = (which) => (state.campaign ? Object.fromEntries(keys.map((k) => [k, sum(k, which)])) : { ...data.totals[which], reach: sum("reach", which) });
+  return { camps, m: pick("m"), prev: state.vs && data.prev_range ? pick("prev") : null };
+}
+
+function headerFigures() {
+  const { camps, m, prev } = headerTotals();
   // People: unique across the whole account from Meta, not the campaigns added up.
   if (!state.campaign && data.reach_total != null) m.reach = data.reach_total;
   if (prev && !state.campaign && data.prev_reach_total != null) prev.reach = data.prev_reach_total;
@@ -61,7 +68,7 @@ function toolbar() {
     ${camps.length > 1 ? `<select class="input tool" id="camp-pick" aria-label="Campaign"><option value="">All campaigns</option>${camps.map((c) => `<option value="${esc(c.id)}" ${c.id === state.campaign ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>` : ""}
     <label class="tool-search">${icon("search")}<input class="input" id="cr-search" type="search" placeholder="Filter by name" value="${esc(state.q)}" aria-label="Filter by name"></label>
     <select class="input tool" id="range-pick" aria-label="Dates">${RANGES.map(([k, l]) => `<option value="${k}" ${k === state.range ? "selected" : ""}>${l}</option>`).join("")}</select>
-    <button type="button" class="tool-tg" id="vs" aria-pressed="${state.vs}" title="Compare with the same number of days before">vs before</button>
+    <button type="button" class="tool-tg" id="vs" aria-pressed="${state.vs}" title="${MONTHS.includes(state.range) ? "Compare with the same days of the month before" : "Compare with the same number of days just before"}">vs before</button>
     ${state.display === "table" ? `<select class="input tool" id="cols-pick" aria-label="Columns">${Object.entries(COLUMN_SETS).map(([k, [l]]) => `<option value="${k}" ${k === state.cols ? "selected" : ""}>Columns: ${l}</option>`).join("")}</select>` : ""}
     ${data.archived ? `<button type="button" class="tool-tg" id="archived" aria-pressed="${state.archived}">${state.archived ? "Hide" : "Show"} archived <span class="n">${data.archived}</span></button>` : ""}
     ${state.level === "ad" ? `<div class="segmented icon-seg" role="group" aria-label="Display">
@@ -82,12 +89,13 @@ function render() {
   const body = !list.length ? `<div class="panel empty"><h3>Nothing here</h3><p>No ${LEVEL_WORDS[state.level][1]} match “${esc((VIEWS[state.view] || VIEWS.all)[0])}”${state.q ? ` and “${esc(state.q)}”` : ""}.</p></div>`
     : state.level === "ad" && state.display === "cards" ? cardsHtml(list)
     : narrow() ? listHtml({ rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), selected, sort: state.sort, dir: state.dir })
-    : tableHtml({ level: state.level, rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: state.cols, sort: state.sort, dir: state.dir, selected, selectable: true });
+    : tableHtml({ level: state.level, rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: state.cols, sort: state.sort, dir: state.dir, selected, selectable: true, range: state.range });
   $("cr-all").innerHTML = buildsNote() + headerFigures() + toolbar() + body
-    + `<p class="muted small flush cr-foot">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}); today is left out because Meta reports late. Click a row for a quick look.</p>`;
+    + `<p class="muted small flush cr-foot">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}); today is left out because Meta reports late.${esc(unlistedNote(headerTotals().m, (rows.ad || []).filter((a) => !state.campaign || a.campaign?.id === state.campaign)))} Click a row for a quick look.</p>`;
   if (state.level === "campaign" && me.role === "admin") {
     document.querySelectorAll('#cr-all tr[data-row^="campaign:"] .c-name small').forEach((sm) => {
       const id = sm.closest("tr").dataset.row.split(":")[1];
+      if (!LIVE.includes((rows.campaign || []).find((c) => c.id === id)?.status)) return;
       sm.insertAdjacentHTML("afterend", `<a class="campaign-add" href="/new-adset.html?campaign=${encodeURIComponent(id)}">+ New ad set</a>`);
     });
   }
