@@ -7,7 +7,7 @@ import hashlib
 import itertools
 import json
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Flask, jsonify, request
 
@@ -368,7 +368,6 @@ FORM_LEADS = {}
 @app.route("/fake/_form_lead")
 def fake_form_lead():
     """A lead on the first form that only the catch-up sees until a webhook names it (QA)."""
-    from datetime import datetime, timezone
     a = request.args
     lead = {"id": a["id"], "created_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000"),
             "form_id": FORM, "is_organic": a.get("organic") == "1",
@@ -537,7 +536,6 @@ def graph(path):
             return jsonify(FORM_LEADS[parts[0]])
         if len(parts) == 1 and parts[0].startswith("7700") and len(parts[0]) == 16:
             # A form lead the webhook announced (QA uses 7700…); shaped like Meta's.
-            from datetime import datetime, timezone
             return jsonify({"id": parts[0], "created_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000"),
                             "ad_id": REAL_AD_IDS[1], "ad_name": "N2 - Order portal", "adset_id": ADSET["id"],
                             "campaign_id": CAMPAIGN["id"], "campaign_name": CAMPAIGN["name"], "form_id": FORM, "is_organic": False,
@@ -558,6 +556,10 @@ def graph(path):
             return jsonify(STUDIES[parts[0]])
         if parts == [act, "adimages"]:
             return jsonify({"data": list(IMAGES.values())})
+        if len(parts) == 2 and parts[1] == "adsets" and parts[0] in (CAMPAIGN["id"], *NEW_CAMPAIGNS):
+            return jsonify({"data": [s for s in (ADSET, *NEW_ADSETS.values()) if s["campaign_id"] == parts[0]]})
+        if parts == [BUSINESS, "ad_studies"]:
+            return jsonify({"data": [{"id": k, "name": v["name"]} for k, v in STUDIES.items()]})
         if parts == [act, "advideos"]:
             return jsonify({"data": list(VIDEOS.values())})
         if parts == [act, "generatepreviews"]:
@@ -639,7 +641,8 @@ def graph(path):
                 return jsonify({"error": {"message": "Invalid parameter (fake): campaign", "code": 100}}), 400
             cid = str(next(ids))
             NEW_CAMPAIGNS[cid] = {"id": cid, "name": a["name"], "status": "PAUSED", "effective_status": "PAUSED", "objective": a["objective"],
-                                  "daily_budget": a.get("daily_budget"), "bid_strategy": a.get("bid_strategy")}
+                                  "daily_budget": a.get("daily_budget"), "bid_strategy": a.get("bid_strategy"),
+                                  "created_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000")}
             return jsonify({"id": cid})
         if parts == [act, "adsets"]:
             # Shaped like Meta's ad set create: the fake checks what the builder relies on.
@@ -653,7 +656,8 @@ def graph(path):
             NEW_ADSETS[sid] = {"id": sid, "name": a["name"], "campaign_id": a["campaign_id"], "status": "PAUSED", "effective_status": "PAUSED",
                                "optimization_goal": a.get("optimization_goal"), "billing_event": a.get("billing_event"),
                                "destination_type": a.get("destination_type"), "promoted_object": json.loads(a.get("promoted_object") or "{}"),
-                               "targeting": t, "start_time": a.get("start_time"), "end_time": a.get("end_time")}
+                               "targeting": t, "start_time": a.get("start_time"), "end_time": a.get("end_time"),
+                               "created_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000")}
             return jsonify({"id": sid})
         if parts == [act, "ads"] and REFUSE_NEXT_AD:
             REFUSE_NEXT_AD.pop()
@@ -741,9 +745,10 @@ def graph(path):
             obj = by_id(parts[0])
             if obj is None:
                 return jsonify({"error": {"message": "Object does not exist (fake)", "code": 100}}), 400
-            if "daily_budget" in a and int(a["daily_budget"]) < 100:
+            if a.get("daily_budget") and int(a["daily_budget"]) < 100:
                 return jsonify({"error": {"message": "Budget too low (fake)", "code": 100}}), 400
-            for key in ("status", "daily_budget", "name"):
+            # lifetime_budget / end_time: QA moves a campaign to a lifetime budget (daily_budget="") and back.
+            for key in ("status", "daily_budget", "lifetime_budget", "end_time", "name"):
                 if key in a:
                     obj[key] = a[key]
             if "creative" in a and parts[0] in ADS:

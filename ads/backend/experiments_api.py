@@ -139,8 +139,7 @@ def meta_view(exp):
     if not s:
         return None
     if not s.get("id"):
-        return {"creating": True}
-    from datetime import datetime
+        return {"creating": True, "unknown": mt.booking_unsettled(s, datetime.now().timestamp())}
     return {"id": s["id"], "kind": s["kind"], "start_day": s["start_day"], "end_day": s["end_day"],
             "daily_budget_cents": s.get("daily_budget_cents"), "total_cents": s.get("total_cents"),
             "state": mt.study_state(s, datetime.now().timestamp()), "fetched_at": s.get("fetched_at"),
@@ -280,6 +279,9 @@ def meta_create(exp_id):
         return api_error("Test not found", 404)
     if exp["status"] != "running":
         return api_error("Only a running test can go on Meta", 409)
+    if mt.booking_unsettled(exp.get("meta_study"), datetime.now().timestamp()):
+        return api_error("Meta didn't answer when this test was booked, so it may be on Meta already. "
+                         "Use “Look for it on Meta” first.", 409)
     if exp.get("meta_study"):
         return api_error("This test is already on Meta", 409)
     data = request.get_json(silent=True) or {}
@@ -292,33 +294,64 @@ def meta_create(exp_id):
     import ads_api
     user = current_user()
     row = {"id": str(exp_id), "name": exp["name"], "campaign_id": None}
+    payload = p["payload"]
+    booking = {"type": payload["type"], "kind": p["kind"], "name": payload["name"], "start_time": payload["start_time"],
+               "end_time": payload["end_time"], "start_day": data["start_day"], "end_day": data["end_day"],
+               "daily_budget_cents": (payload.get("creative_test_config") or {}).get("daily_budget"), "total_cents": p["total_cents"]}
     # Claimed first: a second click while Meta is answering gets "already being created", not a second study.
-    if not db.execute("""UPDATE experiments SET meta_study = '{"creating": true}'::jsonb WHERE id = %s AND meta_study IS NULL
-                         RETURNING id""", (exp_id,), returning=True):
+    # The claim carries the booking, so one a restart cut off can still be looked for on Meta.
+    claim = {**booking, "creating": True, "at": datetime.now().astimezone().isoformat()}
+    if not db.execute("""UPDATE experiments SET meta_study = %s WHERE id = %s AND meta_study IS NULL
+                         RETURNING id""", (json.dumps(claim), exp_id), returning=True):
         return api_error("This test is already being put on Meta", 409)
     try:
-        study = meta_client.post(f"{mt.business_id()}/ad_studies", data=mt.graph_form(p["payload"]))
+        study = meta_client.post(f"{mt.business_id()}/ad_studies", data=mt.graph_form(payload))
     except (meta_client.MetaError, mt.PlanError) as exc:
-        db.execute("UPDATE experiments SET meta_study = NULL WHERE id = %s", (exp_id,))
         ads_api.record(user, "study", row, "create", None, p["summary"], False, str(exc))
         if getattr(exc, "unknown", False):
-            return api_error(f"{exc} Look in Ads Manager → Experiments before trying again.", 400)
+            # Meta may have booked it (with its own test budget): the claim stays until someone looks (audit A3-73, A3-114).
+            db.execute("UPDATE experiments SET meta_study = %s WHERE id = %s", (json.dumps({**claim, "unknown": True}), exp_id))
+            return api_error(f"{exc} The test is marked “may be on Meta”: look for it there before booking it again.", 400)
+        db.execute("UPDATE experiments SET meta_study = NULL WHERE id = %s", (exp_id,))
         return api_error(f"Meta refused: {exc}", 400)
-    payload = p["payload"]
-    stored = {"id": study["id"], "type": payload["type"], "kind": p["kind"], "start_time": payload["start_time"],
-              "end_time": payload["end_time"], "start_day": data["start_day"], "end_day": data["end_day"],
-              "daily_budget_cents": (payload.get("creative_test_config") or {}).get("daily_budget"),
-              "total_cents": p["total_cents"], "created_at": datetime.now().astimezone().isoformat(), "results": {}}
+    stored = {**booking, "id": study["id"], "created_at": datetime.now().astimezone().isoformat(), "results": {}}
     db.execute("UPDATE experiments SET meta_study = %s, updated_at = now() WHERE id = %s", (json.dumps(stored), exp_id))
     ads_api.record(user, "study", {**row, "id": study["id"]}, "create", None, p["summary"], True)
     return jsonify(summary(load(exp_id))), 201
+
+
+@bp.post("/<int:exp_id>/meta/find")
+@admin_required
+def meta_find(exp_id):
+    """After Meta didn't answer a booking: adopt the study when Meta has it (by its exact name), otherwise
+    free the test so it can be booked again."""
+    exp = load(exp_id)
+    pending = (exp or {}).get("meta_study") or {}
+    if not mt.booking_unsettled(pending, datetime.now().timestamp()):
+        return api_error("There's nothing to look for on this test", 409)
+    try:
+        found = [x for x in meta_client.paged(f"{mt.business_id()}/ad_studies", fields="id,name", limit=100)
+                 if x.get("name") == pending.get("name")]
+    except (meta_client.MetaError, mt.PlanError) as exc:
+        return api_error(f"Couldn't look on Meta just now: {exc}", 400)
+    if found:
+        stored = {k: v for k, v in pending.items() if k not in ("creating", "unknown", "at")}
+        stored.update(id=found[0]["id"], created_at=pending.get("at"), results={})
+        db.execute("""UPDATE experiments SET meta_study = %s, updated_at = now() WHERE id = %s AND meta_study->>'id' IS NULL""",
+                   (json.dumps(stored), exp_id))
+        log_activity("experiment.meta_found", subject=str(exp_id), details={"study": found[0]["id"]})
+    else:
+        db.execute("""UPDATE experiments SET meta_study = NULL WHERE id = %s AND meta_study->>'id' IS NULL
+                      AND meta_study->>'at' IS NOT DISTINCT FROM %s""", (exp_id, pending.get("at")))
+        log_activity("experiment.meta_not_found", subject=str(exp_id))
+    return jsonify({**summary(load(exp_id)), "found": bool(found)})
 
 
 @bp.post("/<int:exp_id>/meta/refresh")
 @admin_required
 def meta_refresh(exp_id):
     exp = load(exp_id)
-    if not exp or not exp.get("meta_study"):
+    if not exp or not (exp.get("meta_study") or {}).get("id"):
         return api_error("This test isn't on Meta", 404)
     try:
         fresh = mt.fetch(exp["meta_study"])
@@ -333,7 +366,7 @@ def meta_refresh(exp_id):
 def meta_end(exp_id):
     """End a running Meta test now (moves its end time; nothing is deleted)."""
     exp = load(exp_id)
-    if not exp or not exp.get("meta_study"):
+    if not exp or not (exp.get("meta_study") or {}).get("id"):
         return api_error("This test isn't on Meta", 404)
     s = exp["meta_study"]
     now = int(datetime.now().timestamp())

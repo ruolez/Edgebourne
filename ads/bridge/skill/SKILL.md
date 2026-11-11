@@ -122,7 +122,10 @@ A failed suggestion carries `failure`, the exact error: read it before explainin
    one click, so write them exactly: **status** = `entity_id` (the real Meta id of the
    campaign, ad set or ad) + `proposed_value` `PAUSED` or `ACTIVE`; **budget** = `entity_id`
    of the campaign or ad set that holds the daily budget (Edge Bourne: the campaign) +
-   `proposed_value` like `$24/day`. Anything else (new creative, targeting, copy) is recorded
+   `proposed_value` like `$24/day` + `payload` `{"proposed_cents": 2400}` (the same amount in
+   cents). The console refuses a budget proposal whose cents and words disagree, and never reads
+   "2x", "7-day" or "3 ad sets" as the amount, so put only the new daily amount in
+   `proposed_value`. Anything else (new creative, targeting, copy) is recorded
    when approved and needs a later step, so say what that step is in `expected`.
    **experiment** = a test worth tracking (two to four ads or ad sets that already run at the
    same time to the same people): `title`, `rationale` (the question and why it matters),

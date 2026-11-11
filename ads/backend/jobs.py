@@ -49,6 +49,7 @@ def _loop():
                           ("Desk schedules", lambda: __import__("schedules").run()),
                           ("lead reminders", lambda: __import__("reminders").run()),
                           ("lead stages to Meta", crm_events.process_pending),
+                          ("approvals cut off mid-apply", lambda: __import__("ads_api").sweep_applying()),
                           ("client report emails", lambda: __import__("reports_api").send_due())):
             try:
                 job()

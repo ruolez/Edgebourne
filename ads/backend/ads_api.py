@@ -66,11 +66,18 @@ def proposal_action(p, entity, apply_as=None):
         value = {"OFF": "PAUSED", "PAUSE": "PAUSED", "ON": "ACTIVE", "RESUME": "ACTIVE"}.get(value, value)
         return ("status", value) if value in ("ACTIVE", "PAUSED") else None
     if p["kind"] == "budget" and entity.get("daily_budget_cents"):
-        cents = payload.get("proposed_cents")
-        if not isinstance(cents, int) or isinstance(cents, bool):
-            cents = money_rules.parse_budget_text(p.get("proposed_value"))
-        return ("budget", cents) if cents else ("unclear", p.get("proposed_value"))
+        cents, why = money_rules.proposal_cents(p.get("proposed_value"), payload.get("proposed_cents"))
+        return ("budget", cents) if cents else ("unclear", why)
     return None
+
+
+def proposal_target_id(p):
+    """The Meta id approving a proposal acts on, so permission is checked on what is written: a creative
+    change writes to the ad in its payload, whatever entity_id says (audit A3-49, A3-78)."""
+    template = (p.get("payload") or {}).get("template_ad_id")
+    if p["kind"] == "creative" and template:
+        return template
+    return p.get("entity_id") or template
 
 
 def build_story_spec(template, media, body, title, cta_type=None, form_id=None):
@@ -163,6 +170,37 @@ def can_touch(user, campaign_id):
 
 BULK_ID = __import__("contextvars").ContextVar("bulk_id", default=None)  # set while a bulk change runs
 
+# Error prefixes for the write helpers: NOT_SENT = refused before anything reached Meta (a proposal stays
+# waiting); UNKNOWN = Meta didn't answer a write, so it may have happened (never sent again blind);
+# CHECKED = the console's own read-back check refused the copy Meta stored, so the running ad wasn't
+# switched (Meta refused nothing, audit A3-109).
+NOT_SENT = "\x00"
+UNKNOWN = "\x01"
+CHECKED = "\x02"
+
+
+def error_words(error):
+    """A write helper's error without its prefix, for people."""
+    return error[1:] if error and error[0] in (NOT_SENT, UNKNOWN, CHECKED) else error
+
+
+def write_error(error):
+    """The API answer for a write helper's error."""
+    if error.startswith(NOT_SENT):
+        return api_error(error_words(error), 409)
+    if error.startswith(CHECKED):
+        return api_error(f"Not applied: {error_words(error)}", 400)
+    return api_error(error_words(error) if error.startswith(UNKNOWN) else f"Meta refused: {error}", 400)
+
+
+def after_write(what, fn, *args):
+    """Local bookkeeping after Meta accepted a write: a failure here is logged, never raised, so a request
+    can't end as if nothing had been sent (audit A3-40, A3-68)."""
+    try:
+        fn(*args)
+    except Exception:  # noqa: BLE001
+        log.exception("after the write to Meta: %s failed", what)
+
 
 def record(user, level, row, action, old, new, ok, error=None, proposal_id=None, entity_id=None):
     db.execute(
@@ -230,9 +268,19 @@ def fresh_budget(entity_id):
     return _cents_of(meta_client.get(entity_id, fields="daily_budget").get("daily_budget"))
 
 
+def forget_budget(level, entity_id):
+    """Meta says this has no daily budget now (moved to the other level, or to a lifetime budget): the
+    stored one is wrong and is never used as the current amount (audit A3-76)."""
+    db.execute(f"UPDATE {LEVELS[level]} SET daily_budget_cents = NULL WHERE id = %s", (entity_id,))
+    return ("Meta says this has no daily budget of its own now (it moved to the other level, or to a lifetime "
+            "budget), so nothing was changed. Refresh the page, or change it in Ads Manager.")
+
+
 def spend_context(level, row):
-    """What turning this on can spend a day, read fresh from Meta: {daily_cents, where}. The budget
-    lives on the ad set or on the campaign (or on each ad set of a campaign without one)."""
+    """What turning this on can spend, read fresh from Meta: {daily_cents, lifetime_cents, end_time, where,
+    holder}. The budget lives on the ad set or on the campaign (or on each ad set of a campaign without
+    one); `holder` is the id that holds it, so two budgets with the same name are both counted. `idle`:
+    a campaign with no ad set on, which spends nothing until one is turned on."""
     if level == "ad":
         node = meta_client.get(row["id"], fields="adset_id,campaign_id")
         chain = [("adset", node.get("adset_id")), ("campaign", node.get("campaign_id"))]
@@ -244,16 +292,23 @@ def spend_context(level, row):
     for lvl, eid in chain:
         if not eid:
             continue
-        cents = fresh_budget(eid)
-        if cents:
+        node = meta_client.get(eid, fields="daily_budget,lifetime_budget,end_time")
+        daily, lifetime = _cents_of(node.get("daily_budget")), _cents_of(node.get("lifetime_budget"))
+        if daily or lifetime:
             name = (entity(lvl, eid) or {}).get("name") or eid
-            return {"daily_cents": cents, "where": f"{'the ad set' if lvl == 'adset' else 'the campaign'} “{name}”"}
+            return {"daily_cents": daily, "lifetime_cents": lifetime, "end_time": node.get("end_time") if lifetime else None,
+                    "where": f"{'the ad set' if lvl == 'adset' else 'the campaign'} “{name}”", "holder": eid}
     if level == "campaign":
-        total = sum(_cents_of(a.get("daily_budget")) or 0 for a in meta_client.paged(
-            f"{row['id']}/adsets", fields="daily_budget,status", limit=100) if a.get("status") == "ACTIVE")
-        if total:
-            return {"daily_cents": total, "where": "its ad sets together"}
-    return {"daily_cents": None, "where": None}
+        on = [a for a in meta_client.paged(f"{row['id']}/adsets", fields="daily_budget,lifetime_budget,status", limit=100)
+              if a.get("status") == "ACTIVE"]
+        if not on:
+            return {"daily_cents": None, "lifetime_cents": None, "end_time": None, "where": None, "holder": None, "idle": True}
+        daily = sum(_cents_of(a.get("daily_budget")) or 0 for a in on)
+        lifetime = sum(_cents_of(a.get("lifetime_budget")) or 0 for a in on)
+        if daily or lifetime:
+            return {"daily_cents": daily or None, "lifetime_cents": lifetime or None, "end_time": None,
+                    "where": f"the ad sets of “{row.get('name') or row['id']}”", "holder": f"{row['id']}/adsets"}
+    return {"daily_cents": None, "lifetime_cents": None, "end_time": None, "where": None, "holder": None}
 
 
 def ceiling():
@@ -262,17 +317,28 @@ def ceiling():
 
 # ---------------------------------------------------------------- changes (shared with proposals)
 
-def apply_status(user, level, row, status, proposal_id=None):
-    old = row["status"]
+def apply_status(user, level, row, status, proposal_id=None, live=None):
+    """Switch on or off, compared with Meta's status read now (the stored one can be minutes old; audit
+    A3-19, A3-22) unless the caller has just read it (`live`). Returns None, or what went wrong
+    (NOT_SENT / UNKNOWN prefixed as above)."""
+    if live is None:
+        try:
+            live = meta_client.get(row["id"], fields="status").get("status")
+        except meta_client.MetaError as exc:
+            return NOT_SENT + f"Couldn't read the status from Meta, so nothing was changed: {exc}"
+    old = live or row["status"]
     if old == status:
+        # Already so on Meta: nothing to send. The stored status was stale; the next read corrects it.
+        log_activity("meta.status_already", subject=row["id"], details={"level": level, "name": row.get("name"), "status": status})
+        resync_later()
         return None
     try:
         meta_client.post(row["id"], status=status)
     except meta_client.MetaError as exc:
         record(user, level, row, "status", old, status, False, str(exc), proposal_id)
-        return str(exc)
+        return (UNKNOWN if exc.unknown else "") + str(exc)
     record(user, level, row, "status", old, status, True, proposal_id=proposal_id)
-    refresh_entity(level, row["id"])
+    after_write("status refresh", refresh_entity, level, row["id"])
     resync_later()
     return None
 
@@ -280,14 +346,14 @@ def apply_status(user, level, row, status, proposal_id=None):
 def apply_budget(user, level, row, cents, proposal_id=None):
     old = row["daily_budget_cents"]
     if not old:
-        return "This one has no daily budget of its own (the budget is set one level up)."
+        return NOT_SENT + "This one has no daily budget of its own (the budget is set one level up)."
     try:
         meta_client.post(row["id"], daily_budget=str(int(cents)))
     except meta_client.MetaError as exc:
         record(user, level, row, "budget", old, cents, False, str(exc), proposal_id)
-        return str(exc)
-    db.execute(f"UPDATE {LEVELS[level]} SET daily_budget_cents = %s WHERE id = %s", (int(cents), row["id"]))
+        return (UNKNOWN if exc.unknown else "") + str(exc)
     record(user, level, row, "budget", old, cents, True, proposal_id=proposal_id)
+    after_write("stored budget", db.execute, f"UPDATE {LEVELS[level]} SET daily_budget_cents = %s WHERE id = %s", (int(cents), row["id"]))
     return None
 
 
@@ -525,31 +591,25 @@ def set_status(level, entity_id):
     if status not in ("ACTIVE", "PAUSED"):
         return api_error("status must be ACTIVE or PAUSED", 400)
     if status == "ACTIVE":
-        problem = turn_on_problem(level, row, data.get("confirm_daily_cents"))
+        problem = turn_on_problem(level, row, data)
         if problem:
             return api_error(problem[0], problem[1], **(problem[2] if len(problem) > 2 else {}))
     error = apply_status(current_user(), level, row, status)
     if error:
-        return api_error(f"Meta refused: {error}", 400)
+        return write_error(error)
     return jsonify(entity(level, entity_id))
 
 
-def turn_on_problem(level, row, confirmed):
-    """Turning something on spends money: the person must have seen today's daily spend (read fresh
-    now). Returns (message, status, extra) or None."""
+def turn_on_problem(level, row, data):
+    """Turning something on spends money: the person must have seen what it can spend, daily or lifetime,
+    read fresh now and echoed back (confirm_daily_cents / confirm_lifetime_cents). Returns
+    (message, status, extra) or None."""
     try:
         ctx = spend_context(level, row)
     except meta_client.MetaError as exc:
         return (f"Couldn't read the budget from Meta, so it wasn't turned on: {exc}", 400)
-    if ctx["daily_cents"] is None:
-        return None  # a lifetime budget or none Meta reports: nothing to confirm in dollars a day
-    try:
-        confirmed = int(confirmed)
-    except (TypeError, ValueError):
-        confirmed = None
-    if confirmed != ctx["daily_cents"]:
-        return ("Confirm the daily budget first", 409, {"spend": ctx})
-    return None
+    problem = money_rules.turn_on_problem(ctx, data.get("confirm_daily_cents"), data.get("confirm_lifetime_cents"))
+    return (problem, 409, {"spend": ctx}) if problem else None
 
 
 @bp.get("/ads/<level>/<entity_id>/spend")
@@ -610,22 +670,29 @@ def set_budget(level, entity_id):
     except (TypeError, ValueError):
         return api_error("Enter the new daily budget in dollars", 400, field="budget")
     try:
+        seen = int(data.get("from_cents"))
+    except (TypeError, ValueError):
+        seen = None
+    try:
         live = fresh_budget(entity_id)
     except meta_client.MetaError as exc:
         return api_error(f"Couldn't read the budget from Meta: {exc}", 400)
-    if live and live != row["daily_budget_cents"]:
+    if not live:
+        return api_error(forget_budget(level, entity_id), 409, field="budget")
+    if live != row["daily_budget_cents"]:
         db.execute(f"UPDATE {LEVELS[level]} SET daily_budget_cents = %s WHERE id = %s", (live, entity_id))
         row = {**row, "daily_budget_cents": live}
-        if data.get("from_cents") is not None and int(data["from_cents"]) != live:
-            return api_error(f"The budget changed on Meta since you looked: it's {live / 100:,.2f} a day now. "
-                             "Check the new amount again.", 409, field="budget")
-    change = money_rules.budget_change(row["daily_budget_cents"] or 0, cents, ceiling())
+    # The step confirmed must be the real one: whatever the stored value says (audit A3-77, A3-113).
+    if seen != live:
+        return api_error(f"The budget on Meta is {live / 100:,.2f} a day now, not what the page showed. "
+                         "Check the new amount again.", 409, field="budget", live_cents=live)
+    change = money_rules.budget_change(live, cents, ceiling())
     problem = money_rules.change_problem(change, bool(data.get("accept_big")))
     if problem:
         return api_error(problem, 409 if change["big"] and not change["over_cap"] else 400, field="budget")
     error = apply_budget(current_user(), level, row, cents)
     if error:
-        return api_error(error if "level up" in error else f"Meta refused: {error}", 400)
+        return write_error(error)
     return jsonify(entity(level, entity_id))
 
 
@@ -890,33 +957,34 @@ def prepare_creative(user, data):
 
 
 def create_ad_from(user, data, proposal_id=None, sync=True):
-    """Create an ad (always switched off). Returns (ad_id, None) or (None, (message, http_status))."""
-    row = {"id": data.get("template_ad_id"), "name": (data.get("name") or "").strip()[:200], "campaign_id": None}
+    """Create an ad (always switched off). Returns (ad_id, None) or (None, (message, http_status, outcome)):
+    outcome "not_sent" (refused before anything reached Meta: a check or a read), "refused" (Meta said no)
+    or "unknown" (Meta didn't answer a write, so the ad may exist). Only writes land in meta_changes."""
     try:
         ctx, err = prepare_creative(user, data)
-        if err:
-            return None, err
-        name = ctx["name"]
-        row = {"id": (ctx["template"] or ctx["adset"])["id"], "name": name, "campaign_id": ctx["adset"]["campaign_id"]}
-        payload = {"name": f"{name} creative", "object_story_spec": json.dumps(ctx["spec"])}
-        if ctx["dof"]:
-            payload["degrees_of_freedom_spec"] = json.dumps(ctx["dof"])
+    except meta_client.MetaError as exc:
+        return None, (f"Couldn't read from Meta, so nothing was created: {exc}", 400, "not_sent")
+    if err:
+        return None, (*err, "not_sent")
+    name = ctx["name"]
+    row = {"id": (ctx["template"] or ctx["adset"])["id"], "name": name, "campaign_id": ctx["adset"]["campaign_id"]}
+    payload = {"name": f"{name} creative", "object_story_spec": json.dumps(ctx["spec"])}
+    if ctx["dof"]:
+        payload["degrees_of_freedom_spec"] = json.dumps(ctx["dof"])
+    try:
         creative = meta_client.post(f"act_{_account()}/adcreatives", data=payload)
         ad = meta_client.post(f"act_{_account()}/ads", data={
             "name": name, "adset_id": ctx["adset"]["id"], "status": "PAUSED",
             "creative": json.dumps({"creative_id": creative["id"]})})
     except meta_client.MetaError as exc:
-        record(user, "ad", row, "create", None, row["name"], False, str(exc), proposal_id)
-        return None, (f"Meta refused: {exc}", 400)
+        record(user, "ad", row, "create", None, name, False, str(exc), proposal_id)
+        return None, (str(exc), 400, "unknown") if exc.unknown else (f"Meta refused: {exc}", 400, "refused")
     record(user, "ad", {**row, "id": ad["id"]}, "create", None, name, True, proposal_id=proposal_id)
     import concepts_api
     if ctx["template"]:
-        concepts_api.copy_tags(ctx["template"]["id"], ad["id"])
+        after_write("copying tags", concepts_api.copy_tags, ctx["template"]["id"], ad["id"])
     if sync:
-        try:
-            insights.sync_structure()
-        except meta_client.MetaError:
-            pass
+        after_write("structure sync", insights.sync_structure)
     return ad["id"], None
 
 
@@ -925,14 +993,14 @@ def create_ad_from(user, data, proposal_id=None, sync=True):
 def create_ad():
     ad_id, err = create_ad_from(current_user(), request.get_json(silent=True) or {})
     if err:
-        return api_error(*err)
+        return api_error(err[0], err[1])
     return jsonify({"id": ad_id}), 201
 
 
 # ---------------------------------------------------------------- proposals
 
 def proposal_target(p):
-    tid = p.get("entity_id") or (p.get("payload") or {}).get("template_ad_id")
+    tid = proposal_target_id(p)
     return find_entity(tid) if tid else (None, None)
 
 
@@ -958,14 +1026,16 @@ def proposal_plan(p, apply_as=None):
             return {"kind": "unclear", "problem": "The ad this was made for isn't there any more."}
         return {"kind": "vertical", "name": ad["name"], "live": ad["effective_status"] == "ACTIVE"}
     if kind == "unclear":
-        return {"kind": "unclear", "problem": f"Claude's new budget isn't one clear amount (“{value or ''}”), so it "
-                                              "can't be applied as is. Decline it, or change the budget yourself on the Ads page."}
+        return {"kind": "unclear", "problem": value}
     if kind == "status":
-        out = {"kind": "status", "to": value, "name": row["name"], "level": level}
+        live = meta_client.get(row["id"], fields="status").get("status") or row["status"]
+        out = {"kind": "status", "to": value, "name": row["name"], "level": level, "from": live, "already": live == value}
         if value == "ACTIVE":
             out["spend"] = spend_context(level, row)
         return out
-    live = fresh_budget(row["id"]) or row["daily_budget_cents"]
+    live = fresh_budget(row["id"])
+    if not live:
+        return {"kind": "unclear", "problem": forget_budget(level, row["id"])}
     change = money_rules.budget_change(live, value, ceiling())
     return {"kind": "budget", "name": row["name"], "level": level, **change,
             "problem": money_rules.change_problem(change, True)}
@@ -1053,15 +1123,39 @@ def decide(proposal_id, decision):
         log_activity("proposal.declined", subject=str(proposal_id), details={"title": p["title"]})
         return jsonify({"status": "declined"})
     # Claimed before anything reaches Meta: a double click or a second tab gets a 409, not a second ad.
-    claimed = db.execute("UPDATE desk_proposals SET status = 'applying' WHERE id = %s AND status = 'pending' RETURNING id",
-                         (proposal_id,), returning=True)
+    claimed = db.execute("""UPDATE desk_proposals SET status = 'applying', applying_at = now()
+                            WHERE id = %s AND status = 'pending' RETURNING applying_at""", (proposal_id,), returning=True)
     if not claimed:
         return api_error("This proposal is already being applied or was decided", 409)
+    meta_client.watch_writes()
     try:
         return _approve(user, p, level, row, request.get_json(silent=True) or {})
     finally:
-        # Refused before anything was sent (a check failed): it stays waiting for a decision.
-        db.execute("UPDATE desk_proposals SET status = 'pending' WHERE id = %s AND status = 'applying'", (proposal_id,))
+        release_claim(proposal_id, claimed["applying_at"], user["id"], sent=meta_client.writes_sent())
+
+
+def release_claim(proposal_id, since, user_id=None, ended=True, sent=False):
+    """A claim nothing closed: waiting again only if nothing was sent to Meta since the claim; applied if a
+    write went through; otherwise kept as "check Ads Manager", never sent twice (audit A3-40, A3-68)."""
+    if not db.query("SELECT 1 FROM desk_proposals WHERE id = %s AND status = 'applying'", (proposal_id,), one=True):
+        return
+    changes = db.query("SELECT ok FROM meta_changes WHERE proposal_id = %s AND created_at >= %s", (proposal_id, since))
+    status = desk_view.after_claim(changes, ended, sent)
+    if status == "pending":
+        db.execute("UPDATE desk_proposals SET status = 'pending', applying_at = NULL WHERE id = %s AND status = 'applying'", (proposal_id,))
+        return
+    if db.execute("""UPDATE desk_proposals SET status = %s, decided_by = COALESCE(decided_by, %s), decided_at = now()
+                     WHERE id = %s AND status = 'applying' RETURNING id""", (status, user_id, proposal_id), returning=True):
+        log_activity(f"proposal.{status}", subject=str(proposal_id), details={"after": "an interrupted apply"},
+                     actor=None if user_id else "system", user_id=user_id)
+
+
+def sweep_applying(minutes=10):
+    """Proposals left 'applying' by a request that never finished (a restart mid-apply): settled from
+    what reached Meta, so they don't block their conversation forever (audit A3-79)."""
+    for r in db.query(f"""SELECT id, COALESCE(applying_at, created_at) AS since FROM desk_proposals
+                           WHERE status = 'applying' AND COALESCE(applying_at, created_at) < now() - interval '{int(minutes)} minutes'"""):
+        release_claim(r["id"], r["since"], ended=False)
 
 
 def _approve(user, p, level, row, data):
@@ -1096,16 +1190,22 @@ def _approve(user, p, level, row, data):
                         "note": "Recorded. This one isn't a simple on/off or budget change, so nothing was changed on Meta."})
     kind, value = action
     if kind == "unclear":
-        return api_error(proposal_plan(p)["problem"], 400)
+        return api_error(value, 400)
     new_id = None
     try:
         if kind == "status" and value == "ACTIVE":
-            problem = turn_on_problem(level, row, data.get("confirm_daily_cents"))
+            problem = turn_on_problem(level, row, data)
             if problem:
                 return api_error(problem[0], problem[1], **(problem[2] if len(problem) > 2 else {}))
         if kind == "budget":
-            live = fresh_budget(row["id"]) or row["daily_budget_cents"]
-            if data.get("from_cents") is None or int(data["from_cents"]) != live or int(data.get("to_cents") or 0) != value:
+            live = fresh_budget(row["id"])
+            if not live:
+                return api_error(forget_budget(level, row["id"]), 409)
+            try:
+                echoed = (int(data.get("from_cents")), int(data.get("to_cents")))
+            except (TypeError, ValueError):
+                echoed = None
+            if echoed != (live, value):
                 return api_error(f"Check the amounts again: the budget on Meta is {live / 100:,.2f} a day now.", 409,
                                  plan=proposal_plan(p))
             row = {**row, "daily_budget_cents": live}
@@ -1116,21 +1216,24 @@ def _approve(user, p, level, row, data):
         return api_error(f"Couldn't read the live budget from Meta, so nothing was changed: {exc}", 400)
     if kind == "create":
         new_id, err = create_ad_from(user, {**value, "name": value.get("name") or p["title"]}, proposal_id)
-        error = err[0] if err else None
+        error = err and ({"not_sent": NOT_SENT, "unknown": UNKNOWN}.get(err[2], "") + err[0])
     elif kind == "update":
         import versions_api
         error = versions_api.update_ad(user, value, proposal_id)
-        if error and error.startswith(NOT_SENT):
-            return api_error(error[len(NOT_SENT):], 409)
     elif kind == "vertical":
         error = add_vertical(user, value["template_ad_id"], value["vertical"]["video_id"], proposal_id, value["vertical"].get("image_hash"))
-        if error and error.startswith(NOT_SENT):
-            return api_error(error[len(NOT_SENT):], 409)
     elif kind == "status":
         error = apply_status(user, level, row, value, proposal_id)
     else:
         error = apply_budget(user, level, row, value, proposal_id)
+    if error and error.startswith(NOT_SENT):
+        return api_error(error_words(error), 409)  # nothing reached Meta: it stays waiting
+    if error and error.startswith(UNKNOWN):
+        close("unknown")
+        return api_error(f"{error_words(error)} This suggestion is marked “check Ads Manager” and can't be applied again.", 400)
     close("failed" if error else "applied")
+    if error and error.startswith(CHECKED):
+        return api_error(f"Not applied: {error_words(error)}", 400)
     if error:
         return api_error(f"Approved, but Meta refused the change: {error}", 400)
     return jsonify({"status": "applied", "applied": True, "ad_id": new_id,
@@ -1246,17 +1349,18 @@ def sync_now():
 
 # ---------------------------------------------------------------- 9:16 for Reels (Meta's advice, Claude's fix)
 
-NOT_SENT = "\x00"  # error prefix: refused before anything reached Meta, so the proposal stays waiting
-
-
 def add_vertical(user, ad_id, video_id, proposal_id=None, image_hash=None):
     """Put a 9:16 video on an ad for Reels and Stories; feeds keep its 4:5 video, the words and the
     lead form stay. A new creative is made and read back first, so a copy Meta stored wrongly never
     reaches the running ad. Returns None, or what went wrong."""
     import placements
-    ad = db.query("SELECT id, name, campaign_id, creative_id, title, body FROM ads WHERE id = %s", (ad_id,), one=True)
+    ad = db.query("SELECT id, name, campaign_id, creative_id, effective_status, title, body FROM ads WHERE id = %s", (ad_id,), one=True)
     if not ad or not ad["creative_id"]:
         return NOT_SENT + "That ad has no creative Meta can show yet."
+    if not can_touch(user, ad["campaign_id"]):
+        return NOT_SENT + "This campaign isn't assigned to you"
+    if ad["effective_status"] in ("ARCHIVED", "DELETED"):
+        return NOT_SENT + "That ad is archived, so it can't be updated."
     row = {"id": ad["id"], "name": ad["name"], "campaign_id": ad["campaign_id"]}
     video_id = str(video_id)
     try:
@@ -1278,25 +1382,50 @@ def add_vertical(user, ad_id, video_id, proposal_id=None, image_hash=None):
             "asset_feed_spec": json.dumps(feed)}
     if cr.get("degrees_of_freedom_spec"):
         data["degrees_of_freedom_spec"] = json.dumps(cr["degrees_of_freedom_spec"])
+    new = None
     try:
         new = meta_client.post(f"act_{_account()}/adcreatives", data=data)
         made = meta_client.get(new["id"], fields="object_story_spec,asset_feed_spec,instagram_user_id")
         problem = placements.readback_problem(cr.get("object_story_spec"), made, video_id, instagram="instagram_user_id" in story)
         if problem:
-            record(user, "ad", row, "placement_media", ad["creative_id"], f"creative {new['id']} not used", False,
-                   f"{problem} Meta returned {placements.describe(made)}", proposal_id)
-            return f"{problem} The running ad wasn't changed."
-        meta_client.post(ad["id"], data={"creative": json.dumps({"creative_id": new["id"]})})
+            log.warning("9:16 read-back refused for ad %s: %s", ad["id"], placements.describe(made))
+            record(user, "ad", row, "placement_media", ad["creative_id"], f"creative {new['id']} not used", False, problem, proposal_id)
+            return f"{CHECKED}{problem} The running ad wasn't changed."
+        new = {**new, "switching": True}
+        put_creative(ad["id"], new["id"])
     except meta_client.MetaError as exc:
         record(user, "ad", row, "placement_media", ad["creative_id"], f"9:16 video {video_id}", False, str(exc), proposal_id)
+        if exc.unknown and new and new.get("switching"):
+            return UNKNOWN + SWITCH_UNKNOWN
         return f"{exc}. The running ad wasn't changed."
-    db.execute("UPDATE ads SET creative_id = %s WHERE id = %s", (new["id"], ad["id"]))
-    import versions_api
-    versions_api.save_switch(ad, new["id"], "9:16 video for Reels and Stories", user["id"], proposal_id, ad["title"], ad["body"])
     record(user, "ad", row, "placement_media", ad["creative_id"],
            f"9:16 video {video_id} in Reels and Stories (creative {new['id']})", True, proposal_id=proposal_id)
+    import versions_api
+    after_write("stored creative", db.execute, "UPDATE ads SET creative_id = %s WHERE id = %s", (new["id"], ad["id"]))
+    after_write("version history", versions_api.save_switch, ad, new["id"], "9:16 video for Reels and Stories", user["id"],
+                proposal_id, ad["title"], ad["body"])
     resync_later()
     return None
+
+
+SWITCH_UNKNOWN = ("Meta didn't answer, so it isn't known whether the ad got the new version. Look at the ad in "
+                  "Ads Manager (or press Refresh) before trying again.")
+
+
+def put_creative(ad_id, creative_id):
+    """Point an ad at a creative. When Meta doesn't answer, the ad is read back: showing the new creative
+    means it went through; anything else re-raises (the outcome stays unknown) (audit A3-120)."""
+    try:
+        meta_client.post(ad_id, data={"creative": json.dumps({"creative_id": creative_id})})
+    except meta_client.MetaError as exc:
+        if not exc.unknown:
+            raise
+        try:
+            now = (meta_client.get(ad_id, fields="creative").get("creative") or {}).get("id")
+        except meta_client.MetaError:
+            raise exc from None
+        if now != creative_id:
+            raise
 
 
 # ---------------------------------------------------------------- Meta's automatic changes (roadmap 4.4)

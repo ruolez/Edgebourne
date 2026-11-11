@@ -3,6 +3,7 @@ request, the build order, and a plain review. Order follows the meta-ads skill (
 §18.2): campaign → ad set → creatives → ads, all PAUSED; publishing later turns on the ads,
 then the ad set, then the campaign, so nothing can spend before every piece is on."""
 import re
+from datetime import datetime, timedelta
 
 import adset_build as ab
 
@@ -109,3 +110,20 @@ def publish_order(made):
     """Ads first, then the ad set, then the campaign: nothing delivers until the last switch."""
     return [("ad", a) for _, a in sorted((made.get("ads") or {}).items(), key=lambda kv: int(kv[0]))] + \
            [("adset", made["adset_id"]), ("campaign", made["campaign_id"])]
+
+
+def adoptable(found, name, parent, since, taken):
+    """After Meta didn't answer a create, the object the earlier try may have made: same exact name,
+    still paused, under the same parent, created since the build started (a minute of clock slack) and
+    not already used by another build. The newest such one, or None (audit A3-71, A3-72)."""
+
+    def created(x):
+        try:
+            return datetime.strptime(x.get("created_time") or "", "%Y-%m-%dT%H:%M:%S%z")
+        except ValueError:
+            return None
+    floor = since - timedelta(minutes=1)
+    ok = [(created(x), x["id"]) for x in found
+          if x.get("name") == name and x.get("status") == "PAUSED" and x["id"] not in taken
+          and (parent is None or parent in (x.get("campaign_id"), x.get("adset_id"))) and created(x) and created(x) >= floor]
+    return max(ok)[1] if ok else None

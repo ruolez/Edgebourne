@@ -87,6 +87,11 @@ class CleanPayloadTests(unittest.TestCase):
     def test_stamping_leaves_an_empty_payload_empty(self):
         self.assertIsNone(desk_api.stamp_update(None, {"kind": "polish", "options": {"ad_id": "a1"}}))
 
+    def test_a_budget_proposal_keeps_its_amount_in_cents(self):
+        cases = [(2400, {"proposed_cents": 2400}), ("2400", {"proposed_cents": 2400}), (24.5, None), ("$24", None), (0, None), (True, None)]
+        self.assertEqual([desk_api.clean_proposal({"kind": "budget", "title": "x", "payload": {"proposed_cents": c}})["payload"] for c, _ in cases],
+                         [want for _, want in cases])
+
     def test_payload_only_kept_on_creative_proposals(self):
         self.assertIsNone(desk_api.clean_proposal({"kind": "budget", "title": "x", "payload": dict(self.BASE)})["payload"])
 

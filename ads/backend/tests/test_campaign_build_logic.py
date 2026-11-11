@@ -1,5 +1,7 @@
 import unittest
 
+from datetime import datetime, timezone
+
 import campaign_build as cb
 
 ADSET = {"name": "SoCal", "locations": [{"kind": "city", "key": "1", "name": "Riverside, California", "radius": 25}],
@@ -75,3 +77,23 @@ class FromScratchTest(unittest.TestCase):
     def test_without_a_template_same_media_is_refused(self):
         spec = {**self.SPEC, "ads": [{**self.SPEC["ads"][0], "media": {"kind": "same"}}]}
         self.assertEqual([m for _, m in cb.problems(spec, {"f1"}, set())], ["Ad 1: choose its image or video (it doesn't start from another ad)"])
+
+
+class AdoptableTest(unittest.TestCase):
+    """A3-71/A3-72: after Meta didn't answer, only something this build could have made is adopted."""
+    SINCE = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+
+    def found(self, oid, created, status="PAUSED", name="EB - Payroll - Leads", parent=None):
+        return {"id": oid, "name": name, "status": status, "created_time": created, "campaign_id": parent, "adset_id": parent}
+
+    def test_only_a_paused_one_made_since_the_build_started_and_not_taken(self):
+        found = [self.found("old", "2026-11-01T10:00:00+0000"), self.found("on", "2026-11-10T12:00:30+0000", status="ACTIVE"),
+                 self.found("taken", "2026-11-10T12:01:00+0000"), self.found("other", "2026-11-10T12:01:00+0000", name="Other"),
+                 self.found("new", "2026-11-10T12:00:05+0000"), self.found("no-time", None)]
+        self.assertEqual(cb.adoptable(found, "EB - Payroll - Leads", None, self.SINCE, {"taken"}), "new")
+
+    def test_an_ad_set_or_ad_must_be_under_the_same_parent(self):
+        found = [self.found("elsewhere", "2026-11-10T12:00:05+0000", parent="p2"), self.found("here", "2026-11-10T12:00:06+0000", parent="p1")]
+        self.assertEqual([cb.adoptable(found, "EB - Payroll - Leads", "p1", self.SINCE, set()),
+                          cb.adoptable(found[:1], "EB - Payroll - Leads", "p1", self.SINCE, set())], ["here", None])
+

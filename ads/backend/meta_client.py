@@ -1,5 +1,6 @@
 """Thin Graph API client. Tokens come from settings (encrypted) and never leave
 the server."""
+import contextvars
 import hashlib
 import hmac
 import logging
@@ -18,6 +19,19 @@ TOKEN_CODES = {190, 102}  # token revoked, expired or changed
 COOLDOWN_SECONDS = 300
 _cooldown = {}  # account id -> unix time before which we don't ask Meta again
 _token_bad = {}  # account id -> True once Meta refused the token (cleared by the next success)
+# Set when this request sends anything to Meta that changes it: an interrupted proposal apply is never
+# put back to "waiting" after one (audit A3-40, A3-68). Asset uploads create nothing that runs.
+_write_sent = contextvars.ContextVar("meta_write_sent", default=False)
+_UPLOADS = ("/adimages", "/advideos")
+
+
+def watch_writes():
+    """Start counting writes for the current request; writes_sent() then says whether any was tried."""
+    _write_sent.set(False)
+
+
+def writes_sent():
+    return _write_sent.get()
 
 
 class MetaError(Exception):
@@ -140,6 +154,8 @@ def _call(method, path, token, params=None, data=None, files=None, timeout=TIMEO
         raise MetaError("This account isn't connected to Meta yet: add its ad account in Settings → Meta")
     params = dict(params or {})
     params["access_token"] = token
+    if method != "GET" and not path.rstrip("/").endswith(_UPLOADS):
+        _write_sent.set(True)
     resp = _send(method, f"{_base(video)}/{path.lstrip('/')}", params=params, data=data, files=files,
                  timeout=timeout)
     body = _raise_for(resp)

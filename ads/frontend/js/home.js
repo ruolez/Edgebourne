@@ -242,5 +242,9 @@ document.addEventListener("click", async (e) => {
   try {
     document.getElementById("advice").innerHTML = adviceHtml(await api("/api/advice/apply", { method: "POST", body: { signature: b.dataset.apply, accept_big: big, confirm_to: b.dataset.to ? Number(b.dataset.to) : null } }));
     toast("Applied on Meta");
-  } catch (err) { toast(err.message, "bad"); b.disabled = false; }
+  } catch (err) {
+    toast(err.message, "bad");
+    b.disabled = false;
+    if (err.body && err.body.fresh) document.getElementById("advice").innerHTML = adviceHtml(err.body.fresh);
+  }
 });

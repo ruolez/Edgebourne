@@ -24,7 +24,8 @@ out = {"live": live,
                       f"+20% to ${new_dollars}/day"),
        "unclear": prop("budget", "QA unclear budget", "campaign", CAMP, "Edge Bourne - Free intro call - Leads", "budget", "x",
                        "Raise 2x or more"),
-       "double": prop("status", "QA pause twice", "ad", "120252672229400312", "N2", "status", "ACTIVE", "PAUSED")}
+       "double": prop("status", "QA pause twice", "ad", "120252672229400312", "N2", "status", "ACTIVE", "PAUSED"),
+       "stale": prop("status", "QA pause what the console thinks is off", "ad", "120252672230740312", "N3", "status", "ACTIVE", "PAUSED")}
 with account_ctx.all_accounts():
     out["lead2"] = db.query("SELECT id FROM leads WHERE meta_lead_id = 'ACCT2MARKlead'", one=True)["id"]
 print(json.dumps(out))

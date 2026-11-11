@@ -34,12 +34,23 @@ class ProposalActionTests(unittest.TestCase):
                          [("budget", 2400)] * 3)
 
     def test_an_unclear_budget_is_flagged_not_applied(self):
-        p = self.prop(kind="budget", proposed_value="Raise 2x or more")
-        self.assertEqual(ads_api.proposal_action(p, CAMPAIGN), ("unclear", "Raise 2x or more"))
+        kind, why = ads_api.proposal_action(self.prop(kind="budget", proposed_value="Raise 2x or more"), CAMPAIGN)
+        self.assertEqual((kind, "isn't one clear amount" in why), ("unclear", True))
 
-    def test_a_structured_amount_wins_over_the_words(self):
+    def test_a_structured_amount_is_used_when_the_words_agree(self):
+        p = self.prop(kind="budget", proposed_value="Set to 2x ($40/day)", payload={"proposed_cents": 4000})
+        self.assertEqual(ads_api.proposal_action(p, CAMPAIGN), ("budget", 4000))
+
+    def test_a_structured_amount_the_words_disagree_with_is_refused(self):
         p = self.prop(kind="budget", proposed_value="+20% to $24/day", payload={"proposed_cents": 2300})
-        self.assertEqual(ads_api.proposal_action(p, CAMPAIGN), ("budget", 2300))
+        self.assertEqual(ads_api.proposal_action(p, CAMPAIGN)[0], "unclear")
+
+    def test_a_creative_proposal_is_checked_against_the_ad_it_changes(self):
+        # A3-49/A3-78: entity_id may point at another campaign's ad set; the write goes to template_ad_id.
+        cases = [({"kind": "creative", "entity_id": "s9", "payload": {"template_ad_id": "a1"}}, "a1"),
+                 ({"kind": "budget", "entity_id": "c1", "payload": {"proposed_cents": 2400}}, "c1"),
+                 ({"kind": "creative", "entity_id": None, "payload": None}, None)]
+        self.assertEqual([ads_api.proposal_target_id(p) for p, _ in cases], [want for _, want in cases])
 
     def test_no_entity_means_no_action(self):
         self.assertIsNone(ads_api.proposal_action(self.prop(), None))

@@ -89,5 +89,21 @@ class ResultTests(unittest.TestCase):
                          ["scheduled", "running", "ended", "ended"])
 
 
+
+class BookingUnsettledTest(unittest.TestCase):
+    """A booking cut off mid-request (a restart) must be recoverable, not 'being booked' forever."""
+    AT = "2026-11-09T10:00:00+00:00"
+    AT_TS = 1794218400  # AT as a timestamp
+
+    def test_an_unanswered_or_abandoned_booking_needs_a_look(self):
+        cases = [({"creating": True, "unknown": True, "at": self.AT}, self.AT_TS, True),
+                 ({"creating": True, "at": self.AT}, self.AT_TS + 60, False),
+                 ({"creating": True, "at": self.AT}, self.AT_TS + 601, True),
+                 ({"creating": True}, self.AT_TS, True),
+                 ({"id": "9", "creating": True, "unknown": True}, self.AT_TS + 9999, False),
+                 (None, self.AT_TS, False)]
+        self.assertEqual([mt.booking_unsettled(s, now) for s, now, _ in cases], [want for _, _, want in cases])
+
+
 if __name__ == "__main__":
     unittest.main()

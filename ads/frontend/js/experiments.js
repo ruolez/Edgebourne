@@ -65,6 +65,13 @@ const STUDY_STATE = { scheduled: ["", "Starts"], running: ["ok", "Running on Met
 function metaBlock(t) {
   const m = t.meta;
   if (!m) return "";
+  if (m.creating) {
+    return m.unknown ? `<div class="on-meta">
+      <div class="on-meta-head"><span class="pill warn">May be on Meta</span><b>A/B test on Meta</b></div>
+      <p class="flush">Meta didn't answer when this test was booked, so it may exist there with its own test budget. It can't be booked again until the console has looked.</p>
+      <div class="row"><button type="button" class="btn btn-quiet btn-small" data-meta-find="${t.id}">Look for it on Meta</button></div>
+    </div>` : '<div class="on-meta"><div class="on-meta-head"><span class="pill claude">Being booked</span><b>A/B test on Meta</b></div></div>';
+  }
   const [cls, word] = STUDY_STATE[m.state];
   const span = `${dayLabel(m.start_day)} – ${dayLabel(m.end_day)}`;
   const cost = m.daily_budget_cents ? ` · test budget ${money(m.daily_budget_cents, { exact: true })} a day, up to ${money(m.total_cents)}` : " · ad sets spend their own budgets";
@@ -361,7 +368,13 @@ if (me) {
     if (e.target.closest("[data-edit]")) openForm(byId("data-edit"));
     else if (e.target.closest("[data-finish]")) openFinish(byId("data-finish"));
     else if (e.target.closest("[data-meta]")) openMeta(byId("data-meta"));
-    else if (e.target.closest("[data-meta-refresh]")) {
+    else if (e.target.closest("[data-meta-find]")) {
+      try {
+        const r = await api(`/api/experiments/${byId("data-meta-find").id}/meta/find`, { method: "POST" });
+        toast(r.found ? "Found it on Meta: it's linked now" : "It isn't on Meta. You can book it again.");
+        load();
+      } catch (err) { toast(err.message, "bad"); }
+    } else if (e.target.closest("[data-meta-refresh]")) {
       try { await api(`/api/experiments/${byId("data-meta-refresh").id}/meta/refresh`, { method: "POST" }); toast("Checked Meta"); load(); }
       catch (err) { toast(err.message, "bad"); }
     } else if (e.target.closest("[data-meta-end]")) {

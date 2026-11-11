@@ -15,7 +15,8 @@ RESULT_STATES = {
 }
 DECIDED = {"pending": ("waiting", "Waiting for you"), "declined": ("declined", "Declined"),
            "expired": ("expired", "Expired"), "failed": ("failed", "Meta refused it"),
-           "applying": ("working", "Being applied on Meta"), "revised": ("declined", "Sent back to Claude")}
+           "applying": ("working", "Being applied on Meta"), "revised": ("declined", "Sent back to Claude"),
+           "unknown": ("unknown", "Meta didn't answer: check Ads Manager")}
 
 
 def _time(value):
@@ -50,8 +51,18 @@ def followup_for(p, render_tasks):
     return None
 
 
+CHECK_REFUSED = ("failed", "Not applied: the copy Meta stored didn't match")
+
+
+def refused_by_check(new_value):
+    """A failed write the console's own read-back check stopped ("creative … not used"), not Meta."""
+    return str(new_value or "").endswith(" not used")
+
+
 def proposal_state(p, result_ad, followup, made_state=None):
     """(key, words) for one proposal; made_state is the state of what a version request made."""
+    if p["status"] == "failed" and p.get("checked"):
+        return CHECK_REFUSED
     if p["status"] in DECIDED:
         return DECIDED[p["status"]]
     if p["status"] == "applied":
@@ -65,6 +76,17 @@ def proposal_state(p, result_ad, followup, made_state=None):
             return ("failed", "Claude didn't finish")
         return made_state or ("done", "Made")
     return ("approved", "Approved")
+
+
+def after_claim(changes, ended=True, sent=False):
+    """What a proposal claimed for applying becomes when nothing closed it: `changes` are the meta_changes
+    rows written for it since the claim, `sent` whether the request tried a write on Meta. Waiting again
+    only when the request ended with nothing sent; applied when a write went through; otherwise kept as
+    "check Ads Manager" so it can't be sent twice (a write Meta didn't answer, a write whose bookkeeping
+    failed, or a process that died mid-apply)."""
+    if any(c["ok"] for c in changes):
+        return "applied"
+    return "pending" if ended and not changes and not sent else "unknown"
 
 
 def families(tasks, results):
@@ -249,8 +271,8 @@ PLAN_GROUPS = {"vertical": "live", "update": "live", "create": "create", "render
 
 def review_item(p, plan):
     """How one suggestion shows on the Accept sheet: its group, whether it starts ticked, the reason
-    it can't be accepted, and the exact approval body. Starting to spend and a step over +20% are
-    never ticked for you, nor is a budget that moved since Claude read it."""
+    it can't be accepted, and the exact approval body. Starting to spend, a step over +20% and a cut
+    deeper than 20% are never ticked for you, nor is a budget that moved since Claude read it."""
     kind, blocked, needs_tick, body, note = plan["kind"], None, False, {}, None
     group = PLAN_GROUPS.get(kind)
     if kind == "unclear":
@@ -261,15 +283,16 @@ def review_item(p, plan):
         seen = money_rules.parse_budget_text(p.get("current_value"))
         if seen is not None and seen != plan["from"]:
             note = f"Claude saw ${seen / 100:,.2f} a day. It's ${plan['from'] / 100:,.2f} now."
-        needs_tick = bool(plan.get("big") or note)
+        deep_cut = plan.get("pct") is not None and plan["pct"] < -100 * money_rules.BIG_STEP
+        needs_tick = bool(plan.get("big") or note or deep_cut)
         body = {"from_cents": plan["from"], "to_cents": plan["to"], "accept_big": bool(plan.get("big"))}
     elif kind == "status":
         turning_on = plan["to"] == "ACTIVE"
         group = "money" if turning_on else "live"
         needs_tick = turning_on
-        daily = (plan.get("spend") or {}).get("daily_cents")
-        if turning_on and daily:
-            body = {"confirm_daily_cents": daily}
+        spend = plan.get("spend") or {}
+        if turning_on:
+            body = {f"confirm_{k}": spend[k] for k in ("daily_cents", "lifetime_cents") if spend.get(k)}
     return {"id": p["id"], "task_id": p["task_id"], "title": p["title"], "kind": p["kind"], "entity_name": p.get("entity_name"),
             "group": "blocked" if blocked else group, "blocked": blocked, "needs_tick": needs_tick,
             "tick": not blocked and not needs_tick, "conflict": None, "note": note, "plan": plan, "body": body}

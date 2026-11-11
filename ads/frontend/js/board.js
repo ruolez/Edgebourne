@@ -9,7 +9,7 @@ import { KIND_LABELS, scoreClass } from "./tasks.js";
 
 const STATE_PILL = {
   waiting: "claude", working: "claude", live: "ok", off: "", review: "warn", archived: "", deleted: "",
-  applied: "ok", approved: "ok", done: "ok", declined: "", expired: "", failed: "bad",
+  applied: "ok", approved: "ok", done: "ok", declined: "", expired: "", failed: "bad", unknown: "warn",
 };
 export const RUN_WORDS = { advice: "Meta's advice", polish: "Polish", render: "New version", question: "Question", review: "Results review", research: "Competitor research", creative: "New ad ideas" };
 const ACTIVE = new Set(["queued", "claimed", "running"]);

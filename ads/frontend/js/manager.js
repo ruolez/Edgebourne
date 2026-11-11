@@ -239,9 +239,12 @@ async function bulkRun(level, ids, action, value, after) {
   }
   let summary = "";
   let confirm = `${action === "on" ? "Turn on" : action === "off" ? "Turn off" : action === "archive" ? "Archive" : "Change"} ${t.count} ${t.count === 1 ? words[0] : words[1]}`;
-  if (action === "on" && t.daily_cents) {
-    summary = `<p>Turning these on spends up to <b>${money(t.daily_cents, { exact: true })} a day</b> in total, from ${t.budgets.map(esc).join(", ")}. About ${money(t.daily_cents * 30)} a month.</p>`;
-    confirm += ` · ${money(t.daily_cents, { exact: true })}/day`;
+  if (action === "on" && (t.daily_cents || t.lifetime_cents)) {
+    const amounts = [t.daily_cents ? `up to <b>${money(t.daily_cents, { exact: true })} a day</b>` : "",
+      t.lifetime_cents ? `up to <b>${money(t.lifetime_cents, { exact: true })} in total</b> from lifetime budgets` : ""].filter(Boolean).join(" plus ");
+    summary = `<p>Turning these on spends ${amounts}, from ${t.budgets.map(esc).join(", ")}.${t.daily_cents ? ` About ${money(t.daily_cents * 30)} a month.` : ""}</p>`;
+    if (t.daily_cents) confirm += ` · ${money(t.daily_cents, { exact: true })}/day`;
+    if (t.lifetime_cents) confirm += ` · ${money(t.lifetime_cents, { exact: true })} total`;
   }
   if (body.action.startsWith("budget")) {
     summary = `<p>Daily budgets together: ${money(t.from_cents, { exact: true })} → <b>${money(t.to_cents, { exact: true })}</b> a day.</p>${t.big ? "<p><b>Some steps are more than +20%:</b> Meta may restart learning and results can wobble for a few days.</p>" : ""}`;
@@ -251,7 +254,7 @@ async function bulkRun(level, ids, action, value, after) {
   const ok = await confirmDialog({ title: `${confirm.split(" · ")[0]}?`, body: `${summary}<ul class="bk-lines">${pv.lines.map(line).join("")}</ul>`, confirm, danger: action === "off" || action === "archive" });
   if (!ok) return;
   try {
-    const r = await api("/api/ads/bulk/apply", { method: "POST", body: { plan_token: pv.plan_token, confirm_total_cents: t.daily_cents, accept_big: !!t.big } });
+    const r = await api("/api/ads/bulk/apply", { method: "POST", body: { plan_token: pv.plan_token, confirm_total_cents: t.daily_cents, confirm_lifetime_cents: t.lifetime_cents, accept_big: !!t.big } });
     const failed = r.results.filter((x) => !x.ok);
     toast(failed.length ? `${r.done} done, ${failed.length} not: ${failed[0].error}` : `${r.done} ${r.done === 1 ? words[0] : words[1]} changed`, failed.length ? "bad" : "");
     after();

@@ -126,6 +126,19 @@ def study_state(study, now_ts):
     return "running" if now_ts < study["end_time"] else "ended"
 
 
+STALE_BOOKING_SECONDS = 600
+
+
+def booking_unsettled(study, now_ts):
+    """A booking with no study id that needs someone to look on Meta: Meta didn't answer, or the request
+    was cut off (a restart) and left the claim behind. A booking still in flight is left alone."""
+    if not study or study.get("id"):
+        return False
+    if study.get("unknown") or not study.get("at"):
+        return True
+    return now_ts - datetime.fromisoformat(study["at"]).timestamp() > STALE_BOOKING_SECONDS
+
+
 # ---------------------------------------------------------------- Meta + database
 
 def enabled():

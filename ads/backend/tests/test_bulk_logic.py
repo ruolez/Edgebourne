@@ -11,11 +11,35 @@ class StatusTests(unittest.TestCase):
             {"id": "a3", "name": "N3", "status": "ACTIVE"}, {"id": "a4", "name": "N4", "status": "ARCHIVED"}]
 
     def test_turning_on_counts_each_budget_once(self):
-        ctx = {"a1": {"daily_cents": 3100, "where": "the campaign “Leads”"}, "a2": {"daily_cents": 3100, "where": "the campaign “Leads”"}}
-        lines, totals = bulk.status_lines(self.ROWS, "ACTIVE", ctx)
+        leads = {"daily_cents": 3100, "lifetime_cents": None, "where": "the campaign “Leads”", "holder": "c1"}
+        lines, totals = bulk.status_lines(self.ROWS, "ACTIVE", {"a1": leads, "a2": dict(leads)})
         self.assertEqual([(l["id"], l["skip"]) for l in lines],
                          [("a1", None), ("a2", None), ("a3", "Already on"), ("a4", "Archived: it can't be turned on again")])
-        self.assertEqual(totals, {"count": 2, "daily_cents": 3100, "budgets": ["the campaign “Leads”"]})
+        self.assertEqual(totals, {"count": 2, "daily_cents": 3100, "lifetime_cents": 0, "budgets": ["the campaign “Leads”"]})
+
+    def test_two_budgets_with_the_same_name_are_both_counted(self):
+        # A3-25: two campaigns both named "EB - Payroll - Leads" at $15/day spend $30/day together.
+        ctx = {"a1": {"daily_cents": 1500, "lifetime_cents": None, "where": "the campaign “EB - Payroll - Leads”", "holder": "c1"},
+               "a2": {"daily_cents": 1500, "lifetime_cents": None, "where": "the campaign “EB - Payroll - Leads”", "holder": "c2"}}
+        _, totals = bulk.status_lines(self.ROWS, "ACTIVE", ctx)
+        self.assertEqual((totals["daily_cents"], len(totals["budgets"])), (3000, 2))
+
+    def test_lifetime_budgets_are_totalled_on_their_own(self):
+        ctx = {"a1": {"daily_cents": 1500, "lifetime_cents": None, "where": "the ad set “A”", "holder": "s1"},
+               "a2": {"daily_cents": None, "lifetime_cents": 150000, "where": "the campaign “B”", "holder": "c2"}}
+        _, totals = bulk.status_lines(self.ROWS, "ACTIVE", ctx)
+        self.assertEqual((totals["daily_cents"], totals["lifetime_cents"]), (1500, 150000))
+
+    def test_something_meta_reports_no_budget_for_is_skipped(self):
+        none = {"daily_cents": None, "lifetime_cents": None, "where": None, "holder": None}
+        idle = {**none, "idle": True}
+        lines, totals = bulk.status_lines(self.ROWS[:2], "ACTIVE", {"a1": none, "a2": idle})
+        self.assertEqual(([bool(l["skip"]) for l in lines], totals["count"]), ([True, False], 1))
+
+    def test_the_total_for_apply_counts_each_holder_once(self):
+        ctx = {"daily_cents": 2000, "lifetime_cents": None, "where": "the campaign “L”", "holder": "c1"}
+        self.assertEqual(bulk.spend_totals([ctx, dict(ctx), {**ctx, "holder": "c2", "daily_cents": 500}]),
+                         {"daily_cents": 2500, "lifetime_cents": 0, "budgets": ["the campaign “L”", "the campaign “L”"]})
 
     def test_turning_off_needs_no_money_confirmation(self):
         lines, totals = bulk.status_lines(self.ROWS, "PAUSED", {})

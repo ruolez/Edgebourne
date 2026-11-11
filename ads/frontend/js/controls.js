@@ -5,6 +5,26 @@ import { money, currencySymbol } from "./format.js";
 
 const WHAT = { campaign: "campaign", adset: "ad set", ad: "ad" };
 
+// What turning something on can spend, from the server's fresh read: a daily budget, a lifetime budget
+// (the total until its end date), or both. Every amount shown is echoed back as the confirmation.
+export function spendWords(spend) {
+  if (!spend || spend.idle) return spend && spend.idle ? " (nothing inside it is on yet, so it spends nothing until something is)" : "";
+  const parts = [];
+  if (spend.daily_cents) parts.push(`up to <b>${money(spend.daily_cents, { exact: true })} a day</b>`);
+  if (spend.lifetime_cents) {
+    const until = spend.end_time ? ` until ${esc(new Date(spend.end_time).toLocaleDateString(undefined, { month: "short", day: "numeric" }))}` : "";
+    parts.push(`up to <b>${money(spend.lifetime_cents, { exact: true })} in total</b>${until} (a lifetime budget)`);
+  }
+  return parts.length ? ` and spends ${parts.join(" plus ")} from ${esc(spend.where)}` : "";
+}
+
+export function spendBody(spend) {
+  const body = {};
+  if (spend && spend.daily_cents) body.confirm_daily_cents = spend.daily_cents;
+  if (spend && spend.lifetime_cents) body.confirm_lifetime_cents = spend.lifetime_cents;
+  return body;
+}
+
 export async function toggleEntity(btn, after) {
   const [level, id] = btn.dataset.toggle.split(":");
   const turnOn = btn.getAttribute("aria-checked") !== "true";
@@ -21,14 +41,14 @@ export async function toggleEntity(btn, after) {
   const ok = await confirmDialog({
     title: `${turnOn ? "Turn on" : "Turn off"} “${name}”?`,
     body: turnOn
-      ? `<p>The ${WHAT[level]} starts delivering${daily ? ` and spends up to <b>${money(daily, { exact: true })} a day</b> from ${esc(spend.where)}` : " and spends from its budget"}.${level !== "ad" ? " Ads inside it that are on start too." : ""}</p>${daily ? `<p class="muted small">About ${money(daily * 30)} a month. Meta may spend up to 75% more on a busy day.</p>` : ""}`
+      ? `<p>The ${WHAT[level]} starts delivering${spendWords(spend)}.${level !== "ad" ? " Ads inside it that are on start too." : ""}</p>${daily ? `<p class="muted small">About ${money(daily * 30)} a month. Meta may spend up to 75% more on a busy day.</p>` : ""}`
       : `<p>The ${WHAT[level]} stops showing within a few minutes${level !== "ad" ? ", and every ad inside it stops with it" : ""}. Nothing is deleted; you can turn it back on any time.</p>`,
     confirm: turnOn ? "Turn on" : "Turn off", danger: !turnOn,
   });
   if (!ok) return;
   btn.disabled = true;
   try {
-    await api(`/api/ads/${level}/${id}/status`, { method: "POST", body: { status: turnOn ? "ACTIVE" : "PAUSED", ...(daily ? { confirm_daily_cents: daily } : {}) } });
+    await api(`/api/ads/${level}/${id}/status`, { method: "POST", body: { status: turnOn ? "ACTIVE" : "PAUSED", ...spendBody(spend) } });
     toast(`${name} is ${turnOn ? "on" : "off"}`);
     after();
   } catch (err) { toast(err.message, "bad"); btn.disabled = false; }

@@ -133,12 +133,14 @@ def tasks_with_results(where="TRUE", params=(), limit=50):
     reports = db.query("SELECT id, task_id, title, body, created_at FROM desk_reports "
                        "WHERE task_id = ANY(%s) ORDER BY id", (ids,))
     proposals = db.query("SELECT * FROM desk_proposals WHERE task_id = ANY(%s) ORDER BY id", (ids,))
-    failed = [p["id"] for p in proposals if p["status"] == "failed"]
-    reasons = {r["proposal_id"]: r["error"] for r in db.query(
-        """SELECT DISTINCT ON (proposal_id) proposal_id, error FROM meta_changes
+    failed = [p["id"] for p in proposals if p["status"] in ("failed", "unknown")]
+    reasons = {r["proposal_id"]: r for r in db.query(
+        """SELECT DISTINCT ON (proposal_id) proposal_id, error, new_value FROM meta_changes
            WHERE NOT ok AND proposal_id = ANY(%s) ORDER BY proposal_id, id DESC""", (failed,))} if failed else {}
     for p in proposals:
-        p["failure"] = reasons.get(p["id"])
+        why = reasons.get(p["id"]) or {}
+        p["failure"] = why.get("error")
+        p["checked"] = desk_view.refused_by_check(why.get("new_value"))
     for t in tasks:
         t["reports"] = [r for r in reports if r["task_id"] == t["id"]]
         t["proposals"] = [p for p in proposals if p["task_id"] == t["id"]]
@@ -756,7 +758,20 @@ def clean_proposal(p):
         out["payload"] = clean_tags(p.get("payload"))
         if not out["payload"]:
             out["kind"] = "other"
+    if kind == "budget":
+        out["payload"] = clean_budget(p.get("payload"))
     return out
+
+
+def clean_budget(raw):
+    """A budget proposal's new daily amount in cents ({"proposed_cents": 2400}); approving checks it
+    against the words in proposed_value and refuses when they disagree (audit A3-23)."""
+    cents = raw.get("proposed_cents") if isinstance(raw, dict) else None
+    if isinstance(cents, str) and cents.strip().isdigit():
+        cents = int(cents.strip())
+    if not isinstance(cents, int) or isinstance(cents, bool) or cents <= 0:
+        return None
+    return {"proposed_cents": cents}
 
 
 def clean_tags(raw):

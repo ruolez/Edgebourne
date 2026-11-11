@@ -94,13 +94,22 @@ def apply():
     if not plan or plan.get("user") != user["id"]:
         return api_error("This preview has expired. Check the changes again.", 409)
     action, level, totals = plan["action"], plan["level"], plan["totals"]
-    if action == "status" and plan["value"] == "ACTIVE" and totals.get("daily_cents"):
+    if action == "status" and plan["value"] == "ACTIVE":
+        for key, field in (("daily_cents", "confirm_total_cents"), ("lifetime_cents", "confirm_lifetime_cents")):
+            try:
+                echoed = int(data.get(field))
+            except (TypeError, ValueError):
+                echoed = None
+            if totals.get(key) and echoed != totals[key]:
+                return api_error("Confirm the total budget first", 409)
+        # The budgets behind the confirmed total, read again now: a raise in Ads Manager since the
+        # preview must be seen before anything goes on (audit A3-44, A3-75).
         try:
-            echoed = int(data.get("confirm_total_cents"))
-        except (TypeError, ValueError):
-            echoed = None
-        if echoed != totals["daily_cents"]:
-            return api_error("Confirm the daily total first", 409)
+            now = bulk.spend_totals([ads_api.spend_context(level, row) for row in (ads_api.entity(level, l["id"]) for l in plan["lines"]) if row])
+        except meta_client.MetaError as exc:
+            return api_error(f"Couldn't read the budgets from Meta, so nothing was turned on: {exc}", 400)
+        if (now["daily_cents"], now["lifetime_cents"]) != (totals.get("daily_cents") or 0, totals.get("lifetime_cents") or 0):
+            return api_error("The budgets changed on Meta since the preview, so nothing was turned on. Check the changes again.", 409)
     if action.startswith("budget") and totals.get("big") and not data.get("accept_big"):
         return api_error("Some steps are more than +20%: confirm them knowingly.", 409)
     bulk_id = str(uuid.uuid4())
@@ -127,7 +136,7 @@ def apply():
                 continue
             row = {**row, "status": live} if action in ("status", "archive") else {**row, "daily_budget_cents": live}
             if action == "status":
-                error = ads_api.apply_status(user, level, row, line["to"])
+                error = ads_api.apply_status(user, level, row, line["to"], live=live)
             elif action == "archive":
                 try:
                     meta_client.post(row["id"], status="ARCHIVED")
@@ -139,7 +148,7 @@ def apply():
                     error = str(exc)
             else:
                 error = ads_api.apply_budget(user, level, row, line["to"])
-            results.append({"id": line["id"], "name": row["name"], "ok": not error, "error": error})
+            results.append({"id": line["id"], "name": row["name"], "ok": not error, "error": ads_api.error_words(error)})
     finally:
         ads_api.BULK_ID.reset(token)
     if any(r["ok"] for r in results):

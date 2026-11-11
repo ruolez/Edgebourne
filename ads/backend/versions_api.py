@@ -1,6 +1,7 @@
 """Updating an ad in place: a new creative goes on the same ad, so it keeps its ID and results.
 Every switch is kept in ad_versions so results can be read per version and a version put back."""
 import json
+import logging
 
 from flask import Blueprint, jsonify
 
@@ -14,6 +15,7 @@ import targets
 from auth import current_user, login_required
 from util import api_error
 
+log = logging.getLogger(__name__)
 bp = Blueprint("versions", __name__, url_prefix="/api")
 
 OUTSIDE = "Changed outside this console"
@@ -47,8 +49,7 @@ def _with_live_creative(ad):
     return {**ad, "creative_id": live}
 
 
-def _switch(ad, new_creative, title, body):
-    meta_client.post(ad["id"], data={"creative": json.dumps({"creative_id": new_creative})})
+def _stored(ad, new_creative, title, body):
     db.execute("UPDATE ads SET creative_id = %s, title = %s, body = %s WHERE id = %s", (new_creative, title, body, ad["id"]))
 
 
@@ -87,20 +88,25 @@ def update_ad(user, data, proposal_id=None):
     if ctx["dof"]:
         payload["degrees_of_freedom_spec"] = json.dumps(ctx["dof"])
     title, body = (data.get("title") or "").strip()[:255], (data.get("body") or "").strip()
+    switching = False
     try:
         new = meta_client.post(f"act_{ads_api._account()}/adcreatives", data=payload)
         made = meta_client.get(new["id"], fields="object_story_spec")
         problem = cv.readback_problem(ctx["spec"], made)
         if problem:
-            ads_api.record(user, "ad", row, "update_creative", ad["creative_id"], f"creative {new['id']} not used", False,
-                           f"{problem} Meta returned {placements.describe(made)}", proposal_id)
-            return f"{problem} The running ad wasn't changed."
-        _switch(ad, new["id"], title, body)
+            log.warning("update read-back refused for ad %s: %s", ad["id"], placements.describe(made))
+            ads_api.record(user, "ad", row, "update_creative", ad["creative_id"], f"creative {new['id']} not used", False, problem, proposal_id)
+            return f"{ads_api.CHECKED}{problem} The running ad wasn't changed."
+        switching = True
+        ads_api.put_creative(ad["id"], new["id"])
     except meta_client.MetaError as exc:
         ads_api.record(user, "ad", row, "update_creative", ad["creative_id"], change, False, str(exc), proposal_id)
+        if exc.unknown and switching:
+            return ads_api.UNKNOWN + ads_api.SWITCH_UNKNOWN
         return f"{exc}. The running ad wasn't changed."
-    save_switch(ad, new["id"], change, user["id"], proposal_id, title, body)
     ads_api.record(user, "ad", row, "update_creative", ad["creative_id"], f"{change} (creative {new['id']})", True, proposal_id=proposal_id)
+    ads_api.after_write("stored creative", _stored, ad, new["id"], title, body)
+    ads_api.after_write("version history", save_switch, ad, new["id"], change, user["id"], proposal_id, title, body)
     ads_api.resync_later()
     return None
 
@@ -149,11 +155,14 @@ def restore(ad_id, number):
         ad = _with_live_creative(ad)
         if ad["creative_id"] == version["creative_id"]:
             return api_error("That version is already on the ad", 409)
-        _switch(ad, version["creative_id"], version["title"], version["body"])
+        ads_api.put_creative(ad["id"], version["creative_id"])
     except meta_client.MetaError as exc:
         ads_api.record(user, "ad", row, "restore_creative", ad["creative_id"], label, False, str(exc))
+        if exc.unknown:
+            return api_error(ads_api.SWITCH_UNKNOWN, 400)
         return api_error(f"Meta refused: {exc}. The running ad wasn't changed.", 400)
-    save_switch(ad, version["creative_id"], label, user["id"], None, version["title"], version["body"], number)
     ads_api.record(user, "ad", row, "restore_creative", ad["creative_id"], f"{label} (creative {version['creative_id']})", True)
+    ads_api.after_write("stored creative", _stored, ad, version["creative_id"], version["title"], version["body"])
+    ads_api.after_write("version history", save_switch, ad, version["creative_id"], label, user["id"], None, version["title"], version["body"], number)
     ads_api.resync_later()
     return jsonify({"status": "applied"})

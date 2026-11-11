@@ -92,15 +92,20 @@ def save(build_id, made, status, error=None):
                (json.dumps(made), status, error, build_id))
 
 
-def find_made(level, name, parent=None):
-    """A paused campaign / ad set with this exact name made in the last two days: after Meta didn't
-    answer, the earlier try may have created it. Adopted instead of making a second one."""
+def find_made(b, level, name, parent=None):
+    """After Meta didn't answer a create, the campaign / ad set / ad the earlier try may have made: only
+    one this build could have made (cb.adoptable). Adopted instead of making a second one."""
     account = settings_store.get("meta_ad_account_id")
-    edge = "campaigns" if level == "campaign" else "adsets"
-    found = [x for x in meta_client.paged(f"act_{account}/{edge}", fields="id,name,campaign_id,status,created_time", limit=100)
-             if x.get("name") == name and x.get("status") == "PAUSED" and (parent is None or x.get("campaign_id") == parent)]
-    found.sort(key=lambda x: x.get("created_time") or "", reverse=True)
-    return found[0]["id"] if found else None
+    edge = {"campaign": "campaigns", "adset": "adsets", "ad": "ads"}[level]
+    try:
+        found = list(meta_client.paged(f"act_{account}/{edge}", fields="id,name,campaign_id,adset_id,status,created_time", limit=100))
+    except meta_client.MetaError as exc:  # still not known whether it exists: keep looking next time
+        raise meta_client.MetaError(f"couldn't look for it on Meta: {exc}", unknown=True) from None
+    taken = set()
+    for r in db.query("SELECT made FROM campaign_builds WHERE id <> %s AND made IS NOT NULL", (b["id"],)):
+        made = r["made"] or {}
+        taken |= {made.get("campaign_id"), made.get("adset_id"), *(made.get("ads") or {}).values()}
+    return cb.adoptable(found, name, parent, b["created_at"], taken)
 
 
 def run(build_id, user):
@@ -128,45 +133,57 @@ def _run(build_id, user):
     account = settings_store.get("meta_ad_account_id")
     for step in cb.next_steps(made, len(spec["ads"])):
         try:
-            if step == "campaign" and b["status"] == "partial" and find_made("campaign", spec["name"]):
-                made["campaign_id"] = find_made("campaign", spec["name"])
-            elif step == "adset" and b["status"] == "partial" and find_made("adset", spec["adset"]["name"], made.get("campaign_id")):
-                made["adset_id"] = find_made("adset", spec["adset"]["name"], made.get("campaign_id"))
-            elif step == "campaign":
-                body = cb.campaign_payload(spec)
-                res = meta_client.post(f"act_{account}/campaigns", data={k: json.dumps(v) if isinstance(v, (list, dict)) else v for k, v in body.items()})
-                made["campaign_id"] = res["id"]
-                ads_api.record(user, "campaign", {"id": res["id"], "name": spec["name"], "campaign_id": res["id"]}, "create", None,
-                               f"{spec['name']} (paused, {cb.dollars(spec['daily_budget_cents'])}/day)", True)
-                insights.sync_structure()
+            # Only a step Meta didn't answer last time may have made something to adopt (audit A3-71, A3-72).
+            maybe = made.get("unknown") == step
+            if step == "campaign":
+                adopted = maybe and find_made(b, "campaign", spec["name"])
+                if adopted:
+                    made["campaign_id"] = adopted
+                else:
+                    body = cb.campaign_payload(spec)
+                    res = meta_client.post(f"act_{account}/campaigns", data={k: json.dumps(v) if isinstance(v, (list, dict)) else v for k, v in body.items()})
+                    made["campaign_id"] = res["id"]
+                    save(build_id, made, "partial")
+                    ads_api.record(user, "campaign", {"id": res["id"], "name": spec["name"], "campaign_id": res["id"]}, "create", None,
+                                   f"{spec['name']} (paused, {cb.dollars(spec['daily_budget_cents'])}/day)", True)
             elif step == "adset":
                 s = spec["adset"]
-                tpl = adsets_api.template(s["template_adset_id"]) if s["template_adset_id"] else {}  # {}: lead-form defaults
-                body = ab.payload(s, tpl, {"id": made["campaign_id"], "daily_budget_cents": spec["daily_budget_cents"]},
-                                  settings_store.get("meta_page_id"))
-                res = meta_client.post(f"act_{account}/adsets", data={k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in body.items()})
-                made["adset_id"] = res["id"]
-                ads_api.record(user, "adset", {"id": res["id"], "name": s["name"], "campaign_id": made["campaign_id"]}, "create", None,
-                               f"{s['name']} (paused)", True)
-                insights.sync_structure()
+                adopted = maybe and find_made(b, "adset", s["name"], made.get("campaign_id"))
+                if adopted:
+                    made["adset_id"] = adopted
+                else:
+                    tpl = adsets_api.template(s["template_adset_id"]) if s["template_adset_id"] else {}  # {}: lead-form defaults
+                    body = ab.payload(s, tpl, {"id": made["campaign_id"], "daily_budget_cents": spec["daily_budget_cents"]},
+                                      settings_store.get("meta_page_id"))
+                    res = meta_client.post(f"act_{account}/adsets", data={k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in body.items()})
+                    made["adset_id"] = res["id"]
+                    save(build_id, made, "partial")
+                    ads_api.record(user, "adset", {"id": res["id"], "name": s["name"], "campaign_id": made["campaign_id"]}, "create", None,
+                                   f"{s['name']} (paused)", True)
             else:
                 i = int(step.split(":")[1])
                 ad = spec["ads"][i]
-                ad_id, err = ads_api.create_ad_from(user, {**ad, "adset_id": made["adset_id"], "form_id": spec["form_id"]}, sync=False)
-                if err:
-                    raise meta_client.MetaError(err[0])
+                ad_id = maybe and find_made(b, "ad", ad["name"], made["adset_id"])
+                if not ad_id:
+                    ad_id, err = ads_api.create_ad_from(user, {**ad, "adset_id": made["adset_id"], "form_id": spec["form_id"]}, sync=False)
+                    if err:
+                        raise meta_client.MetaError(err[0], unknown=err[2] == "unknown")
                 made["ads"][str(i)] = ad_id
         except meta_client.MetaError as exc:
             what = {"campaign": "the campaign", "adset": "the ad set"}.get(step, f"ad {int(step.split(':')[1]) + 1}")
+            if exc.unknown:
+                made["unknown"] = step
+            else:
+                made.pop("unknown", None)
             save(build_id, made, "partial", (f"Meta didn't answer while creating {what}. It may exist already: "
                                              "Finish creating looks for it before making another." if exc.unknown
                                              else f"Meta refused {what}: {exc}"))
             return False
+        made.pop("unknown", None)
         save(build_id, made, "partial")
-    try:
-        insights.sync_structure()
-    except meta_client.MetaError:
-        pass
+        if step in ("campaign", "adset"):
+            ads_api.after_write("structure sync", insights.sync_structure)  # the next steps read the new rows
+    ads_api.after_write("structure sync", insights.sync_structure)
     save(build_id, made, "created")
     log_activity("build.created", subject=str(build_id), details={"made": made})
     return True
@@ -266,15 +283,16 @@ def publish(build_id):
         live = ads_api.fresh_budget(b["made"]["campaign_id"]) if b["spec"]["daily_budget_cents"] else None
     except meta_client.MetaError as exc:
         return api_error(f"Couldn't read the budget from Meta: {exc}", 400)
-    if live and live != budget:
-        return api_error(f"The campaign's budget on Meta is {cb.dollars(live)} a day now, not {cb.dollars(budget)}. "
+    if budget and live != budget:
+        now = f"{cb.dollars(live)} a day" if live else "not a daily budget"
+        return api_error(f"The campaign's budget on Meta is {now} now, not {cb.dollars(budget)} a day. "
                          "Change it back in Ads Manager, or check it, before publishing.", 409)
     user = current_user()
     for level, eid in cb.publish_order(b["made"]):
         row = ads_api.entity(level, eid)
         if not row:
             return api_error("The new campaign isn't synced yet. Try again in a minute.", 409)
-        err = ads_api.apply_status(user, level, row, "ACTIVE")
+        err = ads_api.error_words(ads_api.apply_status(user, level, row, "ACTIVE"))
         if err:
             db.execute("UPDATE campaign_builds SET error = %s WHERE id = %s", (f"Meta refused turning on a {level}: {err}", build_id))
             return api_error(f"Meta refused turning on the {level}: {err}. What was already on stays on; the campaign is still off.", 400)

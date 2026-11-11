@@ -121,9 +121,17 @@ def get_advice():
 @admin_required
 def apply():
     """Apply one recommendation Meta offers through its API. Checked against a fresh read, so a
-    signature Meta has since replaced isn't applied blind."""
+    signature Meta has since replaced isn't applied blind. One apply per signature at a time: a second
+    tab or click gets a 409 instead of adding Meta's amount twice (audit A3-74)."""
     body = request.get_json(silent=True) or {}
     sig = str(body.get("signature") or "")
+    with db.try_lock("advice:" + sig) as got:
+        if not got:
+            return api_error("This suggestion is being applied right now.", 409)
+        return _apply(body, sig)
+
+
+def _apply(body, sig):
     try:
         fresh = view(refresh())
     except meta_client.MetaError as exc:
@@ -133,14 +141,31 @@ def apply():
         return api_error("Meta has changed this suggestion since you looked. Check the list again.", 409)
     if not rec["can_apply"]:
         return api_error("This one is done in Ads Manager, not here.", 409)
-    step = rec["budget"]
+    step, holder = rec["budget"], None
     if rec["type"] == "SCALE_GOOD_CAMPAIGN":
         # Raising a budget: only with an amount we can show and Eugene confirmed (audit A3).
         if not step or step["to"] is None:
             return api_error("Meta didn't say clearly how much it would add, so this isn't applied here. "
                              "Change the budget yourself on the Ads page, or apply it in Ads Manager.", 409)
-        if body.get("confirm_to") is None or int(body["confirm_to"]) != step["to"]:
-            return api_error("Meta's amount changed since you looked. Check the suggestion again.", 409)
+        # Meta adds its amount to the live budget, so the step is checked from the live one, not the last
+        # sync's (audit A3-41, A3-74): the ceiling and +20% hold for what Meta will really set.
+        import ads_api
+        try:
+            holder, live = next(((i, b) for i, b in ((i, ads_api.fresh_budget(i)) for i in rec["object_ids"]) if b), (None, None))
+        except meta_client.MetaError as exc:
+            return api_error(f"Couldn't read the budget from Meta, so nothing was changed: {exc}", 400)
+        if not live:
+            return api_error("Meta says this has no daily budget now, so this isn't applied here. Apply it in Ads Manager.", 409)
+        step = {**step, "from": live, "to": live + step["add"]}
+        try:
+            confirmed = int(body.get("confirm_to"))
+        except (TypeError, ValueError):
+            confirmed = None
+        if confirmed != step["to"]:
+            for table in ("campaigns", "adsets"):  # the stored budget was stale: the list shows the live step next
+                db.execute(f"UPDATE {table} SET daily_budget_cents = %s WHERE id = %s", (live, holder))
+            return api_error(f"The budget on Meta is {live / 100:,.2f} a day now, so this would make it {step['to'] / 100:,.2f}. "
+                             "Check the suggestion again.", 409, fresh=view(json.loads(settings_store.get("meta_advice") or "{}")))
         import money_rules
         change = money_rules.budget_change(step["from"], step["to"], money_rules.ceiling(settings_store.get("max_daily_budget_cents")))
         problem = money_rules.change_problem(change, bool(body.get("accept_big")))
@@ -157,10 +182,10 @@ def apply():
     except meta_client.MetaError as exc:
         ads_api.record(user, level, row, "recommendation", None, new_value, False, str(exc))
         return api_error(f"Meta refused: {exc}", 400)
-    ads_api.record(user, level, row, "recommendation", rec["budget"]["from"] if rec["budget"] else None, new_value, True)
+    ads_api.record(user, level, row, "recommendation", step["from"] if step else None, new_value, True)
     if step and step["to"] and rec["object_ids"]:
         try:  # read back what Meta set: if it isn't what was shown, say so in the change log
-            now = ads_api.fresh_budget(rec["object_ids"][0])
+            now = ads_api.fresh_budget(holder or rec["object_ids"][0])
             if now and now != step["to"]:
                 ads_api.record(user, level, row, "recommendation_check", step["to"], now, False,
                                f"Meta set {now / 100:,.2f} a day, not the {step['to'] / 100:,.2f} shown")

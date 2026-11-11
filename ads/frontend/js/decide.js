@@ -4,6 +4,7 @@
 import { api } from "./api.js";
 import { confirmDialog, esc, toast } from "./ui.js";
 import { money } from "./format.js";
+import { spendWords } from "./controls.js";
 
 const GROUPS = {
   money: "Spending", live: "Changes to what's running", create: "New ads, created switched off",
@@ -17,10 +18,8 @@ function line(item) {
     const pct = p.pct == null ? "" : ` (${p.pct > 0 ? "+" : ""}${p.pct}%)`;
     return `${esc(p.name)}: <del>${money(p.from, { exact: true })}</del> → <ins>${money(p.to, { exact: true })}</ins> a day${pct}${p.big ? ' <span class="pill warn">Over the +20% rule</span>' : ""}`;
   }
-  if (p.kind === "status" && p.to === "ACTIVE") {
-    const daily = p.spend && p.spend.daily_cents;
-    return `Turns on <b>${esc(p.name)}</b>${daily ? `, spends up to <b>${money(daily, { exact: true })} a day</b> from ${esc(p.spend.where)}` : ""}`;
-  }
+  if (p.kind === "status" && p.to === "ACTIVE") return `Turns on <b>${esc(p.name)}</b>${spendWords(p.spend)}`;
+  if (p.kind === "status" && p.already) return `<b>${esc(p.name)}</b> is already off on Meta, so nothing is sent.`;
   if (p.kind === "status") return `Turns off <b>${esc(p.name)}</b> right away. Nothing is deleted.`;
   if (p.kind === "vertical") return `<b>${esc(p.name)}</b>: Reels and Stories get Claude's 9:16 video. Meta reviews the ad again.`;
   if (p.kind === "update") return `Goes on <b>${esc(p.name)}</b> itself: same ad, results kept. Meta reviews the ad again.`;
@@ -43,13 +42,16 @@ function itemRow(item, i) {
 
 function totals(items) {
   const budget = items.filter((i) => i.plan.kind === "budget").reduce((n, i) => n + i.plan.to - i.plan.from, 0);
-  const on = new Map(items.filter((i) => i.plan.kind === "status" && i.plan.to === "ACTIVE" && i.plan.spend && i.plan.spend.daily_cents)
-    .map((i) => [i.plan.spend.where, i.plan.spend.daily_cents]));
-  const spending = [...on.values()].reduce((n, c) => n + c, 0);
+  // Each budget once, by the campaign or ad set that holds it (two can share a name).
+  const on = new Map(items.filter((i) => i.plan.kind === "status" && i.plan.to === "ACTIVE" && i.plan.spend && i.plan.spend.holder)
+    .map((i) => [i.plan.spend.holder, i.plan.spend]));
+  const spending = [...on.values()].reduce((n, s) => n + (s.daily_cents || 0), 0);
+  const lifetime = [...on.values()].reduce((n, s) => n + (s.lifetime_cents || 0), 0);
   const runs = items.filter((i) => i.plan.kind === "render" || i.plan.kind === "record").length;
   return [
     budget ? `Daily budgets ${budget > 0 ? "+" : "−"}${money(Math.abs(budget), { exact: true })} a day` : "",
     spending ? `Starts spending up to ${money(spending, { exact: true })} a day` : "",
+    lifetime ? `Up to ${money(lifetime, { exact: true })} in total from lifetime budgets` : "",
     runs ? `${runs} new ${runs === 1 ? "run" : "runs"} on your Mac` : "",
   ].filter(Boolean).join(" · ");
 }

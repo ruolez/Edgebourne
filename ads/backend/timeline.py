@@ -45,7 +45,8 @@ def merge(status_events, changes, proposals, money):
     for p in proposals:
         if not p.get("decided_at"):
             continue
-        word = {"applied": "applied", "approved": "approved", "declined": "declined", "failed": "failed", "revised": "sent back"}.get(p["status"], p["status"])
+        word = {"applied": "applied", "approved": "approved", "declined": "declined", "failed": "failed", "revised": "sent back",
+                "unknown": "not confirmed by Meta (check Ads Manager)"}.get(p["status"], p["status"])
         items.append({"kind": "proposal", "at": p["decided_at"], "title": f"Claude's idea {word}: {p['title']}", "sub": None,
                       "by": None, "tone": "bad" if p["status"] == "failed" else ""})
     items.sort(key=lambda i: i["at"], reverse=True)

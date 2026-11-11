@@ -12,22 +12,38 @@ TTL = 300
 MAX_ITEMS = 50
 
 
+def spend_totals(contexts):
+    """What a set of things turned on together can spend: each budget counted once, by the campaign or
+    ad set that holds it (names aren't unique), daily and lifetime apart."""
+    seen, budgets, daily, lifetime = set(), [], 0, 0
+    for ctx in contexts:
+        holder = ctx.get("holder")
+        if not holder or holder in seen:
+            continue
+        seen.add(holder)
+        budgets.append(ctx.get("where"))
+        daily += ctx.get("daily_cents") or 0
+        lifetime += ctx.get("lifetime_cents") or 0
+    return {"daily_cents": daily, "lifetime_cents": lifetime, "budgets": budgets}
+
+
 def status_lines(rows, value, contexts):
-    lines, budgets, daily = [], [], 0
+    lines, spending = [], []
     for r in rows:
         skip = None
+        ctx = contexts.get(r["id"]) or {}
         if r["status"] in ("ARCHIVED", "DELETED"):
             skip = "Archived: it can't be turned on again" if value == "ACTIVE" else "Archived already"
         elif r["status"] == value:
             skip = "Already on" if value == "ACTIVE" else "Already off"
-        ctx = contexts.get(r["id"]) or {}
+        elif value == "ACTIVE" and not ctx.get("idle") and not ctx.get("daily_cents") and not ctx.get("lifetime_cents"):
+            skip = "Meta reports no budget for it, so it isn't turned on here"
         line = {"id": r["id"], "name": r["name"], "from": r["status"], "to": value, "skip": skip,
-                "daily_cents": ctx.get("daily_cents"), "where": ctx.get("where")}
+                "daily_cents": ctx.get("daily_cents"), "lifetime_cents": ctx.get("lifetime_cents"), "where": ctx.get("where")}
         lines.append(line)
-        if not skip and value == "ACTIVE" and ctx.get("where") and ctx["where"] not in budgets:
-            budgets.append(ctx["where"])
-            daily += ctx.get("daily_cents") or 0
-    return lines, {"count": sum(1 for l in lines if not l["skip"]), "daily_cents": daily, "budgets": budgets}
+        if not skip and value == "ACTIVE":
+            spending.append(ctx)
+    return lines, {"count": sum(1 for l in lines if not l["skip"]), **spend_totals(spending)}
 
 
 def budget_lines(rows, mode, value, live, cap):

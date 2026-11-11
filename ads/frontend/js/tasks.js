@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { confirmDialog, esc, toast, when } from "./ui.js";
 import { renderMarkdown } from "./markdown.js";
 import { money } from "./format.js";
+import { spendBody, spendWords } from "./controls.js";
 
 export const KIND_LABELS = { question: "Question", review: "Review results", research: "Research competitors", creative: "New ad ideas", polish: "Polish", render: "New version", advice: "Meta's advice" };
 const STATUS = {
@@ -13,8 +14,10 @@ export const ACTIVE = new Set(["queued", "claimed", "running"]);
 const DECIDED = {
   applied: ["ok", "Approved and applied"], approved: ["ok", "Approved"], declined: ["", "Declined"],
   failed: ["bad", "Approved, but Meta refused"], expired: ["", "Expired"], applying: ["claude", "Being applied on Meta…"],
-  revised: ["", "Sent back to Claude"],
+  revised: ["", "Sent back to Claude"], unknown: ["warn", "Meta didn't answer: check Ads Manager"],
 };
+// The console's own read-back check stopped it (audit A3-109): Meta refused nothing.
+const decidedOf = (p) => (p.status === "failed" && p.checked ? ["bad", "Not applied: the copy Meta stored didn't match"] : DECIDED[p.status]);
 
 const SCORE_WORDS = { 5: "Ready", 4: "Small polish", 3: "Worth fixing", 2: "Hurting results", 1: "Blocking" };
 export const scoreClass = (n) => (n >= 5 ? "s5" : n >= 4 ? "s4" : n >= 3 ? "s3" : "s2");
@@ -43,7 +46,7 @@ export function scorecardHtml(card) {
 
 function creativeProposal(p) {
   const pl = p.payload || {};
-  const decided = DECIDED[p.status];
+  const decided = decidedOf(p);
   if (pl.vertical) {
     const change = "Reels and Stories show Claude's 9:16 video, feeds keep the 4:5 one. Same words and form.";
     return `<article class="proposal variant" data-proposal="${p.id}" data-title="${esc(p.title)}" data-change="${esc(change)}">
@@ -86,7 +89,7 @@ export function proposalCard(p, task = null) {
   const change = p.field || p.current_value || p.proposed_value
     ? `<div><dt>Change</dt><dd>${esc(p.field || "")}${p.field ? ": " : ""}${esc(p.current_value || "—")} → <b>${esc(p.proposed_value || "—")}</b></dd></div>` : "";
   const row = (label, v) => (v ? `<div><dt>${label}</dt><dd>${esc(v)}</dd></div>` : "");
-  const decided = DECIDED[p.status];
+  const decided = decidedOf(p);
   const foot = p.status === "pending"
     ? `<div class="row"><button class="btn btn-claude btn-small" type="button" data-approve="${p.id}">Approve</button><button class="btn btn-small" type="button" data-decline="${p.id}">Decline</button></div>`
     : `<p class="flush"><span class="pill ${decided ? decided[0] : ""}">${esc(decided ? decided[1] : p.status)}</span>${p.decided_at ? ` <span class="muted small">${esc(when(p.decided_at))}</span>` : ""}</p>`;
@@ -152,13 +155,18 @@ function approvalDialog(card, plan) {
     };
   }
   if (plan.kind === "status" && plan.to === "ACTIVE") {
-    const daily = plan.spend && plan.spend.daily_cents;
     return {
       dialog: {
         title, claude: true, confirm: "Turn it on",
-        body: `<p><b>${esc(plan.name)}</b> starts delivering${daily ? ` and spends up to <b>${money(daily, { exact: true })} a day</b> from ${esc(plan.spend.where)}` : ""}.</p>`,
+        body: `<p><b>${esc(plan.name)}</b> starts delivering${spendWords(plan.spend)}.</p>${plan.already ? '<p class="muted small">Meta already shows it on.</p>' : ""}`,
       },
-      body: daily ? { confirm_daily_cents: daily } : {},
+      body: spendBody(plan.spend),
+    };
+  }
+  if (plan.kind === "status" && plan.already) {
+    return {
+      dialog: { title, claude: true, confirm: "Approve", body: `<p><b>${esc(plan.name)}</b> is already off on Meta (read just now), so nothing is sent. Approving records it.</p>` },
+      body: {},
     };
   }
   if (plan.kind === "vertical") {

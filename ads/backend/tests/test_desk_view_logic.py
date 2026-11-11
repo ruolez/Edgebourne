@@ -322,7 +322,7 @@ class ReviewItemTest(unittest.TestCase):
         self.assertEqual((item["tick"], item["needs_tick"], item["body"]["accept_big"]), (False, True, True))
 
     def test_a_budget_that_moved_since_claude_looked_waits_for_its_own_tick(self):
-        step = {"kind": "budget", "from": 3100, "to": 2400, "pct": -23, "big": False, "problem": None}
+        step = {"kind": "budget", "from": 3100, "to": 2600, "pct": -16, "big": False, "problem": None}
         cases = [("$20/day", True, "Claude saw $20.00 a day. It's $31.00 now."), ("$31/day", False, None), (None, False, None)]
         for seen, held, note in cases:
             item = plan_item(plan=step, current_value=seen)
@@ -331,6 +331,17 @@ class ReviewItemTest(unittest.TestCase):
     def test_turning_something_on_waits_for_its_own_tick(self):
         item = plan_item(plan={"kind": "status", "to": "ACTIVE", "spend": {"daily_cents": 2000, "where": "C"}})
         self.assertEqual((item["tick"], item["needs_tick"], item["body"]), (False, True, {"confirm_daily_cents": 2000}))
+
+    def test_a_cut_deeper_than_twenty_percent_waits_for_its_own_tick(self):
+        # A3-23: a misread amount ($26 → $2.00) must never start ticked.
+        cases = [(-20, False), (-21, True), (-92, True)]
+        for pct, held in cases:
+            item = plan_item(plan={"kind": "budget", "from": 2600, "to": round(2600 * (100 + pct) / 100), "pct": pct, "big": False, "problem": None})
+            self.assertEqual((item["needs_tick"], item["tick"]), (held, not held), pct)
+
+    def test_turning_on_a_lifetime_budget_echoes_that_amount(self):
+        item = plan_item(plan={"kind": "status", "to": "ACTIVE", "spend": {"daily_cents": None, "lifetime_cents": 150000, "where": "C"}})
+        self.assertEqual((item["tick"], item["body"]), (False, {"confirm_lifetime_cents": 150000}))
 
     def test_what_cannot_be_applied_is_blocked_with_the_reason(self):
         cases = [
@@ -375,3 +386,31 @@ class ReviewTest(unittest.TestCase):
             (proposal(4, 9, title="D"), {"kind": "create"}),
         ])
         self.assertEqual([i["id"] for i in items], [3, 4, 2, 1])
+
+
+class AfterClaimTest(unittest.TestCase):
+    """A3-40/A3-68/A3-79: a claimed proposal never goes back to waiting once something reached Meta."""
+
+    def test_a_request_that_ended_before_any_write_leaves_it_waiting(self):
+        self.assertEqual(desk_view.after_claim([], ended=True), "pending")
+
+    def test_a_write_that_went_through_closes_it_as_applied(self):
+        self.assertEqual(desk_view.after_claim([{"ok": True}], ended=True), "applied")
+
+    def test_a_write_with_no_clear_outcome_is_kept_for_checking(self):
+        self.assertEqual([desk_view.after_claim([{"ok": False}], ended=True), desk_view.after_claim([], ended=False)],
+                         ["unknown", "unknown"])
+
+    def test_a_write_sent_without_a_recorded_row_is_kept_for_checking(self):
+        self.assertEqual([desk_view.after_claim([], ended=True, sent=True), desk_view.after_claim([], ended=True, sent=False)],
+                         ["unknown", "pending"])
+
+    def test_a_read_back_refusal_is_not_shown_as_meta_refusing(self):
+        checked = {"status": "failed", "checked": desk_view.refused_by_check("creative 77 not used")}
+        refused = {"status": "failed", "checked": desk_view.refused_by_check("9:16 video 5")}
+        self.assertEqual([desk_view.proposal_state(checked, None, None), desk_view.proposal_state(refused, None, None)],
+                         [("failed", "Not applied: the copy Meta stored didn't match"), ("failed", "Meta refused it")])
+
+    def test_an_unknown_outcome_is_shown_as_check_ads_manager(self):
+        self.assertEqual(desk_view.proposal_state({"status": "unknown"}, None, None)[0], "unknown")
+

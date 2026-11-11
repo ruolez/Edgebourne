@@ -1008,6 +1008,36 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   check('ending it early moves its end on Meta to now, deleting nothing', ended && ended.end_time <= Date.now() / 1000 + 120 && Object.keys(fakeStudies()).length === studiesBefore + 1);
   check('both writes are in the change log', sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query(\\"SELECT string_agg(action, ',' ORDER BY id) AS a FROM meta_changes WHERE level = 'study' AND ok AND created_at > now() - interval '5 minutes'\\", one=True)['a'])"`).trim().endsWith('create,end'));
   await page.screenshot({ path: `${OUT}/flow-meta-test.png`, fullPage: true });
+
+  // A booking Meta didn't answer (or one a restart cut off) is looked for on Meta, never booked twice blind.
+  const lostId = await page.evaluate(async () => (await (await fetch('/api/experiments', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'QA lost booking', metric: 'cpl', start_day: new Date(Date.now() - 6 * 864e5).toISOString().slice(0, 10),
+      arms: [{ label: 'A', ad_ids: ['120252672229040312'] }, { label: 'B', ad_ids: ['120252672230740312'] }] }) })).json()).id);
+  const seedBooking = (study) => sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,base64;db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${lostId}', (base64.b64decode('${Buffer.from(JSON.stringify(study)).toString('base64')}').decode(),))"`);
+  const lostStudy = () => JSON.parse(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,json;print(json.dumps(db.query('SELECT meta_study FROM experiments WHERE id = ${lostId}', one=True)['meta_study']))"`).trim());
+  seedBooking({ creating: true, unknown: true, name: 'QA lost booking (nowhere on Meta)', at: new Date().toISOString(), start_day: '2030-01-02', end_day: '2030-01-09' });
+  await page.reload();
+  const lostCard = page.locator('.test', { hasText: 'QA lost booking' });
+  await lostCard.locator('[data-meta-find]').waitFor();
+  const lostSeen = errors.length;
+  const rebook = await page.evaluate(async (id) => (await fetch(`/api/experiments/${id}/meta`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ start_day: '2030-01-02', end_day: '2030-01-09', daily_budget_cents: 1000, confirm_total_cents: 7000 }) })).status, lostId);
+  errors.splice(lostSeen); // the refusal logs an expected 409
+  check('a test Meta may have booked says so and cannot be booked again', /May be on Meta/.test(await lostCard.locator('.pill.warn').textContent())
+    && rebook === 409 && Object.keys(fakeStudies()).length === studiesBefore + 1);
+  await lostCard.locator('[data-meta-find]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.test')].some((el) => /QA lost booking/.test(el.textContent) && !el.querySelector('[data-meta-find]')));
+  check('looking finds nothing on Meta, so the test is free to book again', lostStudy() === null);
+  // The booked test's own booking, as a claim a restart left behind twenty minutes ago (no answer recorded).
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,json,datetime as d;r=db.query('SELECT meta_study FROM experiments WHERE id = ${mtId}', one=True)['meta_study'];r={k:v for k,v in r.items() if k not in ('id','results','created_at','ended_early_at','fetched_at')};r.update(creating=True,at=(d.datetime.now(d.timezone.utc)-d.timedelta(minutes=20)).isoformat());db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${lostId}', (json.dumps(r),))"`);
+  await page.reload();
+  await lostCard.locator('[data-meta-find]').waitFor();
+  check('a booking a restart left behind turns into "may be on Meta" after ten minutes', /May be on Meta/.test(await lostCard.textContent()));
+  await lostCard.locator('[data-meta-find]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.test')].some((el) => /QA lost booking/.test(el.textContent) && !el.querySelector('[data-meta-find]')));
+  const adopted = lostStudy();
+  check('looking finds it on Meta by its exact name and links it', adopted && adopted.id === Object.keys(fakeStudies())[studiesBefore] && !adopted.creating,
+    JSON.stringify(adopted));
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,settings_store;db.execute('DELETE FROM experiments');settings_store.set('meta_ab_tests',None)"`);
 
   // Lead forms: build one with a live check and phone preview, create it on the Page, use it in a new ad.
@@ -1167,6 +1197,15 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   check('publishing turns on the ads, then the ad set, then the campaign last', order === 'ad,ad,adset,campaign' && Object.values(fake('_campaigns')).slice(-1)[0].status === 'ACTIVE', order);
   await page.screenshot({ path: `${OUT}/flow-new-campaign.png`, fullPage: true });
 
+  // A build whose campaign create Meta didn't answer: Finish creating adopts the campaign Meta made, never a second one.
+  const lostBuild = sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.execute(\\"INSERT INTO campaign_builds (spec, made, status, created_by, account_id) SELECT spec || jsonb_build_object('name', 'QA lost campaign'), jsonb_build_object('unknown', 'campaign', 'ads', '{}'::jsonb), 'partial', created_by, account_id FROM campaign_builds ORDER BY id DESC LIMIT 1 RETURNING id\\", returning=True)['id'])"`).trim();
+  const lostCamp = JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/act_1025971549903293/campaigns?access_token=x', data=b'name=QA+lost+campaign&status=PAUSED&objective=OUTCOME_LEADS&daily_budget=1500')).read().decode())"`)).id;
+  const campsBeforeResume = Object.keys(fake('_campaigns')).length;
+  const resumed = await page.evaluate(async (id) => (await (await fetch(`/api/builds/${id}/resume`, { method: 'POST' })).json()), lostBuild);
+  const lostMade = JSON.parse(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,json;print(json.dumps(db.query('SELECT made FROM campaign_builds WHERE id = ${lostBuild}', one=True)['made']))"`).trim());
+  check('finishing a build after Meta did not answer adopts the campaign Meta made instead of making a second one',
+    lostMade.campaign_id === lostCamp && Object.keys(fake('_campaigns')).length === campsBeforeResume && !lostMade.unknown, `${lostCamp} ${JSON.stringify(lostMade)} ${JSON.stringify(resumed).slice(0, 200)}`);
+
   // Meta's automatic changes on an ad: read in plain words, warn on the rewriting ones, switch one with a new creative.
   await page.goto(BASE + '/ad.html?id=120252672230740312');
   await page.waitForSelector('.enh-list');
@@ -1283,6 +1322,17 @@ print(r['id'])"`).trim();
     (await page.locator('.advice-list li').nth(1).locator('[data-apply]').count()) === 0 && /Needs a 9:16 video with sound/.test(await page.textContent('.advice-list li:nth-child(2)')));
   check('a budget suggestion shows the step in dollars and flags more than +20%', /\$20\.00 → \$26\.00 a day \(\+30%\): more than \+20%/.test(await page.textContent('.advice-list li:first-child')));
   const budgetBefore = Object.values(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/v24.0/120252638288040312?access_token=x').read().decode())"`).match(/"daily_budget":"?(\d+)/).slice(1))[0];
+  // Meta adds its amount to the live budget: a stored budget older than Meta's is refused, not applied (audit 3).
+  sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/120252638288040312?access_token=x', data=b'daily_budget=2400'))"`);
+  const adviceSig = await page.getAttribute('[data-apply]', 'data-apply');
+  const advSeen = errors.length;
+  const staleAdvice = await page.evaluate(async (sig) => { const r = await fetch('/api/advice/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signature: sig, accept_big: true, confirm_to: 2600 }) }); return { status: r.status, body: await r.json() }; }, adviceSig);
+  const staleAdviceMeta = metaObj('120252638288040312').daily_budget; // read before the reset below: nothing may have been added
+  sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/120252638288040312?access_token=x', data=b'daily_budget=2000'))"`);
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute('UPDATE campaigns SET daily_budget_cents = 2000 WHERE id = %s', ('120252638288040312',))"`);
+  errors.splice(advSeen); // the refusal logs an expected 409
+  check("Meta's budget advice is checked against the live budget, not the last sync's", staleAdvice.status === 409 && /24\.00 a day now/.test(staleAdvice.body.error)
+    && staleAdviceMeta === '2400', `${staleAdviceMeta} ${JSON.stringify(staleAdvice.body)}`);
   await page.click('[data-apply]');
   await page.waitForSelector('dialog.confirm');
   check('applying it asks first, with the +20% warning, and says "Apply anyway"', /More than \+20% in one step/.test(await page.textContent('dialog.confirm')) && /Apply anyway/.test(await page.textContent('dialog.confirm #cd-ok')));
@@ -1402,6 +1452,7 @@ print(r['id'])"`).trim();
   const lostForm = await page.evaluate(async (id) => { const r = await fetch(`/api/proposals/${id}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); return { status: r.status, body: await r.json() }; }, macU.proposals.B.id);
   sh('docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(\'http://localhost:5001/fake/_drop_form?on=0\')"');
   check('an update that lost the lead form leaves the ad alone', lostForm.status === 400 && /lost the lead form/.test(lostForm.body.error) && fakeAd(n5).creative_id === n5v2, JSON.stringify(lostForm));
+  check("the change log keeps the plain reason, not Meta's raw keys", !/feed keys|Meta returned/.test(dbq(`r=db.query('SELECT error FROM meta_changes WHERE proposal_id = %s AND NOT ok ORDER BY id DESC LIMIT 1', (${macU.proposals.B.id},), one=True);print(r['error'])`)));
   const placedBefore = fakeAd(mac.picks[0][0]).creative_id;
   const placed = await page.evaluate(async (id) => { const r = await fetch(`/api/proposals/${id}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); return { status: r.status, body: await r.json() }; }, macU.proposals.D.id);
   errors.splice(seenB); // both refusals log an expected error
@@ -1690,6 +1741,50 @@ with account_ctx.use(a2):
   const onSeen = await call('POST', '/api/ads/ad/120252672230740312/status', { status: 'ACTIVE', confirm_daily_cents: spendCtx.body.daily_cents });
   check('turning on needs the daily spend seen first (read fresh from Meta)', offFirst.status === 200 && onBlind.status === 409 && spendCtx.body.daily_cents > 0 && onSeen.status === 200,
     `${offFirst.status} ${onBlind.status} ${JSON.stringify(spendCtx.body)} ${onSeen.status} ${unconfirmed.status}`);
+  // Audit 3: a pause Claude proposed is sent even when the stored status already says off (Meta is read first).
+  const dbq3 = (py) => sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "import db;${py}"`).trim();
+  const fakeSet = (id, body) => sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/${id}?access_token=x', data=b'${body}'))"`);
+  const N3ID = '120252672230740312';
+  dbq3(`db.execute('UPDATE ads SET status = %s WHERE id = %s', ('PAUSED', '${N3ID}'))`);
+  const stalePlan = await call('GET', `/api/proposals/${seeded.stale}/check`);
+  const stale = await call('POST', `/api/proposals/${seeded.stale}/approve`, {});
+  const staleLogged = dbq3(`print(db.query('SELECT COUNT(*) AS n FROM meta_changes WHERE proposal_id = %s AND ok', (${seeded.stale},), one=True)['n'])`);
+  check('approving a pause reads Meta first: a stale "off" in the console still turns it off on Meta', stalePlan.body.from === 'ACTIVE' && !stalePlan.body.already
+    && stale.status === 200 && metaObj(N3ID).status === 'PAUSED' && staleLogged === '1', `${JSON.stringify(stalePlan.body)} ${stale.status} ${metaObj(N3ID).status} ${staleLogged}`);
+  // Already off on Meta (read just now): the Accept sheet says nothing is sent, and approving sends nothing.
+  const seedProp = (title, status) => Number(dbq3(`print(db.execute(\\"INSERT INTO desk_proposals (task_id, kind, title, entity_type, entity_id, entity_name, field, current_value, proposed_value, status) SELECT task_id, 'status', '${title}', 'ad', entity_id, entity_name, 'status', 'ACTIVE', 'PAUSED', '${status}' FROM desk_proposals WHERE id = ${seeded.stale} RETURNING id\\", returning=True)['id'])`));
+  const alreadyId = seedProp('QA pause what Meta already has off', 'pending');
+  const unknownId = seedProp('QA pause Meta did not answer', 'unknown');
+  const a2Task = dbq3(`print(db.query('SELECT task_id FROM desk_proposals WHERE id = %s', (${seeded.stale},), one=True)['task_id'])`);
+  await page.goto(BASE + '/desk.html#waiting');
+  await page.waitForSelector(`[data-proposal="${alreadyId}"] [data-accept]`);
+  await page.click(`[data-proposal="${alreadyId}"] [data-accept]`);
+  const alreadySaid = await page.waitForFunction(() => /already off on Meta, so nothing is sent/.test(document.querySelector('dialog.accept-sheet')?.textContent || ''), null, { timeout: 15000 }).then(() => true, () => false);
+  await page.click('dialog.accept-sheet #cd-cancel');
+  const alreadyApprove = await call('POST', `/api/proposals/${alreadyId}/approve`, {});
+  const alreadyWrites = dbq3(`print(db.query('SELECT COUNT(*) AS n FROM meta_changes WHERE proposal_id = %s', (${alreadyId},), one=True)['n'])`);
+  check('a pause Meta already has says so in the Accept sheet, and approving it sends nothing', alreadySaid && alreadyApprove.status === 200
+    && alreadyWrites === '0' && metaObj(N3ID).status === 'PAUSED', `${alreadySaid} ${alreadyApprove.status} ${alreadyWrites}`);
+  // A write Meta didn't answer: shown as "check Ads Manager" and never approved again.
+  await page.goto(BASE + `/desk.html#r/${a2Task}`);
+  const unknownShown = await page.waitForFunction(() => [...document.querySelectorAll('.pill.warn')].some((el) => /Meta didn't answer: check Ads Manager/.test(el.textContent)), null, { timeout: 15000 }).then(() => true, () => false);
+  const unknownAgain = await call('POST', `/api/proposals/${unknownId}/approve`, {});
+  check('a proposal Meta did not answer shows "check Ads Manager" and cannot be approved again', unknownShown && unknownAgain.status === 409, `${unknownShown} ${unknownAgain.status}`);
+  // A lifetime budget needs the same confirmation as a daily one, with the amount shown.
+  fakeSet(CAMP, 'daily_budget=&lifetime_budget=150000&end_time=2030-01-01T00:00:00%2B0000');
+  const lifeBlind = await call('POST', `/api/ads/ad/${N3ID}/status`, { status: 'ACTIVE' });
+  const lifeDaily = await call('POST', `/api/ads/ad/${N3ID}/status`, { status: 'ACTIVE', confirm_daily_cents: 150000 });
+  const lifeSpend = await call('GET', `/api/ads/ad/${N3ID}/spend`);
+  const lifeOn = await call('POST', `/api/ads/ad/${N3ID}/status`, { status: 'ACTIVE', confirm_lifetime_cents: lifeSpend.body.lifetime_cents });
+  fakeSet(CAMP, `daily_budget=${budgetAfter}&lifetime_budget=&end_time=`);
+  check('turning on from a lifetime budget shows the total and needs it echoed', lifeBlind.status === 409 && lifeDaily.status === 409
+    && lifeSpend.body.lifetime_cents === 150000 && !lifeSpend.body.daily_cents && lifeSpend.body.holder === CAMP && lifeOn.status === 200 && metaObj(N3ID).status === 'ACTIVE',
+    `${lifeBlind.status} ${lifeDaily.status} ${JSON.stringify(lifeSpend.body)} ${lifeOn.status}`);
+  // The budget dialog's "from" is checked against Meta's live budget even when the stored one is current.
+  const staleFrom = await call('POST', `/api/ads/campaign/${CAMP}/budget`, { daily_budget_cents: budgetAfter + 100, from_cents: budgetAfter + 900 });
+  const noFrom = await call('POST', `/api/ads/campaign/${CAMP}/budget`, { daily_budget_cents: budgetAfter + 100 });
+  check('a budget change from an amount the page showed but Meta no longer has is refused', staleFrom.status === 409 && noFrom.status === 409
+    && Number(metaObj(CAMP).daily_budget) === budgetAfter, `${staleFrom.status} ${noFrom.status} ${JSON.stringify(staleFrom.body)}`);
   const huge = await call('POST', `/api/ads/campaign/${CAMP}/budget`, { daily_budget_cents: 50000, from_cents: budgetAfter, accept_big: true });
   check("a budget above the account's ceiling is refused even when confirmed", huge.status === 400 && /ceiling/.test(huge.body.error), JSON.stringify(huge.body));
   const jump = await call('POST', `/api/ads/campaign/${CAMP}/budget`, { daily_budget_cents: budgetAfter * 2, from_cents: budgetAfter });
@@ -1834,6 +1929,13 @@ with account_ctx.use(a2):
   const offDone = await call('POST', '/api/ads/bulk/apply', { plan_token: offPrev.body.plan_token });
   const onPrev = await call('POST', '/api/ads/bulk/preview', { action: 'status', level: 'ad', ids: offIds, value: 'ACTIVE' });
   const onNo = await call('POST', '/api/ads/bulk/apply', { plan_token: onPrev.body.plan_token });
+  // A raise on Meta between the preview and the apply is seen before anything goes on (audit 3).
+  const bulkBudget = Number(metaObj('120252638288040312').daily_budget);
+  sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/120252638288040312?access_token=x', data=b'daily_budget=${bulkBudget + 500}'))"`);
+  const onMoved = await call('POST', '/api/ads/bulk/apply', { plan_token: onPrev.body.plan_token, confirm_total_cents: onPrev.body.totals.daily_cents });
+  sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/120252638288040312?access_token=x', data=b'daily_budget=${bulkBudget}'))"`);
+  check('bulk turn-on is refused when a budget changed on Meta since the preview', onMoved.status === 409 && /changed on Meta since the preview/.test(onMoved.body.error)
+    && metaObj(offIds[0]).status === 'PAUSED', JSON.stringify(onMoved.body));
   const onDone = await call('POST', '/api/ads/bulk/apply', { plan_token: onPrev.body.plan_token, confirm_total_cents: onPrev.body.totals.daily_cents });
   check('bulk off, then on only after the daily total is echoed (each budget counted once)', offDone.body.done === 2 && onPrev.body.totals.budgets.length === 1
     && onNo.status === 409 && onDone.body.done === 2);

@@ -30,8 +30,11 @@ function changeLine(c) {
   else if (c.action === "delete") what = "Deleted the ad";
   else if (c.action === "update_creative") what = c.ok ? `Updated the ad: ${String(c.new_value).replace(/ \(creative .*\)$/, "")}` : "Tried to update the ad";
   else if (c.action === "restore_creative") what = String(c.new_value).replace(/ \(creative .*\)$/, "");
+  else if (c.action === "placement_media") what = c.ok ? "Added a 9:16 video for Reels and Stories" : "Tried to add a 9:16 video for Reels and Stories";
   else what = `Created “${c.new_value || ""}”`;
-  return `<li><span>${esc(what)}${c.ok ? "" : ` <b class="bad-text">(Meta refused: ${esc(c.error || "")})</b>`}</span><small>${esc(when(c.created_at))}${c.user_name ? ` · ${esc(c.user_name)}` : ""}${c.proposal_id ? " · Claude's proposal" : ""}</small></li>`;
+  // The console's own read-back check refused Meta's copy ("creative … not used"): Meta didn't refuse anything.
+  const why = / not used$/.test(String(c.new_value)) ? "Not applied" : "Meta refused";
+  return `<li><span>${esc(what)}${c.ok ? "" : ` <b class="bad-text">(${why}: ${esc(c.error || "")})</b>`}</span><small>${esc(when(c.created_at))}${c.user_name ? ` · ${esc(c.user_name)}` : ""}${c.proposal_id ? " · Claude's proposal" : ""}</small></li>`;
 }
 
 function reviewNotes(ad) {
