@@ -92,6 +92,12 @@ def _raise_for(resp):
         code = err.get("code")
         _note_error(code)
         message = err.get("message") or f"Meta returned HTTP {resp.status_code}"
+        # "Invalid parameter" alone says nothing; Meta's own explanation and subcode say which one.
+        said = [str(t).strip().rstrip(".") + "." for t in (err.get("error_user_title"), err.get("error_user_msg")) if t]
+        if said:
+            message = f"{message}: {' '.join(said)}"
+        if err.get("error_subcode"):
+            message = f"{message} (Meta code {code}, subcode {err['error_subcode']})"
         raise MetaError(plain(code, message), code=code, status=resp.status_code, raw=message)
     return body
 

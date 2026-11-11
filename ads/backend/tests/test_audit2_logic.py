@@ -39,6 +39,19 @@ class MetaClientNetworkTest(unittest.TestCase):
         self.assertEqual([("token" in meta_client.plain(190, "x").lower()), ("slow down" in meta_client.plain(17, "x")),
                           meta_client.plain(100, "Invalid parameter")], [True, True, "Invalid parameter"])
 
+    def test_metas_own_explanation_and_subcode_are_kept(self):
+        resp = mock.Mock(status_code=400, json=lambda: {"error": {"message": "Invalid parameter", "code": 100, "error_subcode": 1487390,
+                                                                  "error_user_title": "Creative can't be used", "error_user_msg": "Pick another creative."}})
+        with self.assertRaises(meta_client.MetaError) as cm:
+            meta_client._raise_for(resp)
+        self.assertEqual(str(cm.exception), "Invalid parameter: Creative can't be used. Pick another creative. (Meta code 100, subcode 1487390)")
+
+    def test_a_bare_error_stays_as_meta_wrote_it(self):
+        resp = mock.Mock(status_code=400, json=lambda: {"error": {"message": "Invalid parameter", "code": 100}})
+        with self.assertRaises(meta_client.MetaError) as cm:
+            meta_client._raise_for(resp)
+        self.assertEqual(str(cm.exception), "Invalid parameter")
+
     def test_a_rate_limit_pauses_that_account(self):
         resp = mock.Mock(status_code=400, json=lambda: {"error": {"message": "User request limit reached", "code": 17}})
         with mock.patch.object(meta_client.requests, "request", return_value=resp) as req, \
