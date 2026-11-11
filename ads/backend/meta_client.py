@@ -58,6 +58,18 @@ def plain(code, message):
     return message
 
 
+def transient(exc):
+    """Meta gave no real answer (network, our cooldown, a rate limit, its own temporary error or a 5xx):
+    asking again with fewer fields wouldn't help and would only hide the failure (audit A3-31)."""
+    return (exc.code in ("network", "cooldown", 1, 2) or exc.code in RATE_CODES
+            or (isinstance(exc.status, int) and exc.status >= 500))
+
+
+def not_found(exc):
+    """Meta refused because the object doesn't exist (any more)."""
+    return exc.code in (100, 803)
+
+
 def network_error(method, timed_out):
     """A request that never got an answer. For a write, Meta may have applied it anyway."""
     what = "Meta didn't answer in time" if timed_out else "Couldn't reach Meta (network problem)"

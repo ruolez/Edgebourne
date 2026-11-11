@@ -77,17 +77,18 @@ def _last(rows, today, n):
     return [r for r in rows if start <= r["day"] < today]
 
 
-def _fatigue(rows, today, rule):
-    """(frequency, ctr drop %, cpm rise %) when the ad looks tired, else None."""
+def _fatigue(rows, today, rule, people):
+    """(frequency, ctr drop %, cpm rise %) when the ad looks tired, else None. `people`: different people
+    who saw it in the last 7 days (Meta's unique reach); without it frequency can't be judged (audit A3-12)."""
     seen = [r for r in rows if (r.get("impressions") or 0) > 0]
     first = seen[:7]
     last = _last(rows, today, 7)
     if len(first) < 7 or not first or not last or first[-1]["day"] >= today - timedelta(days=7):
         return None
     fi, li = _sum(first, "impressions"), _sum(last, "impressions")
-    if fi < MIN_IMPRESSIONS or li < MIN_IMPRESSIONS or not _sum(last, "reach") or not _sum(first, "link_clicks"):
+    if fi < MIN_IMPRESSIONS or li < MIN_IMPRESSIONS or not people or not _sum(first, "link_clicks"):
         return None
-    freq = li / _sum(last, "reach")  # daily reach added up: a low estimate of real frequency
+    freq = li / people
     ctr_f, ctr_l = _sum(first, "link_clicks") / fi, _sum(last, "link_clicks") / li
     cpm_f, cpm_l = _sum(first, "spend_cents") / fi, _sum(last, "spend_cents") / li
     if not cpm_f:
@@ -116,7 +117,7 @@ def evaluate(snap, rules, today):
             add("no_delivery", ad["id"], "warn", f"“{ad['name']}” is on but nobody has seen it",
                 [f"No impressions {ad['age_hours']:.0f} hours after it went live."], ad["campaign_id"], href)
         r = rules["fatigue"]
-        tired = r["on"] and ad["effective_status"] == "ACTIVE" and _fatigue(rows, today, r)
+        tired = r["on"] and ad["effective_status"] == "ACTIVE" and _fatigue(rows, today, r, (snap.get("reach_7d") or {}).get(ad["id"]))
         if tired:
             freq, drop, rise = tired
             add("fatigue", ad["id"], "warn", f"“{ad['name']}” looks tired",
@@ -230,8 +231,9 @@ def snapshot(now):
     for r in db.query("SELECT day, campaign_id, SUM(spend_cents) AS spend_cents, SUM(leads) AS leads FROM ad_daily "
                       "WHERE day >= %s AND day < %s GROUP BY day, campaign_id ORDER BY day", (today - timedelta(days=14), today)):
         camp_days.setdefault(r["campaign_id"], []).append({"day": r["day"], "spend_cents": int(r["spend_cents"]), "leads": int(r["leads"])})
-    raw_today = settings_store.get("today_snapshot")
-    today_spend = {cid: v["spend_cents"] for cid, v in (json.loads(raw_today)["campaigns"].items() if raw_today else [])}
+    import insights
+    today_snap = insights.today_for(settings_store.get("today_snapshot"), today) or {}
+    today_spend = {cid: v["spend_cents"] for cid, v in (today_snap.get("campaigns") or {}).items()}
     from performance_api import cap_snapshot, pacing_data
     meta_leads = {r["day"]: int(r["n"]) for r in db.query(
         "SELECT day, SUM(leads) AS n FROM ad_daily WHERE day >= %s AND day < %s GROUP BY day", (today - timedelta(days=3), today))}
@@ -240,6 +242,8 @@ def snapshot(now):
         "AND created_time > now() - interval '4 days' GROUP BY 1", (account_info.tz_name(),))}
     updated = refresh_api.last_updated(settings_store.get("last_refresh_at"), settings_store.get("last_performance_sync"))
     return today, {
+        # Different people per ad over the same 7 days, from Meta (daily reach can't be added up); None when quiet.
+        "reach_7d": insights.unique_reach("ad", today - timedelta(days=7), today - timedelta(days=1)),
         "ads": ads, "ad_days": ad_days, "campaigns": camps, "camp_days": camp_days, "today_spend": today_spend,
         "cap": cap_snapshot(), "meta_leads": meta_leads, "inbox_leads": inbox,
         "last_pull_age_h": (now.timestamp() - updated) / 3600 if updated else None,
@@ -270,11 +274,19 @@ def run(now=None):
     rules["cpl_high"] = {**rules["cpl_high"], "target_cents": targets.lead()}  # Settings → Targets
     found = evaluate(snap, rules, today)
     raised = raise_found(found)
-    live = {(a["rule"], a["entity_id"]) for a in found}
-    for open_row in db.query("SELECT id, rule, entity_id FROM alerts WHERE resolved_at IS NULL AND kind = 'condition'"):
-        if (open_row["rule"], open_row["entity_id"]) not in live:
-            db.execute("UPDATE alerts SET resolved_at = now() WHERE id = %s", (open_row["id"],))
+    opened = db.query("SELECT id, rule, entity_id FROM alerts WHERE resolved_at IS NULL AND kind = 'condition'")
+    for alert_id in to_resolve(opened, found, snap):
+        db.execute("UPDATE alerts SET resolved_at = now() WHERE id = %s", (alert_id,))
     return [a["key"] for _, a in raised]
+
+
+def to_resolve(opened, found, snap):
+    """Open condition alerts whose condition is gone. Fatigue can't be judged while Meta doesn't answer
+    unique reach (reach_7d None, e.g. a rate-limit cooldown): those alerts stay open, or one hiccup would
+    close them for the rest of the day (the dedupe key is per day)."""
+    live = {(a["rule"], a["entity_id"]) for a in found}
+    unjudged = {"fatigue"} if snap.get("reach_7d") is None else set()
+    return [r["id"] for r in opened if (r["rule"], r["entity_id"]) not in live and r["rule"] not in unjudged]
 
 
 def raise_found(found):

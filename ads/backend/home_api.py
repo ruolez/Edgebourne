@@ -1,5 +1,4 @@
 """Home: what needs attention right now, and the day at a glance."""
-import json
 import time
 
 from flask import Blueprint, jsonify
@@ -18,21 +17,13 @@ TODAY_TTL = 300
 
 def today_by_campaign():
     """Spend and leads so far today, per campaign, cached for five minutes."""
-    raw = settings_store.get("today_snapshot")
-    snap = json.loads(raw) if raw else None
+    snap = insights.stored_today()
     if snap and time.time() - snap["at"] < TODAY_TTL:
         return snap
-    account = settings_store.get("meta_ad_account_id")
     try:
-        rows = list(meta_client.paged(f"act_{account}/insights", level="campaign", date_preset="today",
-                                      fields="campaign_id,spend,actions", limit=100))
+        return insights.pull_today()
     except meta_client.MetaError:
         return snap or {"at": None, "campaigns": {}}
-    snap = {"at": time.time(), "campaigns": {r["campaign_id"]: {"spend_cents": insights.to_cents(r.get("spend")),
-                                                                 "leads": insights.lead_count(r.get("actions"))}
-                                              for r in rows}}
-    settings_store.set("today_snapshot", json.dumps(snap))
-    return snap
 
 
 def attention(user, scope_ids):

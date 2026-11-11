@@ -83,10 +83,16 @@ def _loop():
         if settings_store.get("meta_ad_account_id") and time.time() - last_sync.get(acct, 0) > SYNC_EVERY:
             last_sync[acct] = time.time()
             try:
-                insights.sync_all(days=7)
+                # A pull in this pass has just read the structure (and its video pictures): only the week's results are left.
+                insights.sync_all(days=7, structure=not pulled)
                 pulled = True
             except Exception as exc:  # Meta not configured yet, network, …
                 log.info("account %s: meta sync skipped: %s", acct, exc)
+            else:
+                try:
+                    insights.backfill_daily()  # once per ad account: results from before the first sync
+                except Exception as exc:
+                    log.info("account %s: older results not read yet: %s", acct, exc)
         if pulled or time.time() - last_alerts.get(acct, 0) > ALERTS_EVERY:
             last_alerts[acct] = time.time()
             try:

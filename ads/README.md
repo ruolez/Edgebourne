@@ -90,8 +90,8 @@ and proposes it as a new ad.
 On-demand Meta reads (`backend/insights_api.py`, cached in `meta_cache`): breakdowns,
 diagnostics (rankings), comments (Page token), delivery estimates, account activity.
 The hourly sync also stores video funnel numbers per day (`video_3s`, `thruplays`,
-`video_p25..p100`, `clicks_all`) and each ad's post id; ads that disappear from Meta are
-marked `DELETED` and hidden.
+`video_p25..p100`, `clicks_all`) and each ad's post id; ads that disappear from Meta's list are
+read by id and marked `ARCHIVED` or `DELETED` as Meta says.
 
 Controls: admins everywhere, teammates on their assigned campaigns. Every write to Meta goes
 through `ads_api.py` and lands in `meta_changes` (who, what, old → new, result) plus the

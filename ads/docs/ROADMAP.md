@@ -564,6 +564,19 @@ bridge 1.3); `cp` in a chain was refused (playbook now says one command at a tim
 
 **Meta data and sync**
 - Ads missing from Meta's list are marked DELETED only when the list came back non-empty (`if seen:`). Keep that guard.
+- Meta's lists leave archived and deleted objects out. `status_history.mark_missing` reads the missing ids by id and
+  stores ARCHIVED or DELETED as Meta says, and skips rows another sync stored after this listing was read (`listed_at`).
+  A sync upsert skips a row the console wrote to Meta after the listing started (`UNLESS_CONSOLE_WROTE`, via `meta_changes`).
+- Field-set fallbacks (`sync.with_fallback`) are only for Meta refusing a field; timeouts, cooldowns, rate limits and 5xx
+  are raised. Rows read with the older set are `_partial` and keep the stored issues, configured status and times.
+  Pass `shape` ("list", "ids" for a `?ids=` read, "one" for one object by id) so the right rows get the flag.
+- `today_snapshot` carries the account day it belongs to and every pull refills it; readers use `insights.today_for` and
+  ignore another day's. The fatigue rule divides by Meta's unique 7-day reach, never by daily reach added up; while
+  Meta doesn't answer that reach (`reach_7d` None) open fatigue alerts stay open (`alerts.to_resolve`).
+- Background work started by a request (`ads_api.resync_later`) runs in a plain thread with `account_ctx.use` +
+  `db.reusing()`, never a copied context: Flask's app context (and the request's connection) would come with it.
+  It is debounced per process (3 s after the last write) and takes the advisory lock `resync:<account>`, so two
+  gunicorn workers never re-read one account at once; a held lock postpones the re-read, it never blocks a request.
 - Meta video uploads go to `graph-video.facebook.com` (`meta_client._base(video=True)`), chunked start/transfer/finish.
 - Budgets: `cents()` helper; the UI always shows dollars.
 

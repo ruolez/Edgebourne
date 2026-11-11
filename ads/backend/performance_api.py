@@ -170,8 +170,7 @@ def pacing_data(scope_ids=None):
     budget = db.query(f"""SELECT COALESCE(SUM(COALESCE(c.daily_budget_cents,
                              (SELECT SUM(daily_budget_cents) FROM adsets s WHERE s.campaign_id = c.id AND s.effective_status = 'ACTIVE'))), 0) AS c
                           FROM campaigns c WHERE c.effective_status = 'ACTIVE' AND {cw}""", params, one=True)["c"]
-    raw = settings_store.get("today_snapshot")
-    snap = json.loads(raw).get("campaigns", {}) if raw else {}
+    snap = (insights.today_for(settings_store.get("today_snapshot"), today) or {}).get("campaigns", {})
     so_far = sum(v["spend_cents"] for cid, v in snap.items() if scope_ids is None or cid in scope_ids)
     account = scope_ids is None
     cap = cap_snapshot() if account else None

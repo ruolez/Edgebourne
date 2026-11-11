@@ -15,7 +15,9 @@ app = Flask(__name__)
 ACCOUNT = "1025971549903293"
 PAGE = "1404203629446490"
 FORM = "1132280359202136"
-ids = itertools.count(120252700000000000)
+# Meta never reuses an id: start each run of the fake past the last one, so builds and rows a database kept
+# from an earlier run never name an object this run makes.
+ids = itertools.count(120252700000000000 + int(__import__("time").time()) % 1_000_000 * 10_000)
 TODAY = date.today()
 
 CAMPAIGN = {"id": "120252638288040312", "name": "Edge Bourne - Free intro call - Leads", "status": "ACTIVE",
@@ -107,6 +109,10 @@ def effective(ad):
     if aset["status"] == "PAUSED":
         return "ADSET_PAUSED"
     return ad["status"]
+
+
+def listed(obj):
+    return obj.get("status") not in ("ARCHIVED", "DELETED")
 
 
 def ad_view(ad):
@@ -462,10 +468,11 @@ def graph(path):
                             "business": {"id": BUSINESS, "name": "Edge Bourne"}, "opportunity_score": ADVICE["score"]})
         if parts == [act, "recommendations"]:
             return jsonify({"data": [{"recommendations": ADVICE["recs"]}]})
+        # Like Meta, the account's lists leave archived and deleted objects out (they are still read by id).
         if parts == [act, "campaigns"]:
-            return jsonify({"data": [CAMPAIGN, *NEW_CAMPAIGNS.values()]})
+            return jsonify({"data": [c for c in (CAMPAIGN, *NEW_CAMPAIGNS.values()) if listed(c)]})
         if parts == [act, "adsets"]:
-            return jsonify({"data": [ADSET, *NEW_ADSETS.values()]})
+            return jsonify({"data": [s for s in (ADSET, *NEW_ADSETS.values()) if listed(s)]})
         if parts == ["search"] and a.get("type") == "adgeolocationmeta":
             names = {p["key"]: p for p in PLACES}
             return jsonify({"data": {"cities": {k: {"key": k, "name": names[k]["name"]} for k in json.loads(a.get("cities") or "[]") if k in names}}})
@@ -473,7 +480,7 @@ def graph(path):
             q = (a.get("q") or "").lower()
             return jsonify({"data": [p for p in PLACES if q in p["name"].lower()][:8]})
         if parts == [act, "ads"]:
-            return jsonify({"data": [ad_view(x) for x in ADS.values()]})
+            return jsonify({"data": [ad_view(x) for x in ADS.values() if listed(x)]})
         if len(parts) == 2 and parts[1] == "insights":
             if a.get("breakdowns"):
                 return jsonify({"data": breakdown_rows(a["breakdowns"])})

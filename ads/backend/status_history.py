@@ -175,13 +175,22 @@ def headline(ev):
 
 # ---------------------------------------------------------------- database
 
+# Ends each sync upsert (its last parameter is when the read from Meta started): a row this console wrote
+# to Meta after that keeps what the console stored. Meta's answer may predate the write, and putting the old
+# status or creative back would read as a change made outside the console (audit A3-67).
+UNLESS_CONSOLE_WROTE = """WHERE NOT EXISTS (SELECT 1 FROM meta_changes m WHERE m.entity_id = {table}.id AND m.ok
+                                         AND m.created_at > %s)
+               RETURNING id"""
+
+
 def upsert_tracked(level, entity_id, upsert_sql, params):
-    """Run the INSERT … ON CONFLICT upsert for one entity and return the row as it was before (None when
-    new). The row lock makes a webhook refetch, a poll and a manual refresh see each change once."""
-    prev, _ = db.run_in_transaction([
+    """Run the INSERT … ON CONFLICT upsert for one entity: (the row as it was before or None when new,
+    whether it was written). The row lock makes a webhook refetch, a poll and a manual refresh see each
+    change once."""
+    prev, wrote = db.run_in_transaction([
         (f"SELECT {PREV_COLS[level]} FROM {TABLE[level]} WHERE id = %s FOR UPDATE", (entity_id,)),
         (upsert_sql, params)])
-    return prev[0] if prev else None
+    return (prev[0] if prev else None), bool(wrote)
 
 
 def track(level, meta, prev, source, now=None):
@@ -242,20 +251,51 @@ def alert_on(level, entity, events, now):
         logging.getLogger(__name__).warning("status alert failed for %s: %s", entity.get("id"), exc)
 
 
-def mark_missing(level, seen, source="poll"):
-    """Entities Meta no longer lists are kept, marked deleted (archived ones stay archived); record it."""
+def missing_verdicts(ids, found):
+    """What to store for entities Meta's listing left out, from reading them by id: archived stays archived,
+    deleted or no longer there is deleted, anything else still exists (the listing missed it) and is left alone."""
+    out = {}
+    for i in ids:
+        status = (found.get(i) or {}).get("effective_status")
+        if i not in found or status == "DELETED":
+            out[i] = "DELETED"
+        elif status == "ARCHIVED":
+            out[i] = "ARCHIVED"
+    return out
+
+
+def mark_missing(level, seen, source="poll", listed_at=None):
+    """Entities Meta no longer lists are kept, marked archived or deleted as Meta says when asked by id;
+    record it. Rows another sync stored after this listing was read are left alone (audit A3-30)."""
     if not seen:
         return []
     table = TABLE[level]
-    gone = db.query(
-        f"""WITH gone AS (SELECT id, name, effective_status FROM {table}
-                          WHERE NOT (id = ANY(%s)) AND COALESCE(status, '') <> 'ARCHIVED'
-                            AND effective_status IS DISTINCT FROM 'DELETED' FOR UPDATE)
-            UPDATE {table} t SET effective_status = 'DELETED', status = 'DELETED' FROM gone
-            WHERE t.id = gone.id RETURNING t.*, gone.effective_status AS was""", (seen,))
+    still = (f"NOT (id = ANY(%s)) AND COALESCE(status, '') <> 'ARCHIVED' AND COALESCE(effective_status, '') NOT IN "
+             f"('DELETED', 'ARCHIVED') AND (%s::timestamptz IS NULL OR synced_at < %s)")
+    ids = [r["id"] for r in db.query(f"SELECT id FROM {table} WHERE {still}", (seen, listed_at, listed_at))]
+    if not ids:
+        return []
+    import insights
+    import meta_client
+    try:
+        found = insights._fetch_many(ids, "id,status,effective_status", "id,status,effective_status")
+    except meta_client.MetaError as exc:
+        import logging
+        logging.getLogger(__name__).info("missing %ss not checked with Meta: %s", level, exc)
+        return []
+    verdicts = missing_verdicts(ids, found)
     out = []
-    for row in gone:
-        out += record(level, row, [{"field": "effective_status", "old": row["was"], "new": "DELETED", "backfill": False}], source)
+    for new in ("ARCHIVED", "DELETED"):
+        mine = [i for i, v in verdicts.items() if v == new]
+        if not mine:
+            continue
+        gone = db.query(
+            f"""WITH gone AS (SELECT id, name, effective_status FROM {table} WHERE id = ANY(%s) AND {still} FOR UPDATE)
+                UPDATE {table} t SET effective_status = %s, status = %s FROM gone
+                WHERE t.id = gone.id RETURNING t.*, gone.effective_status AS was""",
+            (mine, seen, listed_at, listed_at, new, new))
+        for row in gone:
+            out += record(level, row, [{"field": "effective_status", "old": row["was"], "new": new, "backfill": False}], source)
     return out
 
 

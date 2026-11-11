@@ -160,6 +160,11 @@ def query(sql, params=None, one=False):
     return rows
 
 
+def now():
+    """The database's clock (rows are stamped with it, so comparisons stay on one clock)."""
+    return query("SELECT now() AS t", one=True)["t"]
+
+
 def execute(sql, params=None, returning=False):
     rows = _run(sql, params, returning)
     if returning:

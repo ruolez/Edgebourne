@@ -68,7 +68,10 @@ def pull_latest(conn):
         return None
     try:
         result = insights.sync_all(days=DAYS)
-        settings_store.set("today_snapshot", None)
+        try:
+            insights.pull_today()  # what pacing and the overspend alert add for today (audit A3-13, A3-47)
+        except meta_client.MetaError as exc:
+            log.warning("refresh: today's spend not read: %s", exc)
         new_leads = 0
         try:
             new_leads = leads.backfill(days=LEAD_DAYS)

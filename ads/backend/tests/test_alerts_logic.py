@@ -40,13 +40,36 @@ class AdRuleTests(unittest.TestCase):
 
     def test_fatigue_needs_high_frequency_and_falling_clicks_and_rising_cost(self):
         first = days(21, impressions=1000, reach=800, link_clicks=20, spend_cents=1000, leads=1)[:7]
-        tired = days(7, impressions=1000, reach=250, link_clicks=10, spend_cents=1500, leads=0)
+        tired = days(7, impressions=1000, reach=800, link_clicks=10, spend_cents=1500, leads=0)
         fresh = days(7, impressions=1000, reach=800, link_clicks=20, spend_cents=1000, leads=1)
+        gap = days(14, impressions=0, reach=0, link_clicks=0, spend_cents=0, leads=0)[:7]
         ad = [{"id": "a1", "name": "N1", "campaign_id": "c1", "effective_status": "ACTIVE", "age_hours": 600}]
         self.assertEqual(
-            [rules_of(alerts.evaluate(snap(ads=ad, ad_days={"a1": first + days(14, impressions=0, reach=0, link_clicks=0, spend_cents=0, leads=0)[:7] + tired}), RULES, TODAY)),
-             rules_of(alerts.evaluate(snap(ads=ad, ad_days={"a1": first + fresh}), RULES, TODAY))],
+            [rules_of(alerts.evaluate(snap(ads=ad, ad_days={"a1": first + gap + tired}, reach_7d={"a1": 1800}), RULES, TODAY)),
+             rules_of(alerts.evaluate(snap(ads=ad, ad_days={"a1": first + fresh}, reach_7d={"a1": 1800}), RULES, TODAY))],
             [["fatigue"], []])
+
+    def test_fatigue_frequency_is_views_per_unique_person_not_per_summed_daily_reach(self):
+        # 7,000 views to 1,800 different people is 3.9 a week, although the daily reach adds up to 5,600.
+        first = days(21, impressions=1000, reach=800, link_clicks=20, spend_cents=1000, leads=1)[:7]
+        gap = days(14, impressions=0, reach=0, link_clicks=0, spend_cents=0, leads=0)[:7]
+        tired = days(7, impressions=1000, reach=800, link_clicks=10, spend_cents=1500, leads=0)
+        ad = [{"id": "a1", "name": "N1", "campaign_id": "c1", "effective_status": "ACTIVE", "age_hours": 600}]
+        found = [alerts.evaluate(snap(ads=ad, ad_days={"a1": first + gap + tired}, reach_7d=r), RULES, TODAY)
+                 for r in ({"a1": 1800}, {"a1": 5600}, None, {})]
+        self.assertEqual([rules_of(f) for f in found], [["fatigue"], [], [], []])
+        self.assertIn("about 3.9 times a week", found[0][0]["lines"][0])
+
+
+class ResolveTests(unittest.TestCase):
+    """Open condition alerts close when their condition is gone, but not when Meta couldn't tell us (audit A3-12)."""
+
+    def test_an_open_fatigue_alert_stays_open_while_meta_does_not_answer_reach(self):
+        opened = [{"id": 1, "rule": "fatigue", "entity_id": "a1"}, {"id": 2, "rule": "no_delivery", "entity_id": "a2"},
+                  {"id": 3, "rule": "fatigue", "entity_id": "a3"}]
+        found = [{"rule": "fatigue", "entity_id": "a3"}]
+        self.assertEqual([alerts.to_resolve(opened, found, snap(reach_7d=r)) for r in (None, {}, {"a1": 900})],
+                         [[2], [1, 2], [1, 2]])
 
 
 class SpendRuleTests(unittest.TestCase):

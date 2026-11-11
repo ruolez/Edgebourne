@@ -146,6 +146,9 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   check('Refresh pulls from Meta and shows when', Date.now() / 1000 - pulledAt < 90, `${await page.textContent('.topline [data-updated]')} (pulled ${Math.round(Date.now() / 1000 - pulledAt)} s ago)`);
   const again = await page.evaluate(() => fetch('/api/refresh', { method: 'POST' }).then((r) => r.json()));
   check('a second Refresh within a minute does not hit Meta again', again.ran === false);
+  const py = (code) => sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "${code}"`).trim();
+  check('a pull keeps today\'s spend (for pacing and the overspend alert), stamped with today',
+    py("import insights;s=insights.stored_today();print(bool(s and s['campaigns']))") === 'True');
   for (const p of ['leads', 'performance', 'desk', 'research', 'settings', 'team', 'account']) {
     await page.goto(`${BASE}/${p}.html`, { waitUntil: 'networkidle' });
     check(`Refresh is on ${p}`, await page.isVisible('.topline [data-refresh]'));
@@ -183,6 +186,20 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   await Promise.all([page.waitForURL('**/ads.html'), page.click('dialog.confirm #cd-ok')]);
   const gone = await page.evaluate((id) => fetch(`/api/ads/ad/${id}`).then((r) => r.json()).then((d) => d.ad.status), dup.id);
   check('Delete with the typed name deletes it and returns to Ads', gone === 'DELETED', gone);
+  // Meta's lists leave archived ads out: one archived in Ads Manager stays archived here, not deleted.
+  const elsewhere = await page.evaluate(() => fetch('/api/ads/ad/120252672229400312/duplicate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'QA archived in Ads Manager' }) }).then((r) => r.json()));
+  sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/${elsewhere.id}?access_token=x', data=b'status=ARCHIVED'))"`);
+  py('import insights;insights.sync_structure()');
+  const archivedThere = await page.evaluate((id) => fetch(`/api/ads/ad/${id}`).then((r) => r.json()), elsewhere.id);
+  check('an ad archived in Ads Manager is stored as archived, not deleted', archivedThere.ad.status === 'ARCHIVED'
+    && archivedThere.ad.effective_status === 'ARCHIVED' && archivedThere.timeline[0].new_value === 'ARCHIVED',
+    `${archivedThere.ad.status}/${archivedThere.ad.effective_status} · ${archivedThere.timeline.map((t) => t.new_value).join(',')}`);
+  // A sync that listed the ads before another stored a new one doesn't mark the new one deleted.
+  check('a slower sync never marks an ad stored after its listing as deleted', py("import db,status_history as h;l=db.now();"
+    + "db.execute('INSERT INTO ads (id, name, campaign_id, status, effective_status) VALUES (%s,%s,%s,%s,%s)',('qa-fresh-row','QA fresh row','120252638288040312','PAUSED','PAUSED'));"
+    + "h.mark_missing('ad',[r['id'] for r in db.query('SELECT id FROM ads WHERE id <> %s',('qa-fresh-row',))],'poll',l);"
+    + "print(db.query('SELECT effective_status FROM ads WHERE id = %s',('qa-fresh-row',),one=True)['effective_status']);"
+    + "db.execute('DELETE FROM status_events WHERE entity_id = %s',('qa-fresh-row',));db.execute('DELETE FROM ads WHERE id = %s',('qa-fresh-row',))") === 'PAUSED');
 
   // Lead stages to Meta: a real-looking lead moved to Qualified sends Lead, Contacted and Qualified once each.
   const leadId = Number(require('child_process').execSync(`docker exec edgebourne-ads-backend python -c "

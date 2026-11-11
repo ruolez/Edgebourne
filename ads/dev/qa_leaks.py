@@ -317,12 +317,14 @@ seen = []
 if True:
     orig = insights.sync_structure
     insights.sync_structure = lambda: seen.append(account_ctx.current())
+    delay, ads_api.RESYNC_DELAY = ads_api.RESYNC_DELAY, 0
     try:
         with account_ctx.use(A2):
             ads_api.resync_later()
-        __import__("time").sleep(0.3)
+        __import__("time").sleep(0.5)
     finally:
         insights.sync_structure = orig
+        ads_api.RESYNC_DELAY = delay
 with account_ctx.use(1):
     members_seen_from_1 = db.query("SELECT COUNT(*) AS n FROM campaign_members WHERE user_id = %s", (member["id"],), one=True)["n"]
 # Audit 3: who hears about an account, which account owns a Meta asset, what a client sees of Claude.

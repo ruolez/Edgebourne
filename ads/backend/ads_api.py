@@ -214,20 +214,51 @@ def record(user, level, row, action, old, new, ok, error=None, proposal_id=None,
                  details={"level": level, "name": row.get("name"), "old": old, "new": new, "error": error})
 
 
+RESYNC_DELAY = 3  # seconds after the last write: a burst of switches gives one re-read (audit A3-125)
+_resync_due = {}  # account id -> when its next re-read starts; None while one runs with nothing queued
+_resync_guard = threading.Lock()
+
+
 def resync_later():
-    """Re-read the structure in the background, in the same account (a plain thread doesn't
-    inherit context variables, so it would otherwise run in account 1)."""
+    """Re-read the structure in the background a moment after the last write, at most one at a time per
+    account."""
     if BULK_ID.get():
         return  # a bulk change resyncs once at the end
-    import contextvars
+    acct = account_ctx.current()
+    with _resync_guard:
+        start = acct not in _resync_due
+        _resync_due[acct] = __import__("time").time() + RESYNC_DELAY
+    if start:
+        threading.Thread(target=_resync_runner, args=(acct,), daemon=True).start()
 
-    def run():
+
+def _resync_runner(acct):
+    """A plain thread starts with an empty context: it never sees the request's app context or database
+    connection (audit A3-48), so it sets the account and opens (and closes) a connection of its own."""
+    import time
+    while True:
+        with _resync_guard:
+            due = _resync_due[acct]
+            if due is None:
+                del _resync_due[acct]
+                return
+            wait = due - time.time()
+            if wait <= 0:
+                _resync_due[acct] = None
+        if wait > 0:
+            time.sleep(wait)
+            continue
         try:
-            insights.sync_structure()
+            with db.try_lock(f"resync:{acct}") as mine:
+                if mine:
+                    with account_ctx.use(acct), db.reusing():
+                        insights.sync_structure()
         except Exception as exc:
             log.info("resync after change failed: %s", exc)
-    ctx = contextvars.copy_context()
-    threading.Thread(target=ctx.run, args=(run,), daemon=True).start()
+            mine = True
+        if not mine:  # another gunicorn worker is re-reading this account: try again after it, never alongside
+            with _resync_guard:
+                _resync_due[acct] = time.time() + RESYNC_DELAY
 
 
 def refresh_entity(level, entity_id):

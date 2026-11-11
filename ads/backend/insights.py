@@ -71,22 +71,38 @@ AD_UPSERT = """INSERT INTO ads (id, name, campaign_id, adset_id, status, configu
                    review_feedback = EXCLUDED.review_feedback, issues = EXCLUDED.issues,
                    creative_id = EXCLUDED.creative_id, object_type = EXCLUDED.object_type,
                    title = EXCLUDED.title, body = EXCLUDED.body, cta_type = EXCLUDED.cta_type,
-                   video_id = EXCLUDED.video_id, image_url = EXCLUDED.image_url,
+                   video_id = EXCLUDED.video_id,
+                   image_url = CASE WHEN EXCLUDED.image_url IS NULL AND EXCLUDED.creative_id IS NOT DISTINCT FROM ads.creative_id
+                                    THEN ads.image_url ELSE EXCLUDED.image_url END,
                    created_time = EXCLUDED.created_time, updated_time = EXCLUDED.updated_time,
-                   story_id = EXCLUDED.story_id, synced_at = now()"""
+                   story_id = EXCLUDED.story_id, synced_at = now()
+               """ + status_history.UNLESS_CONSOLE_WROTE.format(table="ads")
 
 
-def upsert_ad(ad, source, pictures):
+def stored_pictures():
+    """The video frames already stored, so a sync asks Meta only about new videos. Meta's picture links
+    expire, so once a day (account time) every one is read again (audit A3-82, A3-124)."""
+    if settings_store.get("video_pictures_day") != account_info.today().isoformat():
+        return {}
+    return {r["video_id"]: r["image_url"] for r in db.query(
+        "SELECT DISTINCT ON (video_id) video_id, image_url FROM ads WHERE video_id IS NOT NULL AND image_url IS NOT NULL "
+        "ORDER BY video_id, synced_at DESC")}
+
+
+def upsert_ad(ad, source, pictures, listed_at):
     """Store one ad as Meta returned it and record what changed since the last pull."""
     cr = ad.get("creative") or {}
     image = cr.get("image_url") or (video_picture(cr["video_id"], pictures) if cr.get("video_id") else None)
-    prev = status_history.upsert_tracked("ad", ad["id"], AD_UPSERT, (
+    prev, written = status_history.upsert_tracked("ad", ad["id"], AD_UPSERT, (
         ad["id"], ad["name"], ad.get("campaign_id"), ad.get("adset_id"), ad.get("status"),
         ad.get("configured_status"), ad.get("effective_status"), cr.get("thumbnail_url"),
         json.dumps(ad.get("ad_review_feedback")) if ad.get("ad_review_feedback") else None,
         json.dumps(ad.get("issues_info")) if ad.get("issues_info") else None,
         cr.get("id"), cr.get("object_type"), cr.get("title"), cr.get("body"), cr.get("call_to_action_type"),
-        cr.get("video_id"), image, ad.get("created_time"), ad.get("updated_time"), cr.get("effective_object_story_id")))
+        cr.get("video_id"), image, ad.get("created_time"), ad.get("updated_time"), cr.get("effective_object_story_id"),
+        listed_at))
+    if not written:
+        return []
     if prev and prev.get("creative_id") and cr.get("id") and prev["creative_id"] != cr["id"]:
         import versions_api
         versions_api.save_switch({**prev, "id": ad["id"]}, cr["id"], versions_api.OUTSIDE, title=cr.get("title"), body=cr.get("body"))
@@ -94,17 +110,19 @@ def upsert_ad(ad, source, pictures):
 
 
 def sync_ads(source="poll"):
+    import sync
     account = settings_store.get("meta_ad_account_id")
-    pictures = {}
-    try:
-        rows = list(meta_client.paged(f"act_{account}/ads", fields=AD_FIELDS, limit=100))
-    except meta_client.MetaError:
-        rows = list(meta_client.paged(f"act_{account}/ads", fields=AD_FIELDS_PLAIN, limit=100))
+    pictures = stored_pictures()
+    fresh = not pictures
+    listed_at = db.now()
+    rows = sync.listing(f"act_{account}/ads", AD_FIELDS, AD_FIELDS_PLAIN)
     for ad in rows:
-        upsert_ad(ad, source, pictures)
+        upsert_ad(ad, source, pictures, listed_at)
+    if fresh:
+        settings_store.set("video_pictures_day", account_info.today().isoformat())
     # Ads deleted in Ads Manager stop appearing in the listing; keep their history, hide them.
-    # Meta's list leaves archived ads out; keep them archived rather than calling them deleted.
-    status_history.mark_missing("ad", [ad["id"] for ad in rows], source)
+    # Meta's list leaves archived ads out too: mark_missing asks Meta which of the two each one is.
+    status_history.mark_missing("ad", [ad["id"] for ad in rows], source, listed_at)
     return len(rows)
 
 
@@ -115,9 +133,13 @@ def sync_structure():
 
 
 def sync_daily(days=30):
-    account = settings_store.get("meta_ad_account_id")
     until = account_info.today()
-    since = until - timedelta(days=days - 1)
+    return sync_days(until - timedelta(days=days - 1), until)
+
+
+def sync_days(since, until):
+    """Per-ad results for each day from `since` to `until` (account days), stored in ad_daily."""
+    account = settings_store.get("meta_ad_account_id")
     rows = 0
     for r in meta_client.paged(
         f"act_{account}/insights",
@@ -166,29 +188,33 @@ def sync_account():
         raise meta_client.MetaError(problem)
 
 
-def sync_all(days=30):
+def sync_all(days=30, structure=True):
+    """structure=False: only the results (the worker's hourly week when a pull has just read the rest)."""
     sync_account()  # first: the account's time zone and currency decide how the rest is read
-    out = {**sync_structure(), "daily_rows": sync_daily(days)}
+    out = {**(sync_structure() if structure else {}), "daily_rows": sync_daily(days)}
     settings_store.set("last_performance_sync", __import__("datetime").datetime.utcnow().isoformat() + "Z")
     return out
 
 
 def _fetch_many(ids, fields, fallback):
     """Meta's multi-id read (?ids=a,b), with the older field set if a new field is refused, and one by
-    one if an id no longer exists (Meta refuses the whole batch then)."""
+    one if an id no longer exists (Meta refuses the whole batch then). Only ids that are gone are left out:
+    anything else Meta didn't answer is raised, so webhook events stay pending (audit A3-83)."""
+    import sync
     out = {}
     for chunk in (ids[i:i + 50] for i in range(0, len(ids), 50)):
         try:
-            try:
-                out.update(meta_client.get("", ids=",".join(chunk), fields=fields))
-            except meta_client.MetaError:
-                out.update(meta_client.get("", ids=",".join(chunk), fields=fallback))
-        except meta_client.MetaError:
+            out.update(sync.with_fallback(lambda f: meta_client.get("", ids=",".join(chunk), fields=f), fields, fallback,
+                                          shape="ids"))
+        except meta_client.MetaError as exc:
+            if meta_client.transient(exc):
+                raise
             for one in chunk:
                 try:
-                    out[one] = meta_client.get(one, fields=fallback)
-                except meta_client.MetaError:
-                    pass
+                    out[one] = sync.with_fallback(lambda f: meta_client.get(one, fields=f), fields, fallback, shape="one")
+                except meta_client.MetaError as exc:
+                    if not meta_client.not_found(exc):
+                        raise
     return out
 
 
@@ -201,17 +227,82 @@ def sync_entities(level, ids, source="webhook"):
     if not ids:
         return []
     events = []
+    listed_at = db.now()
     if level == "ad":
-        pictures = {}
+        pictures = stored_pictures()
         for ad in _fetch_many(list(ids), AD_FIELDS, AD_FIELDS_PLAIN).values():
-            events += upsert_ad(ad, source, pictures)
+            events += upsert_ad(ad, source, pictures, listed_at)
     elif level == "adset":
         for a in _fetch_many(list(ids), sync.ADSET_FIELDS, sync.ADSET_FIELDS_PLAIN).values():
-            events += sync.upsert_adset(a, source)
+            events += sync.upsert_adset(a, source, listed_at)
     elif level == "campaign":
         for c in _fetch_many(list(ids), sync.CAMPAIGN_FIELDS, sync.CAMPAIGN_FIELDS_PLAIN).values():
-            events += sync.upsert_campaign(c, source)
+            events += sync.upsert_campaign(c, source, listed_at)
     return events
+
+
+# ---------------------------------------------------------------- today so far
+
+def today_for(raw, day):
+    """The stored today-by-campaign snapshot when it was taken on `day` (account time), else None: a
+    snapshot from yesterday must never be added to today's spend (audit A3-13, A3-47)."""
+    snap = json.loads(raw) if raw else None
+    return snap if snap and snap.get("day") == day.isoformat() else None
+
+
+def stored_today():
+    return today_for(settings_store.get("today_snapshot"), account_info.today())
+
+
+def pull_today():
+    """Spend and leads so far today per campaign, read from Meta and stored with the day they belong to."""
+    import time
+    account = settings_store.get("meta_ad_account_id")
+    day = account_info.today()
+    rows = list(meta_client.paged(f"act_{account}/insights", level="campaign", date_preset="today",
+                                  fields="campaign_id,spend,actions", limit=100))
+    snap = {"at": time.time(), "day": day.isoformat(),
+            "campaigns": {r["campaign_id"]: {"spend_cents": to_cents(r.get("spend")), "leads": lead_count(r.get("actions"))}
+                          for r in rows}}
+    settings_store.set("today_snapshot", json.dumps(snap))
+    return snap
+
+
+# ---------------------------------------------------------------- results from before the first sync
+
+BACKFILL_LIMIT = timedelta(days=37 * 30)  # Meta keeps per-day results about 37 months
+BACKFILL_CHUNK = 90
+
+
+def backfill_windows(earliest, first_synced, today, chunk=BACKFILL_CHUNK):
+    """(since, until) windows covering the days from `earliest` (when the oldest campaign or ad started)
+    to the day before the first stored day (yesterday when nothing is stored yet)."""
+    end = (first_synced or today) - timedelta(days=1)
+    start = max(earliest, today - BACKFILL_LIMIT)
+    out = []
+    while start <= end:
+        out.append((start, min(end, start + timedelta(days=chunk - 1))))
+        start += timedelta(days=chunk)
+    return out
+
+
+def backfill_daily():
+    """Once per ad account: per-day results from before the first sync, so "since it started" and every
+    all-time figure cover the whole life of older ads, not just the synced days (audit A3-60)."""
+    account = settings_store.get("meta_ad_account_id")
+    if not account or settings_store.get("daily_backfill_for") == account:
+        return 0
+    tz = account_info.tz_name()
+    earliest = db.query(
+        """SELECT MIN(d) AS d FROM (SELECT (MIN(created_time) AT TIME ZONE %s)::date AS d FROM ads
+                                    UNION ALL SELECT (MIN(created_time) AT TIME ZONE %s)::date FROM campaigns) x""",
+        (tz, tz), one=True)["d"]
+    first = db.query("SELECT MIN(day) AS d FROM ad_daily", one=True)["d"]
+    rows = 0
+    for since, until in backfill_windows(earliest, first, account_info.today()) if earliest else []:
+        rows += sync_days(since, until)
+    settings_store.set("daily_backfill_for", account)
+    return rows
 
 
 # ---------------------------------------------------------------- unique reach
