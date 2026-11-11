@@ -1,5 +1,7 @@
 import unittest
+from unittest import mock
 
+import ads_api
 import placements as pl
 
 PAGE, IG, FORM = "61596354777753", "17841400000000000", "1132280359202136"
@@ -126,6 +128,26 @@ class DescribeTests(unittest.TestCase):
 
     def test_says_when_meta_stored_no_feed_at_all(self):
         self.assertEqual(pl.describe({"id": "9"}), "feed keys: none; videos: []; story keys: none")
+
+
+class PreviewSpecTests(unittest.TestCase):
+    """The Reels preview sends Meta one video_data: exactly one of image_url and image_hash."""
+    def spec(self, vertical, thumb="https://x/vertical.jpg"):
+        with mock.patch.object(ads_api.db, "query", return_value={"id": "1", "campaign_id": "c", "creative_id": "9"}), \
+                mock.patch.object(ads_api, "can_touch", return_value=True), \
+                mock.patch.object(ads_api, "account_video", return_value=True), \
+                mock.patch.object(ads_api, "_video_state", return_value={"thumbnail_url": thumb, "ready": True}), \
+                mock.patch.object(ads_api.meta_client, "get", return_value={"object_story_spec": STORY}):
+            spec, err = ads_api.vertical_preview_spec({"id": 1}, {"template_ad_id": "1", "vertical": vertical})
+        return {k: spec["video_data"].get(k) for k in ("video_id", "image_url", "image_hash")}
+
+    def test_a_cover_replaces_the_picture_link(self):
+        self.assertEqual(self.spec({"video_id": VERTICAL_VIDEO, "image_hash": "c0ffee"}),
+                         {"video_id": VERTICAL_VIDEO, "image_url": None, "image_hash": "c0ffee"})
+
+    def test_without_a_cover_the_vertical_videos_own_thumbnail_is_used(self):
+        self.assertEqual(self.spec({"video_id": VERTICAL_VIDEO}),
+                         {"video_id": VERTICAL_VIDEO, "image_url": "https://x/vertical.jpg", "image_hash": None})
 
 
 if __name__ == "__main__":

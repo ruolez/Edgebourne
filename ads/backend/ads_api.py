@@ -1163,7 +1163,8 @@ def vertical_preview_spec(user, data):
     video = {**story["video_data"], "video_id": vid}
     video.pop("image_hash", None)
     cover = (data.get("vertical") or {}).get("image_hash")
-    if cover:
+    if cover:  # Meta takes only one of image_url and image_hash in video_data
+        video.pop("image_url", None)
         video["image_hash"] = cover
     elif thumb:
         video["image_url"] = thumb
