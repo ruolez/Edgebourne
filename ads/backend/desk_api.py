@@ -796,7 +796,11 @@ def clean_payload(raw):
         vid = str(vertical.get("video_id") or "")
         if raw.get("update_ad") is not True or not vid.isdigit() or not text("template_ad_id", 32):
             return None
-        return {"template_ad_id": text("template_ad_id", 32), "update_ad": True, "vertical": {"video_id": vid[:32]},
+        clean_vertical = {"video_id": vid[:32]}
+        cover = str(vertical.get("image_hash") or "")
+        if re.fullmatch(r"[0-9a-f]{32}", cover):  # a finished cover image from the account's library
+            clean_vertical["image_hash"] = cover
+        return {"template_ad_id": text("template_ad_id", 32), "update_ad": True, "vertical": clean_vertical,
                 "name": text("name", 200)}
     media = raw.get("media") if isinstance(raw.get("media"), dict) else {"kind": "same"}
     kind = media.get("kind") if media.get("kind") in ("same", "image", "video") else "same"

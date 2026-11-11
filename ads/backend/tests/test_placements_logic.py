@@ -46,6 +46,14 @@ class BuildTests(unittest.TestCase):
         bare = {k: v for k, v in STORY.items() if k != "instagram_user_id"}
         self.assertEqual(pl.build(bare, VERTICAL, instagram_user_id=IG)[0], {"page_id": PAGE, "instagram_user_id": IG})
 
+    def test_a_cover_image_becomes_the_vertical_videos_thumbnail(self):
+        _, feed = pl.build(STORY, {**VERTICAL, "image_hash": "c0ffee"})
+        self.assertEqual(feed["videos"][1], {"video_id": VERTICAL_VIDEO, "thumbnail_hash": "c0ffee", "adlabels": [{"name": pl.VERTICAL}]})
+
+    def test_the_feed_video_keeps_the_cover_hash_the_running_ad_uses(self):
+        story = {**STORY, "video_data": {k: v for k, v in STORY["video_data"].items() if k != "image_url"} | {"image_hash": "feedc0"}}
+        self.assertEqual(pl.build(story, VERTICAL)[1]["videos"][0], {"video_id": FEED_VIDEO, "thumbnail_hash": "feedc0", "adlabels": [{"name": pl.FEED}]})
+
     def test_it_is_a_placement_customized_single_video(self):
         self.assertEqual((self.feed["ad_formats"], self.feed["optimization_type"]), (["SINGLE_VIDEO"], "PLACEMENT"))
 

@@ -48,6 +48,12 @@ class CleanPayloadTests(unittest.TestCase):
         self.assertEqual(desk_api.clean_payload(raw), {"template_ad_id": "120252690325970312", "update_ad": True,
                                                        "vertical": {"video_id": "2015174525716803"}, "name": "N1 · 9:16 for Reels"})
 
+    def test_a_vertical_cover_keeps_a_real_image_hash_and_drops_a_malformed_one(self):
+        good, bad = "0123456789abcdef0123456789abcdef", "../x?y=1"
+        out = [desk_api.clean_payload({"template_ad_id": "1", "update_ad": True, "vertical": {"video_id": "2", "image_hash": h}})["vertical"]
+               for h in (good, bad)]
+        self.assertEqual(out, [{"video_id": "2", "image_hash": good}, {"video_id": "2"}])
+
     def test_update_payload_with_a_bad_video_id_is_dropped(self):
         self.assertEqual([desk_api.clean_payload({"template_ad_id": "1", "update_ad": True, "vertical": v})
                           for v in ({"video_id": "abc"}, {}, "2015")], [None, None, None])

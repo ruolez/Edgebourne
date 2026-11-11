@@ -1119,7 +1119,7 @@ def _approve(user, p, level, row, data):
         if error and error.startswith(NOT_SENT):
             return api_error(error[len(NOT_SENT):], 409)
     elif kind == "vertical":
-        error = add_vertical(user, value["template_ad_id"], value["vertical"]["video_id"], proposal_id)
+        error = add_vertical(user, value["template_ad_id"], value["vertical"]["video_id"], proposal_id, value["vertical"].get("image_hash"))
         if error and error.startswith(NOT_SENT):
             return api_error(error[len(NOT_SENT):], 409)
     elif kind == "status":
@@ -1162,7 +1162,10 @@ def vertical_preview_spec(user, data):
     thumb = _video_state(vid)["thumbnail_url"]
     video = {**story["video_data"], "video_id": vid}
     video.pop("image_hash", None)
-    if thumb:
+    cover = (data.get("vertical") or {}).get("image_hash")
+    if cover:
+        video["image_hash"] = cover
+    elif thumb:
         video["image_url"] = thumb
     return {**story, "video_data": video}, None
 
@@ -1241,7 +1244,7 @@ def sync_now():
 NOT_SENT = "\x00"  # error prefix: refused before anything reached Meta, so the proposal stays waiting
 
 
-def add_vertical(user, ad_id, video_id, proposal_id=None):
+def add_vertical(user, ad_id, video_id, proposal_id=None, image_hash=None):
     """Put a 9:16 video on an ad for Reels and Stories; feeds keep its 4:5 video, the words and the
     lead form stay. A new creative is made and read back first, so a copy Meta stored wrongly never
     reaches the running ad. Returns None, or what went wrong."""
@@ -1260,7 +1263,7 @@ def add_vertical(user, ad_id, video_id, proposal_id=None):
         state = _video_state(video_id)
         if not state["ready"]:
             return NOT_SENT + "Meta is still processing the 9:16 video. Try again in a minute."
-        story, feed = placements.build(cr.get("object_story_spec") or {}, {"video_id": video_id, "thumbnail_url": state["thumbnail_url"]},
+        story, feed = placements.build(cr.get("object_story_spec") or {}, {"video_id": video_id, "thumbnail_url": state["thumbnail_url"], "image_hash": image_hash},
                                        instagram_user_id=cr.get("instagram_user_id"))
     except ValueError as exc:
         return NOT_SENT + str(exc)

@@ -20,9 +20,11 @@ def has_placements(creative):
     return bool((creative or {}).get("asset_feed_spec"))
 
 
-def _video(video_id, thumbnail, label):
+def _video(video_id, thumbnail, label, thumbnail_hash=None):
     v = {"video_id": str(video_id)}
-    if thumbnail:
+    if thumbnail_hash:
+        v["thumbnail_hash"] = thumbnail_hash
+    elif thumbnail:
         v["thumbnail_url"] = thumbnail
     v["adlabels"] = [{"name": label}]
     return v
@@ -47,8 +49,8 @@ def build(story, vertical, instagram_user_id=None):
     if ig:
         identity["instagram_user_id"] = str(ig)
     feed = {
-        "videos": [_video(v["video_id"], v.get("image_url"), FEED),
-                   _video(vertical["video_id"], vertical.get("thumbnail_url"), VERTICAL)],
+        "videos": [_video(v["video_id"], v.get("image_url"), FEED, v.get("image_hash")),
+                   _video(vertical["video_id"], vertical.get("thumbnail_url"), VERTICAL, vertical.get("image_hash"))],
         "bodies": [{"text": v.get("message") or ""}],
         "titles": [{"text": v.get("title") or ""}],
         "link_urls": [{"website_url": (cta.get("value") or {}).get("link") or "http://fb.me/"}],
