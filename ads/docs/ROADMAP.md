@@ -220,6 +220,16 @@ Decisions: new visual direction (3 mockups, he picks), stay vanilla multi-page, 
 - [~] 8.12 Follow-through and the line (2026-11-10, Eugene: approved a fix and nothing visibly happened; always show what Claude is on; let me queue a bunch). Accepting a suggestion nothing else acts on now starts a run in its conversation (`continue_accepted`, `options.accepted`, state "Claude is on it"); older approvals get "Have Claude do this". Failed suggestions show Meta's or the check's exact reason (`failure`, also in `desk task`). `/api/desk/now` feeds a status line on every page (`ui.js startClaudeNow`) and the always-present On your Mac panel lists each waiting job. Add to line stacks new jobs; several follow-ups can wait in one conversation, in order. **9:16 still open:** all five approvals failed on "Meta's copy of the new creative has no 9:16 video" (`readback_problem`). After Update, read what Meta stored with `GET /api/ads/creative/1783540646270812/inspect`, then fix `readback_problem` or the build, and retry one ad.
 - [~] 8.8 Finish: full screenshot pass (every page, light + dark, desktop + 390 px) clean; feature inventory in REDESIGN.md all ticked; README Pages + Design rewritten; old per-page back links hidden (breadcrumbs replace them); 317 unit tests, QA 267 PASS, no console errors, no ad-like class/id/file path. **Live checks owed (each with Eugene's yes, after push + Update):** (1) the new Graph fields on v24 (`configured_status`, `issues_info` + `created_time` on campaigns/ad sets, full `learning_stage_info`) — the sync falls back to the old field set if Meta refuses one, check the backend log; (2) Settings → Meta → Instant status updates: the app-level `/{app}/subscriptions` call and `act_/subscribed_apps` with the System User token (else META-APP-SETUP part I by hand); (3) first real ad-account webhook payload (stored raw in `webhook_events.payload.raw`) matches `parse_ad_account`; (4) a paused test ad turned on → In review → Approved shows in the Inbox, on the ad's History tab and as a push/email; (5) a bulk off + on on two test ads; (6) Eugene's ad blocker: open Ads, an ad, Compare
 
+### Phase 9: UI/UX audit (Eugene, 2026-11-10: "research the web… improve our app design in all sections, close gaps, easy seamless navigation from everywhere"; plan in `ads/docs/UX-AUDIT.md`)
+Decisions: design + workflows (no automation rules), new Creative section (Research moves out of Claude), keep Signal and refine, clickable mockup first, then phase by phase. Money rules do not loosen.
+- [~] 9.0 Baseline shots of every tab + clickable mockup (`.superdesign/audit/`). **[Eugene]** reviews before 9.2
+- [ ] 9.1 Fix what's broken
+- [ ] 9.2 One design system (tokens, components, one vocabulary, accessibility)
+- [ ] 9.3 Navigation from everywhere
+- [ ] 9.4 Every tab redesigned on the new parts
+- [ ] 9.5 Creative section and the loop
+- [ ] 9.6 Finish
+
 ---
 
 ## 3. The plan, step by step

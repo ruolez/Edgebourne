@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ads Console mockup</title>
+  <link rel="stylesheet" href="../../frontend/css/tokens.css">
+  <link rel="stylesheet" href="mock.css">
+</head>
+<body>
+  <div class="review" id="review">
+    <b>Mockup</b><span>Click around. Nothing here touches your ads.</span>
+    <div class="grow"></div>
+    <div class="seg" id="size"><button data-size="desk" aria-pressed="true">Desktop</button><button data-size="phone" aria-pressed="false">Phone</button></div>
+    <div class="seg" id="theme"><button data-theme-set="light" aria-pressed="true">Light</button><button data-theme-set="dark" aria-pressed="false">Dark</button></div>
+  </div>
+  <div class="device" id="device" hidden><iframe id="frame" title="Phone view"></iframe></div>
+  <header class="topbar" id="topbar"></header>
+  <div class="app" id="app">
+    <aside class="rail" id="rail"></aside>
+    <main id="main"></main>
+  </div>
+  <nav class="tabbar" id="tabbar" aria-label="Main"></nav>
+  <dialog class="more" id="more"></dialog>
+  <dialog class="palette" id="palette"></dialog>
+  <dialog class="brief" id="brief"></dialog>
+  <aside class="peek" id="peek" aria-label="Quick look" hidden></aside>
+  <div class="tray" id="tray" hidden></div>
+  <script src="mock.js"></script>
+</body>
+</html>

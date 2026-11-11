@@ -32,12 +32,13 @@ const BASE = process.env.BASE || 'http://ads.localhost:8090';
         await page.waitForSelector('#stages');
         await page.screenshot({ path: `${OUT}/lead-detail-${tag}-${scheme}.png`, fullPage: true });
       }
-      for (const p of ['home', 'inbox', 'ads', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312', 'compare.html?ids=120252672232030312,120252672233160312,120252672230740312', 'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=polish', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video', 'ad.html?id=120252672230740312#tab=comments', 'new-ad', 'research', 'desk', 'performance', 'experiments', 'report', 'forms', 'new-campaign', 'team', 'settings', 'account']) {
+      for (const p of ['home', 'inbox', 'ads', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312', 'compare.html?ids=120252672232030312,120252672233160312,120252672230740312', 'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=polish', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video', 'ad.html?id=120252672230740312#tab=comments', 'ad.html?id=120252672230740312#tab=history', 'ads.html?level=adset', 'new-ad', 'new-adset.html?campaign=120252638288040312', 'research', 'desk', 'desk.html#ads', 'desk.html#schedules', 'performance', 'experiments', 'report', 'forms', 'new-campaign', 'team', 'settings', 'account']) {
         await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
         if (p.includes('#')) await page.reload();
         await page.waitForTimeout(600);
-        await page.waitForTimeout(p.includes('#tab') ? 900 : 0);
-        await page.screenshot({ path: `${OUT}/${p.split('.')[0]}${(p.match(/tab=(\w+)/) || ['', ''])[1] ? '-' + p.match(/tab=(\w+)/)[1] : ''}-${tag}-${scheme}.png`, fullPage: true });
+        await page.waitForTimeout(p.includes('#') ? 900 : 0);
+        const variant = (p.match(/(?:#tab=|#|level=)(\w+)/) || ['', ''])[1];
+        await page.screenshot({ path: `${OUT}/${p.split('.')[0]}${variant ? '-' + variant : ''}-${tag}-${scheme}.png`, fullPage: true });
       }
       await ctx.close();
     }
