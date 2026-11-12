@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, fieldError, icon, toast, when, errorState, guardLeaving, markSaved, withFrom } from "./ui.js";
+import { boot, confirmDialog, esc, fieldErrors, icon, toast, when, errorState, guardLeaving, markSaved, withFrom } from "./ui.js";
 import { count } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -7,6 +7,10 @@ let meta = { standard: {}, limits: {}, max_custom: 3, max_options: 6, privacy_de
 let spec = null;
 let step = "intro";
 let createdId = null;
+// The builder's state: typed since it opened (closing asks first), fields left once (their errors show),
+// a Create tried (every error shows), the last check's errors per field.
+let dirty = false, tried = false, fieldList = [];
+const touched = new Set();
 // A form named elsewhere (a lead's form, a change on Today) links here as #form=<id>: its row is marked.
 const linkedForm = () => { const m = location.hash.match(/form=([^&]+)/); return m ? decodeURIComponent(m[1]) : null; };
 
@@ -24,15 +28,22 @@ async function loadList() {
   try {
     const d = await api("/api/forms");
     meta = d;
+    // Leads: the ones stored here (what the Leads list shows), linked to that list; Meta's own count beside it
+    // when it differs (it counts test leads and leads from before the console).
+    const leadsCell = (f) => {
+      const here = f.leads_here || 0, meta_ = f.leads_count || 0;
+      const link = here ? `<a class="form-leads" href="/leads.html?form=${encodeURIComponent(f.id)}&amp;status=all">${count(here)} ${here === 1 ? "lead" : "leads"}</a>` : '<span class="muted">No leads</span>';
+      return `${link}${meta_ !== here ? `<small class="muted">Meta counts ${count(meta_)}</small>` : ""}`;
+    };
     const rows = d.items.map((f) => `<tr class="${f.id === createdId || f.id === linkedForm() ? "flash" : ""}" data-form-row="${esc(f.id)}">
-      <td><b>${esc(f.name)}</b></td>
-      <td>${f.status === "ACTIVE" ? '<span class="pill ok">Active</span>' : `<span class="pill">${esc((f.status || "").toLowerCase())}</span>`}</td>
-      <td class="num">${count(f.leads_count || 0)}</td>
-      <td>${f.created_time ? esc(when(f.created_time)) : ""}</td>
+      <td class="form-name"><b>${esc(f.name)}</b></td>
+      <td class="form-st">${f.status === "ACTIVE" ? '<span class="pill ok">Active</span>' : `<span class="pill">${esc((f.status || "").toLowerCase())}</span>`}</td>
+      <td class="num form-n">${leadsCell(f)}</td>
+      <td class="form-made">${f.created_time ? `<span class="form-made-l">Made </span>${esc(when(f.created_time))}` : ""}</td>
       <td class="row-actions"><button type="button" class="btn btn-quiet btn-small" data-copy="${esc(f.id)}">Copy into a new form</button>
         <a class="btn btn-quiet btn-small" href="${esc(withFrom(`/new-ad.html?form=${encodeURIComponent(f.id)}`, "/forms.html"))}">Use in a new ad</a></td>
     </tr>`).join("");
-    $("list").innerHTML = d.items.length ? `<div class="scroll-x"><table class="table middle"><thead><tr><th>Form</th><th>Status</th><th class="num">Leads</th><th>Made</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody></table></div>`
+    $("list").innerHTML = d.items.length ? `<div class="scroll-x"><table class="table middle form-tbl"><thead><tr><th>Form</th><th>Status</th><th class="num">Leads</th><th>Made</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody></table></div>`
       : '<p class="muted flush">No forms on the Page yet. Start one with New form.</p>';
   } catch (err) { errorState($("list"), err, loadList); }
 }
@@ -44,9 +55,9 @@ const counter = (id, k) => `<span class="hint" data-count="${id}" data-limit="${
 
 function customRow(q, i) {
   return `<div class="q-row" data-q="${i}">
-    <div class="field"><label for="q-label-${i}">Question ${i + 1}</label><input class="input" id="q-label-${i}" data-q-label value="${esc(q.label)}" placeholder="e.g. How many people work at your company?" autocomplete="off"></div>
+    <div class="field"><label for="q-label-${i}">Question ${i + 1}</label><input class="input" id="q-label-${i}" name="q${i + 1}_label" data-q-label value="${esc(q.label)}" placeholder="e.g. How many people work at your company?" autocomplete="off"></div>
     <div class="field"><label for="q-opts-${i}">Answers to pick from <span class="muted">(one per line; leave empty for a typed answer)</span></label>
-      <textarea class="input" id="q-opts-${i}" data-q-opts rows="3" placeholder="1-5&#10;6-20&#10;21 or more">${esc((q.options || []).join("\n"))}</textarea></div>
+      <textarea class="input" id="q-opts-${i}" name="q${i + 1}_options" data-q-opts rows="3" placeholder="1-5&#10;6-20&#10;21 or more">${esc((q.options || []).join("\n"))}</textarea></div>
     <button type="button" class="btn btn-quiet btn-small" data-q-remove>Remove question</button>
   </div>`;
 }
@@ -136,12 +147,27 @@ function counts() {
   });
 }
 
+// Errors show at their field once it has been left or holds something (a prohibited word shows as it is
+// typed), and all of them once Create was tried; the field being typed in keeps its focus.
+function markFields({ focus = false } = {}) {
+  const f = $("form-edit");
+  if (!f) return null;
+  const shown = fieldList.filter(({ field }) => {
+    if (tried) return true;
+    const input = f.querySelector(`[name="${CSS.escape(field)}"]`);
+    return input && (touched.has(field) || input.value.trim());
+  });
+  return fieldErrors(f, shown, { focus });
+}
+
 let checkSeq = 0;
 async function check() {
   const mine = ++checkSeq;
   try {
     const r = await api("/api/forms/check", { method: "POST", body: spec });
-    if (mine !== checkSeq) return;
+    if (mine !== checkSeq) return null;
+    fieldList = r.fields || [];
+    markFields();
     const box = $("f-check");
     if (r.policy.length) {
       box.innerHTML = `<div class="note bad"><b>Meta would stop ads using this form:</b><ul>${r.policy.map((p) => `<li>${esc(p.where)}: ${esc(p.why)}</li>`).join("")}</ul></div>`;
@@ -150,12 +176,13 @@ async function check() {
     } else {
       box.innerHTML = '<div class="note ok">Ready. It passes the lead form rules we can check (no prohibited questions, a privacy page).</div>';
     }
-    $("f-create").disabled = !!(r.policy.length || r.problems.length);
-  } catch (err) { /* the check is advisory; creating checks again */ }
+    return r;
+  } catch (err) { return null; /* the check is advisory; creating checks again */ }
 }
 
 let timer;
-function changed() {
+function changed(e) {
+  if (e) dirty = true;
   readSpec();
   counts();
   const tabs = ["intro", "questions", ...(spec.higher_intent ? ["review"] : []), "thanks"];
@@ -168,9 +195,23 @@ function changed() {
   timer = setTimeout(check, 300);
 }
 
+// Closing, or starting another form, over typed work asks first.
+async function mayDiscard() {
+  if (!dirty || !$("form-edit")) return true;
+  return confirmDialog({ title: "Throw away this form?", body: "<p>What you typed isn't on Meta yet. Closing it loses it.</p>",
+    confirm: "Throw it away", cancel: "Keep editing", danger: true });
+}
+function closeBuilder() {
+  const f = $("form-edit");
+  if (f) markSaved(f);
+  $("builder").hidden = true; $("builder").innerHTML = "";
+  dirty = false;
+}
+
 function openBuilder(start) {
   spec = start;
   step = "intro";
+  dirty = false; tried = false; fieldList = []; touched.clear();
   const box = $("builder");
   box.hidden = false;
   box.innerHTML = editor();
@@ -179,6 +220,9 @@ function openBuilder(start) {
   changed();
   f.addEventListener("input", changed);
   f.addEventListener("change", changed);
+  f.addEventListener("focusout", (e) => {
+    if (e.target.name && e.target.matches("input, textarea")) { touched.add(e.target.name); markFields(); }
+  });
   f.addEventListener("focusin", (e) => {
     const s = e.target.closest("[data-step]");
     if (s && s.dataset.step !== step) { step = s.dataset.step; phone(); }
@@ -186,11 +230,11 @@ function openBuilder(start) {
   f.addEventListener("click", (e) => {
     const t = e.target.closest("[data-show-step]");
     if (t) { step = t.dataset.showStep; phone(); return; }
-    if (e.target.closest("[data-close]")) { box.hidden = true; box.innerHTML = ""; markSaved(f); return; }
+    if (e.target.closest("[data-close]")) { mayDiscard().then((ok) => { if (ok) closeBuilder(); }); return; }
     if (e.target.closest("#q-add")) {
       const n = f.querySelectorAll("[data-q]").length;
       $("q-list").insertAdjacentHTML("beforeend", customRow({ label: "", options: [] }, n));
-      syncQ(); step = "questions"; changed(); $(`q-label-${n}`).focus();
+      syncQ(); step = "questions"; changed(e); $(`q-label-${n}`).focus();
       return;
     }
     const rm = e.target.closest("[data-q-remove]");
@@ -198,7 +242,7 @@ function openBuilder(start) {
       rm.closest("[data-q]").remove();
       readSpec();
       $("q-list").innerHTML = spec.custom.map(customRow).join("");
-      syncQ(); changed();
+      syncQ(); changed(e);
     }
   });
   f.addEventListener("submit", create);
@@ -214,22 +258,32 @@ async function create(e) {
   const btn = e.submitter || f.querySelector("button[type=submit]");
   if (btn.disabled) return;
   readSpec();
-  fieldError(f, null);
+  tried = true;
+  clearTimeout(timer);
+  const r = await check();
+  if (r && r.fields.length) {
+    markFields({ focus: true });
+    // Count what is marked: a problem with no input of its own (too many questions) is only in the summary.
+    const marked = f.querySelectorAll(".field.error").length;
+    toast(marked ? `Fix ${marked === 1 ? "the marked field" : `the ${marked} marked fields`} first` : "Fix what's listed above first", "bad");
+    if (!marked) $("f-check").scrollIntoView({ block: "nearest" });
+    return;
+  }
   const yes = await confirmDialog({ title: `Create “${spec.name}” on Meta?`,
     body: "<p>It's saved on the Facebook Page. Meta doesn't allow changes afterwards, so to change it later you copy it into a new form.</p><p class=\"muted\">Nothing runs and nothing is spent until an ad uses it.</p>",
     confirm: "Create form" });
   if (!yes) return;
   btn.disabled = true;  // a second create while Meta answers would make a second form on the Page
   try {
-    const r = await api("/api/forms", { method: "POST", body: spec });
-    markSaved();
-    createdId = r.id;
-    $("builder").hidden = true; $("builder").innerHTML = "";
+    const made = await api("/api/forms", { method: "POST", body: spec });
+    createdId = made.id;
+    closeBuilder();
     toast("Form created on the Page");
     await loadList();
   } catch (err) {
     btn.disabled = false;
-    if (err.body && err.body.field) fieldError(f, err.body.field, err.message); else toast(err.message, "bad");
+    if (err.body && err.body.fields && err.body.fields.length) { fieldList = err.body.fields; markFields({ focus: true }); toast(err.message, "bad"); }
+    else toast(err.message, "bad");
   }
 }
 
@@ -246,10 +300,10 @@ if (me) {
   await loadList();
   showLinked();
   addEventListener("hashchange", async () => { await loadList(); showLinked(); });
-  $("new-form").addEventListener("click", () => openBuilder(blank()));
+  $("new-form").addEventListener("click", async () => { if (await mayDiscard()) openBuilder(blank()); });
   $("list").addEventListener("click", async (e) => {
     const c = e.target.closest("[data-copy]");
-    if (!c) return;
+    if (!c || !(await mayDiscard())) return;
     try { openBuilder(await api(`/api/forms/${encodeURIComponent(c.dataset.copy)}/copy`)); } catch (err) { toast(err.message, "bad"); }
   });
 }

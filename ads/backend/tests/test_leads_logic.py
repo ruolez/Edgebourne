@@ -93,5 +93,24 @@ class EventGivesUpTest(unittest.TestCase):
         self.assertTrue(leads.event_gives_up(self.NO_PERMISSION, self.NOW - 25 * self.HOUR, self.NOW))
 
 
+class SourceFilterTest(unittest.TestCase):
+    """Leads narrowed to where they came from: ?campaign=, ?adset=, ?ad=, ?form= (each its own column)."""
+
+    def test_each_named_source_becomes_one_clause_on_its_column(self):
+        args = {"campaign": "c1", "adset": "s1", "ad": "a1", "form": "f1"}
+        self.assertEqual(leads.source_filter(args), (
+            ["l.campaign_id = %s", "l.adset_id = %s", "l.ad_id = %s", "l.form_id = %s"], ["c1", "s1", "a1", "f1"]))
+
+    def test_empty_or_unknown_keys_add_nothing(self):
+        self.assertEqual(leads.source_filter({"campaign": "", "status": "new", "owner": "x"}), ([], []))
+
+    def test_an_ad_set_or_form_which_the_campaign_and_ad_picker_cannot_show_is_named(self):
+        cases = [({"campaign": "c1"}, None), ({"campaign": "c1", "adset": "s1"}, ("adset", "s1")),
+                 ({"form": "f1"}, ("form", "f1")), ({"ad": "a1", "form": "f1"}, ("form", "f1")), ({}, None)]
+        for args, want in cases:
+            with self.subTest(args=args):
+                self.assertEqual(leads.source_named(args), want)
+
+
 if __name__ == "__main__":
     unittest.main()

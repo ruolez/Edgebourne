@@ -273,7 +273,7 @@ dialog.palette::backdrop { background: rgba(10, 12, 14, .35); }
 .tbl td.num { text-align: right; font-family: var(--font-num); font-size: var(--t-s); }
 .tbl td.num b { font-weight: 600; }
 .tbl tbody tr { cursor: default; }
-.tbl tbody tr:hover td { background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+.tbl tbody tr:hover td { background: color-mix(in srgb, var(--surface-2) 45%, var(--surface)); }
 .tbl tbody tr.is-sel td { background: color-mix(in srgb, var(--signal-soft) 70%, var(--surface)); }
 .tbl tbody tr.is-peek td { background: var(--surface-2); }
 .tbl tbody tr.is-off .tbl-link { color: var(--ink-2); }
@@ -293,10 +293,49 @@ dialog.palette::backdrop { background: rgba(10, 12, 14, .35); }
 .campaign-add:hover { color: var(--ink); text-decoration: underline; }
 .c-st { width: 1%; }
 .trk { display: inline-flex; gap: 2px; vertical-align: middle; margin-right: 10px; }
-.trk i { width: 4px; height: 14px; border-radius: 1.5px; background: var(--surface-2); }
-.trk i.d-on { background: var(--signal); }
-.trk i.d-review { background: repeating-linear-gradient(135deg, var(--amber) 0 2px, var(--amber-soft) 2px 4px); }
-.trk i.d-bad { background: var(--bad); }
+.trk i, .trk-key i { width: 4px; height: 14px; border-radius: 1.5px; background: var(--surface-2); }
+.trk i.d-on, .trk-key i.d-on { background: var(--signal); }
+.trk i.d-review, .trk-key i.d-review { background: repeating-linear-gradient(135deg, var(--amber) 0 2px, var(--amber-soft) 2px 4px); }
+.trk i.d-bad, .trk-key i.d-bad { background: var(--bad); }
+/* What the bars mean, under a table that shows them. */
+.trk-key { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin: -4px 0 0; font-size: var(--t-xs); color: var(--ink-3); }
+.trk-key > span { display: inline-flex; align-items: center; gap: 6px; }
+.trk-key i { height: 12px; box-shadow: inset 0 0 0 1px var(--line); }
+/* The manager table scrolls inside its box, so its header and the name column (with the tick boxes) stay in
+   view however far down or across it goes. Sticky cells need a solid background.
+   Only the manager table (.mgr-wrap): Compare and other tables keep their full height. A row focused with
+   the arrow keys stops below the sticky header (scroll-padding). */
+.mgr-wrap { max-height: calc(100vh - 96px); overflow: auto; overscroll-behavior-x: contain; scroll-padding-top: 36px; }
+.tbl.has-cb .c-cb { position: sticky; left: 0; z-index: 1; width: 36px; min-width: 36px; max-width: 36px; box-sizing: border-box; padding: 0 0 0 12px; }
+/* Low specificity on purpose, so hover / selected / quick-look / focus row colours reach the tick cell too. */
+:where(.tbl.has-cb) .c-cb { background: var(--surface); }
+.tbl .c-name { position: sticky; left: 0; z-index: 1; background: var(--surface); box-shadow: inset -1px 0 0 var(--line); }
+.tbl.has-cb .c-name { left: 36px; }
+.tbl thead th { z-index: 2; }
+.tbl.has-cb thead th.c-cb, .tbl thead th.c-name { z-index: 3; }
+/* Campaign and ad set pages: who sees it, and learning beside it when Meta reports it. */
+.who-split { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 24px; }
+.learn-h { font-size: var(--t-m); font-weight: 600; margin: 0 0 6px; }
+.who-card p { margin: 0 0 6px; }
+@media (max-width: 720px) { .who-split { grid-template-columns: 1fr; gap: 16px; } }
+/* Lead forms: leads stored here link to them; Meta's own count under it. */
+.form-n a, .form-n .muted { font-family: var(--font-ui); }
+.form-n small { display: block; font-family: var(--font-ui); font-size: var(--t-xs); }
+.form-made-l { display: none; }
+/* Phones: one card per form (name, then status, leads and date, then the two actions). */
+@media (max-width: 720px) {
+  .form-tbl thead { display: none; }
+  .form-tbl, .form-tbl tbody { display: block; }
+  .form-tbl tr { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 12px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .form-tbl tr:last-child { border-bottom: 0; }
+  .form-tbl td { display: block; padding: 0; border: 0; }
+  .form-tbl .form-name, .form-tbl .form-made, .form-tbl .row-actions { grid-column: 1 / -1; }
+  .form-tbl .form-n { text-align: left; }
+  .form-tbl .form-n small { display: inline; margin-left: 6px; }
+  .form-tbl .form-made { color: var(--ink-3); font-size: var(--t-xs); }
+  .form-made-l { display: inline; }
+  .form-tbl .row-actions { white-space: normal; text-align: left; display: flex; flex-wrap: wrap; gap: 8px; }
+}
 .c-on { width: 1%; }
 .c-sp { width: 1%; }
 .tbl-sp { width: 84px; height: 22px; display: block; }
@@ -421,6 +460,8 @@ body.has-bulk .content { padding-bottom: 96px; }
   #sort-pick { flex: 1 1 100%; min-width: 0; order: 3; }
   .cr-toolbar #archived { order: 4; }
   .page-head #level { flex-basis: 100%; }
+  /* Campaign / ad set pages: the tabs get their own row, so the date range under them stays readable. */
+  .cr-toolbar > .tabs { flex: 1 1 100%; }
   .page-head #level button { flex: 1; }
 }
 
@@ -588,7 +629,7 @@ dialog { max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
 .main:focus { outline: none; }
 /* Rows open their quick look from the keyboard. */
 .tbl tbody tr:focus-visible, .pl li:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-.tbl tbody tr:focus-visible td { background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+.tbl tbody tr:focus-visible td { background: color-mix(in srgb, var(--surface-2) 45%, var(--surface)); }
 .pick { display: inline-grid; place-items: center; cursor: pointer; }
 
 /* Phones: every control is at least 44 × 44 px. Inline links get the height from padding that doesn't move

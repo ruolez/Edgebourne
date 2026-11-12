@@ -15,7 +15,9 @@ const state = { loaded: false, me: null, filter: "open", q: "", tests: false, le
 const $ = (id) => document.getElementById(id);
 
 // What "filtered" means here: anything other than open leads of every campaign, no search, no test leads.
-const filtered = () => state.filter !== "open" || Boolean(state.q) || state.tests || ["campaign", "ad"].some((k) => new URLSearchParams(location.search).get(k));
+// Where a lead came from, kept in the URL: the picker offers campaigns and ads; an ad set or a form comes from a link.
+const SOURCE_KEYS = ["campaign", "adset", "ad", "form"];
+const filtered = () => state.filter !== "open" || Boolean(state.q) || state.tests || SOURCE_KEYS.some((k) => new URLSearchParams(location.search).get(k));
 
 function renderFilters() {
   const c = state.counts;
@@ -25,7 +27,7 @@ function renderFilters() {
   $("filters").innerHTML = FILTERS.map((f) =>
     `<button type="button" class="view-chip" data-f="${f.id}" aria-pressed="${state.filter === f.id}">${f.label}<span class="n">${n[f.id] || 0}</span></button>`
   ).join("");
-  setNewCount(c.new || 0);
+  setNewCount(state.newEverywhere ?? c.new ?? 0);
 }
 
 const minutesText = (m) => (m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.round(m / 6) / 10} h`.replace(".0 h", " h") : `${Math.round(m / 1440)} days`);
@@ -69,15 +71,19 @@ function renderList() {
 }
 
 // Filter by where the lead came from: a campaign, or one ad inside it (kept in the URL: ?campaign= / ?ad=).
-function renderSources(sources, src) {
+// A link from an ad set or a lead form (?adset= / ?form=) shows as its own choice, named.
+const NARROW_WORD = { adset: "Ad set", form: "Lead form" };
+function renderSources(sources, src, narrowed) {
   const sel = document.getElementById("source");
-  const current = src.get("ad") ? `a:${src.get("ad")}` : src.get("campaign") ? `c:${src.get("campaign")}` : "";
+  const named = narrowed ? `n:${narrowed.kind}` : "";
+  const current = named || (src.get("ad") ? `a:${src.get("ad")}` : src.get("campaign") ? `c:${src.get("campaign")}` : "");
   const camps = [...new Map(sources.map((s) => [s.campaign_id, s.campaign_name])).entries()];
   sel.innerHTML = `<option value="">All campaigns and ads</option>${camps.map(([cid, cname]) => `<optgroup label="${esc(cname || "Campaign")}">
       <option value="c:${esc(cid)}">All of “${esc(cname || "this campaign")}”</option>
       ${sources.filter((s) => s.campaign_id === cid && s.ad_id).map((s) => `<option value="a:${esc(s.ad_id)}">${esc(s.ad_name || s.ad_id)} (${s.n})</option>`).join("")}</optgroup>`).join("")}`;
+  if (named) sel.insertAdjacentHTML("afterbegin", `<option value="${esc(named)}">${esc(NARROW_WORD[narrowed.kind])}: ${esc(narrowed.name || "this one")}</option>`);
   sel.value = current;
-  sel.hidden = !sources.length;
+  sel.hidden = !sources.length && !named;
 }
 
 async function load({ quiet = false } = {}) {
@@ -86,14 +92,15 @@ async function load({ quiet = false } = {}) {
   if (state.q) params.set("q", state.q);
   if (state.tests) params.set("tests", "1");
   const src = new URLSearchParams(location.search);
-  for (const k of ["campaign", "ad"]) if (src.get(k)) params.set(k, src.get(k));
+  for (const k of SOURCE_KEYS) if (src.get(k)) params.set(k, src.get(k));
   const superseded = startLoad("leads");
   try {
     const data = await api("/api/leads?" + params);
     if (superseded()) return;
-    renderSources(data.sources || [], src);
+    renderSources(data.sources || [], src, data.narrowed);
     state.leads = data.leads;
     state.counts = data.counts;
+    state.newEverywhere = data.new_everywhere;
     renderResponse(data.response);
     if (!state.loaded) { data.leads.forEach((l) => state.seen.add(l.id)); state.loaded = true; }
     renderFilters();
@@ -341,7 +348,7 @@ function clearFilters() {
   state.filter = "open"; state.q = ""; state.tests = false; state.selected = null;
   $("q").value = ""; $("tests").checked = false;
   const u = new URL(location.href);
-  u.searchParams.delete("campaign"); u.searchParams.delete("ad");
+  [...SOURCE_KEYS, "status"].forEach((k) => u.searchParams.delete(k));
   history.replaceState(null, "", u.pathname + u.search);
   rememberList(u.pathname + u.search);
   load();
@@ -355,10 +362,17 @@ async function main() {
   state.me = await boot({ page: "leads" });
   if (!state.me) return;
   $("search-icon").outerHTML = icon("search");
+  const askedStage = new URLSearchParams(location.search).get("status");
+  if (FILTERS.some((f) => f.id === askedStage)) state.filter = askedStage;
   $("filters").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-f]");
     if (!b) return;
     state.filter = b.dataset.f;
+    // The stage is kept in the address too (?status=), so a link can open on All and Back keeps it.
+    const u = new URL(location.href);
+    if (state.filter === "open") u.searchParams.delete("status"); else u.searchParams.set("status", state.filter);
+    history.replaceState(null, "", u.pathname + u.search + u.hash);
+    rememberList(u.pathname + u.search);
     load();
   });
   $("tests").addEventListener("change", (e) => { state.tests = e.target.checked; load(); });
@@ -366,8 +380,9 @@ async function main() {
   $("list").addEventListener("click", (e) => { if (e.target.closest("[data-clear-filters]")) clearFilters(); });
   $("source").addEventListener("change", (e) => {
     const u = new URL(location.href);
-    u.searchParams.delete("campaign"); u.searchParams.delete("ad");
     const [kind, value] = e.target.value.split(":");
+    if (kind === "n") return;
+    SOURCE_KEYS.forEach((k) => u.searchParams.delete(k));
     if (kind === "c") u.searchParams.set("campaign", value);
     if (kind === "a") u.searchParams.set("ad", value);
     history.replaceState(null, "", u);

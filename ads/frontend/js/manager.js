@@ -55,8 +55,15 @@ function track(r) {
   const days = r.track || [];
   if (!days.length) return "";
   const last = REVIEW_STATES.includes(r.effective_status) ? "d-review" : PROBLEM_STATES.includes(r.effective_status) ? "d-bad" : null;
-  return `<span class="trk" aria-hidden="true">${days.map((d, i) => `<i class="${i === days.length - 1 && last ? last : d.on ? "d-on" : ""}"></i>`).join("")}</span>`;
+  const on = days.filter((d) => d.on).length;
+  const words = `Spent on ${on} of the last ${days.length} days`;
+  return `<span class="trk" role="img" aria-label="${words}" title="${words}">${days.map((d, i) => `<i class="${i === days.length - 1 && last ? last : d.on ? "d-on" : ""}"></i>`).join("")}</span>`;
 }
+
+// What the track's bars mean, said once under a table that shows it (only ads have a track).
+export const hasTrack = (rows) => rows.some((r) => r.track?.length);
+export const trackLegend = () => `<p class="trk-key"><span class="trk-key-t">Delivery bars, one per day for the last 14 complete days:</span>
+  <span><i class="d-on"></i>spent that day</span><span><i></i>didn't spend</span><span><i class="d-review"></i>in review now</span><span><i class="d-bad"></i>rejected or has a problem now</span></p>`;
 
 export function statusCell(r) {
   const [cls, label] = statusOf(r.effective_status);
@@ -111,15 +118,15 @@ const C = {
 // A column's name in plain words, for saying what a list is sorted by.
 export const columnLabel = (key) => C[key]?.label || key;
 export const COLUMN_SETS = {
-  results: ["Results", { ad: ["name", "status", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified", "ctr", "hook", "on", "spark"],
-    adset: ["name", "status", "budget", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified", "on"],
-    campaign: ["name", "status", "budget", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified", "on"] }],
-  delivery: ["Delivery", { ad: ["name", "status", "spend", "impressions", "reach", "freq", "cpm", "ctr", "on"],
-    adset: ["name", "status", "budget", "spend", "impressions", "reach", "freq", "cpm", "on"],
-    campaign: ["name", "status", "budget", "spend", "impressions", "reach", "freq", "cpm", "on"] }],
-  video: ["Video", { ad: ["name", "status", "spend", "impressions", "hook", "hold", "leads", "cpl", "on"],
-    adset: ["name", "status", "spend", "impressions", "hook", "hold", "leads", "cpl", "on"],
-    campaign: ["name", "status", "spend", "impressions", "hook", "hold", "leads", "cpl", "on"] }],
+  results: ["Results", { ad: ["name", "on", "status", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified", "ctr", "hook", "spark"],
+    adset: ["name", "on", "status", "budget", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified"],
+    campaign: ["name", "on", "status", "budget", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified"] }],
+  delivery: ["Delivery", { ad: ["name", "on", "status", "spend", "impressions", "reach", "freq", "cpm", "ctr"],
+    adset: ["name", "on", "status", "budget", "spend", "impressions", "reach", "freq", "cpm"],
+    campaign: ["name", "on", "status", "budget", "spend", "impressions", "reach", "freq", "cpm"] }],
+  video: ["Video", { ad: ["name", "on", "status", "spend", "impressions", "hook", "hold", "leads", "cpl"],
+    adset: ["name", "on", "status", "spend", "impressions", "hook", "hold", "leads", "cpl"],
+    campaign: ["name", "on", "status", "spend", "impressions", "hook", "hold", "leads", "cpl"] }],
 };
 
 function sparkline(series) {
@@ -152,7 +159,7 @@ export function tableHtml({ level, rows, cols, sort, dir, selected, selectable, 
   const body = sorted.map((r) => `<tr data-row="${r.level}:${esc(r.id)}" tabindex="${rowKey(r) === focusKey ? 0 : -1}" class="${selected.has(r.id) ? "is-sel" : ""} ${["PAUSED", "ARCHIVED"].includes(r.status) ? "is-off" : ""}">
       ${selectable ? `<td class="c-cb"><label class="pick"><input type="checkbox" class="tbl-cb" data-pick="${esc(r.id)}" aria-label="Select ${esc(r.name)}" ${selected.has(r.id) ? "checked" : ""}></label></td>` : ""}
       ${columns.map((c) => `<td class="${c.num ? "num" : ""} ${c.cls || ""}">${c.cell(r)}</td>`).join("")}</tr>`).join("");
-  return `<div class="tbl-wrap"><table class="tbl"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+  return `<div class="tbl-wrap mgr-wrap"><table class="tbl${selectable ? " has-cb" : ""}"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
 
 // One row of a list is in the Tab order (the last one focused, else the first); ↑ ↓ move between them.
@@ -455,6 +462,7 @@ export async function peek(r, { onClose, focus = true } = {}) {
       ${r.can_control && ["ACTIVE", "PAUSED"].includes(r.status) ? `<span class="pk-sw">${switchHtml(isOn(r.status), `data-toggle="${r.level}:${r.id}" data-name="${esc(r.name)}"`, `${r.name} on or off`)} ${isOn(r.status) ? "On" : "Off"}</span>` : ""}
       ${r.level !== "ad" && r.daily_budget_cents ? budgetCell(r) : ""}
       ${r.level === "ad" ? `<a class="btn btn-small" href="/leads.html?ad=${encodeURIComponent(r.id)}">Its leads</a>` : ""}
+      ${r.level === "adset" ? `<a class="btn btn-small" href="/leads.html?adset=${encodeURIComponent(r.id)}">Its leads</a>` : ""}
       ${r.level === "campaign" ? `<a class="btn btn-small" href="/leads.html?campaign=${encodeURIComponent(r.id)}">Its leads</a>` : ""}</div>
     ${context(r)}
     <h3 class="pk-h">This period ${r.prev ? "<small>against the same days before</small>" : ""}</h3>

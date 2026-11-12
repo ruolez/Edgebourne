@@ -50,7 +50,18 @@ def clean_spec(raw):
 
 def check(spec):
     return {"problems": [{"field": f, "message": m} for f, m in forms.problems(spec)],
-            "policy": [{"where": w, "why": m} for w, m in forms.policy_problems(spec)]}
+            "policy": [{"where": w, "why": m} for w, m in forms.policy_problems(spec)],
+            "fields": [{"field": f, "message": m} for f, m in forms.field_errors(spec)]}
+
+
+def stored_leads(form_ids):
+    """{form id: leads stored here (test leads left out)}: what the Leads list shows for that form."""
+    if not form_ids:
+        return {}
+    import db
+    rows = db.query("SELECT form_id, COUNT(*) AS n FROM leads WHERE form_id = ANY(%s) AND NOT is_test GROUP BY form_id",
+                    [list(form_ids)])
+    return {r["form_id"]: r["n"] for r in rows}
 
 
 @bp.get("")
@@ -60,6 +71,9 @@ def listing():
         items = page_forms()
     except meta_client.MetaError as exc:
         return api_error(str(exc), 400)
+    here = stored_leads([f["id"] for f in items])
+    for f in items:
+        f["leads_here"] = here.get(f["id"], 0)
     return jsonify({"items": items, "privacy_default": privacy_default(), "standard": forms.STANDARD,
                     "limits": forms.LIMITS, "max_custom": forms.MAX_CUSTOM, "max_options": forms.MAX_OPTIONS})
 
@@ -88,7 +102,8 @@ def create():
     result = check(spec)
     if result["problems"] or result["policy"]:
         first = (result["problems"] or [{"field": None, "message": f"{result['policy'][0]['where']}: {result['policy'][0]['why']}"}])[0]
-        body = {"error": first["message"], "field": first["field"], **result}
+        spot = result["fields"][0]["field"] if result["fields"] else first["field"]
+        body = {"error": first["message"], "field": spot, **result}
         return jsonify(body), 400
     import ads_api
     user = current_user()

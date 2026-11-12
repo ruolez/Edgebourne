@@ -1,10 +1,10 @@
 // Ads page: the manager table at three levels with views, saved views, range + "vs before",
 // columns, search, selection → bulk bar / compare, and a peek drawer. Everything is in the URL.
 import { api, startLoad } from "./api.js";
-import { boot, confirmDialog, esc, icon, onRefresh, toast, showLoadError, rememberList, withFrom } from "./ui.js";
+import { boot, confirmDialog, emptyState, esc, icon, onRefresh, toast, showLoadError, rememberList, withFrom } from "./ui.js";
 import { count, dayLabel, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
-import { COLUMN_SETS, LEVEL_WORDS, columnLabel, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, tableHtml, unlistedNote, wire } from "./manager.js";
+import { COLUMN_SETS, LEVEL_WORDS, columnLabel, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, tableHtml, hasTrack, trackLegend, unlistedNote, wire } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = { level: "ad", view: "all", range: "7", vs: true, cols: "results", sort: "spend", dir: "desc", q: "", campaign: "", archived: false, display: "table", peek: "" };
@@ -105,11 +105,12 @@ function render() {
     return;
   }
   const list = visibleRows();
-  const body = !list.length ? `<div class="panel empty"><h3>Nothing here</h3><p>No ${LEVEL_WORDS[state.level][1]} match “${esc((VIEWS[state.view] || VIEWS.all)[0])}”${state.q ? ` and “${esc(state.q)}”` : ""}.</p></div>`
+  const table = list.length && !narrow() && !(state.level === "ad" && state.display === "cards");
+  const body = !list.length ? emptyHere()
     : state.level === "ad" && state.display === "cards" ? cardsHtml(list)
     : narrow() ? listHtml({ rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), selected, sort: state.sort, dir: state.dir })
     : tableHtml({ level: state.level, rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: state.cols, sort: state.sort, dir: state.dir, selected, selectable: true, range: state.range });
-  $("cr-all").innerHTML = buildsNote() + headerFigures() + toolbar() + body
+  $("cr-all").innerHTML = buildsNote() + headerFigures() + toolbar() + body + (table && hasTrack(list) ? trackLegend() : "")
     + `<p class="muted small flush cr-foot">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}); today is left out because Meta reports late.${esc(unlistedNote(headerTotals().m, (rows.ad || []).filter((a) => !state.campaign || a.campaign?.id === state.campaign)))} Click a row for a quick look.</p>`;
   if (state.level === "campaign" && me.role === "admin") {
     document.querySelectorAll('#cr-all tr[data-row^="campaign:"] .c-name small').forEach((sm) => {
@@ -122,6 +123,18 @@ function render() {
   if (all && all.dataset.mixed) all.indeterminate = true;
   $("bulk").innerHTML = bulkBarHtml(state.level, picked(), canControl);
   document.body.classList.toggle("has-bulk", selected.size > 0);
+}
+
+// Nothing left after the filters: say which ones, and one click back to everything at this level.
+const filtersOn = () => state.view !== "all" || Boolean(state.q.trim()) || Boolean(state.campaign);
+function emptyHere() {
+  const words = LEVEL_WORDS[state.level][1];
+  if (!filtersOn()) return emptyState({ title: `No ${words} yet`, body: `There are no ${words} to show${state.archived ? "" : " (archived ones are hidden)"}.`, tag: "div" });
+  const camp = state.campaign && (rows.campaign || []).find((c) => c.id === state.campaign);
+  const said = [state.view !== "all" ? `“${esc((VIEWS[state.view] || VIEWS.all)[0])}”` : "", state.q.trim() ? `named “${esc(state.q.trim())}”` : "",
+    camp ? `in “${esc(camp.name)}”` : ""].filter(Boolean).join(", ");
+  return emptyState({ title: "Nothing matches", body: `No ${words} ${said}.`, tag: "div", role: "status",
+    actions: `<button type="button" class="btn" data-clear-filters>Clear filters</button>` });
 }
 
 async function loadSaved() {
@@ -180,8 +193,10 @@ function set(patch, reload = false) {
 
 me = await boot({ page: "ads" });
 if (me) {
+  // One primary New: admins pick what to make from it, teammates make an ad (clients make nothing).
   $("new-ad").innerHTML = `${icon("plus")}<span>New ad</span>`;
   $("new-menu").hidden = me.role !== "admin";
+  $("new-ad").hidden = me.role === "admin";
   $("level").addEventListener("click", (e) => {
     const b = e.target.closest("[data-level]");
     if (!b || b.dataset.level === state.level) return;
@@ -212,6 +227,12 @@ if (me) {
   root.addEventListener("click", async (e) => {
     const v = e.target.closest("[data-view]");
     if (v) { selected.clear(); set({ view: v.dataset.view }); return; }
+    if (e.target.closest("[data-clear-filters]")) {
+      selected.clear();
+      set({ view: "all", q: "", campaign: "" });
+      $("cr-search")?.focus();
+      return;
+    }
     const d = e.target.closest("[data-display]");
     if (d) { set({ display: d.dataset.display }); return; }
     if (e.target.closest("#vs")) { set({ vs: !state.vs }, true); return; }

@@ -1199,6 +1199,28 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   await Promise.all([page.waitForURL('**/forms.html'), page.click('.subnav a[href="/forms.html"]')]);
   await page.waitForSelector('#list table');
   check('Lead forms lists the Page forms with their leads', /EB \| Free AI workflow review/.test(await page.textContent('#list')));
+  // 9.4b: each form's leads (as stored here) link to Leads narrowed to that form; Meta's own count beside them.
+  const formLeads = page.locator('[data-form-row="1132280359202136"] a.form-leads');
+  const formHref = await formLeads.getAttribute('href');
+  const formLeadsShown = Number((await formLeads.textContent()).replace(/\D/g, ''));
+  const formApi = await page.evaluate(async () => (await (await fetch('/api/leads?form=1132280359202136&status=all')).json()));
+  check('a form names its leads and links to Leads narrowed to that form, on every stage', formHref === '/leads.html?form=1132280359202136&status=all'
+    && formLeadsShown === formApi.leads.length && formApi.leads.length > 0 && formApi.narrowed && formApi.narrowed.kind === 'form', `${formHref} ${formLeadsShown} ${formApi.leads.length}`);
+  await Promise.all([page.waitForURL('**/leads.html?form=**'), formLeads.click()]);
+  await page.waitForFunction(() => /^Lead form: /.test(document.querySelector('#source')?.selectedOptions[0]?.text || ''));
+  check('Leads opened from a form says which form and offers Clear filters', await page.isVisible('#clear-filters'));
+  await page.waitForFunction(() => document.querySelector('#filters [data-f="all"][aria-pressed="true"]'));
+  const formOpened = await page.evaluate(() => ({ rows: document.querySelectorAll('#list .lead-row').length,
+    all: Number(document.querySelector('#filters [data-f="all"] .n').textContent), open: Number(document.querySelector('#filters [data-f="open"] .n').textContent) }));
+  check("the form's lead number is what the opened Leads page lists, and its stage counts are that form's", formOpened.rows === formLeadsShown && formOpened.all === formLeadsShown
+    && formOpened.open <= formLeadsShown, `${formLeadsShown} ${JSON.stringify(formOpened)}`);
+  await page.selectOption('#source', '');
+  await page.waitForFunction(() => !/form=/.test(location.search));
+  await page.click('#clear-filters');
+  await page.waitForFunction(() => !/status=/.test(location.search) && document.querySelector('#filters [data-f="open"][aria-pressed="true"]'));
+  check('picking "All campaigns and ads" drops the form', !/form=/.test(page.url()));
+  await page.goto(BASE + '/forms.html');
+  await page.waitForSelector('#list table');
   await page.click('#new-form');
   await page.waitForSelector('#form-edit');
   await page.fill('#f-name', 'QA intro call form');
@@ -1209,11 +1231,20 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   await page.fill('#q-label-0', 'What is your yearly income?');
   await page.fill('#q-opts-0', 'Under 50k\nOver 50k');
   await page.waitForFunction(() => /Meta would stop ads/.test(document.getElementById('f-check').textContent));
-  check('a prohibited question is caught before creating, with the reason', /financial details/.test(await page.textContent('#f-check')) && await page.isDisabled('#f-create'));
+  await page.waitForSelector('#q-label-0[aria-invalid="true"]');
+  const qErr = await page.evaluate(() => { const i = document.getElementById('q-label-0'); return i.getAttribute('aria-describedby').split(' ').map((id) => document.getElementById(id)?.textContent || '').join(' '); });
+  check('a prohibited question is caught before creating, with the reason, at the question itself', /financial details/.test(await page.textContent('#f-check')) && /financial details/.test(qErr), qErr);
+  await page.fill('#f-name', '');
+  await page.click('#f-create');
+  await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'f-name');
+  check('Create with problems sends nothing: every problem field is marked and the first gets the focus',
+    (await page.locator('dialog.confirm[open]').count()) === 0 && (await page.getAttribute('#f-name', 'aria-invalid')) === 'true' && (await page.getAttribute('#q-label-0', 'aria-invalid')) === 'true');
+  await page.fill('#f-name', 'QA intro call form');
   await page.fill('#q-label-0', 'How many people work at your company?');
   await page.fill('#q-opts-0', '1-5\n6-20\n21 or more');
   await page.check('#form-edit input[name="type"][value="intent"]');
   await page.waitForFunction(() => /Ready/.test(document.getElementById('f-check').textContent));
+  check('fixed fields lose their marks', (await page.locator('#form-edit [aria-invalid="true"]').count()) === 0);
   check('a serious-leads form adds the review step to the preview', await page.locator('#steps [data-show-step="review"]').count() === 1);
   await page.click('#steps [data-show-step="questions"]');
   check('the preview lists the prefilled fields and the answers to pick', /Contact information.*Maria Lopez.*How many people work at your company\?.*6-20/s.test(await page.textContent('#phone')));
@@ -1235,6 +1266,17 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   check('the server refuses a prohibited question too', sneaky[0] === 400 && sneaky[1] === 1 && Object.keys(fake('_forms')).length === formsBefore + 1);
   await page.locator('[data-copy="1132280359202136"]').click();
   await page.waitForSelector('#form-edit');
+  await page.fill('#f-name', 'QA typed name');
+  await page.click('#form-edit [data-close]');
+  await page.waitForSelector('dialog.confirm[open]');
+  check('closing a form with typed work asks first', /Throw away this form/.test(await page.textContent('dialog.confirm')));
+  await page.click('dialog.confirm #cd-cancel');
+  await page.waitForSelector('dialog.confirm', { state: 'detached' }).catch(() => {});
+  check('Keep editing leaves the typed work', (await page.inputValue('#f-name')) === 'QA typed name');
+  await page.locator('[data-copy="1132280359202136"]').click();
+  await page.waitForSelector('dialog.confirm[open]');
+  await page.click('dialog.confirm #cd-ok');
+  await page.waitForFunction(() => document.getElementById('f-name')?.value !== 'QA typed name');
   check('Copy into a new form starts from the old one', (await page.inputValue('#f-intro')) === 'Free AI workflow review' && (await page.inputValue('#q-label-0')) === 'What kind of business do you run?'
     && (await page.inputValue('#f-name')) === 'EB | Free AI workflow review (copy)');
   await page.goto(BASE + `/new-ad.html?form=${newForms[0].id}`);
@@ -1287,6 +1329,18 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   check('the next step is adding an ad to the new ad set', (await page.inputValue('#aset-pick')) === newSets[0].id);
   check('that page says the ad set was made, links to it, and Cancel still goes back to the list',
     (await page.getAttribute('#made-note a.ent-link', 'href')) === `/adset.html?id=${newSets[0].id}` && /^\/ads\.html\?.*level=campaign/.test(await page.getAttribute('#cancel', 'href')));
+  // 9.4b: the new, empty ad set says who it reaches without learning data, and offers its first ad.
+  {
+    const p2 = await page.context().newPage();
+    await p2.goto(BASE + `/adset.html?id=${newSets[0].id}`);
+    await p2.waitForSelector('#who-sees');
+    const emptyNew = await p2.getAttribute('#empty-new', 'href').catch(() => null);
+    check('an ad set with no ads offers New ad in its empty state', (emptyNew || '').startsWith(`/new-ad.html?adset=${newSets[0].id}`), emptyNew);
+    check('who sees it shows even before Meta reports learning', /Who sees it/.test(await p2.textContent('#who-sees')) && (await p2.locator('#who-sees .learn').count()) === 0,
+      await p2.textContent('#who-sees'));
+    check('an ad set page links to its leads', (await p2.getAttribute('#en-leads', 'href')) === `/leads.html?adset=${newSets[0].id}`);
+    await p2.close();
+  }
   await page.reload();
   await page.waitForFunction(() => document.querySelectorAll('#aset-pick option').length > 0);
   check('the "just created" note is said once: a reload keeps the ad set but drops the note', !/[?&]made=/.test(page.url())
@@ -1294,6 +1348,9 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
 
   // New campaign: one form for campaign, ad set, form and ads; created off; resumes after a refusal; publish needs the budget typed.
   await page.goto(BASE + '/ads.html');
+  await page.waitForSelector('#new-menu:not([hidden]) summary');
+  check('Ads has one primary New button (admins pick what to make from it)', (await page.locator('.page-head .btn-primary:visible').count()) === 1
+    && /btn-primary/.test(await page.getAttribute('#new-menu summary', 'class')) && await page.isHidden('#new-ad'));
   await page.click('#new-menu summary');
   await Promise.all([page.waitForURL('**/new-campaign.html?from=**'), page.click('#campaign-link')]);
   check('New campaign opened from Ads has Cancel back to Ads', /^\/ads\.html/.test(await page.getAttribute('#cancel', 'href')), await page.getAttribute('#cancel', 'href'));
@@ -1828,6 +1885,9 @@ with account_ctx.all_accounts():
   });
   check("a client marks Inbox items read and keeps their own saved views, never shared", clientOwn.read === 200 && clientOwn.unread[1] === clientOwn.unread[0] - 1
     && clientOwn.view === 201 && clientOwn.shared.join() === 'false,false' && clientOwn.del === 200, JSON.stringify(clientOwn));
+  await cp.goto(BASE + '/ads.html');
+  await cp.waitForSelector('#cr-all .cr-toolbar');
+  check('a client gets no New button or menu on Ads', await cp.isHidden('#new-ad') && await cp.isHidden('#new-menu') && (await cp.locator('#empty-new').count()) === 0);
   await cp.goto(BASE + '/leads.html');
   await cp.waitForSelector('.lead-row');
   await cp.click('.lead-row');
@@ -2508,6 +2568,8 @@ print(','.join(left))
   const cmpText = await page.textContent('#cmp');
   const cmpWords = await page.evaluate(() => { const svg = document.querySelector('#cmp-chart svg'); const d = document.getElementById(svg.getAttribute('aria-describedby')); return d ? d.textContent : ''; });
   check('the Compare chart says in words, per ad, its highest day and its last value', (cmpWords.match(/: (highest .+? on .+?, last [^;.]+|no data)/g) || []).length === 3, cmpWords);
+  const cmpBox = await page.evaluate(() => { const w = document.querySelector('#cmp .tbl-wrap') || document.querySelector('.tbl-wrap'); return { max: getComputedStyle(w).maxHeight, cut: w.scrollHeight - w.clientHeight }; });
+  check('the Compare table is shown at its full height (only the manager table scrolls in a box)', cmpBox.max === 'none' && cmpBox.cut <= 1, JSON.stringify(cmpBox));
   check('the Compare page lines up 3 ads with a verdict and a line per ad', (await page.locator('.cmp thead .cmp-th').count()) === 3
     && (await page.locator('#cmp-chart .ln').count()) === 3 && /Too early to name a winner|leads on cost per/.test(cmpText));
   await page.click('[data-drop]');
@@ -2675,6 +2737,47 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   await page.goto(BASE + '/ads.html?range=7');
   await page.waitForSelector('tr[data-row^="ad:"] .trk');
   check('the Delivery track shows the last 14 days whatever the range', (await page.locator('tr[data-row^="ad:"] .trk').first().locator('i').count()) === 14);
+  // 9.4b: the track says what it shows, a legend explains the bars, the On switch sits next to the name,
+  // and the header and name column stay in view while the table scrolls.
+  const trkWords = await page.getAttribute('tr[data-row^="ad:"] .trk', 'aria-label');
+  check('each delivery track says in words how many days it spent', /^Spent on \d+ of the last 14 days$/.test(trkWords || ''), trkWords);
+  check('a legend under the table explains the delivery bars', /spent that day/.test(await page.textContent('.trk-key')) && /in review/.test(await page.textContent('.trk-key')));
+  const heads = await page.$$eval('.tbl thead th', (ths) => ths.map((t) => t.className.trim().split(/\s+/).pop()));
+  check('the On switch is the column right after the name', heads.indexOf('c-on') === heads.indexOf('c-name') + 1, heads.join());
+  const sticky = await page.evaluate(async () => {
+    const wrap = document.querySelector('.tbl-wrap');
+    wrap.scrollTop = 300; wrap.scrollLeft = 400;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const w = wrap.getBoundingClientRect(), th = document.querySelector('.tbl thead th').getBoundingClientRect();
+    const name = document.querySelector('.tbl tbody tr:nth-child(8) td.c-name').getBoundingClientRect();
+    const cb = document.querySelector('.tbl thead th.c-cb').getBoundingClientRect();
+    const hit = document.elementFromPoint(cb.left + cb.width / 2, cb.top + cb.height / 2);
+    const out = { scrolled: wrap.scrollTop > 0 && wrap.scrollLeft > 0, headTop: Math.round(th.top - w.top), nameLeft: Math.round(name.left - w.left),
+      selectAll: Boolean(hit && hit.closest('thead th.c-cb')) };
+    wrap.scrollTop = 0; wrap.scrollLeft = 0;
+    return out;
+  });
+  check('scrolled down and across, the header stays on top and the name column stays at the left', sticky.scrolled && sticky.headTop <= 1 && sticky.nameLeft <= 40, JSON.stringify(sticky));
+  check('scrolled down, the Select all box stays on top of the rows and can be clicked', sticky.selectAll, JSON.stringify(sticky));
+  await page.locator('.tbl tbody tr').nth(1).locator('.c-cb input').check();
+  await page.mouse.move(1, 1);
+  const selBg = await page.evaluate(() => { const tr = document.querySelector('.tbl tbody tr.is-sel'); const bg = (sel) => getComputedStyle(tr.querySelector(sel)).backgroundColor; return [bg('td.c-cb'), bg('td.c-name'), bg('td.num')]; });
+  check('a selected row is coloured from its tick box to the last column', selBg[0] === selBg[1] && selBg[1] === selBg[2] && selBg[0] !== 'rgb(255, 255, 255)', selBg.join(' | '));
+  await page.locator('.tbl tbody tr').nth(1).locator('.c-cb input').uncheck();
+  await page.goto(BASE + '/ads.html?level=adset');
+  await page.waitForSelector('.tbl tr[data-row^="adset:"]');
+  check('ad sets have no delivery bars, so no legend for them', (await page.locator('.trk-key').count()) === 0 && (await page.locator('.trk').count()) === 0);
+  await page.locator('.tbl tr[data-row^="adset:"]').first().locator('td.num').first().click();
+  await page.waitForSelector('.pk.open');
+  const peekLeads = await page.getAttribute('.pk.open a[href^="/leads.html?adset="]', 'href').catch(() => null);
+  check("an ad set's quick look links to its leads", /^\/leads\.html\?adset=\d+$/.test(peekLeads || ''), peekLeads);
+  await page.keyboard.press('Escape');
+  await page.goto(BASE + '/ads.html?view=off&q=zzzz-nothing');
+  await page.waitForSelector('[data-clear-filters]');
+  check('a filtered-out list says which filters and offers Clear filters', /“Off”/.test(await page.textContent('#cr-all .empty')) && /zzzz-nothing/.test(await page.textContent('#cr-all .empty')));
+  await page.click('[data-clear-filters]');
+  await page.waitForSelector('.tbl tr[data-row^="ad:"]');
+  check('Clear filters brings every ad back and drops the filters from the address', !/view=|q=/.test(page.url()) && (await page.inputValue('#cr-search')) === '', page.url());
   const vsHead = async () => page.getAttribute('th:has(button[data-sort="vs"])', 'title');
   const vsDays = await vsHead();
   await page.goto(BASE + '/ads.html?range=mtd');
@@ -2875,6 +2978,10 @@ with account_ctx.all_accounts():
     await mp.waitForSelector('#ib-detail [data-accept]');
     check("a teammate's suggestion in the Inbox offers Review and accept and no link to the Claude page", /Review and accept/.test(await mp.textContent('#ib-detail [data-accept]'))
       && (await mp.locator('#ib-detail a[href^="/desk.html"]').count()) === 0, mateProp);
+    await mp.goto(BASE + '/ads.html');
+    await mp.waitForSelector('#cr-all .cr-toolbar');
+    check('a teammate gets one primary New ad and no New menu', await mp.isVisible('#new-ad') && await mp.isHidden('#new-menu')
+      && /btn-primary/.test(await mp.getAttribute('#new-ad', 'class')) && (await mp.locator('.page-head .btn-primary:visible').count()) === 1);
     await mctx.close();
     py(`
 import db, account_ctx
@@ -3215,6 +3322,10 @@ with account_ctx.all_accounts():
   }
   await phonePage.click('.bk [data-bulk="clear"]');
   await phonePage.setViewportSize({ width: 390, height: 844 });
+  await phonePage.goto(BASE + '/adset.html?id=120252672227950312');
+  await phonePage.waitForSelector('#range-pick');
+  const rangeFit = await phonePage.evaluate(() => { const r = document.getElementById('range-pick'); return { w: Math.round(r.getBoundingClientRect().width), cut: r.scrollWidth - r.clientWidth }; });
+  check('on a phone the ad set page gives the date range room to be read', rangeFit.w >= 140, JSON.stringify(rangeFit));
   const proposalsWaiting = (await phonePage.evaluate(async () => (await fetch('/api/refresh')).json())).proposals || 0;
   await phonePage.goto(BASE + '/home.html');
   await phonePage.waitForTimeout(1200);
@@ -3293,6 +3404,12 @@ with account_ctx.all_accounts():
   }
   check('no field on a phone is small enough to make iOS zoom', zoomers.length === 0, zoomers.join(' | '));
   check('on a 320px phone nothing runs past the edge', spilling.length === 0, spilling.join(' | '));
+  await narrow.goto(BASE + '/forms.html');
+  await narrow.waitForSelector('.form-tbl');
+  const formCards = await narrow.evaluate(() => { const t = document.querySelector('.form-tbl'), box = t.parentElement;
+    return { sideways: box.scrollWidth - box.clientWidth, right: Math.round(Math.max(...[...t.querySelectorAll('td')].map((td) => td.getBoundingClientRect().right))), vw: innerWidth,
+      head: getComputedStyle(t.querySelector('thead')).display }; });
+  check('on a 320px phone each lead form is a card that fits, with no sideways scroll', formCards.sideways <= 1 && formCards.right <= formCards.vw && formCards.head === 'none', JSON.stringify(formCards));
   await narrow.goto(BASE + '/leads.html');
   await narrow.waitForSelector('.lead-row');
   await narrow.click('.lead-row');

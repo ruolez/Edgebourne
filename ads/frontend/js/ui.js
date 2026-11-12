@@ -794,6 +794,12 @@ export function setNewCount(n) {
 // the field's hint too). fieldError(form) clears every error in the form.
 let errSeq = 0;
 export function fieldError(form, name, message) {
+  fieldErrors(form, name ? [{ field: name, message }] : []);
+}
+
+// Several at once ([{ field: input name, message }]), e.g. a live check: every field marked, the first one
+// focused unless `focus: false` (someone is typing elsewhere). An empty list clears them all.
+export function fieldErrors(form, errors, { focus = true } = {}) {
   form.querySelectorAll(".field.error").forEach((f) => f.classList.remove("error"));
   form.querySelectorAll('[aria-invalid="true"]').forEach((el) => {
     el.removeAttribute("aria-invalid");
@@ -801,19 +807,23 @@ export function fieldError(form, name, message) {
     if (rest) el.setAttribute("aria-describedby", rest); else el.removeAttribute("aria-describedby");
   });
   form.querySelectorAll(".field .err").forEach((e) => e.remove());
-  if (!name) return;
-  const input = form.querySelector(`[name="${name}"]`);
-  const field = input && input.closest(".field");
-  if (!field) return;
-  field.classList.add("error");
-  const err = document.createElement("div");
-  err.className = "err";
-  err.id = `ferr-${++errSeq}`;
-  err.textContent = message;
-  field.appendChild(err);
-  input.setAttribute("aria-invalid", "true");
-  input.setAttribute("aria-describedby", [input.getAttribute("aria-describedby"), err.id].filter(Boolean).join(" "));
-  input.focus();
+  let first = null;
+  for (const { field: name, message } of errors) {
+    const input = form.querySelector(`[name="${CSS.escape(name)}"]`);
+    const field = input && input.closest(".field");
+    if (!field) continue;
+    field.classList.add("error");
+    const err = document.createElement("div");
+    err.className = "err";
+    err.id = `ferr-${++errSeq}`;
+    err.textContent = message;
+    field.appendChild(err);
+    input.setAttribute("aria-invalid", "true");
+    input.setAttribute("aria-describedby", [input.getAttribute("aria-describedby"), err.id].filter(Boolean).join(" "));
+    first = first || input;
+  }
+  if (focus && first) first.focus();
+  return first;
 }
 
 // ---------- confirm dialog ----------

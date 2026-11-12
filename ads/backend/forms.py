@@ -36,57 +36,91 @@ PROHIBITED = [
 PREFILL_REPEAT = re.compile(r"^\s*(what(?:'s| is) your )?(full )?(name|e-?mail(?: address)?|phone(?: number)?|cell(?: number)?)\??\s*$", re.I)
 
 
-def policy_problems(spec):
-    """[(where, why)] for anything Meta would reject the form or its ads for."""
+def _policy(spec):
+    """[(field, where, why)]: what Meta would reject, with the builder input it is written in."""
     out = []
-    texts = [("Intro", spec.get("intro_title") or "")] + [("Intro", b) for b in spec.get("intro_bullets") or []]
+    texts = [("intro_title", "Intro", spec.get("intro_title") or "")] + [("intro_bullets", "Intro", b) for b in spec.get("intro_bullets") or []]
     for i, q in enumerate(spec.get("custom") or [], 1):
-        texts.append((f"Question {i}", q.get("label") or ""))
-        texts += [(f"Question {i}", o) for o in q.get("options") or []]
+        texts.append((f"q{i}_label", f"Question {i}", q.get("label") or ""))
+        texts += [(f"q{i}_options", f"Question {i}", o) for o in q.get("options") or []]
         if PREFILL_REPEAT.match(q.get("label") or ""):
-            out.append((f"Question {i}", "it repeats a prefilled field (name, email or phone); Meta already asks for it"))
-    for where, text in texts:
+            out.append((f"q{i}_label", f"Question {i}", "it repeats a prefilled field (name, email or phone); Meta already asks for it"))
+    for field, where, text in texts:
         for pattern, why in PROHIBITED:
             if re.search(pattern, text, re.I):
-                out.append((where, f"it asks about {why}, which Meta doesn't allow on Instant Forms"))
+                out.append((field, where, f"it asks about {why}, which Meta doesn't allow on Instant Forms"))
                 break
     url = spec.get("privacy_url") or ""
     if not re.match(r"^https://[^\s/]+\.[^\s]+$", url) or url.lower().endswith(".pdf"):
-        out.append(("Privacy policy", "it needs a web page address starting with https:// (not a PDF)"))
+        out.append(("privacy_url", "Privacy policy", "it needs a web page address starting with https:// (not a PDF)"))
+    return out
+
+
+def policy_problems(spec):
+    """[(where, why)] for anything Meta would reject the form or its ads for."""
+    return [(where, why) for _, where, why in _policy(spec)]
+
+
+def _problems(spec):
+    """[(field, input, message, short)]: `field` groups the questions as "custom" (the summary), `input` is the
+    builder input the problem is shown at, `short` is the message without "Question N:" for that spot."""
+    out = []
+    if not (spec.get("name") or "").strip():
+        out.append(("name", "name", "Give the form a name (only you see it)", None))
+    if not (spec.get("intro_title") or "").strip():
+        out.append(("intro_title", "intro_title", "Write the headline people see first", None))
+    for key, limit in (("name", LIMITS["name"]), ("intro_title", LIMITS["intro_title"]), ("thanks_title", LIMITS["thanks_title"]),
+                       ("thanks_body", LIMITS["thanks_body"])):
+        if len(spec.get(key) or "") > limit:
+            out.append((key, key, f"Keep it to {limit} characters", None))
+    if any(len(b) > LIMITS["bullet"] for b in spec.get("intro_bullets") or []):
+        out.append(("intro_bullets", "intro_bullets", f"Keep each point to {LIMITS['bullet']} characters", None))
+    custom = spec.get("custom") or []
+    if len(custom) > MAX_CUSTOM:
+        out.append(("custom", "custom", f"At most {MAX_CUSTOM} questions of your own", None))
+    for i, q in enumerate(custom, 1):
+        opts = [o for o in q.get("options") or [] if o.strip()]
+        label, answers = f"q{i}_label", f"q{i}_options"
+        if not (q.get("label") or "").strip():
+            out.append(("custom", label, f"Question {i} needs its wording", "Write the question"))
+        elif len(q["label"]) > LIMITS["label"]:
+            out.append(("custom", label, f"Question {i}: keep it to {LIMITS['label']} characters", None))
+        if len(opts) == 1 or len(opts) > MAX_OPTIONS:
+            out.append(("custom", answers, f"Question {i}: give 2 to {MAX_OPTIONS} answers to pick from, or none for a typed answer", None))
+        if any(len(o) > LIMITS["option"] for o in opts):
+            out.append(("custom", answers, f"Question {i}: keep each answer to {LIMITS['option']} characters", None))
+        if len({o.strip().lower() for o in opts}) != len(opts):
+            out.append(("custom", answers, f"Question {i}: two answers are the same", None))
+    if spec.get("thanks_button") == "website" and not re.match(r"^https://\S+$", spec.get("thanks_url") or ""):
+        out.append(("thanks_url", "thanks_url", "Give the page the button opens, starting with https://", None))
     return out
 
 
 def problems(spec):
     """[(field, message)] for missing or too-long values (before the policy check)."""
-    out = []
-    if not (spec.get("name") or "").strip():
-        out.append(("name", "Give the form a name (only you see it)"))
-    if not (spec.get("intro_title") or "").strip():
-        out.append(("intro_title", "Write the headline people see first"))
-    for key, limit in (("name", LIMITS["name"]), ("intro_title", LIMITS["intro_title"]), ("thanks_title", LIMITS["thanks_title"]),
-                       ("thanks_body", LIMITS["thanks_body"])):
-        if len(spec.get(key) or "") > limit:
-            out.append((key, f"Keep it to {limit} characters"))
-    if any(len(b) > LIMITS["bullet"] for b in spec.get("intro_bullets") or []):
-        out.append(("intro_bullets", f"Keep each point to {LIMITS['bullet']} characters"))
-    custom = spec.get("custom") or []
-    if len(custom) > MAX_CUSTOM:
-        out.append(("custom", f"At most {MAX_CUSTOM} questions of your own"))
-    for i, q in enumerate(custom, 1):
-        opts = [o for o in q.get("options") or [] if o.strip()]
-        if not (q.get("label") or "").strip():
-            out.append(("custom", f"Question {i} needs its wording"))
-        elif len(q["label"]) > LIMITS["label"]:
-            out.append(("custom", f"Question {i}: keep it to {LIMITS['label']} characters"))
-        if len(opts) == 1 or len(opts) > MAX_OPTIONS:
-            out.append(("custom", f"Question {i}: give 2 to {MAX_OPTIONS} answers to pick from, or none for a typed answer"))
-        if any(len(o) > LIMITS["option"] for o in opts):
-            out.append(("custom", f"Question {i}: keep each answer to {LIMITS['option']} characters"))
-        if len({o.strip().lower() for o in opts}) != len(opts):
-            out.append(("custom", f"Question {i}: two answers are the same"))
-    if spec.get("thanks_button") == "website" and not re.match(r"^https://\S+$", spec.get("thanks_url") or ""):
-        out.append(("thanks_url", "Give the page the button opens, starting with https://"))
-    return out
+    return [(field, message) for field, _, message, _ in _problems(spec)]
+
+
+def _input_order(name, n_custom):
+    order = ["name", "intro_title", "intro_bullets"]
+    for i in range(1, max(n_custom, 0) + 1):
+        order += [f"q{i}_label", f"q{i}_options"]
+    order += ["custom", "privacy_url", "thanks_title", "thanks_body", "thanks_url"]
+    return order.index(name) if name in order else len(order)
+
+
+def field_errors(spec):
+    """[(input, message)] for the builder: each problem at the input it is about, one message per input
+    (the first found), in the order the form shows them."""
+    found = {}
+    for _, name, message, short in _problems(spec):
+        if short is None:
+            short = re.sub(r"^Question \d+: ", "", message)
+        found.setdefault(name, short[:1].upper() + short[1:])
+    for name, _, why in _policy(spec):
+        found.setdefault(name, why[:1].upper() + why[1:])
+    n = len(spec.get("custom") or [])
+    return sorted(found.items(), key=lambda kv: _input_order(kv[0], n))
 
 
 def payload(spec):

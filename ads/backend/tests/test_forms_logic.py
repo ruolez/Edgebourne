@@ -88,5 +88,45 @@ class CheckTests(unittest.TestCase):
         self.assertIn(("custom", "At most 3 questions of your own"), forms.problems({**GOOD, "custom": many}))
 
 
+class FieldErrorTests(unittest.TestCase):
+    """Each problem lands on the field the builder shows it at (input names), in the order of the form."""
+
+    def test_a_clean_form_marks_no_field(self):
+        self.assertEqual(forms.field_errors(GOOD), [])
+
+    def test_missing_and_too_long_values_land_on_their_own_inputs_in_form_order(self):
+        bad = {**GOOD, "name": " ", "intro_title": "x" * 61, "thanks_url": "edgebourne.com",
+               "custom": [{"label": "", "options": ["Only"]}, {"label": "Dupes", "options": ["A", "a"]}]}
+        self.assertEqual(forms.field_errors(bad), [
+            ("name", "Give the form a name (only you see it)"),
+            ("intro_title", "Keep it to 60 characters"),
+            ("q1_label", "Write the question"),
+            ("q1_options", "Give 2 to 6 answers to pick from, or none for a typed answer"),
+            ("q2_options", "Two answers are the same"),
+            ("thanks_url", "Give the page the button opens, starting with https://")])
+
+    def test_a_prohibited_question_marks_its_wording_and_a_prohibited_answer_marks_the_answers(self):
+        spec = {**GOOD, "custom": [{"label": "What is your yearly income?", "options": []},
+                                   {"label": "Where are you?", "options": ["Church", "Office"]}]}
+        got = dict(forms.field_errors(spec))
+        self.assertEqual((sorted(got), "financial details" in got["q1_label"], "religion" in got["q2_options"]),
+                         (["q1_label", "q2_options"], True, True))
+
+    def test_the_intro_headline_and_its_points_are_told_apart(self):
+        spec = {**GOOD, "intro_title": "Get your mortgage sorted", "intro_bullets": ["Fine", "Talk about your health"]}
+        got = dict(forms.field_errors(spec))
+        self.assertEqual(sorted(got), ["intro_bullets", "intro_title"])
+
+    def test_one_message_per_field_the_first_found(self):
+        spec = {**GOOD, "custom": [{"label": "", "options": ["Only"]}]}
+        spec["custom"][0]["options"] = ["x" * 81, "x" * 81]
+        self.assertEqual(forms.field_errors(spec), [("q1_label", "Write the question"), ("q1_options", "Keep each answer to 80 characters")])
+
+    def test_a_bad_privacy_page_marks_its_field_and_too_many_questions_has_no_input(self):
+        many = [{"label": f"Q{i}", "options": []} for i in range(4)]
+        got = forms.field_errors({**GOOD, "privacy_url": "http://x.com/p", "custom": many})
+        self.assertEqual([f for f, _ in got], ["custom", "privacy_url"])
+
+
 if __name__ == "__main__":
     unittest.main()

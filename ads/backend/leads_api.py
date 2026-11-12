@@ -54,12 +54,9 @@ def list_leads():
         clauses.append("l.status IN ('new', 'contacted', 'qualified')")
     if request.args.get("tests") != "1":
         clauses.append("NOT l.is_test")
-    if request.args.get("campaign"):
-        clauses.append("l.campaign_id = %s")
-        params.append(request.args["campaign"])
-    if request.args.get("ad"):
-        clauses.append("l.ad_id = %s")
-        params.append(request.args["ad"])
+    source_clauses, source_params = leads.source_filter(request.args)
+    clauses += source_clauses
+    params += source_params
     q = (request.args.get("q") or "").strip()
     if q:
         clauses.append("(l.full_name ILIKE %s OR l.email ILIKE %s OR l.phone ILIKE %s "
@@ -73,16 +70,37 @@ def list_leads():
     now = datetime.now(timezone.utc)
     for r in rows:
         r["urgency"] = today.urgency(r, now)  # the same rule as Today and the reminders
+    # The stage chips count the same source as the list (a campaign, ad set, ad or form), so a link that
+    # narrows the list shows numbers that add up to what it lists.
+    # The nav badge still counts every new lead (`everywhere`).
+    source_sql = " AND ".join(source_clauses) or "TRUE"
     counts = db.query(
-        f"SELECT l.status, COUNT(*) AS n FROM leads l WHERE {where} AND NOT l.is_test GROUP BY l.status",
-        _scope(user)[1],
+        f"""SELECT l.status, COUNT(*) FILTER (WHERE {source_sql}) AS n, COUNT(*) AS everywhere
+            FROM leads l WHERE {where} AND NOT l.is_test GROUP BY l.status""",
+        source_params + _scope(user)[1],
     )
     sources = db.query(
         f"""SELECT l.campaign_id, MAX(l.campaign_name) AS campaign_name, l.ad_id, MAX(l.ad_name) AS ad_name, COUNT(*) AS n
             FROM leads l WHERE {where} AND NOT l.is_test AND l.campaign_id IS NOT NULL
             GROUP BY l.campaign_id, l.ad_id ORDER BY 2, 4""", _scope(user)[1])
-    return jsonify({"leads": rows, "counts": {r["status"]: r["n"] for r in counts}, "sources": sources,
-                    "response": reminders.stats(*_scope(user))})
+    return jsonify({"leads": rows, "counts": {r["status"]: r["n"] for r in counts},
+                    "new_everywhere": next((r["everywhere"] for r in counts if r["status"] == "new"), 0), "sources": sources,
+                    "narrowed": _narrowed(request.args, user), "response": reminders.stats(*_scope(user))})
+
+
+def _narrowed(args, user):
+    """The ad set or form the list is narrowed to, by name (the campaign / ad picker can't show those)."""
+    named = leads.source_named(args)
+    if not named:
+        return None
+    kind, ref = named
+    where, params = _scope(user)
+    if kind == "adset":
+        row = db.query(f"SELECT name FROM adsets s WHERE s.id = %s AND {_scope(user, 's')[0]}", [ref] + params, one=True)
+    else:
+        row = db.query(f"""SELECT (array_agg(l.form_name ORDER BY l.created_time DESC) FILTER (WHERE l.form_name IS NOT NULL))[1] AS name
+                            FROM leads l WHERE l.form_id = %s AND {where}""", [ref] + params, one=True)
+    return {"kind": kind, "id": ref, "name": (row or {}).get("name")}
 
 
 @bp.get("/<int:lead_id>")

@@ -29,15 +29,15 @@
           <button type="button" data-level="campaign">Campaigns</button>
         </div>
         <details class="menu" id="new-menu" hidden>
-          <summary class="btn">New<span class="caret" aria-hidden="true"></span></summary>
+          <summary class="btn btn-primary" id="new-btn">New<span class="caret" aria-hidden="true"></span></summary>
           <div class="menu-pop" role="menu">
-            <a role="menuitem" href="/new-ad.html">New ad</a>
+            <a role="menuitem" href="/new-ad.html" id="new-ad-link">New ad</a>
             <a role="menuitem" href="/new-adset.html">New ad set</a>
             <a role="menuitem" href="/new-campaign.html" id="campaign-link">New campaign</a>
             <a role="menuitem" href="/forms.html" id="forms-link">New lead form</a>
           </div>
         </details>
-        <a class="btn btn-primary" href="/new-ad.html" id="new-ad"></a>
+        <a class="btn btn-primary" href="/new-ad.html" id="new-ad" hidden></a>
       </header>
       <div class="content stack" id="cr-all"><div class="skeleton" role="status"><span></span><span></span><span></span><p>Loading…</p></div></div>
       <div id="bulk" class="bk-dock"></div>

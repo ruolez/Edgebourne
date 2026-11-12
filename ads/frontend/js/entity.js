@@ -1,11 +1,11 @@
 // Campaign and ad set pages: their numbers with "vs before", a daily chart, (ad sets) learning progress
 // and who sees it, the ad sets / ads inside in the manager table, and one History timeline.
 import { api, startLoad } from "./api.js";
-import { boot, esc, icon, onRefresh, setCrumbs, switchHtml, toast, when, errorState, withFrom } from "./ui.js";
+import { boot, emptyState, esc, icon, onRefresh, setCrumbs, switchHtml, toast, when, errorState, withFrom } from "./ui.js";
 import { columnChart } from "./charts.js";
 import { count, dayLabel, explain, money, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
-import { LIVE, bulkBarHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, statusCell, tableHtml, unlistedNote, wire } from "./manager.js";
+import { LIVE, bulkBarHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, statusCell, tableHtml, hasTrack, trackLegend, unlistedNote, wire } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
 const LEVEL = document.body.dataset.level;
@@ -20,20 +20,22 @@ const childLevel = () => (state.tab === "adsets" ? "adset" : "ad");
 const children = () => (rows ? rows[childLevel()] : []);
 const picked = () => children().filter((r) => selected.has(r.id));
 
-function learningCard(s) {
+// Who sees it is always shown; learning progress beside it only when Meta reports a stage.
+function audienceCard(s) {
   const l = s.learning || {};
   const stage = l.status || s.learning_stage;
-  if (!stage) return "";
   const got = l.conversions;
   const edited = l.last_sig_edit_ts ? new Date(l.last_sig_edit_ts * 1000) : null;
   const words = stage === "SUCCESS" ? "Finished learning: delivery is stable."
     : stage === "FAIL" ? explain("learning_limited") : explain("learning").replace(/^Learning: /, "");
   const pct = got != null ? Math.min(100, Math.round((got / 50) * 100)) : null;
-  return `<section class="panel learn"><div class="panel-head"><h2>Learning</h2><p>${esc(words)}</p></div><div class="panel-body">
+  const learning = stage ? `<div class="learn"><h3 class="learn-h">Learning</h3><p class="muted small">${esc(words)}</p>
     ${got != null ? `<div class="learn-row"><b class="tnum">${count(got)} of 50</b><span class="muted">results since the last big edit</span></div><span class="bar ${stage === "FAIL" ? "warn" : ""}"><i data-w="${pct}"></i></span>` : ""}
-    ${edited ? `<p class="muted small">Last edit that restarted learning: ${esc(when(edited.toISOString()))}.</p>` : ""}
-    ${s.targeting_summary ? `<p class="small"><b>Who sees it:</b> ${esc(s.targeting_summary)}</p>` : ""}
-    <p class="muted small" id="estimate"></p></div></section>`;
+    ${edited ? `<p class="muted small">Last edit that restarted learning: ${esc(when(edited.toISOString()))}.</p>` : ""}</div>` : "";
+  return `<section class="panel who-card" id="who-sees"><div class="panel-body${learning ? " who-split" : ""}">
+    <div><h3 class="learn-h">Who sees it</h3><p>${s.targeting_summary ? esc(s.targeting_summary) : '<span class="muted">Meta hasn\'t said who this ad set reaches yet. It shows here after the next refresh.</span>'}</p>
+      <p class="muted small" id="estimate"></p></div>
+    ${learning}</div></section>`;
 }
 
 function render() {
@@ -45,8 +47,8 @@ function render() {
   const live = LIVE.includes(e.status);
   const budget = e.daily_budget_cents ? (canControl && live ? `<button type="button" class="chip" data-budget="${LEVEL}:${e.id}" data-current="${e.daily_budget_cents}" data-name="${esc(e.name)}">${money(e.daily_budget_cents, { exact: true })}/day</button>` : `<span class="chip">${money(e.daily_budget_cents, { exact: true })}/day</span>`) : "";
   $("en-actions").innerHTML = `${budget}
-    ${LEVEL === "campaign" ? `<a class="btn" href="/leads.html?campaign=${encodeURIComponent(e.id)}" id="en-leads">${icon("leads")}Its leads</a>
-      <a class="btn" href="/performance.html?campaign=${encodeURIComponent(e.id)}&range=${encodeURIComponent(state.range)}" id="en-results">${icon("chart")}Results</a>` : ""}
+    <a class="btn" href="/leads.html?${LEVEL}=${encodeURIComponent(e.id)}" id="en-leads">${icon("leads")}Its leads</a>
+    ${LEVEL === "campaign" ? `<a class="btn" href="/performance.html?campaign=${encodeURIComponent(e.id)}&range=${encodeURIComponent(state.range)}" id="en-results">${icon("chart")}Results</a>` : ""}
     ${me.role === "admin" && live ? (LEVEL === "campaign" ? `<a class="btn" href="${esc(withFrom(`/new-adset.html?campaign=${encodeURIComponent(e.id)}`))}">${icon("plus")}New ad set</a>` : `<a class="btn" href="${esc(withFrom(`/new-ad.html?adset=${encodeURIComponent(e.id)}`))}">${icon("plus")}New ad</a>`) : ""}
     ${me.role === "admin" ? `<a class="btn btn-claude-outline" href="/desk.html?ask=1&campaign=${encodeURIComponent(data.campaign.id)}">${icon("spark")}Ask Claude</a>` : ""}
     ${canControl && live ? `<span class="pk-sw">${switchHtml(e.status === "ACTIVE", `data-toggle="${LEVEL}:${e.id}" data-name="${esc(e.name)}"`, `${e.name} on or off`)} ${e.status === "ACTIVE" ? "On" : "Off"}</span>` : ""}`;
@@ -56,16 +58,17 @@ function render() {
     ? `<section class="panel"><div class="panel-body">${data.timeline.length ? `<ol class="tl">${data.timeline.map((i) => `<li class="tl-${i.tone || "n"}"><span class="tl-dot"></span><span class="tl-w">${esc(when(i.at))}</span><span class="tl-t"><b>${esc(i.title)}</b>${i.sub ? `<small>${esc(i.sub)}</small>` : ""}${i.by ? `<small>${esc(i.by)}</small>` : ""}</span></li>`).join("")}</ol>` : '<p class="muted">Nothing recorded yet.</p>'}</div></section>`
     : list.length && narrow() ? listHtml({ rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), selected, sort: state.sort, dir: state.dir })
     : list.length ? tableHtml({ level: childLevel(), rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: "results", sort: state.sort, dir: state.dir, selected, selectable: true, range: state.range })
-    : `<div class="panel empty"><h3>Nothing here yet</h3><p>${LEVEL === "campaign" ? "This campaign has no ad sets." : "This ad set has no ads."}</p></div>`;
+    : emptyHere(e, live);
   $("cr-all").innerHTML = `${figuresHtml(e.m, state.vs ? e.prev : null, data.target_qualified_cents, { today: e.today, ever: e.ever })}
     <div class="charts"><section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
       <section class="panel"><div class="panel-head"><h2>Leads per day</h2></div><div class="chart" id="c-leads"></div></section></div>
-    ${LEVEL === "adset" ? learningCard(e) : ""}
+    ${LEVEL === "adset" ? audienceCard(e) : ""}
     <div class="cr-toolbar"><div class="tabs" role="tablist" aria-label="Show" data-tabpanel="en-panel">${tabs.map(([k, l, n]) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${state.tab === k}">${l}<span class="n">${n}</span></button>`).join("")}</div>
       <span class="spacer"></span>
       ${rangeSelect("range-pick", state.range)}
       <button type="button" class="view-chip" id="vs" aria-pressed="${state.vs}">vs before</button></div>
     <div id="en-panel">${body}</div>
+    ${state.tab !== "history" && !narrow() && hasTrack(list) ? trackLegend() : ""}
     <p class="muted small flush">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}).${esc(unlistedNote(e.m, rows.ad))}</p>`;
   document.querySelectorAll("#cr-all [data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
   columnChart({ el: $("c-spend"), series: data.series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 170,
@@ -75,6 +78,17 @@ function render() {
   if (LEVEL === "adset" && $("estimate")) api(`/api/insights/adset/${encodeURIComponent(e.id)}/estimate`).then((x) => { if (x.lower && x.upper) $("estimate").textContent = `Meta estimates ${count(x.lower)}–${count(x.upper)} people could see these ads.`; }).catch(() => {});
   $("bulk").innerHTML = bulkBarHtml(childLevel(), picked(), canControl);
   document.body.classList.toggle("has-bulk", selected.size > 0);
+}
+
+// An empty campaign or ad set says so and offers to make the first one inside it (admins, while it can run).
+function emptyHere(e, live) {
+  const inCampaign = state.tab === "adsets";
+  const make = me.role === "admin" && live
+    ? (inCampaign ? `<a class="btn btn-primary" id="empty-new" href="${esc(withFrom(`/new-adset.html?campaign=${encodeURIComponent(e.id)}`))}">${icon("plus")}New ad set</a>`
+      : `<a class="btn btn-primary" id="empty-new" href="${esc(withFrom(LEVEL === "adset" ? `/new-ad.html?adset=${encodeURIComponent(e.id)}` : "/new-ad.html"))}">${icon("plus")}New ad</a>`)
+    : "";
+  const what = inCampaign ? "This campaign has no ad sets yet." : LEVEL === "campaign" ? "This campaign has no ads yet." : "This ad set has no ads yet.";
+  return emptyState({ title: "Nothing here yet", body: `${what}${make ? "" : live ? "" : " It's archived or deleted, so nothing new can go in it."}`, actions: make, tag: "div" });
 }
 
 async function load() {

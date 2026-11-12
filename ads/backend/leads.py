@@ -82,6 +82,24 @@ def without_nul(value):
     return value
 
 
+# Where a lead came from, as the Leads list narrows it (?campaign= / ?adset= / ?ad= / ?form=).
+SOURCE_COLUMNS = (("campaign", "campaign_id"), ("adset", "adset_id"), ("ad", "ad_id"), ("form", "form_id"))
+
+
+def source_filter(args):
+    """(clauses, params) for the named sources; empty values and other keys add nothing."""
+    named = [(col, str(args.get(key))) for key, col in SOURCE_COLUMNS if args.get(key)]
+    return [f"l.{col} = %s" for col, _ in named], [value for _, value in named]
+
+
+def source_named(args):
+    """(kind, id) of an ad set or form filter, which the list's campaign / ad picker can't show, else None."""
+    for key in ("adset", "form"):
+        if args.get(key):
+            return key, str(args[key])
+    return None
+
+
 def store_lead(data):
     """Insert a lead from Graph API data, not yet announced. Returns (lead_id, created_new)."""
     data = without_nul(data)
