@@ -384,12 +384,13 @@ document.addEventListener("click", (e) => {
 const PAGE_SECTION = {
   home: "today", inbox: "inbox", leads: "leads",
   ads: "ads", ad: "ads", "new-ad": "ads", "new-adset": "ads", "new-campaign": "ads", forms: "ads", campaign: "ads", adset: "ads",
+  gallery: "creative", research: "creative",
   performance: "insights", compare: "insights", experiments: "insights", report: "insights",
-  desk: "claude", research: "claude", settings: "settings", team: "settings", account: "account",
+  desk: "claude", settings: "settings", team: "settings", account: "account",
 };
 const PAGE_TITLE = {
   home: "Today", inbox: "Inbox", leads: "Leads", ads: "Ads", ad: "Ad", "new-ad": "New ad", "new-adset": "New ad set",
-  "new-campaign": "New campaign", forms: "Lead forms", campaign: "Campaign", adset: "Ad set", performance: "Results",
+  "new-campaign": "New campaign", forms: "Lead forms", campaign: "Campaign", adset: "Ad set", gallery: "Gallery", performance: "Results",
   compare: "Compare", experiments: "Tests", report: "Reports", desk: "Claude", research: "Research", settings: "Settings",
   team: "Team", account: "Your account",
 };
@@ -398,6 +399,7 @@ const SECTIONS = {
   inbox: { href: "/inbox.html", label: "Inbox", icon: "inbox", badge: "inbox" },
   leads: { href: "/leads.html", label: "Leads", icon: "leads", badge: "leads" },
   ads: { href: "/ads.html", label: "Ads", icon: "ads" },
+  creative: { href: "/gallery.html", label: "Creative", icon: "image" },
   insights: { href: "/performance.html", label: "Insights", icon: "chart" },
   claude: { href: "/desk.html", label: "Claude", icon: "spark", badge: "claude", admin: true },
   settings: { href: "/settings.html", label: "Settings", icon: "settings", admin: true },
@@ -407,10 +409,11 @@ const SECTIONS = {
 const SUBNAV = {
   ads: [["ads", "Ads", "all"], ["forms", "Lead forms", "admin"]],
   insights: [["performance", "Results", "all"], ["compare", "Compare", "all"], ["experiments", "Tests", "admin"], ["report", "Reports", "report"]],
-  claude: [["desk", "Claude", "admin"], ["research", "Research", "admin"]],
+  creative: [["gallery", "Gallery", "all"], ["research", "Research", "admin"]],
+  claude: [["desk", "Claude", "admin"]],
   settings: [["settings", "Settings", "admin"], ["team", "Team", "admin"]],
 };
-const PAGE_HREF = { ads: "/ads.html", forms: "/forms.html", performance: "/performance.html", compare: "/compare.html",
+const PAGE_HREF = { ads: "/ads.html", forms: "/forms.html", gallery: "/gallery.html", performance: "/performance.html", compare: "/compare.html",
   experiments: "/experiments.html", report: "/report.html", desk: "/desk.html", research: "/research.html",
   settings: "/settings.html", team: "/team.html" };
 
@@ -594,7 +597,7 @@ export async function boot({ page, admin = false }) {
   const roleLabel = me.owner ? "Admin" : isAdmin ? `Admin · ${me.account.name}` : me.role === "client" ? "Client" : "Team member";
   const showAcct = (me.accounts || []).length > 1 || !me.owner;
   const allowed = (key) => !SECTIONS[key].admin || isAdmin;
-  const groups = [["Work", ["today", "inbox", "leads"]], ["Run", ["ads", "insights", "claude"]]]
+  const groups = [["Work", ["today", "inbox", "leads"]], ["Run", ["ads", "creative", "insights", "claude"]]]
     .map(([label, keys]) => [label, keys.filter(allowed)]);
   const badge = (b) => b === "leads" ? '<span class="count bad" data-new-count hidden></span>'
     : b === "claude" ? '<span class="count claude" data-claude-count hidden></span>'
@@ -646,7 +649,8 @@ export async function boot({ page, admin = false }) {
   main.prepend(line);
   const canSee = (who) => who === "all" || isAdmin || (who === "report" && me.role === "client");
   const tabsFor = (SUBNAV[section] || []).filter(([, , who]) => canSee(who));
-  if (tabsFor.length > 1 && tabsFor.some(([p]) => p === page)) {
+  // Claude's page turns its one tab into its own (Conversations · By ad · Schedules), so its bar stays.
+  if ((tabsFor.length > 1 || section === "claude") && tabsFor.some(([p]) => p === page)) {
     const sub = document.createElement("nav");
     sub.className = "subnav";
     sub.setAttribute("aria-label", SECTIONS[section].label);
@@ -680,14 +684,15 @@ export async function boot({ page, admin = false }) {
     <button type="button" data-more ${inMore ? 'aria-current="page"' : ""}>${icon("menu")}<span>More</span>${isAdmin ? badge("claude") : ""}</button>`;
   app.append(tabs);
 
-  // Claude first (and Creative, once it exists), then Insights with its pages, then Settings.
+  // Claude first, then Creative with its pages, then Insights with its pages, then Settings.
   const sheetLink = (href, label, ic, current, extra = "") => `<a href="${href}" ${current ? 'aria-current="page"' : ""}>${icon(ic)}<span>${label}</span>${extra}</a>`;
   const sheet = document.createElement("dialog");
   sheet.className = "sheet";
   sheet.setAttribute("aria-label", "More");
   sheet.innerHTML = `<div class="grab"></div>${accountSwitch(me, "sheet")}<nav>
       ${allowed("claude") ? sheetLink(SECTIONS.claude.href, "Claude", "spark", page === "desk", badge("claude")) : ""}
-      ${allowed("claude") ? sheetLink(PAGE_HREF.research, "Research", "research", page === "research") : ""}
+      ${sheetLink(SECTIONS.creative.href, "Creative", "image", page === "gallery")}
+      ${isAdmin ? sheetLink(PAGE_HREF.research, "Research", "research", page === "research") : ""}
       ${sheetLink(SECTIONS.insights.href, "Insights", "chart", page === "performance")}
       ${SUBNAV.insights.filter(([p, , who]) => p !== "performance" && canSee(who)).map(([p, label]) => sheetLink(PAGE_HREF[p], label, p === "compare" ? "compare" : p === "experiments" ? "tests" : "table", p === page)).join("")}
       ${allowed("settings") ? sheetLink(SECTIONS.settings.href, "Settings", "settings", section === "settings") : ""}
@@ -714,7 +719,7 @@ export async function boot({ page, admin = false }) {
 }
 
 // ⌘K / Ctrl+K or "/" opens the palette; "g" then a letter jumps to a section.
-const JUMPS = { t: "/home.html", i: "/inbox.html", l: "/leads.html", a: "/ads.html", n: "/performance.html", c: "/desk.html", s: "/settings.html" };
+const JUMPS = { t: "/home.html", i: "/inbox.html", l: "/leads.html", a: "/ads.html", e: "/gallery.html", n: "/performance.html", c: "/desk.html", s: "/settings.html" };
 function typing(el) { return el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)); }
 function shortcuts(isAdmin) {
   let g = 0;
@@ -748,7 +753,7 @@ export function openShortcuts() {
   const k = (...keys) => keys.map((x) => (x === "then" || x === "or" ? ` ${x} ` : `<kbd>${esc(x)}</kbd>`)).join("");
   const rows = [
     ["Anywhere", [[k(mod, "K") + " or " + k("/"), "Search or jump to anything"], [k("?"), "This list"],
-      ...[["t", "Today"], ["i", "Inbox"], ["l", "Leads"], ["a", "Ads"], ["n", "Results"], ...(admin ? [["c", "Claude"], ["s", "Settings"]] : [])].map(([key, label]) => [k("g", "then", key), label])]],
+      ...[["t", "Today"], ["i", "Inbox"], ["l", "Leads"], ["a", "Ads"], ["e", "Creative"], ["n", "Results"], ...(admin ? [["c", "Claude"], ["s", "Settings"]] : [])].map(([key, label]) => [k("g", "then", key), label])]],
     ["Lists and tables", [[k("↑", "or", "↓"), "Move between rows"], [k("Enter"), "Open the quick look or the item"], ["Shift + click a box", "Select every row in between"], [k("Esc"), "Close the quick look, or clear the selection"]]],
     ["Inbox", [[k("j", "or", "k"), "Next or previous item"]]],
     ["Tabs", [[k("←", "or", "→"), "Switch between tabs"]]],

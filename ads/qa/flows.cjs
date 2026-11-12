@@ -2088,7 +2088,7 @@ with account_ctx.all_accounts():
   await Promise.all([cp.waitForURL('**/home.html**'), cp.click('button[type=submit]')]);
   await cp.waitForSelector('.rail .nav a .label');
   const nav = await cp.$$eval('.rail .nav a .label', (a) => a.map((x) => x.textContent.trim()));
-  check('a client signs in to their own account with the read-only menu', nav.join() === 'Today,Inbox,Leads,Ads,Insights' && /Burdanova QA/.test(await cp.textContent('.rail')), nav.join());
+  check('a client signs in to their own account with the read-only menu', nav.join() === 'Today,Inbox,Leads,Ads,Creative,Insights' && /Burdanova QA/.test(await cp.textContent('.rail')), nav.join());
   const clientBulk = await cp.evaluate(async () => (await fetch('/api/ads/bulk/preview', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ebads' },
     body: JSON.stringify({ action: 'status', level: 'ad', ids: ['x'], value: 'PAUSED' }) })).status);
   check('a client can\'t make bulk changes', clientBulk === 403, String(clientBulk));
@@ -2161,6 +2161,12 @@ with account_ctx.all_accounts():
   await cp.goto(BASE + '/report.html');
   await cp.waitForSelector('.r-head');
   check("a client opens their own account's report, without the share button", /Burdanova QA/.test(await cp.textContent('.r-head')) && await cp.isHidden('#share'));
+  await cp.goto(BASE + '/gallery.html');
+  await cp.waitForSelector('.gal-card, #gal .empty');
+  check('a client opens the Gallery to look only: no New ad, no Research tab', await cp.isHidden('#gal-new') && (await cp.locator('.subnav a[href="/research.html"]').count()) === 0
+    && (await cp.locator('.rail .nav a[href="/gallery.html"]').count()) === 1);
+  await cp.goto(BASE + '/report.html');
+  await cp.waitForSelector('.r-head');
   check("a client's report links no form or test", (await cp.locator('#report a[href^="/forms.html"], #report a[href^="/experiments.html"]').count()) === 0);
   await cp.waitForSelector('#period option', { state: 'attached' });
   const clientWeeks = await cp.$$eval('#period option', (o) => o.map((x) => x.value));
@@ -2721,7 +2727,7 @@ print(','.join(left))
   check('the prune drops old read marks but keeps recent ones and a pending proposal\'s (A3-131)', pruneLeft === 'alert:qa-prune-new,proposal:qa-prune-old', pruneLeft);
   // 8.5 Signal shell: every page sits in the right section, has breadcrumbs, and ⌘K finds an ad.
   const sections = { 'home': 'Today', 'inbox': 'Inbox', 'leads': 'Leads', 'ads': 'Ads', 'ad.html?id=120252672230740312': 'Ads', 'new-ad': 'Ads',
-    'forms': 'Ads', 'new-campaign': 'Ads', 'performance': 'Insights', 'report': 'Insights', 'experiments': 'Insights', 'desk': 'Claude', 'research': 'Claude' };
+    'forms': 'Ads', 'new-campaign': 'Ads', 'performance': 'Insights', 'report': 'Insights', 'experiments': 'Insights', 'desk': 'Claude', 'gallery': 'Creative', 'research': 'Creative' };
   const wrongNav = [];
   for (const [p, want] of Object.entries(sections)) {
     await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
@@ -2757,7 +2763,7 @@ print(','.join(left))
   };
   const firstFor = {};
   for (const [q, want] of [['results', 'Results'], ['home', 'Today'], ['performance', 'Results'], ['targets', 'Settings: Targets'], ['schedules', 'Claude: Schedules'],
-    ['swipe file', 'Research'], ['experiments', 'Tests'], ['dark mode', 'Switch theme'], ['needs attention', 'Ads that need attention'], ['ads review', 'Ads in review']]) {
+    ['swipe file', 'Research'], ['gallery', 'Gallery'], ['creative', 'Gallery'], ['tired', 'Gallery: Tired'], ['experiments', 'Tests'], ['dark mode', 'Switch theme'], ['needs attention', 'Ads that need attention'], ['ads review', 'Ads in review']]) {
     const got = await palette(q);
     firstFor[q] = got[0]?.t;
     if (got[0]?.t !== want) firstFor[q] = `${got[0]?.t} (wanted ${want})`;
@@ -2883,6 +2889,167 @@ print(' '.join(sorted(links)))`).split(' ').filter(Boolean);
   await page.goto(BASE + '/inbox.html?show=money');
   await page.waitForSelector('#ib-filters [data-f="money"][aria-pressed="true"]');
   check('an older Inbox link (?show=money) still lands on Money', (await page.getAttribute('#ib-box [aria-selected="true"]', 'data-box')) === 'all');
+  // 9.5 Creative › Gallery: every ad as people see it, copies of one ad as one card, numbers from stored days.
+  {
+    const N2 = '120252672229400312', N1 = '120252672229040312';
+    const gal = (q = '') => getJson(`/api/gallery?range=7${q}`);
+    const cardOf = (d, adId) => d.groups.find((x) => x.ads.some((a) => a.id === adId));
+    const before = cardOf(await gal(), N2);
+    // The same video and words (spacing and capitals aside) on a new creative in the same ad set, and a picture ad.
+    py(`import db, account_info
+from datetime import timedelta
+y = account_info.today() - timedelta(days=1)
+db.execute('DELETE FROM ad_daily WHERE ad_id IN (%s, %s)', ('qa-gal-copy', 'qa-gal-pic'))
+db.execute('DELETE FROM ads WHERE id IN (%s, %s)', ('qa-gal-copy', 'qa-gal-pic'))
+db.execute('''INSERT INTO ads (id, name, campaign_id, adset_id, status, effective_status, creative_id, object_type, title, body, cta_type, video_id, image_url, created_time)
+  SELECT 'qa-gal-copy', 'QA gallery copy', campaign_id, adset_id, 'PAUSED', 'PAUSED', 'qa-gal-creative', object_type, '  ' || upper(title), body, cta_type, video_id, image_url, created_time
+  FROM ads WHERE id = %s''', ('${N2}',))
+db.execute('''INSERT INTO ads (id, name, campaign_id, adset_id, status, effective_status, creative_id, object_type, title, body, cta_type, video_id, image_url, created_time)
+  SELECT 'qa-gal-pic', 'QA gallery picture', campaign_id, adset_id, 'PAUSED', 'PAUSED', 'qa-gal-pic-creative', 'SHARE', 'A picture', 'Words', cta_type, NULL, image_url, created_time
+  FROM ads WHERE id = %s''', ('${N2}',))
+for ad, spend, leads in (('qa-gal-copy', 500, 1), ('qa-gal-pic', 300, 1)):
+    db.execute('INSERT INTO ad_daily (day, ad_id, spend_cents, impressions, leads, video_3s) VALUES (%s, %s, %s, 1000, %s, 0)', (y, ad, spend, leads))`);
+    const after = await gal();
+    const merged = cardOf(after, N2);
+    const pic = cardOf(after, 'qa-gal-pic');
+    check('Gallery: the same video with the same words on a new creative is one card, its numbers added once',
+      merged && merged.ads.map((a) => a.id).sort().join() === [N2, 'qa-gal-copy'].sort().join() && merged.top_ad_id === N2
+      && merged.spend_cents === before.spend_cents + 500 && merged.leads === before.leads + 1 && cardOf(after, 'qa-gal-copy') === merged,
+      JSON.stringify({ before: before && [before.spend_cents, before.leads], after: merged && [merged.spend_cents, merged.leads, merged.ads.length] }));
+    check('Gallery: a picture ad is its own card with no hook rate (not 0)', pic && pic.ads.length === 1 && pic.kind === 'image' && pic.hook_rate === null, JSON.stringify(pic && [pic.kind, pic.hook_rate]));
+    await page.goto(BASE + '/gallery.html?range=7');
+    await page.waitForSelector('.gal-card');
+    const shown = await page.evaluate(([mk, pk]) => {
+      const m = document.querySelector(`.gal-card[data-key="${mk}"]`), p = document.querySelector(`.gal-card[data-key="${pk}"]`);
+      return { copies: m?.querySelector('.gal-copies')?.textContent || '', hook: !!m && /Hook rate/.test(m.textContent), picHook: !!p && /Hook rate/.test(p.textContent),
+        crumbs: document.querySelector('.crumbs')?.textContent, tabs: [...document.querySelectorAll('.subnav a')].map((a) => a.textContent), nav: document.querySelector('.rail .nav a[aria-current="page"]')?.textContent.trim() };
+    }, [merged?.key, pic?.key]);
+    check('Gallery page: the merged card says it runs as 2 ads, video cards show a hook rate, the picture card none; it sits under Creative with Gallery · Research',
+      /Runs as 2 ads/.test(shown.copies) && shown.hook && !shown.picHook && /Creative\s*\/\s*Gallery/.test(shown.crumbs) && shown.tabs.join() === 'Gallery,Research' && shown.nav === 'Creative', JSON.stringify(shown));
+    // A card whose copy Meta rejected shows under "Rejected or has a problem" even when another copy delivers, and says so.
+    py(`import db
+db.execute('UPDATE ads SET effective_status = %s WHERE id = %s', ('DISAPPROVED', 'qa-gal-copy'))`);
+    const bad = await gal('&status=problem');
+    const badCard = bad.groups.find((x) => x.key === merged?.key);
+    await page.goto(BASE + '/gallery.html?range=7&status=problem');
+    await page.waitForSelector('.gal-card, #gal .empty');
+    const badShown = merged ? await page.evaluate((k) => document.querySelector(`.gal-card[data-key="${k}"]`)?.textContent || '', merged.key) : '';
+    check('Gallery: a card with one rejected copy shows under "Rejected or has a problem", saying which part of it is',
+      !!badCard && badCard.buckets.includes('problem') && (badCard.bucket === 'problem' || /1 copy is rejected/.test(badShown)), JSON.stringify(badCard && [badCard.bucket, badCard.buckets, badCard.problems]));
+    py(`import db
+db.execute('DELETE FROM ad_daily WHERE ad_id IN (%s, %s)', ('qa-gal-copy', 'qa-gal-pic'))
+db.execute('DELETE FROM ads WHERE id IN (%s, %s)', ('qa-gal-copy', 'qa-gal-pic'))`);
+    // Top: the judged cards cheapest first, then the rest by spend.
+    const top = (await gal()).groups;
+    const judged = top.filter((x) => x.enough);
+    check('Gallery Top: judged cards first, cheapest cost per lead first; deleted cards only under Deleted',
+      judged.length > 0 && top.slice(0, judged.length).every((x) => x.enough)
+      && judged.every((x, i) => i === 0 || judged[i - 1].cpl_cents <= x.cpl_cents) && top.every((x) => x.bucket !== 'deleted'), top.map((x) => `${x.name}:${x.enough}:${x.cpl_cents}`).join(' | '));
+    const launched = await gal('&view=launched');
+    const weekAgo = new Date(Date.now() - 8 * 86400000).toISOString().slice(0, 10);
+    check('Gallery Just launched: only cards that started in the last 7 days, newest first, and its chip counts them',
+      launched.groups.every((x) => x.just_launched && x.launched_on >= weekAgo) && launched.groups.every((x, i) => i === 0 || launched.groups[i - 1].launched_on >= x.launched_on)
+      && launched.counts.launched === launched.groups.length, launched.groups.map((x) => `${x.name}:${x.launched_on}`).join(' | '));
+    if (launched.groups.length) {
+      await page.goto(BASE + '/gallery.html?range=7&view=launched');
+      await page.waitForSelector('.gal-card');
+      const started = await page.$$eval('.gal-card', (cs) => cs.map((c) => c.querySelector('.gal-started')?.textContent || ''));
+      check('Gallery Just launched: every card says the day it started', started.length === launched.groups.length && started.every((t) => /^Started \w{3} \d{1,2}$/.test(t.trim())), started.join(' | '));
+    }
+    // A card whose ad changed what it shows counts only the days of what it shows now, and says so with a link to its versions.
+    const changedCard = (await gal()).groups.find((x) => x.version_since);
+    check('Gallery: an ad that changed what it shows is marked with the day it changed (dev N3 / N5 have new versions)', !!changedCard);
+    if (changedCard) {
+      await page.goto(BASE + '/gallery.html?range=7');
+      await page.waitForSelector('.gal-card');
+      const since = await page.evaluate((k) => { const c = document.querySelector(`.gal-card[data-key="${k}"] .gal-since`); return c ? { text: c.textContent, href: c.querySelector('a')?.getAttribute('href') } : null; }, changedCard.key);
+      check('Gallery: a changed ad\'s card says its numbers and bars count only the days it showed this version, linking its versions; the bars have their legend',
+        !!since && /Changed on .*count only the days it showed this version/.test(since.text) && since.href === `/ad.html?id=${changedCard.version_ad}#fold=versions`
+        && (await page.locator('#gal .trk-key').count()) === 1, JSON.stringify(since));
+      await Promise.all([page.waitForURL('**/ad.html?id=**'), page.click(`.gal-card[data-key="${changedCard.key}"] .gal-since a`)]);
+      await page.waitForSelector('#fold-versions');
+      check('"See versions" opens the ad on its Versions panel', await page.evaluate(() => document.getElementById('fold-versions').open));
+      await page.evaluate(() => { document.getElementById('fold-versions').open = false; });
+    }
+    // Tired comes from the fatigue alert; with that rule off the view says so.
+    py(`import db, uuid, settings_store
+settings_store.set('qa_rules_backup', settings_store.get('alert_rules') or '')
+db.execute('INSERT INTO alerts (rule, dedupe_key, level, title, lines, entity_id, kind) VALUES (%s, %s, %s, %s, %s, %s, %s)', ('fatigue', 'qa-tired-' + uuid.uuid4().hex, 'warn', 'QA looks tired', '[]', '${N1}', 'condition'))`);
+    try {
+    await page.goto(BASE + '/gallery.html?view=tired&range=7');
+    await page.waitForSelector('.gal-card, .empty');
+    const tiredCards = await page.evaluate(() => [...document.querySelectorAll('.gal-card')].map((c) => ({ name: c.querySelector('.cr-name')?.textContent, tired: /Tired/.test(c.querySelector('.gal-status')?.textContent || '') })));
+    check('Gallery Tired: the ads with an open "looks tired" alert, marked Tired', tiredCards.some((c) => /^N1/.test(c.name)) && tiredCards.every((c) => c.tired)
+      && (await page.getAttribute('[data-gview="tired"]', 'aria-pressed')) === 'true', JSON.stringify(tiredCards));
+    py(`import json, settings_store, alerts
+r = alerts.saved_rules(); r['fatigue']['on'] = False
+settings_store.set('alert_rules', json.dumps(r))`);
+    await page.reload();
+    await page.waitForSelector('.note');
+    check('Gallery Tired says when the tired check is switched off in Settings › Alerts', /switched off/.test(await page.textContent('#gal .note'))
+      && (await page.getAttribute('#gal .note a', 'href')) === '/settings.html#alerts');
+    } finally {
+      py(`import db, settings_store
+db.execute('DELETE FROM alerts WHERE rule = %s AND title = %s', ('fatigue', 'QA looks tired'))
+settings_store.set('alert_rules', settings_store.get('qa_rules_backup') or '')
+db.execute('DELETE FROM settings WHERE key = %s', (settings_store.stored_key('qa_rules_backup'),))`);
+    }
+    // Filters: a tag on a card narrows to that idea (any copy), the status picker keeps one status; both in the URL.
+    await page.goto(BASE + '/gallery.html?range=7');
+    await page.waitForSelector('.gal-card .gal-tag');
+    const tagBtn = page.locator(`.gal-card[data-key="${before.key}"] .gal-tag`).first();
+    const tagWord = (await tagBtn.textContent()).trim();
+    await tagBtn.click();
+    await page.waitForFunction((t) => new URL(location.href).searchParams.get('tag') === t && document.querySelector('.gal-tag[aria-pressed="true"]'), tagWord);
+    const tagged = await gal(`&dim=hook&tag=${encodeURIComponent(tagWord)}`);
+    check('Gallery: a card\'s idea tag filters to the cards with that idea, and the URL keeps it',
+      tagged.groups.length >= 1 && tagged.groups.every((x) => x.tags_all.some(([d, v]) => d === 'hook' && v === tagWord))
+      && (await page.locator('.gal-card').count()) === tagged.groups.length && (await page.inputValue('#tag-pick')) === `hook:${tagWord}`, `${tagWord}: ${tagged.groups.length}`);
+    await page.selectOption('#tag-pick', '');
+    await page.selectOption('#status-pick', 'deleted');
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('status') === 'deleted');
+    await page.waitForTimeout(300);
+    const del = await gal('&status=deleted');
+    check('Gallery: the status picker shows only that status (Deleted here)', del.groups.length > 0 && del.groups.every((x) => x.bucket === 'deleted')
+      && (await page.locator('.gal-card').count()) === del.groups.length);
+    // Compare from two cards: each card's top-spending ad, on the same dates.
+    await page.goto(BASE + '/gallery.html?range=14');
+    await page.waitForSelector('.gal-card [data-pick]');
+    const keys = await page.$$eval('.gal-card', (cs) => cs.slice(0, 2).map((c) => c.dataset.key));
+    const tops = (await gal('').then(() => getJson('/api/gallery?range=14'))).groups.filter((x) => keys.includes(x.key)).sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key)).map((x) => x.top_ad_id);
+    await page.locator(`.gal-card[data-key="${keys[0]}"] [data-pick]`).check();
+    await page.waitForSelector('#gal-tray [data-tray="compare"][disabled]');
+    check('Gallery: with one card picked, the tray says in words why Compare waits', /Pick 2 to 6 to compare/.test(await page.textContent('#gal-tray')) && await page.isVisible('#gal-why'));
+    await page.locator(`.gal-card[data-key="${keys[1]}"] [data-pick]`).check();
+    await page.waitForSelector('#gal-tray [data-tray="compare"]:not([disabled])');
+    await Promise.all([page.waitForURL('**/compare.html?**'), page.click('#gal-tray [data-tray="compare"]')]);
+    const cmpUrl = new URL(page.url());
+    check('Gallery: Compare from two picked cards opens Compare on their top-spending ads with the same dates',
+      cmpUrl.searchParams.get('ids') === tops.join(',') && cmpUrl.searchParams.get('range') === '14' && cmpUrl.searchParams.get('vs') === '1', page.url());
+    // On a phone the tray never covers the last row: the page makes room below it.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(BASE + '/gallery.html?range=30');
+    await page.waitForSelector('.gal-card [data-pick]');
+    for (const box of (await page.$$('.gal-card [data-pick]')).slice(0, 2)) await box.check();
+    await page.waitForSelector('#gal-tray .bk');
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.waitForTimeout(200);
+    const room = await page.evaluate(() => { const cs = document.querySelectorAll('.gal-card'); return { last: cs[cs.length - 1].getBoundingClientRect().bottom, tray: document.querySelector('#gal-tray .bk').getBoundingClientRect().top }; });
+    check('Gallery on a phone: with cards picked, the last card ends above the tray', room.last <= room.tray, JSON.stringify(room));
+    await page.keyboard.press('Escape');
+    check('Gallery: Escape clears the picks and gives the room back', !(await page.evaluate(() => document.body.classList.contains('has-bulk'))) && (await page.locator('#gal-tray .bk').count()) === 0);
+    await page.setViewportSize({ width: 1360, height: 900 });
+    // ⌘K and the Claude section: Research lives under Creative now, at the same address.
+    await page.goto(BASE + '/research.html');
+    await page.waitForSelector('.crumbs a');
+    const research = await page.evaluate(() => ({ crumbs: document.querySelector('.crumbs').textContent, tabs: [...document.querySelectorAll('.subnav a')].map((a) => a.textContent) }));
+    await page.goto(BASE + '/desk.html');
+    await page.waitForSelector('.crumbs *');
+    await page.waitForSelector('nav.subnav [data-sub="schedules"]');
+    const deskTabs = await page.evaluate(() => [...document.querySelectorAll('nav.subnav a')].map((a) => a.textContent));
+    check('Research sits under Creative (same address), and Claude no longer has a Research tab',
+      /Creative\s*\/\s*Research/.test(research.crumbs) && research.tabs.join() === 'Gallery,Research' && deskTabs.join() === 'Conversations,By ad,Schedules', JSON.stringify({ research, deskTabs }));
+  }
   // 9.4 Inbox triage: Needs action first, FYI for the rest; the badge counts what needs you and is new.
   await page.goto(BASE + '/inbox.html');
   await page.waitForSelector('.ib-item, .ib-none');
@@ -3476,6 +3643,14 @@ with account_ctx.all_accounts():
     await mp.waitForSelector('#cr-all .cr-toolbar');
     check('a teammate gets one primary New ad and no New menu', await mp.isVisible('#new-ad') && await mp.isHidden('#new-menu')
       && /btn-primary/.test(await mp.getAttribute('#new-ad', 'class')) && (await mp.locator('.page-head .btn-primary:visible').count()) === 1);
+    // The Gallery shows a teammate only the ads of the campaigns they're on; no Research tab, but New ad.
+    await mp.goto(BASE + '/gallery.html?range=30');
+    await mp.waitForSelector('.gal-card, #gal .empty');
+    const mateCamps = await mp.evaluate(async () => { const out = []; for (const st of ['', 'deleted']) { const d = await (await fetch(`/api/gallery?range=30&status=${st}`)).json(); for (const g of d.groups) for (const a of g.ads) out.push(a.campaign_id); } return out; });
+    const allCamps = new Set((await getJson('/api/gallery?range=30&status=deleted')).groups.concat((await getJson('/api/gallery?range=30')).groups).flatMap((g) => g.ads.map((a) => a.campaign_id)));
+    check("a teammate's Gallery holds only their campaigns' ads, with New ad and no Research tab",
+      mateCamps.length > 0 && mateCamps.every((c) => c === '120252638288040312') && allCamps.size > 1 && await mp.isVisible('#gal-new')
+      && (await mp.locator('.subnav a[href="/research.html"]').count()) === 0, `${new Set(mateCamps).size} of ${allCamps.size} campaigns`);
     await mctx.close();
     py(`
 import db, account_ctx
@@ -3909,7 +4084,7 @@ with account_ctx.all_accounts():
   await phonePage.click('.tabbar [data-more]');
   await phonePage.waitForSelector('dialog.sheet[open]');
   const sheetOrder = await phonePage.evaluate(() => ({ links: [...document.querySelectorAll('dialog.sheet nav a')].map((a) => a.querySelector('span')?.textContent || a.textContent.trim()), focus: document.activeElement?.textContent.trim() }));
-  check('More lists Claude first and opens on it, not on the account switcher', sheetOrder.links[0] === 'Claude' && sheetOrder.links.indexOf('Insights') > 0 && /^Claude/.test(sheetOrder.focus || ''), JSON.stringify(sheetOrder));
+  check('More lists Claude first, then Creative, and opens on Claude, not on the account switcher', sheetOrder.links[0] === 'Claude' && sheetOrder.links[1] === 'Creative' && sheetOrder.links.indexOf('Insights') > 1 && /^Claude/.test(sheetOrder.focus || ''), JSON.stringify(sheetOrder));
   await phonePage.keyboard.press('Escape');
   // A page that doesn't exist gets the console's own page, and the API keeps its own answer.
   const missing = await phonePage.goto(BASE + '/no-such-page.html?x=1');

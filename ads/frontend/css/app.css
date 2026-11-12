@@ -545,6 +545,48 @@ dialog.confirm .affix .input:focus { box-shadow: none; }
 .cr-stats dt { font-size: var(--t-xs); color: var(--ink-3); font-weight: 600; }
 .cr-stats dd { margin: 0; font-weight: 560; font-variant-numeric: tabular-nums; }
 
+/* ---------- Creative › Gallery (gallery.js): the Ads cards with a tick, the delivery track and the idea ---------- */
+.gal-card { position: relative; }
+.gal-card.is-picked { box-shadow: 0 0 0 2px var(--ink); }
+.gal-tick { position: absolute; top: 8px; left: 8px; width: 30px; height: 30px; display: grid; place-items: center; border-radius: var(--radius-s);
+  background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 1px 3px rgba(0,0,0,.18); cursor: pointer; }
+.gal-tick input { width: 16px; height: 16px; margin: 0; accent-color: var(--ink); cursor: pointer; }
+.gal-card .cr-name { overflow-wrap: anywhere; }
+.gal-copies { margin: 0; font-size: var(--t-xs); color: var(--ink-3); line-height: 1.4; }
+.gal-copies .ent-link { color: var(--ink-2); }
+.gal-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.gal-status .trk { margin-right: 2px; }
+.gal-status .pill + .pill { margin-left: 0; }
+.gal-kpi { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-top: 4px; }
+.gal-kpi > span:first-child { flex: 1 1 auto; font-size: var(--t-xs); color: var(--ink-3); font-weight: 600; }
+.gal-kpi b { font: 500 var(--t-l)/1.2 var(--font-num); color: var(--ink); }
+.gal-kpi b.early { color: var(--ink-3); }
+.gal-stats { grid-template-columns: repeat(3, auto); justify-content: space-between; margin-top: 2px; }
+.gal-stats dt { white-space: nowrap; }
+.gal-tags { margin-top: 2px; }
+.gal-tag { font-size: var(--t-xs); padding: 2px 8px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gal-tag[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--canvas); }
+.gal-when { margin-top: -6px; }
+.gal-bar #tag-pick { max-width: 260px; }
+.gal-since a { color: var(--ink-2); }
+.gal-why { font-size: var(--t-xs); opacity: .8; margin-right: 4px; }
+@media (max-width: 960px) {
+  /* Inline links stay in their sentence; padding that doesn't move the text makes them 44px to tap. */
+  .gal-copies .ent-link, .gal-since a { display: inline; padding: 15px 6px; margin: -15px -6px; }
+  .gal-tick { top: 0; left: 0; width: var(--target); height: var(--target); background: none; box-shadow: none; }
+  .gal-tick input { width: 22px; height: 22px; background: var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,.25); border-radius: 4px; }
+  .gal-tag { min-height: var(--target); }
+  .gal-card .cr-name { display: flex; align-items: center; min-height: var(--target); }
+}
+@media (max-width: 720px) {
+  .gal-stats { grid-template-columns: 1fr 1fr; }
+  .gal-tags { display: none; }
+  .gal-bar select.tool, .gal-bar #range-pick { flex: 1 1 40%; min-width: 0; order: 0; }
+  .gal-bar #range-pick { flex-basis: 100%; }
+  .gal-kpi b { font-size: var(--t-m); }
+  .gal-why { flex: 1 1 100%; order: -1; margin: 0; }
+}
+
 /* ---------- Ad page ---------- */
 .cr-head h1 { overflow-wrap: anywhere; }
 .cr-layout { display: grid; grid-template-columns: minmax(340px, 420px) minmax(0, 1fr); gap: 16px; align-items: start; }

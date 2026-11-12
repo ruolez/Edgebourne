@@ -77,24 +77,26 @@ def _zero():
     return {"days": 0, **{m: 0 for m in METRICS}}
 
 
+def owner_index(day, versions):
+    """Which version (its index) a day's results belong to, or None on a changeover day."""
+    current = 0
+    for i, v in enumerate(versions[1:], 1):
+        if day < v["started_on"]:
+            break
+        if day <= (v.get("live_on") or v["started_on"]):
+            return None
+        current = i
+    return current
+
+
 def split_results(days, versions):
     """(one total per version, changeover total). Days from a switch until Meta approved it could
     be either version, so they count for neither and are shown apart."""
     totals = [_zero() for _ in versions]
     changeover = _zero()
-
-    def owner(day):
-        current = totals[0]
-        for v, total in zip(versions[1:], totals[1:]):
-            if day < v["started_on"]:
-                break
-            if day <= (v.get("live_on") or v["started_on"]):
-                return changeover
-            current = total
-        return current
-
     for row in days:
-        total = owner(row["day"])
+        i = owner_index(row["day"], versions)
+        total = changeover if i is None else totals[i]
         total["days"] += 1
         for m in METRICS:
             total[m] += int(row.get(m) or 0)

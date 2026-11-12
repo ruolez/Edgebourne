@@ -25,12 +25,13 @@ const PAGES = [
   P("Ad sets", "/ads.html?level=adset", "all", "ads", "adsets audiences", "Ads"),
   P("Campaigns", "/ads.html?level=campaign", "all", "ads", "budgets", "Ads"),
   P("Lead forms", "/forms.html", "admin", "leads", "instant forms questions", "Ads"),
+  P("Gallery", "/gallery.html", "all", "image", "creative creatives pictures videos visuals thumbnails what works best ads copies", "Creative"),
   P("Results", "/performance.html", "all", "chart", "insights performance numbers stats statistics charts spend cost per lead", "Insights"),
   P("Compare ads", "/compare.html", "all", "compare", "side by side versus", "Insights"),
   P("Tests", "/experiments.html", "admin", "tests", "experiments a/b split test", "Insights"),
   P("Reports", "/report.html", "report", "table", "client report share pdf print", "Insights"),
   P("Claude", "/desk.html", "admin", "spark", "desk ai assistant requests conversations"),
-  P("Research", "/research.html", "admin", "research", "swipe file competitors ad library inspiration", "Claude"),
+  P("Research", "/research.html", "admin", "research", "swipe file competitors ad library inspiration", "Creative"),
   P("Settings", "/settings.html", "admin", "settings", "preferences configuration setup options"),
   P("Team", "/team.html", "admin", "team", "users people members invite logins", "Settings"),
   P("Your account", "/account.html", "all", "user", "profile password notifications push phone sign in"),
@@ -41,6 +42,8 @@ const TABS = [
   T("Claude: Suggestions waiting", "/desk.html#decide", "admin", "spark", "decisions accept approve review proposals"),
   T("Claude: By ad", "/desk.html#ads", "admin", "spark", "per ad"),
   T("Claude: Schedules", "/desk.html#schedules", "admin", "clock", "scheduled recurring repeat"),
+  T("Gallery: Just launched", "/gallery.html?view=launched", "all", "image", "new recent started"),
+  T("Gallery: Tired", "/gallery.html?view=tired", "all", "image", "fatigue worn out seen too often"),
   T("Results: By idea", "/performance.html#ideas-panel", "all", "chart", "concepts tags hooks angles"),
   T("Inbox: Needs action", "/inbox.html?box=need", "all", "inbox", "needs you to do waiting triage"),
   T("Inbox: For your information", "/inbox.html?box=fyi", "all", "inbox", "fyi notes approved changed outside"),
@@ -149,7 +152,7 @@ function render(groups) {
   ul.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
 }
 
-const QUICK = ["Today", "Inbox", "Leads", "Ads", "Results", "Compare ads", "Tests", "Reports", "Claude", "Research", "Settings",
+const QUICK = ["Today", "Inbox", "Leads", "Ads", "Gallery", "Results", "Compare ads", "Tests", "Reports", "Claude", "Research", "Settings",
   "New ad", "Ask Claude", "Ads that need attention", "Keyboard shortcuts"];
 
 async function update(ctx) {

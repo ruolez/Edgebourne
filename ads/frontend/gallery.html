@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Gallery | Edge Bourne Ads</title>
+  <link rel="icon" href="/img/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/img/app/apple-touch-icon.png">
+  <meta name="theme-color" content="#F6F6F4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E0F11" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-title" content="EB Ads">
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/css/tokens.css?v=1794494069">
+  <link rel="stylesheet" href="/css/app.css?v=1794494069">
+  <link rel="stylesheet" href="/css/shell.css?v=1794494069">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail"></aside>
+    <main class="main">
+      <header class="page-head">
+        <h1>Gallery</h1>
+        <p class="page-sub">Every ad as people see it, with what it earned. Copies of the same ad count once.</p>
+        <span class="spacer"></span>
+        <a class="btn btn-primary" href="/new-ad.html" id="gal-new" hidden></a>
+      </header>
+      <div class="content stack" id="gal"><div class="skeleton" role="status"><span></span><span></span><span></span><p>Loading…</p></div></div>
+      <div id="gal-tray" class="bk-dock"></div>
+    </main>
+  </div>
+  <script type="module" src="/js/gallery.js"></script>
+</body>
+</html>

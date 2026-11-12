@@ -12,6 +12,7 @@ let me, data, passes;
 let format = "MOBILE_FEED_STANDARD";
 try { format = localStorage.getItem("ebads-preview") || format; } catch (e) {}
 let tab = (location.hash.match(/tab=(\w+)/) || [])[1] || "overview";
+let foldAsked = (location.hash.match(/fold=(\w+)/) || [])[1] || null;  // a link can open one fold (the Gallery's "See versions")
 let audienceBy = "placement";
 const AUDIENCE_RANGES = [...RANGES, ["lifetime", "All time"]];
 // The overview's daily charts and the Audience tab open on the shared date range (or the link's ?range=).
@@ -273,6 +274,8 @@ function renderOverview() {
   }
   if (data.series) drawDaily(data.series); else pickRange(chartRange);
   $("chart-range").addEventListener("change", (e) => pickRange(e.target.value));
+  const asked = foldAsked && $(`fold-${foldAsked}`);
+  if (asked) { asked.open = true; asked.scrollIntoView({ block: "start" }); foldAsked = null; }
   loadEnhancements();
   loadIdea();
   const budgetLevel = ad.adset_budget_cents ? "adset" : "campaign";
