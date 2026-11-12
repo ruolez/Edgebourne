@@ -56,6 +56,21 @@ class FunnelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rl.funnel([(rl.LEAD_STEP, 10), ("Qualified", 3, "Contacted")])
 
+    def test_the_steps_add_booked_calls_only_for_an_account_that_tracks_them(self):
+        counts = {"received": 10, "contacted": 8, "booked": 5, "qualified": 3, "won": 1}
+        self.assertEqual([rl.funnel_steps(counts, tracks_bookings=True), rl.funnel_steps(counts, tracks_bookings=False)],
+                         [[(rl.LEAD_STEP, 10), ("Contacted", 8), ("Booked a call", 5, rl.LEAD_STEP), ("Qualified", 3, "Contacted"), ("Won", 1)],
+                          [(rl.LEAD_STEP, 10), ("Contacted", 8), ("Qualified", 3), ("Won", 1)]])
+
+    def test_booked_calls_never_pass_100_even_before_anyone_is_contacted(self):
+        for received in range(5):
+            for booked in range(received + 1):
+                for contacted in range(received + 1):
+                    for qualified in range(contacted + 1):
+                        c = {"received": received, "contacted": contacted, "booked": booked, "qualified": qualified, "won": qualified}
+                        rates = [s["rate"] for s in rl.funnel(rl.funnel_steps(c, True))]
+                        self.assertTrue(all(r is None or 0 <= r <= 100 for r in rates), (c, rates))
+
 
 class LeadGapTests(unittest.TestCase):
     """Meta's count beside the leads that reached the console, in plain words (00-PLAN C3: "your leads list")."""
@@ -299,6 +314,10 @@ class ContentTests(unittest.TestCase):
                          "Cost per lead was $5.00. 18 leads from $90.00 spent.")
         self.assertEqual(rl.headline({"spend_cents": 500, "leads": 0, "qualified": 0}, {"spend_cents": 0, "leads": 0}),
                          "$5.00 spent and no leads yet. 0 leads from $5.00 spent.")
+
+    def test_a_footnote_says_where_booked_calls_come_from_when_they_are_shown(self):
+        notes = rl.footnotes(date(2026, 11, 2), date(2026, 11, 8), booked=True)
+        self.assertEqual([len(notes), notes[-1]], [3, "Booked calls come from your leads list, by the day the lead arrived."])
 
     def test_the_measurement_change_footnote_only_when_the_period_spans_it(self):
         self.assertEqual([len(rl.footnotes(date(2026, 11, 2), date(2026, 11, 8))), len(rl.footnotes(date(2026, 11, 9), date(2026, 11, 15)))], [2, 3])

@@ -68,7 +68,7 @@ function reportHtml(r) {
       <table class="table r-funnel"><thead><tr><th>Step</th><th class="num">People</th><th class="num">Share</th></tr></thead>
         <tbody>${r.funnel.map((f) => `<tr><th scope="row">${esc(f.step)}</th><td class="num">${count(f.n)}</td><td class="num">${f.rate == null ? "" : `${f.rate}% <span class="muted r-of">of ${esc(f.of)}</span>`}</td></tr>`).join("")}</tbody></table>
       ${gap ? `<p class="muted small flush r-gap">${esc(gap.text)}${bigGap && r.review ? ` If this stays, check that new leads reach the console: <a href="/settings.html#meta">Settings → Meta</a>.` : ""}</p>` : ""}
-      ${n.median_minutes != null ? `<p class="muted flush small">Half of the leads heard back within ${n.median_minutes < 90 ? `${n.median_minutes} minutes` : `${Math.round(n.median_minutes / 60)} hours`}.</p>` : ""}
+      ${n.median_minutes != null ? `<p class="muted flush small">Half of the leads got a first call or email within ${n.median_minutes < 90 ? `${n.median_minutes} minutes` : `${Math.round(n.median_minutes / 60)} hours`}.</p>` : ""}
     </section>
     <section class="r-sec"><h3>2. Why</h3>
       ${r.ads.length ? `<table class="table r-ads"><thead><tr><th>Ad</th><th class="num">${WORDS.spend}</th><th class="num">${WORDS.leads} (Meta)</th><th class="num">${WORDS.cpl}</th><th class="num" title="${esc(EXPLAIN.ctr)}">${WORDS.ctr}</th><th class="num" title="${esc(EXPLAIN.hook)}">${WORDS.hook}</th></tr></thead>

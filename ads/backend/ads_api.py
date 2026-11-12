@@ -20,6 +20,7 @@ import ranges
 import db
 import delivery
 import desk_view
+import followup
 import creative_build
 import insights
 import meta_client
@@ -481,7 +482,7 @@ def _metrics(where, params, start, end):
 
 
 def _sum(items):
-    keys = ("spend_cents", "impressions", "reach", "link_clicks", "leads", "qualified", "video_3s", "thruplays", "video_impressions")
+    keys = ("spend_cents", "impressions", "reach", "link_clicks", "leads", "qualified", "booked", "video_3s", "thruplays", "video_impressions")
     return {k: sum(i["m"].get(k, 0) for i in items) for k in keys}
 
 
@@ -495,6 +496,14 @@ def window_from(args):
 def _quality(aw, ap, start, end):
     return {r["ad_id"]: int(r["n"]) for r in db.query(
         f"""SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND status IN ('qualified','won')
+            AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {aw} GROUP BY ad_id""",
+        [account_info.tz_name(), start, end] + ap)}
+
+
+def _booked(aw, ap, start, end):
+    """Leads that booked a call, by the day the lead arrived (L1), per ad."""
+    return {r["ad_id"]: int(r["n"]) for r in db.query(
+        f"""SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND booked_at IS NOT NULL
             AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {aw} GROUP BY ad_id""",
         [account_info.tz_name(), start, end] + ap)}
 
@@ -528,8 +537,9 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
         (f"SELECT COUNT(*) AS n FROM campaigns WHERE {cw} AND effective_status = 'ARCHIVED' AND id IS DISTINCT FROM %s", cp + [campaign_id])))
     metrics = _metrics(xw, xp, start, end)
     quality = _quality(xw, xp, start, end)
+    booked = _booked(xw, xp, start, end)
     if prev:
-        metrics_prev, quality_prev = _metrics(xw, xp, *prev), _quality(xw, xp, *prev)
+        metrics_prev, quality_prev, booked_prev = _metrics(xw, xp, *prev), _quality(xw, xp, *prev), _booked(xw, xp, *prev)
     lifetime = {r["ad_id"]: int(r["impressions"]) for r in db.query(
         f"SELECT ad_id, SUM(impressions) AS impressions FROM ad_daily WHERE {xw} GROUP BY ad_id", xp)}
     pending = {} if user["role"] == "client" else {r["eid"]: int(r["n"]) for r in db.query(
@@ -548,9 +558,9 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
                       [track_days[0], track_days[-1]] + xp):
         delivered.setdefault(r["ad_id"], set()).add(r["day"])
     for ad in ads:
-        ad["m"] = {**metrics.get(ad["id"], {}), "qualified": quality.get(ad["id"], 0)}
+        ad["m"] = {**metrics.get(ad["id"], {}), "qualified": quality.get(ad["id"], 0), "booked": booked.get(ad["id"], 0)}
         if prev:
-            ad["prev"] = {**metrics_prev.get(ad["id"], {}), "qualified": quality_prev.get(ad["id"], 0)}
+            ad["prev"] = {**metrics_prev.get(ad["id"], {}), "qualified": quality_prev.get(ad["id"], 0), "booked": booked_prev.get(ad["id"], 0)}
         d = daily.get(ad["id"], {})
         ad["spark"] = [{"day": k, "spend_cents": d.get(k, (0, 0))[0], "leads": d.get(k, (0, 0))[1]} for k in days_list]
         ad["track"] = [{"day": t.isoformat(), "on": t in delivered.get(ad["id"], ())} for t in track_days]
@@ -558,8 +568,10 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
         ad["pending_proposals"] = pending.get(ad["id"], 0)
     # Totals count every ad's spend, archived and deleted ones included (they spent real money).
     every = db.query(f"SELECT id, adset_id, campaign_id FROM ads WHERE {xw}", xp)
-    every_m = [{"adset_id": a["adset_id"], "campaign_id": a["campaign_id"], "m": {**metrics.get(a["id"], {}), "qualified": quality.get(a["id"], 0)},
-                "p": {**metrics_prev.get(a["id"], {}), "qualified": quality_prev.get(a["id"], 0)} if prev else {}} for a in every]
+    every_m = [{"adset_id": a["adset_id"], "campaign_id": a["campaign_id"],
+                "m": {**metrics.get(a["id"], {}), "qualified": quality.get(a["id"], 0), "booked": booked.get(a["id"], 0)},
+                "p": {**metrics_prev.get(a["id"], {}), "qualified": quality_prev.get(a["id"], 0), "booked": booked_prev.get(a["id"], 0)} if prev else {}}
+               for a in every]
     for s in adsets:
         s["ads"] = [a for a in ads if a["adset_id"] == s["id"]]
         mine = [a for a in every_m if a["adset_id"] == s["id"]]
@@ -615,7 +627,7 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
            "ever_total": {"impressions": sum(v[1] for v in all_views), "reach": (acct_ever or {}).get("account")} if not campaign_id else None,
            "prev_reach_total": (reach["account", "prev"] or {}).get("account") if prev and whole else None,
            "range": {"start": start.isoformat(), "end": end.isoformat(), "days": days, "label": ranges.label(start, end)},
-           "target_qualified_cents": targets.qualified(), "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync"), "archived": archived_n}
+           "target_qualified_cents": targets.qualified(), "tracks_bookings": followup.tracks_bookings(), "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync"), "archived": archived_n}
     if prev:
         out["prev_range"] = {"start": prev[0].isoformat(), "end": prev[1].isoformat(), "label": ranges.label(*prev)}
     return out

@@ -104,8 +104,8 @@ def _with_choice(resp, account_id):
 # What a client (read-only) may still do: sign out, their own password and notification settings,
 # and their own Inbox read marks and saved views (both are rows of that person only).
 CLIENT_MAY = re.compile(r"^/api/(auth/(logout|password|me)|me/(push|telegram)(/[a-z0-9]+)?|inbox/read|views(/\d+)?)$")
-# With Settings → Client access on: moving a lead's stage (and undoing that move) and adding notes.
-CLIENT_LEADS = re.compile(r"^/api/leads/\d+(/notes|/events/\d+/undo)?$")
+# With Settings → Client access on: moving a lead's stage, logging calls and next steps (and undoing them), notes.
+CLIENT_LEADS = re.compile(r"^/api/leads/\d+(/notes|/calls|/events/\d+/undo|/not-junk)?$")
 
 
 def name_of(account_id):

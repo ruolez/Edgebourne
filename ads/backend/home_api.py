@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify
 
+import account_info
 import db
+import followup
 import insights
 import meta_client
 import settings_store
@@ -73,24 +75,69 @@ def queue(user, scope_ids):
                      # W1: Got it / Diagnose with Claude on the row (admins); a snoozed problem is FYI, so never here.
                      **{k: i[k] for k in ("actions", "choices", "diagnose") if k in i}})
     rows += [] if user["role"] == "client" else _extras(user)
-    lw = "TRUE" if scope_ids is None else "campaign_id = ANY(%s)"
-    lp = [] if scope_ids is None else [scope_ids]
-    waiting = f"status = 'new' AND NOT is_test AND first_contacted_at IS NULL AND {lw}"
-    total = db.query(f"SELECT COUNT(*) AS n FROM leads WHERE {waiting}", lp, one=True)["n"]
-    leads = db.query(f"""SELECT id, full_name, business_type, ad_id, ad_name, phone, email, created_time, status,
-                                first_contacted_at, is_test FROM leads WHERE {waiting}
-                         ORDER BY created_time ASC LIMIT 200""", lp)
-    for l in leads:
-        rows.append({"key": f"lead:{l['id']}", "category": "leads", "rule": "new_lead", "level": today.urgency(l, now),
-                     "bucket": today.lead_bucket(l, now), "at": l["created_time"], "title": l["full_name"] or "Unnamed",
-                     "line": l["business_type"], "href": f"/leads.html#lead={l['id']}",
-                     "lead": {k: l[k] for k in ("id", "phone", "email", "ad_id", "ad_name", "created_time")}})
+    leads_rows, total, follow = lead_rows(scope_ids, now)
+    rows += leads_rows
     for r in rows:
         r["group"] = today.group_of(r["category"], r["rule"], r["level"])
     ranked = today.rank(rows)
-    calls = [r for r in ranked if r["group"] == "call"]
+    calls = [r for r in ranked if r["rule"] == "new_lead"]
     shown = {r["key"] for r in calls[:CALL_ROWS]}
-    return [r for r in ranked if r["group"] != "call" or r["key"] in shown], int(total), {**inbox.counts(items), "snoozed": inbox.snoozed_count(items)}
+    counts = {**inbox.counts(items), "snoozed": inbox.snoozed_count(items)}
+    return [r for r in ranked if r["rule"] != "new_lead" or r["key"] in shown], int(total), counts, follow
+
+
+# L1's lead rows: which Today group each bucket of followup.queue() lands in (00-PLAN S9), and its words.
+LEAD_GROUP = {"call": "call", "meeting_soon": "call", "overdue": "follow", "meeting_check": "follow", "later": "later"}
+LEAD_RULE = {"call": "new_lead", "meeting_soon": "meeting_soon", "overdue": "followup_overdue", "meeting_check": "meeting_check",
+             "later": "followup_today"}
+
+
+def _lead_title(kind, l, tz, now):
+    name = l["full_name"] or "Unnamed"
+    if kind == "meeting_soon":
+        return f"Call with {name} at {followup.short_clock(l['meeting_at'].astimezone(tz))}", l["business_type"]
+    if kind == "meeting_check":
+        return f"Did the call with {name} happen?", f"It was {followup._when_words(l['meeting_at'], now, tz)}"
+    words_ = followup.next_words(l["next_step_kind"], l["next_step_text"])
+    if kind == "overdue":
+        return f"Overdue: {words_} {name}", f"since {followup._when_words(l['next_step_at'], now, tz)}" + (f" · {l['business_type']}" if l["business_type"] else "")
+    if kind == "later":
+        return f"{words_} {name} · {followup.short_clock(l['next_step_at'].astimezone(tz))}", l["business_type"]
+    return name, l["business_type"]
+
+
+def lead_rows(scope_ids, now):
+    """The leads part of Today, ranked by followup.queue: leads to call, booked calls within the hour, overdue
+    follow-ups, calls that may not have happened, follow-ups due later today. Also how many leads wait for a
+    first call and the follow-up footer counts."""
+    tz = account_info.tz()
+    lw = "TRUE" if scope_ids is None else "campaign_id = ANY(%s)"
+    lp = [] if scope_ids is None else [scope_ids]
+    waiting = f"""status = 'new' AND NOT is_test AND first_contacted_at IS NULL AND meeting_status IS DISTINCT FROM 'scheduled' AND {lw}"""
+    total = db.query(f"SELECT COUNT(*) AS n FROM leads WHERE {waiting}", lp, one=True)["n"]
+    end_of_day = followup.due_where("today", now, tz)[1][1]
+    leads = db.query(f"""SELECT id, full_name, business_type, ad_id, ad_name, phone, email, created_time, status, status_changed_at,
+                                first_contacted_at, is_test, next_step_kind, next_step_text, next_step_at, meeting_at, meeting_status,
+                                booked_at, call_attempts, ever_reached
+                         FROM leads WHERE NOT is_test AND status IN ('new', 'contacted', 'qualified') AND {lw}
+                         AND ((status = 'new' AND first_contacted_at IS NULL) OR next_step_at < %s
+                              OR (meeting_status = 'scheduled' AND meeting_at < %s))
+                         ORDER BY created_time ASC LIMIT 300""", lp + [end_of_day, now + followup.MEETING_GRACE])
+    rows = []
+    for q in followup.queue(leads, now, tz):
+        l, kind = q["lead"], q["kind"]
+        title, line = _lead_title(kind, l, tz, now)
+        level = today.urgency(l, now) if kind == "call" else "warn" if kind in ("overdue", "meeting_check", "meeting_soon") else "info"
+        rows.append({"key": f"lead:{l['id']}", "category": "leads", "rule": LEAD_RULE[kind], "level": level, "bucket": q["bucket"],
+                     "at": q["at"], "title": title, "line": line, "href": f"/leads.html#lead={l['id']}",
+                     "lead": {k: l[k] for k in ("id", "full_name", "phone", "email", "ad_id", "ad_name", "created_time", "status",
+                                                "next_step_kind", "next_step_text", "next_step_at", "meeting_at")}})
+    sql, params = followup.due_where("none", now, tz)
+    no_next = db.query(f"SELECT COUNT(*) AS n FROM leads l WHERE {sql} AND NOT l.is_test AND {lw.replace('campaign_id', 'l.campaign_id')}",
+                       params + lp, one=True)["n"]
+    follow = {"no_next": int(no_next), "due_today": sum(1 for r in rows if r["rule"] == "followup_today"),
+              "overdue": sum(1 for r in rows if r["rule"] == "followup_overdue"), "presets": followup.presets(now, tz)}
+    return rows, total, follow
 
 
 @bp.get("")
@@ -119,10 +166,11 @@ def home():
     strip = [{"id": a["id"], "name": a["name"], "status": a["effective_status"], "thumbnail_url": a.get("thumbnail_url"),
               "spend_cents": int(a["spend_cents"]), "leads": int(a["leads"])}
              for a in perf["ads"] if a["effective_status"] not in ("DELETED", "ARCHIVED")][:8]
-    rows, waiting_calls, counts = queue(user, scope_ids)
+    rows, waiting_calls, counts, follow = queue(user, scope_ids)
     out = {
         "queue": rows,
         "waiting_calls": waiting_calls,
+        "follow": follow,
         "fyi_unread": counts["fyi_unread"],
         "snoozed": counts["snoozed"],
         "today": {"spend_cents": sum(r["spend_cents"] for r in today_rows), "leads": sum(r["leads"] for r in today_rows),

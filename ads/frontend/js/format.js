@@ -49,6 +49,13 @@ export const WORDS = {
   conversation: "Conversation", conversations: "Conversations",
 };
 
+// Follow-ups and booked calls (L1): a booked call is a "call" (never meeting or appointment), a next step a follow-up.
+export const FOLLOW = {
+  title: "Follow-up", booked: "Calls booked", cpb: "Cost per booked call", booked_col: "Booked", cpb_col: "Per booked call",
+  booked_title: "Leads that booked a call, by the day the lead arrived", no_show: "No-show",
+  due: [["", "Any follow-up"], ["today", "Due today"], ["overdue", "Overdue"], ["none", "No next step"], ["booked", "Calls booked"]],
+};
+
 // Plain explanations of Meta's own terms, shown next to the term wherever it appears.
 export const EXPLAIN = {
   impressions: "How many times the ad was shown, counting repeats.",

@@ -5,7 +5,7 @@ import { boot, emptyState, esc, icon, onRefresh, setCrumbs, switchHtml, timeline
 import { columnChart, marksPanel } from "./charts.js";
 import { count, dayLabel, explain, money, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
-import { LIVE, bulkBarHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, statusCell, tableHtml, hasTrack, trackLegend, unlistedNote, wire } from "./manager.js";
+import { LIVE, bulkBarHtml, closePeek, figuresHtml, flatten, setBooked, listHtml, narrow, peek, statusCell, tableHtml, hasTrack, trackLegend, unlistedNote, wire } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
 const LEVEL = document.body.dataset.level;
@@ -105,6 +105,7 @@ async function load() {
   }
   if (superseded()) return;
   data = d;
+  setBooked(d.tracks_bookings);
   rows = flatten({ campaigns: data.campaigns });
   if (LEVEL === "adset") { rows.ad = rows.ad.filter((a) => a.adset.id === id); rows.adset = rows.adset.filter((s) => s.id === id); }
   data.entity = LEVEL === "campaign" ? rows.campaign[0] : rows.adset[0];

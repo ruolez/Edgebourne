@@ -25,8 +25,13 @@ class DueTests(unittest.TestCase):
              reminders.due(lead(90, is_test=True), NOW), reminders.due(lead(25 * 60), NOW)],
             [[], [], [], []])
 
-    def test_a_note_alone_is_not_a_call_so_the_reminders_carry_on(self):
+
+    def test_a_note_alone_no_longer_stops_reminders(self):
         self.assertEqual(reminders.due(lead(90, notes=1), NOW), ["5m", "1h"])
+
+    def test_a_booked_call_stops_them(self):
+        self.assertEqual([reminders.due(lead(90, meeting_status="scheduled"), NOW), reminders.due(lead(90, meeting_status="canceled"), NOW)],
+                         [[], ["5m", "1h"]])
 
 
 class DigestTests(unittest.TestCase):
@@ -54,7 +59,3 @@ class TextTests(unittest.TestCase):
                                                                ["Wholesale bakery", "Phone: (555) 123-4567"]))
         self.assertEqual(reminders.reminder_text({**l, "full_name": None}, "5m", NOW)[0], "Nobody has called Someone yet (5 min)")
 
-    def test_digest_lists_each_lead_with_its_wait(self):
-        ls = [{**lead(14 * 60, id=1), "full_name": "Maria Lopez", "business_type": "Bakery"}, {**lead(70, id=2), "full_name": None, "business_type": None}]
-        self.assertEqual(reminders.digest_text(ls, NOW), ("2 leads are still waiting for a call",
-                                                         ["Maria Lopez, Bakery: waiting 14 h", "Someone: waiting 1 h"]))

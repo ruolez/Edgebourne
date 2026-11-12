@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, request
 import config
 import account_info
 import db
+import followup
 import insights
 import pacing
 import ranges
@@ -90,7 +91,10 @@ def overview_data(user, days, campaign_id=None, span=None):
         f"""SELECT l.ad_id,
                    COUNT(*) AS inbox,
                    COUNT(*) FILTER (WHERE l.status IN ('qualified','won')) AS qualified,
-                   COUNT(*) FILTER (WHERE l.status = 'won') AS won
+                   COUNT(*) FILTER (WHERE l.status = 'won') AS won,
+                   COUNT(*) FILTER (WHERE l.booked_at IS NOT NULL) AS booked,
+                   COUNT(*) FILTER (WHERE l.meeting_status = 'held') AS held,
+                   COUNT(*) FILTER (WHERE l.meeting_status = 'no_show') AS no_show
             FROM leads l
             WHERE NOT l.is_test AND (l.created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {lwhere}
             GROUP BY l.ad_id""",
@@ -103,7 +107,8 @@ def overview_data(user, days, campaign_id=None, span=None):
             FROM ad_daily d WHERE day BETWEEN %s AND %s AND {where}""",
         [prev_start, prev_end] + params, one=True)
     before_q = db.query(
-        f"""SELECT COUNT(*) FILTER (WHERE l.status IN ('qualified','won')) AS qualified FROM leads l
+        f"""SELECT COUNT(*) FILTER (WHERE l.status IN ('qualified','won')) AS qualified,
+                  COUNT(*) FILTER (WHERE l.booked_at IS NOT NULL) AS booked FROM leads l
             WHERE NOT l.is_test AND (l.created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {lwhere}""",
         [account_info.tz_name(), prev_start, prev_end] + lparams, one=True)
 
@@ -122,8 +127,10 @@ def overview_data(user, days, campaign_id=None, span=None):
         ad["qualified"] = int(q.get("qualified") or 0)
         ad["won"] = int(q.get("won") or 0)
         ad["inbox"] = int(q.get("inbox") or 0)
+        ad["booked"] = int(q.get("booked") or 0)
 
     qualified_total = sum(int(r["qualified"]) for r in quality)
+    booked = {k: sum(int(r[k]) for r in quality) for k in ("booked", "held", "no_show")}
     alerts = []
     for ad in per_ad:
         if ad["effective_status"] in BAD_STATUSES:
@@ -147,10 +154,12 @@ def overview_data(user, days, campaign_id=None, span=None):
         "range": {"start": start.isoformat(), "end": end.isoformat(), "days": days},
         "yesterday": {"day": last["day"], "spend_cents": last["spend_cents"], "leads": last["leads"],
                       "prev_spend_cents": prev["spend_cents"], "prev_leads": prev["leads"]},
-        "totals": {**{k: int(v) for k, v in totals.items()}, "qualified": qualified_total},
+        "totals": {**{k: int(v) for k, v in totals.items()}, "qualified": qualified_total, **booked},
         "previous": {"start": prev_start.isoformat(), "end": prev_end.isoformat(),
                      "spend_cents": int(before["spend_cents"]), "leads": int(before["leads"]),
-                     "qualified": int(before_q["qualified"] or 0)},
+                     "qualified": int(before_q["qualified"] or 0), "booked": int(before_q["booked"] or 0)},
+        # Booked calls (L1) show only once the account has booked one with a real lead.
+        "tracks_bookings": followup.tracks_bookings(),
         "series": series,
         "ads": per_ad,
         "cap": cap,

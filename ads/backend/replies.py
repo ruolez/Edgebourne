@@ -10,10 +10,10 @@ import re
 from datetime import datetime, timezone
 
 import db
+import lead_history
 import mailer
 import notify
 import settings_store
-from util import log_activity
 
 log = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ def send_now(lead, sender, subject, body, template_id=None):
         raise
     db.execute("UPDATE lead_replies SET status = 'sent', sent_at = now() WHERE id = %s", (row["id"],))
     db.execute("UPDATE leads SET first_contacted_at = COALESCE(first_contacted_at, now()) WHERE id = %s", (lead["id"],))
-    log_activity("lead.reply", subject=str(lead["id"]), details={"subject": subject})
+    lead_history.record(lead["id"], "email", ref_id=row["id"], user_id=sender["id"], details={"subject": subject})
     return row
 
 
@@ -168,7 +168,7 @@ def process_pending(now=None):
                        (attempts, str(exc)[:500], "pending" if again else "failed", again, row["id"]))
             continue
         db.execute("UPDATE lead_replies SET status = 'sent', sent_at = now(), attempts = attempts + 1, error = NULL WHERE id = %s", (row["id"],))
-        log_activity("lead.reply_auto", subject=str(row["lead_id"]), actor="system", details={"subject": row["subject"]})
+        lead_history.record(row["lead_id"], "email_auto", ref_id=row["id"], actor="system", details={"subject": row["subject"]})
     return len(rows)
 
 

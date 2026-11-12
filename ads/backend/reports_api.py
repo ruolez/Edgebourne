@@ -38,16 +38,19 @@ def today():
 
 def stage_counts(start, end):
     """The leads received in these days (account's days) and how far they got."""
+    # Contacted is stage-based (00-PLAN C5): a call nobody answered is a try, not contact. Booked calls (L1) count
+    # by the day the lead arrived.
     row = db.query(f"""SELECT COUNT(*) AS received,
-                              COUNT(*) FILTER (WHERE first_contacted_at IS NOT NULL OR status <> 'new') AS contacted,
+                              COUNT(*) FILTER (WHERE status <> 'new') AS contacted,
+                              COUNT(*) FILTER (WHERE booked_at IS NOT NULL) AS booked,
                               COUNT(*) FILTER (WHERE status IN ('qualified', 'won')) AS qualified,
                               COUNT(*) FILTER (WHERE status = 'won') AS won,
                               percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM first_contacted_at - created_time) / 60)
                                   FILTER (WHERE first_contacted_at IS NOT NULL) AS median_minutes
                        FROM leads WHERE {LEAD_SCOPE} AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s""",
                    (account_info.tz_name(), start, end), one=True)
-    return {"received": int(row["received"]), "contacted": int(row["contacted"]), "qualified": int(row["qualified"]),
-            "won": int(row["won"]),
+    return {"received": int(row["received"]), "contacted": int(row["contacted"]), "booked": int(row["booked"]),
+            "qualified": int(row["qualified"]), "won": int(row["won"]),
             "median_minutes": round(float(row["median_minutes"])) if row["median_minutes"] is not None else None}
 
 
@@ -135,18 +138,20 @@ def build(kind, start=None, for_admin=False, links=False):
         log.exception("report ideas not read")
         ideas = None
     import accounts_api
+    import followup
+    booked = followup.tracks_bookings()
     return {
         "account": accounts_api.name_of(account_ctx.current()), "currency": account_info.currency(), "kind": kind, "start": s.isoformat(), "end": e.isoformat(),
         "previous": {"start": ps.isoformat(), "end": pe.isoformat()}, "complete": rl.complete(e, t),
         "headline": rl.headline(now, before, target, account_info.currency()), "target_cents": target, "now": now, "before": before,
-        "funnel": rl.funnel([(rl.LEAD_STEP, now["received"]), ("Contacted", now["contacted"]), ("Qualified", now["qualified"]), ("Won", now["won"])]),
+        "funnel": rl.funnel(rl.funnel_steps(now, booked)),
         "lead_gap": rl.lead_gap(now["received"], now["meta_leads"]),
         "ads": ads, "ads_total": len(every), "ideas": ideas,
         "changes": changes[-SHOWN_CHANGES:], "changes_more": max(0, len(changes) - SHOWN_CHANGES),
         "tests": [{"name": x["name"], **({"id": x["id"]} if links else {}), "status": x["status"], "note": x["judgement"]["note"] if x["status"] == "running" else (x["verdict"] or "")} for x in tests],
         # Claude's pending ideas are internal: clients and share links don't see their titles.
         "needs": [p["title"] for p in pending] if for_admin else [],
-        "footnotes": rl.footnotes(s, e),
+        "footnotes": rl.footnotes(s, e, booked=booked),
     }
 
 
@@ -245,7 +250,8 @@ def frozen(row):
     """The copy that went out, with the note it carries now (an edit after sending shows; no email goes)."""
     snap = dict(row["snapshot"])
     sent_on = date.fromisoformat(snap["as_sent"]) if snap.get("as_sent") else None
-    snap["footnotes"] = rl.footnotes(date.fromisoformat(snap["start"]), date.fromisoformat(snap["end"]), sent_on)
+    snap["footnotes"] = rl.footnotes(date.fromisoformat(snap["start"]), date.fromisoformat(snap["end"]), sent_on,
+                                     booked=any(f.get("step") == rl.BOOKED_STEP for f in snap.get("funnel") or []))
     snap["note"] = note_block(row) if row.get("note") else None
     return snap
 

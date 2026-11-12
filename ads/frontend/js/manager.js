@@ -6,7 +6,7 @@ import { api } from "./api.js";
 import { confirmDialog, esc, icon, skeleton, switchHtml, timelineItem, toast, when } from "./ui.js";
 import { columnChart } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
-import { EXPLAIN, LEARNING, PROBLEM_STATES, REVIEW_STATES, WORDS, count, money, moneyWhole, pct, per, statusOf } from "./format.js";
+import { EXPLAIN, FOLLOW, LEARNING, PROBLEM_STATES, REVIEW_STATES, WORDS, count, money, moneyWhole, pct, per, statusOf } from "./format.js";
 
 export const LEVEL_WORDS = { campaign: ["campaign", "campaigns"], adset: ["ad set", "ad sets"], ad: ["ad", "ads"] };
 const isOn = (s) => s === "ACTIVE";
@@ -105,6 +105,8 @@ const C = {
   cpl: num("cpl", WORDS.cpl, (r) => cpl(r.m) ?? Infinity, (r) => `<b>${per(r.m.spend_cents, r.m.leads)}</b>`),
   vs: num("vs", "vs before", (r) => (r.prev && cpl(r.prev) && cpl(r.m) ? cpl(r.m) / cpl(r.prev) : Infinity), (r) => delta(cpl(r.m), cpl(r.prev), true), { title: vsTitle() }),
   qualified: num("qualified", WORDS.qualified, (r) => r.m.qualified || 0, (r) => count(r.m.qualified)),
+  booked: num("booked", FOLLOW.booked_col, (r) => r.m.booked || 0, (r) => count(r.m.booked), { title: FOLLOW.booked_title }),
+  cpb: num("cpb", FOLLOW.cpb_col, (r) => (r.m.booked ? r.m.spend_cents / r.m.booked : Infinity), (r) => per(r.m.spend_cents, r.m.booked), { title: FOLLOW.booked_title }),
   ctr: num("ctr", WORDS.ctr, (r) => -(rate(r.m.link_clicks, r.m.impressions) || 0), (r) => pct(r.m.link_clicks, r.m.impressions), { title: EXPLAIN.ctr }),
   hook: num("hook", WORDS.hook, (r) => -(rate(r.m.video_3s, r.m.video_impressions) || 0), (r) => (r.m.video_impressions ? pct(r.m.video_3s, r.m.video_impressions) : "—"), { title: EXPLAIN.hook }),
   hold: num("hold", WORDS.hold, (r) => -(rate(r.m.thruplays, r.m.video_3s) || 0), (r) => pct(r.m.thruplays, r.m.video_3s), { title: EXPLAIN.hold }),
@@ -140,8 +142,17 @@ function sparkline(series) {
 
 // ---------------------------------------------------------------- the table
 
+// Booked calls (L1) show only for an account that has booked one: the pages set it from the server's tracks_bookings.
+let booked = false;
+export const setBooked = (on) => { booked = Boolean(on); };
+const withBooked = (defs) => {
+  if (!booked || !defs.includes("qualified")) return defs;
+  const at = defs.indexOf("qualified") + 1;
+  return [...defs.slice(0, at), "booked", "cpb", ...defs.slice(at)];
+};
+
 export function tableHtml({ level, rows, cols, sort, dir, selected, selectable, range }) {
-  const defs = COLUMN_SETS[cols]?.[1][level] || COLUMN_SETS.results[1][level];
+  const defs = withBooked(COLUMN_SETS[cols]?.[1][level] || COLUMN_SETS.results[1][level]);
   const columns = defs.map((k) => C[k]);
   const sorter = columns.find((c) => c.key === sort) || C.spend;
   const sorted = [...rows].sort((a, b) => {
@@ -221,7 +232,7 @@ function todayEver(today, ever, key) {
 export function figuresHtml(m, prev, target, { today = null, ever = null } = {}) {
   const f = (label, value, d) => `<div class="fig"><span class="fig-l">${label}</span><b class="fig-v">${value}</b>${d || ""}</div>`;
   const qcpl = m.qualified ? m.spend_cents / m.qualified : null;
-  return `<div class="figs">
+  return `<div class="figs"${booked ? ' data-booked="1"' : ""}>
     ${f(WORDS.spend, money(m.spend_cents, { exact: true }), prev ? delta(m.spend_cents, prev.spend_cents, null).replace(/d-(good|bad)/, "d-mute") : "")}
     ${f(WORDS.impressions, count(m.impressions), `${prev ? delta(m.impressions, prev.impressions, false) : ""}${todayEver(today, ever, "impressions")}`)}
     ${f(WORDS.reach, count(m.reach) + (m.reach_summed ? "*" : ""), `${prev && !m.reach_summed ? delta(m.reach, prev.reach, false) : ""}${todayEver(today, ever, "reach")}`)}
@@ -229,6 +240,7 @@ export function figuresHtml(m, prev, target, { today = null, ever = null } = {})
     ${f(WORDS.cpl, per(m.spend_cents, m.leads), prev ? delta(cpl(m), cpl(prev), true) : "")}
     ${f(WORDS.qualified, count(m.qualified), prev ? delta(m.qualified, prev.qualified, false) : "")}
     ${f(WORDS.cpql, qcpl ? money(qcpl, { exact: true }) : "—", target ? `<span class="delta d-mute">target ${money(target)}</span>` : "")}
+    ${booked ? `${f(FOLLOW.booked_col, count(m.booked), prev && (m.booked || prev.booked) ? delta(m.booked, prev.booked, false) : "")}${f(FOLLOW.cpb_col, per(m.spend_cents, m.booked), "")}` : ""}
   </div>`;
 }
 

@@ -10,7 +10,7 @@ import * as UrlState from "./urlstate.js";
 const $ = (id) => document.getElementById(id);
 // The dates picked last on Ads, Results or any campaign, ad set or ad, unless the link names its own.
 const DEFAULTS = { ids: "", range: sharedRange(), vs: true, chart: "leads" };
-const LOWER = { cpl_cents: 1, cpq_cents: 1, cpm_cents: 1 };
+const LOWER = { cpl_cents: 1, cpq_cents: 1, cpm_cents: 1, cpb_cents: 1 };
 let state = UrlState.read(DEFAULTS);
 let data = null, all = null, allRange = null, campaigns = [];
 // The campaign picked last on Results or here, unless the link names one: the picker shows its ads.
@@ -23,8 +23,9 @@ const picked = new Set(ids());
 const save = () => UrlState.write(state, DEFAULTS);
 
 const FMT = {
-  spend_cents: (v) => money(v, { exact: true }), leads: count, qualified: count,
+  spend_cents: (v) => money(v, { exact: true }), leads: count, qualified: count, booked: count,
   cpl_cents: (v) => money(v, { exact: true }), cpq_cents: (v) => money(v, { exact: true }), cpm_cents: (v) => money(v, { exact: true }),
+  cpb_cents: (v) => money(v, { exact: true }),
   ctr: (v) => `${(v * 100).toFixed(2)}%`, hook: (v) => `${(v * 100).toFixed(1)}%`, hold: (v) => `${(v * 100).toFixed(1)}%`,
   frequency: (v) => v.toFixed(2),
 };

@@ -632,7 +632,7 @@ for name, mins in (('Reminder QA Five', 7), ('Reminder QA Hour', 61)):
   check("each reminder goes out once, and a late lead only the hour one", remindCount === 2, `${remindCount} reminder messages`);
   await page.goto(BASE + '/leads.html');
   await page.waitForSelector('#response:not([hidden])');
-  check('Leads shows how fast leads hear back', /Last 30 days: half heard back within .* of \d+ within 5 min/.test(await page.textContent('#response')), await page.textContent('#response'));
+  check('Leads shows how fast leads get a first try', /Last 30 days: first try within .* for half of them · \d+ of \d+ within 5 min/.test(await page.textContent('#response')), await page.textContent('#response'));
 
   // Desk schedules: switch one on, change its time, a due schedule files one run (not a pile), the finish reaches Telegram.
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute('UPDATE desk_schedules SET enabled=FALSE, next_run_at=NULL, skipped=0, last_task_id=NULL')"`);
@@ -2219,7 +2219,7 @@ db.execute(\\"UPDATE users SET password_hash = %s, must_change_password = FALSE 
 db.execute(\\"UPDATE accounts SET archived_at = now() WHERE name = 'QA Studio'\\")
 import account_ctx
 with account_ctx.all_accounts():
-    db.execute(\\"UPDATE leads SET created_time = now(), status = 'new', form_id = '777000111', form_name = 'QA client form' WHERE meta_lead_id = 'ACCT2MARKlead'\\")
+    db.execute(\\"UPDATE leads SET created_time = now(), status = 'new', first_contacted_at = NULL, form_id = '777000111', form_name = 'QA client form' WHERE meta_lead_id = 'ACCT2MARKlead'\\")
     db.execute(\\"DELETE FROM inbox_reads WHERE user_id = (SELECT id FROM users WHERE email = 'client-qa@burdanova.test')\\")"`);
   const cctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
   const cp = await cctx.newPage();
@@ -2277,7 +2277,50 @@ with account_ctx.all_accounts():
   await cp.click('.lead-row');
   await cp.waitForSelector('#stages');
   check("a client sees their leads but not the controls that change them", /ACCT2MARK Lead Person/.test(await cp.textContent('#list'))
-    && !(await cp.isVisible('#note-form')) && (await cp.locator('#stages button:visible').count()) <= 1);
+    && !(await cp.isVisible('#note-form')) && (await cp.locator('#stages button:visible').count()) <= 1
+    && !(await cp.isVisible('#log-call')) && (await cp.locator('#fu-box').count()) === 1 && (await cp.locator('.fu-actions:visible, [data-fu]:visible').count()) === 0);
+  {
+    // L1: a read-only client sees the Follow-up box and the history, and the server refuses a logged call.
+    const clientLead = await cp.getAttribute('.lead-row', 'data-id');
+    const callStatus = await cp.evaluate(async (id) => (await fetch(`/api/leads/${id}/calls`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outcome: 'no_answer' }) })).status, clientLead);
+    check('a read-only client cannot log a call (403)', callStatus === 403, String(callStatus));
+    // Their Call link only dials (on the lead and on Today): no call dialog they could never save.
+    const noTel = () => cp.evaluate(() => document.addEventListener('click', (e) => { if (e.target.closest('a[href^="tel:"]')) e.preventDefault(); }, true));
+    await cp.reload();
+    await cp.waitForSelector('#call-link');
+    await noTel();
+    await cp.click('#call-link');
+    await cp.waitForTimeout(700);
+    const leadDialog = await cp.locator('dialog.fu-dialog').count();
+    await cp.goto(BASE + '/home.html');
+    await cp.waitForSelector(`[data-dial="${clientLead}"]`);
+    await noTel();
+    await cp.click(`[data-dial="${clientLead}"]`);
+    await cp.waitForTimeout(700);
+    const todayDialog = await cp.locator('dialog.fu-dialog').count();
+    check("a read-only client's Call buttons only dial: no call dialog on the lead or on Today", leadDialog === 0 && todayDialog === 0, `${leadDialog} ${todayDialog}`);
+    // With Settings → Client access on, the client logs a call through the dialog (L1 flow 11b).
+    py(`import settings_store, json;settings_store.set('client_lead_updates', 'on', account_id=${leak.account2})`);
+    await cp.goto(BASE + `/leads.html#lead=${clientLead}`);
+    await cp.reload();
+    await cp.waitForSelector('#log-call:visible');
+    await cp.click('#log-call');
+    await cp.click('dialog.fu-dialog [data-outcome="no_answer"]');
+    const [clientCall] = await Promise.all([cp.waitForResponse((r) => r.request().method() === 'POST' && /\/calls$/.test(r.url())), cp.click('dialog.fu-dialog #fu-save')]);
+    await cp.waitForSelector('dialog.fu-dialog', { state: 'detached' });
+    const clientLogged = await cp.evaluate(async (id) => (await fetch(`/api/leads/${id}`)).json(), clientLead);
+    check('a client with lead updates on logs a call: No answer, Call back set', clientCall.status() === 200 && clientLogged.call_attempts === 1 && clientLogged.next_step_kind === 'call_back',
+      JSON.stringify({ code: clientCall.status(), n: clientLogged.call_attempts, next: clientLogged.next_step_kind }));
+    py(`import settings_store;settings_store.set('client_lead_updates', None, account_id=${leak.account2})`);
+    py(`import db, account_ctx
+with account_ctx.all_accounts():
+    db.execute(\\"DELETE FROM lead_events WHERE lead_id = %s AND kind IN ('call', 'next_set', 'next_cleared', 'stage')\\", (${clientLead},))
+    db.execute(\\"UPDATE leads SET status = 'new', first_contacted_at = NULL, call_attempts = 0, unanswered_streak = 0, ever_reached = FALSE, last_call_at = NULL, last_outcome = NULL, next_step_kind = NULL, next_step_text = NULL, next_step_at = NULL, next_step_by = NULL WHERE id = %s\\", (${clientLead},))`);
+    await cp.goto(BASE + '/leads.html');
+    await cp.waitForSelector('.lead-row');
+    await cp.click('.lead-row');
+    await cp.waitForSelector('#stages');
+  }
   // Forms and tests are admin pages: a client reads their names but gets no link to them.
   await cp.waitForFunction(() => /QA client form/.test(document.getElementById('detail')?.textContent || ''));
   const clientPlain = await cp.evaluate(async () => {
@@ -4252,7 +4295,9 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   await page.click('dialog.accept-sheet #cd-cancel');
   await page.waitForSelector('dialog.accept-sheet', { state: 'detached' });
   check('cancelling it decides nothing', (await getJson('/api/home')).queue.some((r) => String(r.proposal_id) === decideId), decideId);
-  check('Today ends with a way to the Inbox for the rest', /\/inbox\.html\?box=fyi/.test(await page.getAttribute('.tq-foot a', 'href')));
+  check('Today ends with a way to the Inbox for the rest', /\/inbox\.html\?box=fyi/.test(await page.getAttribute('.tq-foot:last-child a', 'href')));
+  check('L1: Today\'s footer counts the open leads with no next step and links to them', !homeData.follow.no_next
+    || (await page.getAttribute('#fu-nonext a', 'href')) === '/leads.html?due=none' && new RegExp(`^${homeData.follow.no_next} open leads? ha(s|ve) no next step`).test(await page.textContent('#fu-nonext')), JSON.stringify(homeData.follow));
   // W1a: Got it (snooze) and Diagnose with Claude on alerts: Inbox, Today, the ad page, Settings, teammates, clients, phones.
   {
     const C = '120252638288040312';
@@ -4589,6 +4634,216 @@ db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users
       && back.body.urgency === 'done' && (!listed || listed.urgency === 'done'), JSON.stringify({ code: back.code, status: back.body.status, fc: back.body.first_contacted_at, u: back.body.urgency, lu: listed && listed.urgency }));
     py(`import db;db.execute(\\"DELETE FROM lead_replies WHERE id = %s\\", (${reply},));db.execute(\\"UPDATE leads SET status = %s, first_contacted_at = %s WHERE id = %s\\", ('${before.status}', ${before.fc ? `'${before.fc}'` : 'None'}, ${undoLead}))`);
   }
+  // L1 Follow-ups and booked calls: call outcomes, the next step, Undo, Lost after three tries, Today's rows,
+  // a booked call with cost per booked call, did the call happen, the follow-up reminder and a history never pruned.
+  {
+    const C1 = "'120252638288040312', 'Edge Bourne - Free intro call - Leads'";
+    const newLead = (key, name, mins) => Number(py(`import db
+db.execute(\\"DELETE FROM leads WHERE meta_lead_id = '${key}'\\")
+r = db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, phone, campaign_id, campaign_name) VALUES ('${key}', now() - interval '${mins} minutes', '${name}', '+16195557788', ${C1}) RETURNING id\\", returning=True)
+print(r['id'])`));
+    const leadJson = (id) => getJson(`/api/leads/${id}`);
+    const post = (url, body, method = 'POST') => page.evaluate(async ([u, b, m]) => { const r = await fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); return { code: r.status, body: await r.json() }; }, [url, body, method]);
+    const fuId = newLead('qa-follow-1', 'QA Follow Lead', 200);
+    await page.goto(`${BASE}/leads.html#lead=${fuId}`);
+    await page.reload();
+    await page.waitForSelector('#fu-box');
+    check('L1: a new lead\'s Follow-up box says No calls yet, with Log a call beside Call', /No calls yet\./.test(await page.textContent('#fu-box'))
+      && await page.isVisible('#log-call') && await page.isVisible('#call-link'));
+    // 1. No answer → Call back, later today (preselected) → Save.
+    await page.click('#log-call');
+    await page.waitForSelector('dialog.fu-dialog [data-outcome="no_answer"]');
+    check('L1: Log a call asks how the call went, by first name', /How did the call with QA go\?/.test(await page.textContent('dialog.fu-dialog h2'))
+      && (await page.locator('dialog.fu-dialog [data-outcome]').count()) === 5);
+    await page.screenshot({ path: `${OUT}/flow-fu-outcome.png` });
+    await page.click('[data-outcome="no_answer"]');
+    await page.waitForSelector('dialog.fu-dialog [data-kind="call_back"][aria-pressed="true"]');
+    check('L1: No answer suggests Call back, later today', await page.isVisible('dialog.fu-dialog [data-when="later_today"][aria-pressed="true"]')
+      && /^Later today \(/.test(await page.textContent('[data-when="later_today"]')));
+    const [callRes] = await Promise.all([page.waitForResponse((r) => /\/calls$/.test(r.url())), page.click('dialog.fu-dialog #fu-save')]);
+    const called = await callRes.json();
+    await page.waitForSelector('dialog.fu-dialog', { state: 'detached' });
+    await page.waitForFunction((id) => /Call back/.test(document.querySelector(`.lead-row[data-id="${id}"] .fu-chip`)?.textContent || ''), fuId);
+    check('L1: the call counts as a first try, the row says Call back, History and the toast say what happened', Boolean(called.first_contacted_at) && called.call_attempts === 1
+      && called.urgency === 'done' && /Eugene called: no answer/.test(await page.textContent('#detail ol.history')) && /Logged: no answer\. Next: Call back/.test(await page.textContent('.toast'))
+      && /Next: Call back/.test(await page.textContent('#fu-box')), `${called.call_attempts} ${await page.textContent('.toast')}`);
+    // 2. Undo from the toast.
+    const [undoRes] = await Promise.all([page.waitForResponse((r) => /\/undo$/.test(r.url())), page.click('.toast .toast-act')]);
+    const undone = await undoRes.json();
+    await page.waitForFunction(() => /\(undone\)/.test(document.querySelector('#detail ol.history')?.textContent || ''));
+    check('L1: Undo takes the call back: no tries, waiting again, the next step it set gone, History says so', undoRes.status() === 200 && undone.call_attempts === 0
+      && !undone.first_contacted_at && !undone.next_step_at && undone.history[0].text === 'Eugene took back the call'
+      && undone.history.some((h) => h.text === 'Eugene called: no answer (undone)'), JSON.stringify(undone.history.slice(0, 3).map((h) => h.text)));
+    const again = await post(`/api/leads/${fuId}/events/${called.undo.event_id}/undo`, {});
+    check('L1: the same call cannot be taken back twice', again.code === 409, String(again.code));
+    // A note alone is not a call: still waiting.
+    await post(`/api/leads/${fuId}/notes`, { body: 'QA note, not a call' });
+    check('L1: a note alone does not stop the first-call reminders', (await leadJson(fuId)).urgency !== 'done');
+    // 3. Three calls nobody answered → one tap: Lost, couldn't reach (the next step closes).
+    await post(`/api/leads/${fuId}`, { next_step: { kind: 'call_back', preset: 'tomorrow_9' } }, 'PATCH');
+    for (let i = 0; i < 3; i++) await post(`/api/leads/${fuId}/calls`, { outcome: 'no_answer' });
+    await page.reload();
+    await page.waitForSelector('#fu-lost');
+    check('L1: after three tries nobody answered, the box offers Lost: couldn\'t reach', (await page.textContent('#fu-lost')).trim() === "Lost: couldn't reach"
+      && /3 tries, no answer\./.test(await page.textContent('#fu-suggest')));
+    const badLost = await post(`/api/leads/${fuId}`, { status: 'lost', lost_reason: 'made up' }, 'PATCH');
+    check('L1: a Lost reason outside the list is refused (400) and the lead stays put', badLost.code === 400 && (await leadJson(fuId)).status !== 'lost', String(badLost.code));
+    const [lostResp] = await Promise.all([page.waitForResponse((r) => r.request().method() === 'PATCH'), page.click('#fu-lost')]);
+    const lostUndo = ((await lostResp.json()).undo || {}).event_id;
+    await page.waitForFunction(() => document.querySelector('#stages [data-stage="lost"]')?.getAttribute('aria-pressed') === 'true');
+    const lostLead = await leadJson(fuId);
+    check('L1: Lost: couldn\'t reach moves it to Lost with the reason and closes the next step', lostLead.status === 'lost' && !lostLead.next_step_at
+      && lostLead.history.some((h) => h.text === 'Next step closed: lead is Lost') && lostLead.history.some((h) => /to Lost: Couldn't reach after 3 tries$/.test(h.text)),
+      JSON.stringify(lostLead.history.slice(0, 3).map((h) => h.text)));
+    // Undo of the Lost move brings the next step back and takes back the "Next step closed" line with it.
+    const unLost = await post(`/api/leads/${fuId}/events/${lostUndo}/undo`, {});
+    check('L1: Undo of Lost brings the next step back and marks "Next step closed" undone', unLost.code === 200 && Boolean(unLost.body.next_step_at)
+      && unLost.body.history.some((h) => h.text === 'Next step closed: lead is Lost (undone)') && !unLost.body.history.some((h) => h.text === 'Next step closed: lead is Lost'),
+      JSON.stringify({ code: unLost.code, next: unLost.body.next_step_at, h: (unLost.body.history || []).slice(0, 4).map((h) => h.text) }));
+    // 4. A stage move by hand asks what's next.
+    await post(`/api/leads/${fuId}`, { status: 'contacted' }, 'PATCH');
+    await page.reload();
+    await page.waitForSelector('#stages [data-stage="qualified"]');
+    await page.click('#stages [data-stage="qualified"]');
+    await page.waitForSelector('dialog.fu-dialog [data-kind]');
+    check('L1: moving a lead to Qualified asks what\'s next for them', /What's next for QA\?/.test(await page.textContent('dialog.fu-dialog h2')));
+    await page.click('dialog.fu-dialog [data-kind="proposal"]');
+    await page.click('dialog.fu-dialog [data-when="tomorrow_9"]');
+    await page.click('dialog.fu-dialog #fu-save');
+    await page.waitForSelector('dialog.fu-dialog', { state: 'detached' });
+    const nextShown = await page.waitForFunction(() => /Next: Send a quote · tomorrow 9:00 AM/.test(document.querySelector('#fu-box')?.textContent || ''), null, { timeout: 8000 }).then(() => true).catch(() => false);
+    check('L1: the box shows the next step and when', nextShown, await page.textContent('#fu-box'));
+    // 5. Overdue: on Leads (?due=overdue) and on Today, where Done closes it.
+    py(`import db;db.execute(\\"UPDATE leads SET next_step_at = now() - interval '2 hours' WHERE id = %s\\", (${fuId},))`);
+    await page.goto(`${BASE}/leads.html?due=overdue`);
+    await page.waitForSelector(`.lead-row[data-id="${fuId}"]`);
+    check('L1: Overdue lists the lead with an Overdue chip, and the filter says so', /^Overdue: Send a quote/.test(await page.textContent(`.lead-row[data-id="${fuId}"] .fu-chip`))
+      && (await page.inputValue('#follow')) === 'overdue' && await page.isVisible('#clear-filters'));
+    await page.goto(`${BASE}/home.html`);
+    const row = `.tq-row[data-key="lead:${fuId}"]`;
+    await page.waitForSelector(`${row} [data-fu-done]`);
+    check('L1: Today lists the overdue follow-up in Follow up, with Call and Done', /Overdue: Send a quote QA Follow Lead/.test(await page.textContent(row))
+      && (await page.$eval(row, (r) => r.closest('.tq-group').getAttribute('aria-labelledby'))) === 'tq-follow' && await page.isVisible(`${row} [data-dial]`));
+    await page.click(`${row} [data-fu-done]`);
+    await page.waitForSelector(row, { state: 'detached' });
+    check('L1: Done takes it off Today and History says so', (await leadJson(fuId)).history.some((h) => h.text === 'Done: Send a quote'));
+    // 6. A call booked on a New lead: Contacted, the chip, booked figures on Results and the Ads manager.
+    const bkId = newLead('qa-follow-2', 'QA Booked Lead', 30);
+    await page.goto(`${BASE}/leads.html#lead=${bkId}`);
+    await page.reload();
+    await page.waitForSelector('#log-call');
+    await page.click('#log-call');
+    await page.click('dialog.fu-dialog [data-outcome="booked"]');
+    await page.waitForSelector('dialog.fu-dialog [data-day="tomorrow"]');
+    const bookDefault = await page.evaluate(() => {
+      const day = document.querySelector('dialog.fu-dialog [data-day][aria-pressed="true"]')?.dataset.day;
+      const [h, m] = document.querySelector('dialog.fu-dialog #fu-time').value.split(':').map(Number);
+      const at = new Date(); at.setHours(h, m, 0, 0);
+      if (day === 'tomorrow') at.setDate(at.getDate() + 1);
+      return { day, time: document.querySelector('dialog.fu-dialog #fu-time').value, future: (day === 'today' || day === 'tomorrow') && at > new Date() };
+    });
+    check('L1: When is the call? starts on a time still ahead (Save straight away is never refused as past)', bookDefault.future, JSON.stringify(bookDefault));
+    await page.click('dialog.fu-dialog [data-day="tomorrow"]');
+    await page.fill('dialog.fu-dialog #fu-time', '14:00');
+    await page.click('dialog.fu-dialog #fu-save');
+    await page.waitForSelector('dialog.fu-dialog', { state: 'detached' });
+    await page.waitForFunction((id) => /^Call on \w{3} 2 PM$/.test(document.querySelector(`.lead-row[data-id="${id}"] .fu-chip`)?.textContent || ''), bkId);
+    const booked = await leadJson(bkId);
+    check('L1: Booked a call on a New lead books it, moves it to Contacted and says so', Boolean(booked.booked_at) && booked.meeting_status === 'scheduled'
+      && booked.status === 'contacted' && /Call booked for \w{3} 2 PM\. Moved to Contacted\./.test(await page.textContent('.toast'))
+      && /Call booked for .*2:00 PM \(booked by phone\)/.test(await page.textContent('#fu-box')), await page.textContent('.toast'));
+    py(`import db;db.execute(\\"UPDATE leads SET created_time = now() - interval '2 days', booked_at = now() - interval '2 days' WHERE id = %s\\", (${bkId},))`);
+    await page.goto(`${BASE}/performance.html`);
+    await page.waitForSelector('#fig-booked');
+    check('L1: Results shows Calls booked and Cost per booked call (from your leads)', /Calls booked/.test(await page.textContent('#fig-booked'))
+      && /Cost per booked call/.test(await page.textContent('#fig-cpb')) && /from your leads/.test(await page.textContent('#fig-cpb')));
+    await page.goto(`${BASE}/ads.html`);
+    await page.waitForSelector('.mgr-wrap thead');
+    check('L1: the Ads manager\'s Results columns include Booked and Per booked call', /Booked/.test(await page.textContent('.mgr-wrap thead')) && /Per booked call/.test(await page.textContent('.mgr-wrap thead')));
+    const rep = await getJson('/api/reports?kind=week');
+    check('L1: the report funnel has Booked a call as a share of the leads received', rep.funnel.some((f) => f.step === 'Booked a call' && f.of === 'Leads received')
+      && rep.footnotes.includes('Booked calls come from your leads list, by the day the lead arrived.'), JSON.stringify(rep.funnel));
+    // A No answer counts as a first try, so the report says first call or email, never "heard back".
+    await page.goto(`${BASE}/report.html?kind=week`);
+    await page.waitForSelector('.r-head');
+    const repText = await page.textContent('#report');
+    check('L1: the report says how fast leads got a first call or email (not "heard back")', rep.now.median_minutes != null && /Half of the leads got a first call or email within \d+ (minutes|hours)\./.test(repText)
+      && !/heard back/.test(repText), String(rep.now.median_minutes));
+    // 7. Did the call happen? No-show → Call back, later today.
+    py(`import db;db.execute(\\"UPDATE leads SET meeting_at = now() - interval '2 hours' WHERE id = %s\\", (${bkId},))`);
+    await page.goto(`${BASE}/home.html`);
+    const brow = `.tq-row[data-key="lead:${bkId}"]`;
+    await page.waitForSelector(`${brow} [data-fu-meeting="no_show"]`);
+    check('L1: Today asks whether the booked call happened', /Did the call with QA Booked Lead happen\?/.test(await page.textContent(brow)));
+    await page.click(`${brow} [data-fu-meeting="no_show"]`);
+    await page.waitForSelector('dialog.fu-dialog [data-kind="call_back"][aria-pressed="true"]');
+    check('L1: a No-show asks for the next step, Call back later today preselected', await page.isVisible('dialog.fu-dialog [data-when="later_today"][aria-pressed="true"]'));
+    await page.click('dialog.fu-dialog #fu-save');
+    await page.waitForSelector('dialog.fu-dialog', { state: 'detached' });
+    const noShow = await leadJson(bkId);
+    check('L1: History says No-show and the call back is set', noShow.meeting_status === 'no_show' && noShow.history.some((h) => h.text === 'No-show') && noShow.next_step_kind === 'call_back');
+    // 8. A due follow-up reminds once (a second pass sends nothing more).
+    py(`import db;db.execute(\\"UPDATE leads SET next_step_kind = 'call_back', next_step_at = now() - interval '1 minute' WHERE id = %s\\", (${fuId},))`);
+    const remind = () => JSON.parse(py(`import reminders, db, json
+from datetime import datetime, timezone
+reminders.followups(datetime.now(timezone.utc))
+print(json.dumps([r['title'] for r in db.query(\\"SELECT title FROM notifications WHERE kind = 'followup' AND ref = %s\\", ('${fuId}',))]))`));
+    const firstPass = remind();
+    const secondPass = remind();
+    check('L1: a follow-up that came due reminds once (to whoever set it), in plain words', firstPass.length >= 1 && secondPass.length === firstPass.length
+      && firstPass.every((t) => /^Call back QA Follow Lead: due \d{1,2}:\d{2} [AP]M$/.test(t)), JSON.stringify([firstPass, secondPass]));
+    // 9. History is never pruned (activity is, after 180 days).
+    const pruned = JSON.parse(py(`import db, jobs, json
+e = db.execute(\\"INSERT INTO lead_events (lead_id, kind, at, details) VALUES (%s, 'note', now() - interval '400 days', '{}') RETURNING id\\", (${fuId},), returning=True)['id']
+a = db.execute(\\"INSERT INTO activity (actor, action, subject, at) VALUES ('qa', 'qa.old', 'qa-old', now() - interval '400 days') RETURNING id\\", returning=True)['id']
+jobs.prune()
+print(json.dumps([bool(db.query('SELECT 1 FROM lead_events WHERE id = %s', (e,), one=True)), bool(db.query('SELECT 1 FROM activity WHERE id = %s', (a,), one=True))]))`));
+    check('L1: a lead\'s history is kept when old activity is pruned', pruned[0] === true && pruned[1] === false, JSON.stringify(pruned));
+    // 12. Phone: the dialog's answers are thumb-sized, its fields 16px.
+    const phone = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await page.context().storageState() })).newPage();
+    phone.on('pageerror', (e) => errors.push(e.message));
+    await phone.goto(`${BASE}/leads.html#lead=${fuId}`);
+    await phone.waitForSelector('#log-call');
+    await phone.click('#log-call');
+    await phone.waitForSelector('dialog.fu-dialog [data-outcome]');
+    const fit = await phone.evaluate(() => ({ small: [...document.querySelectorAll('dialog.fu-dialog button')].filter((b) => b.getBoundingClientRect().height < 44).map((b) => b.textContent),
+      font: getComputedStyle(document.querySelector('#fu-note')).fontSize, wide: document.documentElement.scrollWidth <= innerWidth,
+      bottom: Math.round(document.querySelector('dialog.fu-dialog').getBoundingClientRect().bottom) === innerHeight }));
+    await phone.screenshot({ path: `${OUT}/flow-fu-phone.png` });
+    check('L1 phone: the call dialog sits at the bottom, every button is 44px or more, the note is 16px', fit.small.length === 0 && fit.font === '16px' && fit.wide && fit.bottom, JSON.stringify(fit));
+    await phone.context().close();
+    // 320px: the row's Overdue chip is whole (no clipped text), small and amber, inside the row.
+    const narrowFu = await (await browser.newContext({ viewport: { width: 320, height: 700 }, isMobile: true, hasTouch: true, storageState: await page.context().storageState() })).newPage();
+    narrowFu.on('pageerror', (e) => errors.push(e.message));
+    await narrowFu.goto(`${BASE}/leads.html?due=overdue`);
+    const chipSel = `.lead-row[data-id="${fuId}"] .fu-chip`;
+    await narrowFu.waitForSelector(chipSel);
+    const chipFit = await narrowFu.$eval(chipSel, (c) => {
+      const row = c.closest('.lead-row').getBoundingClientRect(), r = c.getBoundingClientRect(), cs = getComputedStyle(c);
+      const kind = getComputedStyle(c.closest('.who').querySelector(':scope > span:not(.fu-chip)'));
+      return { text: c.textContent, whole: c.scrollWidth <= c.clientWidth + 1 && cs.whiteSpace !== 'nowrap' && cs.overflow === 'visible', inside: r.right <= row.right + 0.5,
+        notFull: r.width < row.width - 40, small: parseFloat(cs.fontSize) < parseFloat(kind.fontSize), amber: cs.color !== kind.color, page: document.documentElement.scrollWidth <= innerWidth };
+    });
+    check('L1 320px: the row chip shows its whole text, small and amber, inside the row', /^Overdue: Call back \(/.test(chipFit.text) && chipFit.whole && chipFit.inside
+      && chipFit.notFull && chipFit.small && chipFit.amber && chipFit.page, JSON.stringify(chipFit));
+    await narrowFu.context().close();
+    // The booked call's box line reads 'Did the call at 9 AM happen?' today, never 'on 9 AM'.
+    py(`import db;db.execute(\\"UPDATE leads SET meeting_status = 'scheduled', meeting_at = now() - interval '2 hours' WHERE id = %s\\", (${bkId},))`);
+    await page.goto(`${BASE}/leads.html#lead=${bkId}`);
+    await page.reload();
+    await page.waitForSelector('#fu-meeting');
+    const mLine = await page.textContent('#fu-meeting');
+    check("L1: the box asks 'Did the call at 4 PM happen?' (never 'on' before a bare time)", /Did the call (at|on \w{3}) \d{1,2}(:\d{2})? [AP]M happen\?/.test(mLine) && !/\bon \d/.test(mLine), mLine);
+    // A lead older than the history kept (180 days before migration 039) says so under History.
+    py(`import db;db.execute(\\"UPDATE leads SET created_time = now() - interval '400 days' WHERE id = %s\\", (${bkId},))`);
+    await page.reload();
+    await page.waitForSelector('#history-gap');
+    const gapText = await page.textContent('#history-gap');
+    const recentGap = (await leadJson(fuId)).history_gap;
+    check('L1: a lead older than the kept history says "History before <date> was not kept." and a recent one says nothing', /^History before \w{3} \d{1,2}, \d{4} was not kept\.$/.test(gapText) && recentGap === null, `${gapText} | ${recentGap}`);
+    // Booked figures show only for accounts that booked a call: these QA leads go, so later checks see the account as before.
+    py(`import db;db.execute(\\"DELETE FROM leads WHERE meta_lead_id IN ('qa-follow-1', 'qa-follow-2')\\")`);
+  }
   await page.goto(BASE + '/desk.html#list');
   await page.waitForSelector('#cv[data-state]');
   await page.waitForTimeout(400);
@@ -4674,6 +4929,14 @@ with account_ctx.all_accounts():
     check("a teammate's Gallery holds only their campaigns' ads, with New ad and no Research tab",
       mateCamps.length > 0 && mateCamps.every((c) => c === '120252638288040312') && allCamps.size > 1 && await mp.isVisible('#gal-new')
       && (await mp.locator('.subnav a[href="/research.html"]').count()) === 0, `${new Set(mateCamps).size} of ${allCamps.size} campaigns`);
+    // L1: a call on a lead from a campaign they're not on is not found (404), and nothing is logged.
+    const otherLead = Number(py(`import db
+db.execute(\\"DELETE FROM leads WHERE meta_lead_id = 'qa-mate-other'\\")
+print(db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, phone, campaign_id, campaign_name) VALUES ('qa-mate-other', now(), 'QA Other Campaign Lead', '+16195550199', 'qa-other-campaign', 'QA other campaign') RETURNING id\\", returning=True)['id'])`));
+    const mateCall = await mp.evaluate(async (id) => (await fetch(`/api/leads/${id}/calls`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ebads' }, body: JSON.stringify({ outcome: 'no_answer' }) })).status, otherLead);
+    const otherCalls = py(`import db;print(db.query(\\"SELECT call_attempts FROM leads WHERE id = %s\\", (${otherLead},), one=True)['call_attempts'])`);
+    check("a teammate can't log a call on a lead from a campaign they're not on (404, nothing logged)", mateCall === 404 && otherCalls === '0', `${mateCall} ${otherCalls}`);
+    py(`import db;db.execute(\\"DELETE FROM leads WHERE meta_lead_id = 'qa-mate-other'\\")`);
     await mctx.close();
     py(`
 import db, account_ctx
@@ -4701,6 +4964,13 @@ with account_ctx.all_accounts():
   await page.click('#home [data-retry]');
   await page.waitForSelector('.tq-group, .tq-clear');
   check('Try again loads the page', !/didn't load/i.test(await page.textContent('#home')) && (await page.locator('#home [data-retry]').count()) === 0);
+  // L1: with nothing to do, Today says no follow-ups are due and how they get there.
+  const homeBody = await getJson('/api/home');  // read in the page: Node can't resolve ads.localhost for route.fetch
+  await page.route('**/api/home', (route) => route.fulfill({ json: { ...homeBody, queue: [], waiting_calls: 0, snoozed: 0, follow: { ...(homeBody.follow || {}), no_next: 0 } } }));
+  await page.reload();
+  await page.waitForSelector('.tq-clear');
+  check('L1: an empty Today says "No follow-ups due" with how a follow-up gets there', (await page.textContent('#fu-none-due')) === 'No follow-ups due. Set a next step after each call and it shows up here on the day.');
+  await page.unroute('**/api/home');
   // Today's minute timer and the frame's catch-up with Meta fire on the same tick: one /api/home, not two.
   const clockCtx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
   await clockCtx.addCookies(await page.context().cookies());

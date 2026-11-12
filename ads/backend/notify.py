@@ -180,13 +180,13 @@ def _mark_emailed(lead_id):
 
 def _note_email_failed(lead_id, exc):
     """A lead email the queue gave up on shows in that lead's history, under the lead's account."""
-    import util
+    import lead_history
     try:
         with account_ctx.all_accounts():
             lead = db.query("SELECT account_id FROM leads WHERE id = %s", (lead_id,), one=True)
         if lead:
             with account_ctx.use(lead["account_id"]):
-                util.log_activity("lead.email_failed", subject=str(lead_id), actor="system", details={"error": str(exc)})
+                lead_history.record(int(lead_id), "alert_failed", actor="system", details={"error": str(exc)})
     except Exception:
         log.exception("lead %s: the failed email was not recorded", lead_id)
 

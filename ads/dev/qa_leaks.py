@@ -60,6 +60,9 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
     problem = once("alerts", {"rule": "no_leads", "dedupe_key": f"{mark}problem", "level": "bad", "title": f"{mark} no leads", "kind": "condition",
                               "entity_id": campaign, "campaign_id": campaign, "account_id": acct}, "dedupe_key")
     once("lead_notes", {"lead_id": lead, "user_id": admin_id, "body": f"{mark} note", "account_id": acct}, "body")
+    # A lead's history line (L1, never pruned): its words name the mark, so a leak shows in any lead's History.
+    once("lead_events", {"lead_id": lead, "kind": "received", "actor": "meta", "details": json.dumps({"ad": f"{mark} event"}),
+                         "account_id": acct}, "details")
     once("lead_replies", {"lead_id": lead, "user_id": admin_id, "to_email": "qa@example.com", "subject": f"{mark} reply", "body": f"{mark} reply",
                           "status": "sent", "account_id": acct}, "subject")
     activity = once("activity", {"user_id": admin_id, "actor": "qa", "action": "qa.mark", "subject": f"{mark} activity", "account_id": acct}, "subject")
@@ -117,6 +120,7 @@ with account_ctx.all_accounts():
                            ("lead_notes", "body"), ("lead_replies", "subject"), ("activity", "subject"), ("inbox_reads", "item_key"),
                            ("desk_tasks", "prompt"), ("swipes", "page_name")):
                 db.execute(f"DELETE FROM {t} WHERE account_id = 1 AND {col} LIKE %s", (MARK1 + "%",))
+            db.execute("DELETE FROM lead_events WHERE account_id = 1 AND details->>'ad' LIKE %s", (MARK1 + "%",))
     drop_mark1()
     atexit.register(drop_mark1)
     task1 = db.execute("INSERT INTO desk_tasks (kind, prompt, status, summary, account_id) VALUES ('question', %s, 'done', %s, 1) RETURNING id",

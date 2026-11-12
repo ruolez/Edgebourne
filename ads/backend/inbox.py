@@ -173,12 +173,12 @@ def items_for(user):
     if ids is None:
         alerts = db.query(f"SELECT {ALERT_COLS} FROM alerts WHERE created_at > now() - make_interval(days => %s) "
                           "ORDER BY id DESC LIMIT 300", (DAYS,))
-        leads = db.query("SELECT id, full_name, ad_name, created_time, status, first_contacted_at, is_test FROM leads WHERE NOT is_test "
+        leads = db.query("SELECT id, full_name, ad_name, created_time, status, first_contacted_at, meeting_status, is_test FROM leads WHERE NOT is_test "
                          "AND created_time > now() - interval '7 days' ORDER BY created_time DESC LIMIT 100")
     else:
         alerts = db.query(f"SELECT {ALERT_COLS} FROM alerts WHERE created_at > now() - make_interval(days => %s) AND campaign_id = ANY(%s) "
                           "ORDER BY id DESC LIMIT 300", (DAYS, ids))
-        leads = db.query("SELECT id, full_name, ad_name, created_time, status, first_contacted_at, is_test FROM leads WHERE NOT is_test "
+        leads = db.query("SELECT id, full_name, ad_name, created_time, status, first_contacted_at, meeting_status, is_test FROM leads WHERE NOT is_test "
                          "AND created_time > now() - interval '7 days' AND campaign_id = ANY(%s) ORDER BY created_time DESC LIMIT 100", (ids,))
     proposals = []
     if user["role"] != "client":

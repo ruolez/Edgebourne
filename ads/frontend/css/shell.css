@@ -575,6 +575,12 @@ details.tech > summary + .row, details.tech > summary + .field, details.tech > s
   .figs .fig:nth-child(-n+2) { border-top: 0; }
   .figs .fig:nth-child(even) { border-left: 1px solid var(--line); }
 }
+/* Nine with booked calls (L1): two rows (the quick look keeps its two columns, below). */
+@media (min-width: 1281px) {
+  .figs[data-booked] { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .figs[data-booked] .fig:nth-child(5n+1) { border-left: 0; }
+  .figs[data-booked] .fig:nth-child(n+6) { border-top: 1px solid var(--line); }
+}
 .figs.pk-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .figs.pk-figs .fig { border-left: 0; border-top: 1px solid var(--line); }
 .figs.pk-figs .fig:nth-child(-n+2) { border-top: 0; }
@@ -620,6 +626,14 @@ details.tech > summary + .row, details.tech > summary + .field, details.tech > s
   .figs .fig { border-left: 1px solid var(--line); border-top: 0; }
   .figs .fig:nth-child(4n+1) { border-left: 0; }
   .figs .fig:nth-child(n+5) { border-top: 1px solid var(--line); }
+}
+/* Nine with booked calls: 5 + 4 with the last one twice as wide on wide screens, 3 x 3 below, no empty slot. */
+@media (min-width: 1281px) { .figs[data-booked]:not(.pk-figs) .fig:last-child { grid-column: span 2; } }
+@media (min-width: 961px) and (max-width: 1280px) {
+  .figs[data-booked]:not(.pk-figs) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .figs[data-booked]:not(.pk-figs) .fig { border-left: 1px solid var(--line); border-top: 0; }
+  .figs[data-booked]:not(.pk-figs) .fig:nth-child(3n+1) { border-left: 0; }
+  .figs[data-booked]:not(.pk-figs) .fig:nth-child(n+4) { border-top: 1px solid var(--line); }
 }
 .figs.pk-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .figs.pk-figs .fig { border-left: 0; border-top: 1px solid var(--line); }

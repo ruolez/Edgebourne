@@ -7,6 +7,7 @@ import account_info
 import ads_api
 import compare
 import db
+import followup
 import ranges
 import search as search_logic
 import status_history
@@ -144,9 +145,9 @@ def compare_ads():
     key, start, end = ads_api.window_from(request.args)
     prev = ranges.previous(start, end, key) if request.args.get("vs") == "prev" else None
     where, params = "ad_id = ANY(%s)", [ids]
-    cur, qual = ads_api._metrics(where, params, start, end), ads_api._quality(where, params, start, end)
+    cur, qual, booked = ads_api._metrics(where, params, start, end), ads_api._quality(where, params, start, end), ads_api._booked(where, params, start, end)
     if prev:
-        cur_p, qual_p = ads_api._metrics(where, params, *prev), ads_api._quality(where, params, *prev)
+        cur_p, qual_p, booked_p = ads_api._metrics(where, params, *prev), ads_api._quality(where, params, *prev), ads_api._booked(where, params, *prev)
     import insights
     reach = insights.reach_many({"now": ("ad", start, end, None, 1800), **({"before": ("ad", *prev, None, 1800)} if prev else {})})
     reach_now, reach_before = reach["now"], reach.get("before")
@@ -155,15 +156,15 @@ def compare_ads():
         tags.setdefault(t["ad_id"], {})[t["dimension"]] = t["value"]
     items = []
     for i in ids:
-        item = {"id": i, **rows[i], "m": {**cur.get(i, {}), "qualified": qual.get(i, 0)}, "tags": tags.get(i, {}),
+        item = {"id": i, **rows[i], "m": {**cur.get(i, {}), "qualified": qual.get(i, 0), "booked": booked.get(i, 0)}, "tags": tags.get(i, {}),
                 "series": _series("ad_id = %s", [i], start, end)}
         if prev:
-            item["prev"] = {**cur_p.get(i, {}), "qualified": qual_p.get(i, 0)}
+            item["prev"] = {**cur_p.get(i, {}), "qualified": qual_p.get(i, 0), "booked": booked_p.get(i, 0)}
         insights.apply_reach([item], reach_now, "m")
         if prev:
             insights.apply_reach([item], reach_before, "prev")
         items.append(item)
-    shaped = compare.shape(items, targets.qualified(), targets.lead())
+    shaped = compare.shape(items, targets.qualified(), targets.lead(), booked=followup.tracks_bookings())
     parents = list({p for i in ids for p in (rows[i].get("adset_id"), rows[i].get("campaign_id")) if p})
     out = {"range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "label": ranges.label(start, end)},
            "items": items, **shaped, **status_history.marks_payload(user, {"entities": ids, "parents": parents}, start, end)}

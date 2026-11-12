@@ -37,6 +37,14 @@ class ShapeTests(unittest.TestCase):
     def items(self, spends):
         return [{"id": f"a{i}", "m": m(s, l, q)} for i, (s, l, q) in enumerate(spends)]
 
+    def test_booked_calls_get_two_rows_only_for_an_account_that_books_them_and_never_change_the_verdict(self):
+        items = [{"id": "a", "m": {**m(6000, 6, 3), "booked": 2}}, {"id": "b", "m": {**m(9000, 9, 4), "booked": 0}}]
+        with_b, without = compare.shape(items, 1500, booked=True), compare.shape(items, 1500)
+        row = {r["key"]: r for r in with_b["rows"]}
+        self.assertEqual([[r["key"] for r in with_b["rows"]][5:7], [c["value"] for c in row["cpb_cents"]["cells"]], row["booked"]["best"],
+                          row["cpb_cents"]["best"], "booked" in [r["key"] for r in without["rows"]], with_b["verdict"] == without["verdict"]],
+                         [["booked", "cpb_cents"], [3000, None], 0, None, False, True])
+
     def test_best_per_row_respects_direction(self):
         out = compare.shape(self.items([(4645, 11, 3), (5017, 10, 2), (5100, 9, 2)]), target_cents=6000)
         rows = {r["key"]: r["best"] for r in out["rows"]}

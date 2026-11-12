@@ -4,7 +4,7 @@ import { api, startLoad } from "./api.js";
 import { boot, confirmDialog, emptyState, esc, icon, onRefresh, toast, showLoadError, rememberList, withFrom } from "./ui.js";
 import { count, dayLabel, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
-import { COLUMN_SETS, LEVEL_WORDS, columnLabel, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, tableHtml, hasTrack, trackLegend, unlistedNote, wire } from "./manager.js";
+import { COLUMN_SETS, LEVEL_WORDS, columnLabel, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, setBooked, listHtml, narrow, peek, tableHtml, hasTrack, trackLegend, unlistedNote, wire } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = { level: "ad", view: "all", range: "7", vs: true, cols: "results", sort: "spend", dir: "desc", q: "", campaign: "", archived: false, display: "table", peek: "" };
@@ -156,6 +156,7 @@ async function load() {
   } catch (err) { if (!superseded()) showLoadError($("cr-all"), err, load); return; }
   if (superseded()) return;
   data = d;
+  setBooked(d.tracks_bookings);
   rows = flatten(data);
   for (const id of [...selected]) if (!(rows[state.level] || []).some((r) => r.id === id)) selected.delete(id);
   render();

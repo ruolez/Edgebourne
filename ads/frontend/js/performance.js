@@ -1,7 +1,7 @@
 import { api, startLoad } from "./api.js";
 import { boot, entityLink, esc, icon, onRefresh, rememberList, skeleton, toast, when, showLoadError } from "./ui.js";
 import { barList, columnChart, marksPanel } from "./charts.js";
-import { EXPLAIN, RANGES, STATUS as FORMAT_STATUS, WORDS, count, dayLabel, money, pct, per, moneyWhole, currencySymbol, rangeSelect, rememberCampaign, rememberRange, sharedCampaign, sharedRange, statusPill } from "./format.js";
+import { EXPLAIN, FOLLOW, RANGES, STATUS as FORMAT_STATUS, WORDS, count, plural, dayLabel, money, pct, per, moneyWhole, currencySymbol, rangeSelect, rememberCampaign, rememberRange, sharedCampaign, sharedRange, statusPill } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
@@ -38,9 +38,13 @@ const COLUMNS = [
   { key: "ctr", label: WORDS.ctr, value: (a) => (a.impressions ? a.link_clicks / a.impressions : null), title: EXPLAIN.ctr },
   { key: "leads", label: "Leads", value: (a) => a.leads },
   { key: "cpl", label: WORDS.cpl, value: (a) => (a.leads ? a.spend_cents / a.leads : null), low: true },
-  { key: "qualified", label: WORDS.qualified, value: (a) => a.qualified, title: "Marked Qualified or Won in the leads inbox" },
+  { key: "qualified", label: WORDS.qualified, value: (a) => a.qualified, title: "Marked Qualified or Won in your leads list" },
   { key: "cpq", label: WORDS.cpql, value: (a) => (a.qualified ? a.spend_cents / a.qualified : null), low: true },
+  // Booked calls (L1): only for an account that has booked one (the server's tracks_bookings).
+  { key: "booked", label: FOLLOW.booked_col, value: (a) => a.booked, title: FOLLOW.booked_title, booked: true },
+  { key: "cpb", label: FOLLOW.cpb_col, value: (a) => (a.booked ? a.spend_cents / a.booked : null), low: true, title: FOLLOW.booked_title, booked: true },
 ];
+const cols = () => COLUMNS.filter((c) => !c.booked || (data && data.tracks_bookings));
 const EARLY = 3; // fewer leads than this: too early to judge an ad's cost per lead
 let table = { filter: "spent", sort: "spend", dir: "desc", q: "" };
 try { table = { ...table, ...JSON.parse(localStorage.getItem("ebads-results") || "{}"), q: "" }; } catch (e) {}
@@ -87,12 +91,14 @@ function render() {
   }
 
   const ratio = (c, n) => (n ? c / n : null);
-  const figures = `<section class="panel figures" aria-label="Totals for the period">
+  const figures = `<section class="panel figures${data.tracks_bookings ? " booked" : ""}" aria-label="Totals for the period">
     <div class="figure hero"><span class="label">Cost per lead</span><span class="value">${cpl ? money(cpl, { exact: true }) : "—"}</span>${change(cpl, ratio(p.spend_cents, p.leads), "down", p)}<span class="sub">${count(t.leads)} lead${t.leads === 1 ? "" : "s"} from ${money(t.spend_cents)}</span>${yesterdayLine(data.yesterday)}</div>
     <div class="figure"><span class="label">Spent</span><span class="value">${money(t.spend_cents)}</span>${change(t.spend_cents, p.spend_cents, null, p)}</div>
     <div class="figure"><span class="label">Leads</span><span class="value">${count(t.leads)}</span>${change(t.leads, p.leads, "up", p)}</div>
-    <div class="figure"><span class="label">Qualified or won</span><span class="value">${count(t.qualified)}</span>${change(t.qualified, p.qualified, "up", p)}<span class="sub">from the leads inbox</span></div>
+    <div class="figure"><span class="label">Qualified or won</span><span class="value">${count(t.qualified)}</span>${change(t.qualified, p.qualified, "up", p)}<span class="sub">got that far · from your leads</span></div>
     <div class="figure"><span class="label">Cost per qualified lead</span><span class="value">${per(t.spend_cents, t.qualified)}</span>${change(ratio(t.spend_cents, t.qualified), ratio(p.spend_cents, p.qualified), "down", p)}<span class="sub">the number that matters most</span></div>
+    ${data.tracks_bookings ? `<div class="figure" id="fig-booked"><span class="label">${FOLLOW.booked}</span><span class="value">${count(t.booked)}</span>${change(t.booked, p.booked, "up", p)}<span class="sub">${count(t.held)} held, ${plural(t.no_show, "no-show")}</span></div>
+    <div class="figure" id="fig-cpb"><span class="label">${FOLLOW.cpb}</span><span class="value">${per(t.spend_cents, t.booked)}</span>${change(ratio(t.spend_cents, t.booked), ratio(p.spend_cents, p.booked), "down", p)}<span class="sub">from your leads</span></div>` : ""}
   </section>`;
 
   const charts = `<div class="charts">
@@ -133,7 +139,7 @@ function render() {
 
 function adsShown() {
   const q = table.q.trim().toLowerCase();
-  const col = COLUMNS.find((c) => c.key === table.sort);
+  const col = cols().find((c) => c.key === table.sort) || COLUMNS[2];
   const sign = table.dir === "asc" ? 1 : -1;
   return data.ads.filter(listed).filter(FILTERS[table.filter][1]).filter((a) => !q || (a.name || "").toLowerCase().includes(q)).sort((a, b) => {
     const x = col.value(a), y = col.value(b);
@@ -159,15 +165,17 @@ function adRow(a) {
     <td class="num">${costCell(a.spend_cents, a.leads)}</td>
     <td class="num">${count(a.qualified)}</td>
     <td class="num">${costCell(a.spend_cents, a.qualified)}</td>
+    ${data.tracks_bookings ? `<td class="num">${count(a.booked)}</td><td class="num">${costCell(a.spend_cents, a.booked)}</td>` : ""}
   </tr>`;
 }
 
 function totalRow(list) {
   const sum = (k) => list.reduce((s, a) => s + (a[k] || 0), 0);
-  const [spend, imp, clicks, leads, qual] = ["spend_cents", "impressions", "link_clicks", "leads", "qualified"].map(sum);
+  const [spend, imp, clicks, leads, qual, booked] = ["spend_cents", "impressions", "link_clicks", "leads", "qualified", "booked"].map(sum);
   return `<tr><th scope="row" colspan="2">Total · ${list.length} ad${list.length === 1 ? "" : "s"}</th>
     <td class="num">${money(spend, { exact: true })}</td><td class="num">${count(imp)}</td><td class="num">${pct(clicks, imp)}</td>
-    <td class="num">${count(leads)}</td><td class="num">${per(spend, leads)}</td><td class="num">${count(qual)}</td><td class="num">${per(spend, qual)}</td></tr>`;
+    <td class="num">${count(leads)}</td><td class="num">${per(spend, leads)}</td><td class="num">${count(qual)}</td><td class="num">${per(spend, qual)}</td>
+    ${data.tracks_bookings ? `<td class="num">${count(booked)}</td><td class="num">${per(spend, booked)}</td>` : ""}</tr>`;
 }
 
 function headCell(c) {
@@ -186,7 +194,7 @@ function renderAds() {
   const goneSpend = gone.reduce((s, a) => s + a.spend_cents, 0);
   const body = list.length
     ? `<div class="scroll-x"><table class="table middle results-table">
-        <thead><tr>${COLUMNS.map(headCell).join("")}</tr></thead>
+        <thead><tr>${cols().map(headCell).join("")}</tr></thead>
         <tbody>${list.map(adRow).join("")}</tbody>
         ${list.length > 1 ? `<tfoot>${totalRow(list)}</tfoot>` : ""}</table></div>`
     : `<div class="empty-inline"><p class="muted">${table.q ? `No ad called “${esc(table.q)}”` : `No ads ${{ spent: "spent money", running: "are running", all: "" }[table.filter]} in this period`.replace("  ", " ")}.</p>
@@ -226,7 +234,7 @@ function wireAds() {
     if (f) { table.filter = f.dataset.filter; saveTable(); renderAds(); return; }
     const s = e.target.closest(".results-table [data-sort]");
     if (s) {
-      const col = COLUMNS.find((c) => c.key === s.dataset.sort);
+      const col = cols().find((c) => c.key === s.dataset.sort);
       if (table.sort === col.key) table.dir = table.dir === "asc" ? "desc" : "asc";
       else { table.sort = col.key; table.dir = col.text || col.low ? "asc" : "desc"; }
       saveTable(); renderAds();

@@ -1,6 +1,8 @@
 import { api, startLoad } from "./api.js";
 import { boot, entityLink, esc, fieldError, icon, leadClock, onRefresh, phoneDisplay, rememberList, setNewCount, toast, when, showLoadError } from "./ui.js";
 import { closeLayer, openLayer } from "./urlstate.js";
+import { FOLLOW, plural } from "./format.js";
+import { armDial, askMeeting, askNext, boxHtml, chipHtml, logCall, resumePending } from "./followup.js";
 
 const STAGES = [
   { id: "new", label: "New" },
@@ -11,13 +13,14 @@ const STAGES = [
 ];
 const FILTERS = [{ id: "open", label: "Open" }, ...STAGES, { id: "all", label: "All" }];
 
-const state = { loaded: false, me: null, filter: "open", q: "", tests: false, leads: [], counts: {}, selected: null, seen: new Set() };
+const state = { loaded: false, me: null, filter: "open", q: "", tests: false, due: "", leads: [], counts: {}, selected: null, seen: new Set(), lead: null };
 const $ = (id) => document.getElementById(id);
 
 // What "filtered" means here: anything other than open leads of every campaign, no search, no test leads.
 // Where a lead came from, kept in the URL: the picker offers campaigns and ads; an ad set or a form comes from a link.
 const SOURCE_KEYS = ["campaign", "adset", "ad", "form"];
-const filtered = () => state.filter !== "open" || Boolean(state.q) || state.tests || SOURCE_KEYS.some((k) => new URLSearchParams(location.search).get(k));
+const filtered = () => state.filter !== "open" || Boolean(state.q) || state.tests || Boolean(state.due) || SOURCE_KEYS.some((k) => new URLSearchParams(location.search).get(k));
+const DUE_KEYS = FOLLOW.due.map(([k]) => k).filter(Boolean);
 
 function renderFilters() {
   const c = state.counts;
@@ -32,16 +35,30 @@ function renderFilters() {
 
 const minutesText = (m) => (m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.round(m / 6) / 10} h`.replace(".0 h", " h") : `${Math.round(m / 1440)} days`);
 
-// How fast leads hear back, last 30 days. Half of the contacted leads heard back within the median.
+// How fast leads got a first try, last 30 days, and the calls logged. Half of the tried leads got it within the median.
 function renderResponse(r) {
   const el = $("response");
   if (!r || !r.leads) { el.hidden = true; return; }
-  const parts = [r.median_minutes === null ? "Nobody has been contacted yet" : `half heard back within ${minutesText(r.median_minutes)}`,
+  const parts = [r.median_minutes === null ? "Nobody has been tried yet" : `first try within ${minutesText(r.median_minutes)} for half of them`,
     `${r.within_5} of ${r.leads} within 5 min`];
-  if (r.untouched) parts.push(`${r.untouched} not contacted`);
+  if (r.untouched) parts.push(`${r.untouched} not tried yet`);
+  if (r.calls) parts.push(`${plural(r.calls, "call")}, ${r.talked} talked to (${r.rate}%)`);
   el.textContent = `Last 30 days: ${parts.join(" · ")}`;
   el.hidden = false;
 }
+
+// The follow-up filter: its counts beside each choice, kept in the address (?due=).
+function renderFollow(counts) {
+  const n = { today: counts.due_today, overdue: counts.overdue, none: counts.no_next, booked: counts.booked };
+  $("follow").innerHTML = FOLLOW.due.map(([k, l]) => `<option value="${k}" ${state.due === k ? "selected" : ""}>${esc(l)}${k && n[k] ? ` (${n[k]})` : ""}</option>`).join("");
+}
+
+const DUE_EMPTY = {
+  today: ["Nothing due today", "Next steps you set show up here on their day."],
+  overdue: ["Nothing overdue", "Every follow-up is on time."],
+  none: ["Every open lead has a next step", "Leads someone has tried show up here when nothing is planned for them."],
+  booked: ["No calls booked yet", "Tap Booked a call after a call and it shows up here."],
+};
 
 function rowHtml(lead) {
   const isNew = lead.status === "new";
@@ -53,6 +70,7 @@ function rowHtml(lead) {
       <b>${esc(lead.full_name || "No name given")}</b>
       <span>${esc(lead.business_type || "Business not given")}</span>
       <small>${lead.is_test ? '<span class="pill">Test</span> ' : ""}${isNew ? "" : `<span class="pill ${lead.status}">${esc(STAGES.find((s) => s.id === lead.status).label)}</span> `}${esc(lead.ad_name || (lead.is_organic ? "No ad (organic)" : ""))}${lead.owner_name ? `, ${esc(lead.owner_name)}` : ""}</small>
+      ${chipHtml(lead.chip)}
     </span>
   </button></li>`;
 }
@@ -60,7 +78,10 @@ function rowHtml(lead) {
 function renderList() {
   const list = $("list");
   $("clear-filters").hidden = !filtered();
-  if (!state.leads.length) {
+  if (!state.leads.length && DUE_EMPTY[state.due]) {
+    const [h, p] = DUE_EMPTY[state.due];
+    list.innerHTML = `<li class="empty"><h3>${h}</h3><p>${p}</p><button type="button" class="btn" data-clear-filters>Clear filters</button></li>`;
+  } else if (!state.leads.length) {
     list.innerHTML = `<li class="empty">${filtered()
       ? '<h3>Nothing matches</h3><p>Try another stage or search, or start again from every open lead.</p><button type="button" class="btn" data-clear-filters>Clear filters</button>'
       : `<h3>No leads yet</h3><p>When someone fills in one of the ad's lead forms, they show up here within a minute${state.me.role === "admin" ? " and you get an email" : ""}.</p>${state.me.role === "admin" ? '<a class="btn" href="/settings.html">Check the Meta connection</a>' : ""}`}</li>`;
@@ -91,6 +112,7 @@ async function load({ quiet = false } = {}) {
   if (state.filter !== "all") params.set("status", state.filter);
   if (state.q) params.set("q", state.q);
   if (state.tests) params.set("tests", "1");
+  if (state.due) params.set("due", state.due);
   const src = new URLSearchParams(location.search);
   for (const k of SOURCE_KEYS) if (src.get(k)) params.set(k, src.get(k));
   const superseded = startLoad("leads");
@@ -102,6 +124,7 @@ async function load({ quiet = false } = {}) {
     state.counts = data.counts;
     state.newEverywhere = data.new_everywhere;
     renderResponse(data.response);
+    renderFollow(data.follow || {});
     if (!state.loaded) { data.leads.forEach((l) => state.seen.add(l.id)); state.loaded = true; }
     renderFilters();
     renderList();
@@ -133,10 +156,12 @@ function detailHtml(lead) {
     </div>
     ${lead.is_test ? '<p class="note warn">This is a test lead from Meta\'s testing tool.</p>' : ""}
     <div class="reach">
-      ${lead.phone ? `<a class="btn btn-call" href="tel:${esc(lead.phone)}">${icon("phone")} Call ${esc(phoneDisplay(lead.phone))}</a>` : ""}
+      ${lead.phone ? `<a class="btn btn-call" id="call-link" href="tel:${esc(lead.phone)}">${icon("phone")} Call ${esc(phoneDisplay(lead.phone))}</a>` : ""}
+      <button type="button" class="btn" id="log-call">Log a call</button>
       ${lead.email ? `<button type="button" class="btn" id="reply-open" aria-expanded="false" aria-controls="reply-form">${icon("mail")} Email them</button>` : ""}
     </div>
     ${lead.email ? replyForm(lead) : ""}
+    ${boxHtml(lead)}
     <div class="stage">
       <span class="stage-label" id="stage-label">Stage</span>
       <div class="segmented" role="group" aria-labelledby="stage-label" id="stages">
@@ -161,9 +186,10 @@ function detailHtml(lead) {
     <form id="note-form" class="stack tight">
       <label class="sr-only" for="note">Add a note</label>
       <textarea class="input" id="note" name="body" placeholder="What did you learn on the call?"></textarea>
+      ${lead.urgency !== "done" ? '<p class="hint" id="note-hint">Called them? Use Log a call so the reminders stop.</p>' : ""}
       <div><button class="btn btn-primary" type="submit">Add note</button></div>
     </form>
-    ${history ? `<h3 class="section-title">History</h3><ol class="history">${history}</ol>` : ""}`;
+    ${history ? `<h3 class="section-title">History</h3><ol class="history">${history}</ol>${lead.history_gap ? `<p class="muted small flush" id="history-gap">${esc(lead.history_gap)}</p>` : ""}` : ""}`;
 }
 
 function replyForm(lead) {
@@ -277,7 +303,9 @@ function renderDetail(lead, { keep = false } = {}) {
   const detail = $("detail");
   const typed = keep ? { note: $("note")?.value, reply: $("reply-form") && !$("reply-form").hidden
     ? { subject: $("reply-subject").value, body: $("reply-body").value, template: $("reply-template").value } : null } : {};
+  state.lead = lead;
   detail.innerHTML = detailHtml(lead);
+  wireFollow(lead);
   $("back")?.addEventListener("click", () => {
     $("layout").classList.remove("showing-detail");
     closeLayer(listUrl());
@@ -302,6 +330,48 @@ function renderDetail(lead, { keep = false } = {}) {
     $("reply-open").setAttribute("aria-expanded", "true");
     loadDraft(lead, typed.reply.template).then(() => { $("reply-subject").value = typed.reply.subject; $("reply-body").value = typed.reply.body; }).catch(() => {});
   }
+}
+
+// A change from the Follow-up box or the call dialog: the lead page and the list redraw, what's typed stays.
+function changed(lead) {
+  if (lead && state.selected === lead.id) renderDetail(lead, { keep: true });
+  load({ quiet: true });
+}
+
+const ask = async (fn, ...args) => { const lead = await fn(...args); if (lead) changed(lead); return lead; };
+
+function wireFollow(lead) {
+  armDial($("call-link"), lead, changed);
+  $("log-call")?.addEventListener("click", () => ask(logCall, lead, { after: changed }));
+  $("fu-box")?.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-fu]");
+    if (!b || b.disabled) return;
+    const what = b.dataset.fu;
+    const first = String(lead.full_name || "").trim().split(/\s+/)[0] || "them";
+    if (what === "add" || what === "change") return ask(askNext, lead, { title: what === "add" ? `What's next for ${first}?` : "Change the next step" });
+    if (what === "moved" || what === "set-time" || what === "rebook") return ask(askMeeting, lead);
+    if (what === "email") { $("reply-open")?.click(); return; }
+    b.disabled = true;
+    try {
+      if (what === "done") {
+        const updated = await api(`/api/leads/${lead.id}`, { method: "PATCH", body: { next_step_done: true } });
+        toast(`Done: ${lead.follow.next.words}`);
+        changed(updated);
+      } else if (what === "held" || what === "no_show" || what === "canceled") {
+        const updated = await api(`/api/leads/${lead.id}`, { method: "PATCH", body: { meeting: { status: what } } });
+        changed(updated);
+        toast({ held: "Marked: the call happened", no_show: "Marked: no-show", canceled: "Call canceled" }[what]);
+        if (what !== "canceled") {
+          const opts = what === "no_show" ? { title: `What's next for ${first}?`, kind: "call_back", preset: "later_today" } : { title: `What's next for ${first}?` };
+          await ask(askNext, updated, opts);
+        }
+      } else if (what === "lost") {
+        await patch(lead.id, { status: "lost", lost_reason: "no_response", lost_note: lead.follow.lost_notes[lead.follow.suggestion] });
+      } else if (what === "lost-wrong") {
+        await patch(lead.id, { status: "lost" });
+      }
+    } catch (err) { toast(err.message, "bad"); b.disabled = false; }
+  });
 }
 
 // Stage events go to Meta from the background worker within seconds; refresh just that line.
@@ -331,6 +401,11 @@ async function patch(id, body) {
     // A stage move can be put back for a few minutes: the toast's Undo (same person, while it's still the last move).
     if (body.status) toast(`Moved to ${stageLabel(body.status)}`, "", lead.undo ? { undo: () => undoMove(id, lead.undo.event_id) } : {});
     load({ quiet: true });
+    // Moved on to Contacted or Qualified by hand: what's next for them (No next step is always fine).
+    if (lead.undo && ["contacted", "qualified"].includes(body.status) && state.selected === id) {
+      const first = String(lead.full_name || "").trim().split(/\s+/)[0] || "them";
+      await ask(askNext, lead, { title: `What's next for ${first}?` });
+    }
   } catch (err) { toast(err.message, "bad"); }
 }
 
@@ -340,15 +415,15 @@ async function undoMove(id, eventId) {
     if (state.selected === id) renderDetail(lead, { keep: true });
     const sent = (lead.undone?.meta_has || []).map(stageLabel);
     toast(`Back to ${stageLabel(lead.status)}${sent.length ? `. Meta already has ${sent.join(", ")}` : ""}`);
-    load({ quiet: true });
+    changed(null);
   } catch (err) { toast(err.message, "bad"); }
 }
 
 function clearFilters() {
-  state.filter = "open"; state.q = ""; state.tests = false; state.selected = null;
+  state.filter = "open"; state.q = ""; state.tests = false; state.due = ""; state.selected = null;
   $("q").value = ""; $("tests").checked = false;
   const u = new URL(location.href);
-  [...SOURCE_KEYS, "status"].forEach((k) => u.searchParams.delete(k));
+  [...SOURCE_KEYS, "status", "due"].forEach((k) => u.searchParams.delete(k));
   history.replaceState(null, "", u.pathname + u.search);
   rememberList(u.pathname + u.search);
   load();
@@ -364,6 +439,21 @@ async function main() {
   $("search-icon").outerHTML = icon("search");
   const askedStage = new URLSearchParams(location.search).get("status");
   if (FILTERS.some((f) => f.id === askedStage)) state.filter = askedStage;
+  const askedDue = new URLSearchParams(location.search).get("due");
+  if (DUE_KEYS.includes(askedDue)) {
+    state.due = askedDue;
+    // Calls booked can be on leads already won or lost: the list opens on every stage for it.
+    if (askedDue === "booked" && !askedStage) state.filter = "all";
+  }
+  $("follow").addEventListener("change", (e) => {
+    state.due = e.target.value;
+    const u = new URL(location.href);
+    if (state.due) u.searchParams.set("due", state.due); else u.searchParams.delete("due");
+    history.replaceState(null, "", u.pathname + u.search + u.hash);
+    rememberList(u.pathname + u.search);
+    state.selected = null;
+    load();
+  });
   $("filters").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-f]");
     if (!b) return;
@@ -405,6 +495,10 @@ async function main() {
   if (fromHash) state.selected = fromHash; // so the list doesn't open the newest lead instead
   await load();
   if (fromHash) select(fromHash, { push: false });
+  // A call dialled from this page while it was reloaded (a phone app starting again): ask how it went.
+  resumePending(async (id) => {
+    try { const lead = await api(`/api/leads/${id}`); ask(logCall, lead, { after: changed }); } catch (e) { /* gone or not theirs */ }
+  });
   // ⌘K or a notification can point at another lead while this page is open; Back closes the one open.
   const followUrl = () => {
     const id = Number((location.hash.match(/lead=(\d+)/) || [])[1]);

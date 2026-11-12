@@ -30,6 +30,18 @@ for i, (name, phone, email, biz, ad, mins, status) in enumerate(samples):
                   ON CONFLICT (meta_lead_id) DO NOTHING""",
                (f"demo-{i}", now - timedelta(minutes=mins), f"ad-{i}", ad, name, email, phone, biz,
                 json.dumps(answers), status))
+# Follow-ups (L1): Grace has an overdue call back after a no-answer, Robert a call booked for tomorrow.
+for meta_id, outcome, sql in (
+        ("demo-4", "no_answer", "next_step_kind = 'call_back', next_step_at = now() - interval '2 hours'"),
+        ("demo-5", "booked", "booked_at = now() - interval '1 day', meeting_at = date_trunc('hour', now()) + interval '1 day', "
+                             "meeting_status = 'scheduled', booking_source = 'call'")):
+    lead = db.query("SELECT id FROM leads WHERE meta_lead_id = %s", (meta_id,), one=True)
+    if lead and not db.query("SELECT 1 FROM lead_events WHERE lead_id = %s AND kind = 'call'", (lead["id"],), one=True):
+        db.execute("INSERT INTO lead_events (lead_id, kind, outcome, actor, at) VALUES (%s, 'call', %s, 'system', now() - interval '1 day')",
+                   (lead["id"], outcome))
+        db.execute(f"""UPDATE leads SET {sql}, call_attempts = 1, last_call_at = now() - interval '1 day', last_outcome = %s,
+                           ever_reached = %s, unanswered_streak = %s, first_contacted_at = COALESCE(first_contacted_at, now() - interval '1 day')
+                       WHERE id = %s""", (outcome, outcome == "booked", int(outcome != "booked"), lead["id"]))
 print("seeded")
 
 # Sample performance: 5 ads over 30 days, and a spending cap (local only).

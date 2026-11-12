@@ -1051,12 +1051,24 @@ def snapshot():
         f"""SELECT COALESCE(NULLIF(business_type, ''), 'not given') AS business_type, COUNT(*) AS n,
                   COUNT(*) FILTER (WHERE status IN ('qualified', 'won')) AS qualified
            FROM leads WHERE {in_window} GROUP BY 1 ORDER BY 2 DESC LIMIT 15""", window)
+    # first_contacted_at is the first try (any logged call, a No answer too, an email or a move out of New), not
+    # proof the lead heard back (L1).
     speed = db.query(
-        f"""SELECT COUNT(*) FILTER (WHERE first_contacted_at IS NOT NULL) AS contacted,
+        f"""SELECT COUNT(*) FILTER (WHERE first_contacted_at IS NOT NULL) AS tried,
                   COUNT(*) AS total,
                   percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM first_contacted_at - created_time) / 60)
-                      FILTER (WHERE first_contacted_at IS NOT NULL) AS median_minutes_to_contact
+                      FILTER (WHERE first_contacted_at IS NOT NULL) AS median_minutes_to_first_try
            FROM leads WHERE {in_window}""", window, one=True)
+    # Calls and follow-ups (L1), counts only: no names, phones or notes.
+    calls = db.query(
+        f"""SELECT COUNT(*) FILTER (WHERE e.outcome IS NOT NULL) AS calls,
+                  COUNT(*) FILTER (WHERE e.outcome IN ('reached', 'booked')) AS talked
+           FROM lead_events e JOIN leads l ON l.id = e.lead_id
+           WHERE e.kind = 'call' AND e.undone_at IS NULL AND NOT l.is_test
+           AND (e.at AT TIME ZONE %s)::date BETWEEN %s AND %s""", window, one=True)
+    follow = {"calls": int(calls["calls"]), "talked": int(calls["talked"]),
+              "follow_ups_overdue": int(db.query("""SELECT COUNT(*) AS n FROM leads WHERE NOT is_test AND next_step_at <= now()
+                                                    AND status IN ('new', 'contacted', 'qualified')""", one=True)["n"])}
     import experiments_api
     tests = experiments_api.summaries(db.query(
         f"SELECT {experiments_api.COLS} FROM experiments WHERE status = 'running' OR closed_at > now() - interval '30 days' ORDER BY start_day DESC"))
@@ -1068,7 +1080,7 @@ def snapshot():
     import accounts_api
     return jsonify({"account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current())},
                     "performance": perf, "lead_stages_by_ad": stages, "lead_business_types": types,
-                    "speed_to_lead": speed, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
+                    "speed_to_lead": speed, "follow_ups": follow, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
                     "experiments": tests, **budget_snapshot(perf["range"])})
 
 

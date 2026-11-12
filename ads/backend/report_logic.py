@@ -81,6 +81,19 @@ def funnel(steps):
     return out
 
 
+BOOKED_STEP = "Booked a call"
+
+
+def funnel_steps(counts, tracks_bookings):
+    """The report's steps from its counts. An account that books calls gets "Booked a call" after Contacted, as a
+    share of the leads received (a call can be booked before anyone is contacted), and Qualified stays a share of
+    Contacted (00-PLAN C2)."""
+    steps = [(LEAD_STEP, counts["received"]), ("Contacted", counts["contacted"])]
+    if tracks_bookings:
+        return steps + [(BOOKED_STEP, counts["booked"], LEAD_STEP), ("Qualified", counts["qualified"], "Contacted"), ("Won", counts["won"])]
+    return steps + [("Qualified", counts["qualified"]), ("Won", counts["won"])]
+
+
 def lead_gap(received, meta):
     """Meta's lead count beside the leads that reached the console, in plain words; None when they agree."""
     if received == meta:
@@ -122,13 +135,15 @@ def headline(now, before, target_cents=None, currency="USD"):
     return first + " " + second
 
 
-def footnotes(start, end, sent_on=None):
+def footnotes(start, end, sent_on=None, booked=False):
     notes = ["Leads are the people who reached your leads list from the lead forms (test entries left out), by the day they arrived; "
              "Meta's own count, under each ad set's attribution setting, is shown beside them. Qualified and won come from your "
              "leads list. In the table of ads, leads are Meta's count per ad.",
              "Complete days only, in the ad account's time zone. Conversion counts may include Meta's modelled conversions; reach and frequency are estimates."]
     if start < MEASUREMENT_CHANGE <= end:
         notes.append("From Nov 12, 2026 Meta also measures some website conversions on people's devices; figures before and after that date are not directly comparable. Instant Form leads are not affected.")
+    if booked:
+        notes.append("Booked calls come from your leads list, by the day the lead arrived.")
     if sent_on:
         notes.append(f"Figures as sent on {words.day(sent_on)}, {sent_on.year}.")
     return notes

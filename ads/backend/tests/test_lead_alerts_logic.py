@@ -190,14 +190,14 @@ class LeadEmailFailedTest(unittest.TestCase):
                 mock.patch.object(notify, "claim", return_value=True), \
                 mock.patch.object(notify, "_deliver", side_effect=error), \
                 mock.patch.object(notify.db, "execute"), \
-                mock.patch("util.log_activity") as activity, \
+                mock.patch("lead_history.record") as activity, \
                 mock.patch.object(notify.account_ctx, "use", wraps=notify.account_ctx.use) as use:
             notify.process_pending(NOW)
         return [(c.args, c.kwargs) for c in activity.call_args_list], [c.args for c in use.call_args_list]
 
     def test_a_lead_email_that_finally_fails_shows_in_the_lead_history_of_its_account(self):
         self.assertEqual(self.run_failure("lead", "email", permanent=True),
-                         ([(("lead.email_failed",), {"subject": "7", "actor": "system", "details": {"error": "mailbox full"}})],
+                         ([((7, "alert_failed"), {"actor": "system", "details": {"error": "mailbox full"}})],
                           [(3,)]))
 
     def test_a_retry_still_to_come_or_another_alert_writes_nothing(self):

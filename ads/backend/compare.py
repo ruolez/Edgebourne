@@ -8,6 +8,8 @@ ROWS = (  # key, label, direction (+1 higher is better, -1 lower is better, 0 no
     ("cpl_cents", "Cost per lead", -1),
     ("qualified", "Qualified leads", 1),
     ("cpq_cents", "Cost per qualified lead", -1),
+    ("booked", "Calls booked", 1),
+    ("cpb_cents", "Cost per booked call", -1),
     ("ctr", "Click rate", 1),
     ("hook", "Hook rate", 1),
     ("hold", "Hold rate", 1),
@@ -26,6 +28,7 @@ def rates(t):
     out = dict(t)
     out["cpl_cents"] = round(spend / leads) if leads else None
     out["cpq_cents"] = round(spend / q) if q else None
+    out["cpb_cents"] = round(spend / t["booked"]) if t.get("booked") else None
     out["ctr"] = _div(t.get("link_clicks", 0), imp)
     # Video impressions only: an image ad has no hook rate, and doesn't pull a mixed group's down (audit A3-65).
     out["hook"] = _div(t.get("video_3s", 0), t.get("video_impressions", 0))
@@ -49,11 +52,18 @@ def _delta(now, before):
     return round((now - before) * 100 / before)
 
 
-def shape(items, target_cents, lead_target_cents=None):
+BOOKED_ROWS = ("booked", "cpb_cents")
+
+
+def shape(items, target_cents, lead_target_cents=None, booked=False):
+    """booked: the account books calls (L1), so Calls booked and Cost per booked call get rows. They are shown,
+    never judged: the verdict stays on qualified leads or leads."""
     cur = [rates(i["m"]) for i in items]
     prev = [rates(i["prev"]) if i.get("prev") else None for i in items]
     rows = []
     for key, label, direction in ROWS:
+        if key in BOOKED_ROWS and not booked:
+            continue
         values = [c.get(key) for c in cur]
         rows.append({"key": key, "label": label, "best": _best(values, direction),
                      "cells": [{"value": v, "delta_pct": _delta(v, p.get(key) if p else None)} for v, p in zip(values, prev)]})

@@ -30,6 +30,12 @@ class ClientAllowTests(unittest.TestCase):
         self.assertEqual([bool(accounts_api.CLIENT_MAY.match(p)) for p in ok], [True] * len(ok))
         self.assertEqual([bool(accounts_api.CLIENT_MAY.match(p)) for p in no], [False] * len(no))
 
+    def test_with_client_access_on_a_client_may_work_a_lead_and_nothing_around_it(self):
+        import accounts_api
+        ok = ["/api/leads/7", "/api/leads/7/notes", "/api/leads/7/calls", "/api/leads/7/events/12/undo", "/api/leads/7/not-junk"]
+        no = ["/api/leads", "/api/leads/7/reply", "/api/leads/7/events/12", "/api/leads/7/calls/3", "/api/leads/x/calls", "/api/bookings/1/link"]
+        self.assertEqual([bool(accounts_api.CLIENT_LEADS.match(p)) for p in ok + no], [True] * len(ok) + [False] * len(no))
+
 
 if __name__ == "__main__":
     unittest.main()

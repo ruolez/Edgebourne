@@ -3,6 +3,7 @@ import { acceptSheet } from "./decide.js";
 import { boot, confirmDialog, entityLink, esc, icon, leadClock, onRefresh, toast, when, editing, showLoadError, withFrom } from "./ui.js";
 import { money, per, plural } from "./format.js";
 import { alertButtons, moreButton, runChip, wireAlerts } from "./alertmenu.js";
+import { armDial, askMeeting, askNext } from "./followup.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
@@ -31,16 +32,41 @@ function actionLabel(r) {
     : h.startsWith("/settings") ? "Open Settings" : "Open";
 }
 
+// A Call button dials and then asks how it went (followup.armDial); without a phone number, the lead opens.
+const callButton = (r) => (r.lead.phone ? `<a class="btn btn-call" href="tel:${esc(r.lead.phone)}" data-dial="${r.lead.id}">${icon("phone")}Call</a>` : `<a class="btn" href="${esc(r.href)}">Open</a>`);
+
 function leadRow(r) {
   const l = r.lead;
   const from = l.ad_name ? ` · from ${entityLink("ad", l.ad_id, shortAd(l.ad_name))}` : "";
   return `<li class="tq-row tq-lead" data-key="${esc(r.key)}">
     ${leadClock({ urgency: r.level, created_time: l.created_time })}
     <div class="tq-b"><a class="tq-name" href="${esc(r.href)}"><b>${esc(r.title)}</b></a><p>${esc(r.line || "No business given")}${from}</p></div>
-    <div class="tq-acts">${l.phone ? `<a class="btn btn-call" href="tel:${esc(l.phone)}">${icon("phone")}Call</a>` : `<a class="btn" href="${esc(r.href)}">Open</a>`}
+    <div class="tq-acts">${callButton(r)}
       ${l.email ? `<a class="btn tq-mail" href="mailto:${esc(l.email)}" aria-label="Email ${esc(r.title)}">${icon("mail")}</a>` : ""}</div>
   </li>`;
 }
+
+// L1's follow-up rows: one action each (Call / Done, It happened / No-show / Moved, Open for a call coming up).
+function followRow(r) {
+  const id = r.lead.id;
+  let acts;
+  if (r.rule === "meeting_check") {
+    acts = `<span class="tq-fu"><button type="button" class="btn" data-fu-meeting="held" data-lead="${id}">It happened</button>`
+      + `<button type="button" class="btn btn-quiet" data-fu-meeting="no_show" data-lead="${id}">No-show</button>`
+      + `<button type="button" class="btn btn-quiet" data-fu-meeting="moved" data-lead="${id}">Moved</button></span>`;
+  } else if (r.rule === "meeting_soon") {
+    acts = `<a class="btn" href="${esc(r.href)}">Open</a>`;
+  } else {
+    acts = `${callButton(r)}<button type="button" class="btn btn-quiet tq-fu" data-fu-done="${id}">Done</button>`;
+  }
+  const ic = r.rule === "meeting_soon" || r.rule === "meeting_check" ? "phone" : "alarm";
+  return `<li class="tq-row tq-follow" data-key="${esc(r.key)}"><span class="tq-ic k-${TONE[r.level] || "info"}">${icon(ic)}</span>
+    <div class="tq-b"><a class="tq-name" href="${esc(r.href)}"><b>${esc(r.title)}</b></a>${r.line ? `<p>${esc(r.line)}</p>` : ""}</div>
+    <div class="tq-acts">${acts}</div></li>`;
+}
+
+const FOLLOW_RULES = new Set(["meeting_soon", "followup_overdue", "meeting_check", "followup_today"]);
+const rowOf = (r) => (r.rule === "new_lead" ? leadRow(r) : FOLLOW_RULES.has(r.rule) ? followRow(r) : itemRow(r));
 
 function itemRow(r) {
   const s = r.subject;
@@ -64,17 +90,22 @@ function itemRow(r) {
 
 function queueHtml(d) {
   const q = d.queue;
-  if (!q.length) return `<p class="tq-clear">${icon("spark")}<span>Nothing needs you right now.</span></p>`;
+  if (!q.length) {
+    const logs = !document.documentElement.classList.contains("read-only") || document.documentElement.classList.contains("client-leads");
+    return `<p class="tq-clear">${icon("spark")}<span>Nothing needs you right now.</span></p>${logs
+      ? '<p class="tq-foot" id="fu-none-due">No follow-ups due. Set a next step after each call and it shows up here on the day.</p>' : ""}`;
+  }
   const groups = [...new Set(q.map((r) => r.group))];
   return groups.map((g) => {
     const rows = q.filter((r) => r.group === g);
     const [title, hint] = GROUPS[g] || ["Other", ""];
     const ids = rows.filter((r) => r.proposal_id).map((r) => r.proposal_id);
     const all = g === "decide" && ids.length > 1 ? `<button type="button" class="link-btn" data-accept-all="${ids.join(",")}">Review all ${ids.length}</button>` : "";
-    const more = g === "call" && d.waiting_calls > rows.length
-      ? `<li class="tq-more"><a href="/leads.html">${plural(d.waiting_calls - rows.length, "more lead")} waiting for a first call</a></li>` : "";
+    const calls = rows.filter((r) => r.rule === "new_lead").length;
+    const more = g === "call" && d.waiting_calls > calls
+      ? `<li class="tq-more"><a href="/leads.html">${plural(d.waiting_calls - calls, "more lead")} waiting for a first call</a></li>` : "";
     return `<section class="tq-group" aria-labelledby="tq-${g}"><h2 class="tq-h" id="tq-${g}">${title}${hint ? ` <small>${hint}</small>` : ""}<span class="spacer"></span>${all}</h2>
-      <ul>${rows.map((r) => (r.group === "call" ? leadRow(r) : itemRow(r))).join("")}${more}</ul></section>`;
+      <ul>${rows.map(rowOf).join("")}${more}</ul></section>`;
   }).join("");
 }
 
@@ -83,6 +114,7 @@ function lede(d) {
   const parts = [];
   if (d.waiting_calls) parts.push(`${plural(d.waiting_calls, "person", "people")} to call`);
   if (n("problems")) parts.push(`${plural(n("problems"), "problem")} to fix`);
+  if (n("follow")) parts.push(`${plural(n("follow"), "follow-up")} to do`);
   if (n("decide")) parts.push(`${plural(n("decide"), "thing")} to decide`);
   const first = parts.length ? parts.slice(0, -1).join(", ") + (parts.length > 1 ? " and " : "") + parts[parts.length - 1] + "." : "Nothing needs you right now.";
   const on = d.ads?.ACTIVE || 0;
@@ -92,7 +124,9 @@ function lede(d) {
 function render(d) {
   $("today-lede").textContent = lede(d);
   const fyi = d.fyi_unread ? `${plural(d.fyi_unread, "new note")} for your information, like approvals and changes made in Ads Manager.` : "Approvals, changes made in Ads Manager and other notes for your information stay in the Inbox.";
+  const noNext = d.follow && d.follow.no_next;
   const queueCard = `<section class="panel tq" aria-label="What needs you, most urgent first">${queueHtml(d)}
+    ${noNext ? `<p class="tq-foot" id="fu-nonext">${plural(noNext, "open lead")} ${noNext === 1 ? "has" : "have"} no next step. <a href="/leads.html?due=none">See them</a></p>` : ""}
     ${d.snoozed ? `<p class="tq-foot al-snoozed-line">${plural(d.snoozed, "snoozed alert")}. <a href="/inbox.html?box=fyi">See them</a></p>` : ""}
     <p class="tq-foot">${fyi} <a href="/inbox.html?box=fyi">Open the Inbox</a></p></section>`;
 
@@ -164,6 +198,10 @@ function render(d) {
     else loadAdvice();
   }
   if (changesOpen) $("home").querySelector(".today-changes").open = true;
+  $("home").querySelectorAll("[data-dial]").forEach((a) => {
+    const r = d.queue.find((x) => x.lead && String(x.lead.id) === a.dataset.dial);
+    if (r) armDial(a, withPresets(r.lead), load);
+  });
   $("home").querySelectorAll("[data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
 }
 
@@ -195,6 +233,39 @@ function changeWords(c, LEVEL) {
     case "subscribe": return ["", "made", "<b>Connected the Page</b> to receive leads"];
     default: return ["made", "made", `<b>${esc((c.action || "Changed").replace(/_/g, " ").replace(/^./, (x) => x.toUpperCase()))}</b> ${lvl} “${name || short(c.new_value)}”`];
   }
+}
+
+// Today's lead rows carry what a dialog needs; the time buttons come once for the page.
+const withPresets = (lead) => ({ ...lead, presets: (shown && shown.follow && shown.follow.presets) || {} });
+const firstName = (lead) => String(lead.full_name || "").trim().split(/\s+/)[0] || "them";
+
+async function followAction(e) {
+  const done = e.target.closest("[data-fu-done]");
+  const meet = e.target.closest("[data-fu-meeting]");
+  if (!done && !meet) return false;
+  const id = Number((done || meet).dataset.fuDone || (done || meet).dataset.lead);
+  const row = shown && shown.queue.find((x) => x.lead && x.lead.id === id);
+  if (!row) return true;
+  const lead = withPresets(row.lead);
+  const btn = done || meet;
+  try {
+    if (done) {
+      btn.disabled = true;
+      await api(`/api/leads/${id}`, { method: "PATCH", body: { next_step_done: true } });
+      toast("Done. It's in the lead's history.");
+    } else if (meet.dataset.fuMeeting === "moved") {
+      await askMeeting(lead);
+    } else {
+      btn.disabled = true;
+      const status = meet.dataset.fuMeeting;
+      await api(`/api/leads/${id}`, { method: "PATCH", body: { meeting: { status } } });
+      toast(status === "held" ? "Marked: the call happened" : "Marked: no-show");
+      await askNext(lead, status === "no_show" ? { title: `What's next for ${firstName(lead)}?`, kind: "call_back", preset: "later_today", presets: lead.presets }
+        : { title: `What's next for ${firstName(lead)}?`, presets: lead.presets });
+    }
+  } catch (err) { toast(err.message, "bad"); btn.disabled = false; return true; }
+  load();
+  return true;
 }
 
 let loadedAt = 0;
@@ -269,6 +340,7 @@ async function loadAdvice(fresh = false) {
 
 document.addEventListener("click", async (e) => {
   if (e.target.closest("#advice-fresh")) { loadAdvice(true); return; }
+  if (await followAction(e)) return;
   // A decision opens the Accept sheet: Meta read fresh, money items never ticked for you, one by one.
   const acc = e.target.closest("[data-accept], [data-accept-all]");
   if (acc) {

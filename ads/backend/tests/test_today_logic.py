@@ -48,6 +48,12 @@ class GroupTests(unittest.TestCase):
                          ["problems", "problems", "system", "money", "decide", "decide", "call", "system", "system"])
 
 
+class LeadGroupTests(unittest.TestCase):
+    def test_follow_up_rows_land_in_their_groups(self):
+        rules = ["new_lead", "meeting_soon", "followup_overdue", "meeting_check", "followup_today"]
+        self.assertEqual([today.group_of("leads", r, "warn") for r in rules], ["call", "call", "follow", "follow", "later"])
+
+
 class RankTests(unittest.TestCase):
     def setUp(self):
         self.items = [

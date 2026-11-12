@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import config
 import crm_events
 import db
+import lead_history
 import mailer
 import meta_client
 from util import log_activity
@@ -121,6 +122,9 @@ def store_lead(data):
     if row:
         if not is_test:
             crm_events.enqueue(row["id"], "new", _parse_time(data.get("created_time")))
+        # The first line of its history (never pruned); `announce` writes the activity line once it is told about.
+        lead_history.record(row["id"], "received", actor="meta", at=_parse_time(data.get("created_time")), mirror=False,
+                            details={"ad": data.get("ad_name"), "test": is_test, "organic": bool(data.get("is_organic"))})
         return row["id"], True
     existing = db.query("SELECT id FROM leads WHERE meta_lead_id = %s", (str(data["id"]),), one=True)
     # Not visible here: the lead id is unique across accounts and another account already has it.

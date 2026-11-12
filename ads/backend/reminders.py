@@ -1,8 +1,10 @@
-"""Leads nobody has contacted get chased: after 5 minutes the owner (or, with no owner, everyone
-who gets the lead alert) hears about it, after an hour the admins do, and at 8 AM local time the
-admins get the list of every lead still waiting. "Contacted" means a stage change or an email sent
-from the lead page, as on Today and Leads; a note alone is not a call. Test leads and leads over a
-day old never trigger a reminder.
+"""Leads nobody has tried get chased: after 5 minutes the owner (or, with no owner, everyone who gets the
+lead alert) hears about it, after an hour the admins do. A next step that comes due reminds the lead's owner
+(else whoever set it, else the admins) once per due time (L1). At 8 AM local time each admin gets the day
+(leads waiting for a first call, follow-ups due or overdue, booked calls); a teammate gets the leads they own.
+"Tried" means a logged call, an email sent from the lead page or a stage change, as on Today and Leads; a note
+alone is not a call, and a booked call stops the first-call reminders. Test leads and leads over a day old
+never trigger a first-call reminder.
 
 Alerts go to Telegram when the person linked it, otherwise by email (notify.py queue).
 """
@@ -13,6 +15,7 @@ from zoneinfo import ZoneInfo
 import account_info
 import config
 import db
+import followup
 import mailer
 import notify
 import replies
@@ -62,15 +65,53 @@ def reminder_text(lead, kind, now):
     return title, lines
 
 
-def digest_text(leads, now):
-    n = len(leads)
-    title = f"{n} lead{'s are' if n != 1 else ' is'} still waiting for a call"
-    lines = [f"{l.get('full_name') or 'Someone'}{', ' + l['business_type'] if l.get('business_type') else ''}: waiting {_wait(l, now)}" for l in leads]
-    return title, lines
-
-
 LEADS_SQL = """SELECT l.* FROM leads l
-               WHERE l.status = 'new' AND NOT l.is_test AND l.first_contacted_at IS NULL"""
+               WHERE l.status = 'new' AND NOT l.is_test AND l.first_contacted_at IS NULL
+               AND l.meeting_status IS DISTINCT FROM 'scheduled'"""
+OPEN_SQL = "l.status IN ('new', 'contacted', 'qualified') AND NOT l.is_test"
+
+
+def followups(now):
+    """One reminder per follow-up that came due (a moved step reminds again; a retry never does). It goes to
+    the lead's owner, else whoever set the step, else the account's admins. Missed for a day: dropped (the
+    digest still lists it as overdue)."""
+    tz = account_info.tz()
+    queued = 0
+    for lead in db.query(f"SELECT l.* FROM leads l WHERE {OPEN_SQL} AND l.next_step_at <= %s AND l.next_step_at > %s",
+                         (now, now - followup.REMIND_FOR)):
+        if not followup.reminder_due(lead, now):
+            continue
+        people = [lead["owner_id"]] if lead["owner_id"] else [lead["next_step_by"]] if lead["next_step_by"] else notify.admin_ids()
+        title, lines = followup.due_text(lead, tz)
+        epoch = int(lead["next_step_at"].timestamp())
+        for uid, channel in notify.reach(people):
+            notify.queue(uid, channel, "followup", title, lines, notify.link(f"/leads.html#lead={lead['id']}"), "Open the lead",
+                         ref=str(lead["id"]), dedupe_key=f"followup:{lead['id']}:{epoch}:{uid}")
+            queued += 1
+    return queued
+
+
+def digest(now, local):
+    """The 8 AM message: admins get every lead, a teammate the leads they own. Returns how many were queued."""
+    tz = account_info.tz()
+    end = followup.due_where("today", now, tz)[1][1]
+    waiting = [l for l in db.query(LEADS_SQL + " ORDER BY l.created_time") if untouched(l)]
+    due = db.query(f"SELECT l.* FROM leads l WHERE {OPEN_SQL} AND l.next_step_at < %s ORDER BY l.next_step_at", (end,))
+    calls = db.query(f"""SELECT l.* FROM leads l WHERE {OPEN_SQL} AND l.meeting_status = 'scheduled'
+                         AND l.meeting_at >= %s AND l.meeting_at < %s ORDER BY l.meeting_at""", (now, end))
+    admins = notify.admin_ids()
+    owners = {l["owner_id"] for l in waiting + due + calls if l["owner_id"] and l["owner_id"] not in admins}
+    queued = 0
+    for uid in list(admins) + sorted(owners):
+        mine = (lambda ls: ls) if uid in admins else (lambda ls, u=uid: [l for l in ls if l["owner_id"] == u])
+        text = followup.digest_text(mine(waiting), mine(due), mine(calls), now, tz)
+        if not text:
+            continue
+        for who, channel in notify.reach([uid]):
+            notify.queue(who, channel, "digest", text[0], text[1], notify.link("/leads.html?due=today"), "Open the leads",
+                         dedupe_key=f"digest:{local.date().isoformat()}:{who}")
+            queued += 1
+    return queued
 
 
 def run(now=None):
@@ -97,18 +138,17 @@ def run(now=None):
         settings_store.set("reminder_digest_date", local.date().isoformat())
     elif digest_due(local, last):
         settings_store.set("reminder_digest_date", local.date().isoformat())
-        waiting = [l for l in db.query(LEADS_SQL + " ORDER BY l.created_time") if untouched(l)]
-        if waiting:
-            title, lines = digest_text(waiting, now)
-            for uid, channel in notify.reach(notify.admin_ids()):
-                notify.queue(uid, channel, "digest", title, lines, notify.link("/leads.html"), "Open the leads",
-                             dedupe_key=f"digest:{local.date().isoformat()}:{uid}")
-                queued += 1
-    return queued
+        queued += digest(now, local)
+    return queued + followups(now)
 
 
 def stats(where="TRUE", params=()):
+    """The response line on Leads: how fast leads got a first try, and the calls logged, last 30 days."""
     rows = db.query(
         f"SELECT EXTRACT(EPOCH FROM (l.first_contacted_at - l.created_time)) / 60 AS wait_minutes FROM leads l "
         f"WHERE {where} AND NOT l.is_test AND l.created_time > now() - interval '30 days'", list(params))
-    return response_stats([{"wait_minutes": float(r["wait_minutes"]) if r["wait_minutes"] is not None else None} for r in rows])
+    calls = db.query(
+        f"""SELECT e.outcome, e.undone_at IS NOT NULL AS undone FROM lead_events e JOIN leads l ON l.id = e.lead_id
+            WHERE e.kind = 'call' AND e.at > now() - interval '30 days' AND {where} AND NOT l.is_test""", list(params))
+    return {**response_stats([{"wait_minutes": float(r["wait_minutes"]) if r["wait_minutes"] is not None else None} for r in rows]),
+            **followup.call_stats(calls)}
