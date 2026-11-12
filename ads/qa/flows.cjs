@@ -99,19 +99,73 @@ const guards = require('./guards.cjs');
   check('duplicate opens the new ad with the "created, off" note', (await page.textContent('#cr-title')).includes('flow copy'));
   await page.screenshot({ path: `${OUT}/flow-3-duplicate.png`, fullPage: true });
 
-  // 4. New ad with an uploaded image.
-  if (IMG) {
+  // 4. New ad with an uploaded image (9.4e: steps beside the form, every field marked before anything is
+  // sent, one uploader with cancel and retry).
+  {
+    const png = (kb, name) => {
+      if (IMG) return IMG;
+      const b = Buffer.alloc(kb * 1024, 7);
+      b.write('\x89PNG', 0, 'latin1');
+      return { name, mimeType: 'image/png', buffer: b };
+    };
     await page.goto(BASE + '/new-ad.html');
+    await page.waitForSelector('#stepper li');
     await page.waitForSelector('#template option', { state: 'attached' });
     await page.selectOption('#template', '120252672229040312');
-    await page.setInputFiles('#file', IMG);
+    await page.waitForFunction(() => /to finish first/.test(document.getElementById('ready').textContent));
+    let adPosts = 0;
+    const countAdPosts = (r) => { if (r.method() === 'POST' && /\/api\/ads\/new$/.test(r.url())) adPosts += 1; };
+    page.on('request', countAdPosts);
+    await page.click('#create');
+    await page.waitForSelector('#new-form .field.error .err');
+    const marked = await page.$$eval('#new-form [aria-invalid="true"]', (els) => els.map((e) => e.name));
+    check('New ad marks every missing field at once (the media and the name) and sends nothing', marked.join() === 'media,name' && adPosts === 0, marked.join());
+    check('the steps beside the form say what each holds or still needs', (await page.getAttribute('#stepper li:nth-child(1)', 'data-state')) === 'done'
+      && (await page.getAttribute('#stepper li:nth-child(2)', 'data-state')) === 'fix' && /Choose an image or video/.test(await page.textContent('#stepper li:nth-child(2)')));
+    // The media's file input sits under the Upload tab: with another tab open, Create puts the keyboard on that tab.
+    await page.click('#mt-library');
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.click('#create');
+    await page.waitForFunction(() => document.activeElement?.id === 'mt-library');
+    check('Create with the media missing under another tab focuses that tab and brings it into view', await page.evaluate(() => {
+      const r = document.getElementById('mt-library').getBoundingClientRect();
+      return r.top >= 0 && r.bottom <= innerHeight;
+    }) && adPosts === 0);
+    await page.click('#mt-upload');
+    // A failed upload offers Try again with the same file; a slow one can be cancelled.
+    await page.route('**/api/media/upload', (r) => r.abort('failed'), { times: 1 });
+    const upSeen = errors.length;
+    await page.setInputFiles('#file', png(40, 'qa-first.png'));
+    await page.waitForSelector('.upl[data-state="failed"] [data-upl="again"]');
+    check('a failed upload says so and offers Try again', /check the connection/.test(await page.textContent('.upl-status')));
+    await page.click('[data-upl="again"]');
+    await page.waitForSelector('#chosen:not([hidden]) .ok-text');
+    errors.splice(upSeen);
+    check('Try again sends the same file without choosing it again', /qa-first\.png|\.png/.test(await page.textContent('#chosen')));
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Network.enable');
+    await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: 100 * 1024 });
+    await page.click('#clear-media');
+    await page.setInputFiles('#file', { name: 'qa-slow.png', mimeType: 'image/png', buffer: Buffer.alloc(3 * 1024 * 1024, 7) });
+    await page.waitForSelector('[data-upl="cancel"]');
+    check('while one file uploads no second one can be chosen', await page.evaluate(() => document.getElementById('file').disabled));
+    await page.click('[data-upl="cancel"]');
+    await page.waitForSelector('.upl[data-state="failed"]');
+    await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    check('an upload can be cancelled while it goes up, and uploaded again', /cancelled/.test(await page.textContent('.upl-status'))
+      && (await page.locator('[data-upl="again"]').count()) === 1 && await page.isHidden('#chosen'));
+    await page.setInputFiles('#file', png(40, 'qa-new-ad.png'));
     await page.waitForSelector('#chosen:not([hidden]) .ok-text');
     await page.fill('#name', 'N7 - Flow test image ad');
     await page.fill('#title', 'One system for the whole shop');
+    await page.waitForFunction(() => /Ready to create/.test(document.getElementById('ready').textContent));
+    check('once everything is there the marks clear and every step is done', (await page.locator('#new-form [aria-invalid="true"]').count()) === 0
+      && (await page.locator('#stepper li[data-state="done"]').count()) === 3);
     await page.screenshot({ path: `${OUT}/flow-4-new-ad.png`, fullPage: true });
     await Promise.all([page.waitForURL('**/ad.html?id=**created=1**'), page.click('#create')]);
+    page.off('request', countAdPosts);
     await page.waitForSelector('#cr-status .pill');
-    check('new image ad is created and opens off', (await page.textContent('#cr-status')).includes('Off'), await page.textContent('#cr-title'));
+    check('new image ad is created and opens off', (await page.textContent('#cr-status')).includes('Off') && adPosts === 1, await page.textContent('#cr-title'));
   }
 
   // 4b. Polish: start a run from the ad page, then turn Claude's new-headline proposal into an ad.
@@ -553,14 +607,31 @@ for name, mins in (('Reminder QA Five', 7), ('Reminder QA Hour', 61)):
   await page.click('#sched-1 [data-sched-toggle]');
   await page.waitForFunction(() => /next/.test(document.querySelector('#sched-1 .sched-when')?.textContent || ''));
   check('switching the daily health check on shows its next run', /Every day at 8:30 AM · next/.test(await page.textContent('#sched-1 .sched-when')), await page.textContent('#sched-1 .sched-when'));
+  const deskPoke = async () => {  // a poll that brings something new: the page redraws
+    sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE desk_tasks SET progress = md5(random()::text) WHERE id = (SELECT max(id) FROM desk_tasks WHERE status = 'done')\\")"`);
+    const seen = page.waitForResponse((r) => /\/api\/desk$/.test(r.url()));
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await seen;
+    await page.waitForTimeout(300);
+  };
+  check('schedules say whose clock they run on: the zone in words and on the next run', /Times are Los Angeles time/.test(await page.textContent('#sched-zone'))
+    && /next \w{3} \w{3} \d+, 8:30 AM P[SD]T/.test(await page.textContent('#sched-1 .sched-when')) && /Los Angeles time/.test(await page.textContent('label[for="at-1"]')),
+    await page.textContent('#sched-1 .sched-when'));
   await page.click('#sched-1 .sched-edit summary');
   await page.selectOption('#every-1', 'days');
   await page.selectOption('#days-1', '2');
   await page.fill('#at-1', '07:15');
+  await page.click('#sched-2 h3');  // typed, not saved, and the cursor elsewhere
+  await deskPoke();
+  check('a poll keeps a typed time and the open "Change when it runs"', (await page.inputValue('#at-1')) === '07:15' && await page.$eval('#sched-1 .sched-edit', (d) => d.open));
   await page.click('#sched-1 .sched-rule button[type=submit]');
   await page.waitForFunction(() => /Every 2 days at 7:15 AM/.test(document.querySelector('#sched-1 .sched-when')?.textContent || ''));
   const rule1 = JSON.parse(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,json;print(json.dumps(db.query('SELECT rule FROM desk_schedules WHERE id = 1', one=True)['rule']))"`));
   check('the time can be changed', rule1.every === 'days' && rule1.days === 2 && rule1.at === '07:15', JSON.stringify(rule1));
+  await page.focus('#sched-2 [data-sched-run]');
+  await deskPoke();
+  check('a poll that redraws Schedules keeps the keyboard on the same button', await page.evaluate(() => document.activeElement?.dataset?.schedRun === '2'),
+    await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80)));
   const tasksBefore = Number(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query('SELECT COUNT(*) AS n FROM desk_tasks', one=True)['n'])"`));
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE desk_schedules SET next_run_at = now() - interval '1 minute' WHERE id = 1\\")"`);
   let made = 0;
@@ -762,11 +833,16 @@ db.execute(\\"INSERT INTO ads (id, name, campaign_id, status, effective_status) 
   const story = await page.textContent('#view .family');
   check('By ad tells the ad\'s story with outcomes', /Created, off/.test(story) && /made in the New version run/.test(story) && /Not about one ad/.test(await page.textContent('#view')), story.replace(/\s+/g, ' ').trim().slice(0, 60));
   await page.screenshot({ path: `${OUT}/flow-5-claude-ads.png`, fullPage: true });
-  const decideTo = (await page.locator('#view .decide-link').first().getAttribute('href')).replace('#p/', '');
-  await page.locator('#view .decide-link').first().click();
-  await page.waitForSelector('#cv-col .sg.flash');
-  const flashed = await page.evaluate(() => { const el = document.querySelector('#cv-col .sg.flash'); const r = el.getBoundingClientRect(); return { id: el.dataset.proposal, inView: r.top < innerHeight && r.bottom > 0 }; });
-  check('Decide jumps to the suggestion', flashed.id === decideTo && flashed.inView, `${decideTo} ${JSON.stringify(flashed)}`);
+  const byAdCards = await page.$$eval('#view .sg[data-proposal]', (els) => els.map((e) => [e.dataset.proposal, !!e.querySelector('[data-accept]'), !!e.querySelector('[data-revise]')]));
+  const convCards = await getJson('/api/desk').then((d) => d.tasks.flatMap((t) => t.proposals || []).filter((p) => p.status === 'pending').map((p) => String(p.id)));
+  check('By ad shows a waiting suggestion as the same card as the conversation (Accept, Ask to change), not a line',
+    byAdCards.length > 0 && byAdCards.every(([id, a, r]) => convCards.includes(id) && a && r) && (await page.locator('#view .decide-link').count()) === 0
+    && (await page.locator('[id^="p-"]').count()) === (await page.locator('#view [id^="p-"]').count()), JSON.stringify(byAdCards));
+  const reviseId = byAdCards[0][0];
+  await page.locator(`#view .sg[data-proposal="${reviseId}"] [data-revise]`).click();
+  await page.waitForSelector('#cv-chip:not([hidden])');
+  check('Ask to change from By ad opens its conversation about that suggestion', /About:/.test(await page.textContent('#cv-chip')) && (await page.locator(`#cv-col .sg[data-proposal="${reviseId}"]`).count()) === 1);
+  await page.click('[data-unchip]');
   const second = page.locator('#cv-col .sg', { hasText: 'the next hire' });
   await second.locator('[data-decline-one]').click();
   await page.waitForFunction(() => document.querySelectorAll('#cv-col .sg').length === 1);
@@ -984,6 +1060,15 @@ with account_ctx.use(1):
     /waits until it.s back/.test(await page.textContent('#cl-list .cl-now')) && !/starts right away/.test(await page.textContent('#cl-list .cl-now')));
   await page.waitForFunction(() => /Your Mac is offline/.test(document.querySelector('.rail .claude-now')?.textContent || ''), null, { timeout: 15000 });
   check('the status line says the Mac is offline, not that Claude is idle', !/Claude is idle/.test(await page.textContent('.rail .claude-now')) && (await desk()).tasks.every((t) => !['queued', 'claimed', 'running'].includes(t.status)));
+  {
+    const now = await getJson('/api/desk/now');
+    const rail = await page.textContent('.rail .claude-now b');
+    const panel = await page.textContent('#cl-list .cl-now [data-mac]');
+    const foot = await page.textContent('#mac-summary');
+    check('the Mac status says the same thing in the sidebar, the list and the Mac button (offline vs idle)', now.mac.state === 'offline'
+      && rail.startsWith(now.mac.title) && panel.startsWith(`${now.mac.title}.`) && panel.includes(now.mac.detail) && foot.startsWith(now.mac.title) && /last seen/.test(foot),
+      `${now.mac.title} | ${rail} | ${panel} | ${foot}`);
+  }
 
   const dayCount = await page.locator('#cl-list .cl-item').count();
   await page.locator('[data-clear-day]').first().click();
@@ -1020,6 +1105,7 @@ with account_ctx.use(1):
   await sendReply('Second follow-up.');
   await page.waitForFunction(() => /Second follow-up/.test(document.querySelector('#cv-col')?.textContent || ''));
   check('several messages can wait in one conversation', /3 messages waiting/.test(await page.textContent('#cv-line')), await page.textContent('#cv-line'));
+  check('a waiting message says what it waits for while the Mac is offline', /Your Mac is offline\. It starts when your Mac is back online\./.test(await page.textContent('#cv-col')));
   d = await desk();
   const order = d.board.queue.map((id) => d.tasks.find((t) => t.id === id).prompt.split(' ').slice(0, 2).join(' '));
   check('follow-ups keep the order they were sent', order.indexOf('First follow-up.') >= 0 && order.indexOf('First follow-up.') < order.indexOf('Second follow-up.') && order.indexOf('Review the') < order.indexOf('First follow-up.'), order.join(' | '));
@@ -1032,8 +1118,8 @@ with account_ctx.use(1):
   }
   check('Add to line stacks jobs without leaving the page', (await page.inputValue('#prompt')) === '' && await page.isVisible('#cv-seeds'));
   await page.goto(BASE + '/leads.html');
-  await page.waitForFunction(() => /5 in line/.test(document.querySelector('.rail .claude-now')?.textContent || ''), null, { timeout: 15000 });
-  check('every page shows what Claude has going on', /5 in line/.test(await page.textContent('.rail .claude-now')));
+  await page.waitForFunction(() => /5 waiting/.test(document.querySelector('.rail .claude-now')?.textContent || ''), null, { timeout: 15000 });
+  check('every page shows what Claude has going on', /Your Mac is offline.*5 waiting\. They start when the Mac is back/.test(await page.textContent('.rail .claude-now')));
   macSeen(0);  // the Mac is back
   await page.goto(BASE + '/desk.html#list', { waitUntil: 'networkidle' });
   await page.click('[data-clear="queue"]');
@@ -1370,11 +1456,12 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   await page.fill('#name', 'QA Inland Empire');
   await page.fill('#age_min', '30');
   const asSeen = errors.length;
+  const asetsAsked = Object.keys(fake('_adsets')).length;
   await page.click('#create');
-  await page.waitForSelector('dialog.confirm');
-  await page.click('dialog.confirm #cd-ok');
   await page.waitForSelector('#as-form .field.error .err');
-  check('Advantage+ audience refuses a minimum age over 25, saying why', /at most 25/.test(await page.textContent('#as-form .field.error')));
+  check('Advantage+ audience refuses a minimum age over 25, saying why, before any confirmation and before Meta', /at most 25/.test(await page.textContent('#as-form .field.error'))
+    && (await page.locator('dialog.confirm').count()) === 0 && Object.keys(fake('_adsets')).length === asetsAsked && (await page.getAttribute('#age_min', 'aria-invalid')) === 'true');
+  check('its step says what to fix', (await page.getAttribute('#stepper li:nth-child(2)', 'data-state')) === 'fix' && /at most 25/.test(await page.textContent('#stepper li:nth-child(2)')));
   errors.splice(asSeen);
   await page.fill('#age_min', '25');
   const adsetsBefore = Object.keys(fake('_adsets')).length;
@@ -1417,8 +1504,9 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   await Promise.all([page.waitForURL('**/new-campaign.html?from=**'), page.click('#campaign-link')]);
   check('New campaign opened from Ads has Cancel back to Ads', /^\/ads\.html/.test(await page.getAttribute('#cancel', 'href')), await page.getAttribute('#cancel', 'href'));
   await page.waitForSelector('#nc-list li b');
-  await page.waitForFunction(() => /Still to do/.test(document.getElementById('review').textContent));
-  check('the wizard lists what is still missing, by step', /Goal.*Give the campaign a name.*Budget/s.test(await page.textContent('#review')) && await page.isDisabled('#nc-create'));
+  await page.waitForFunction(() => /to finish first/.test(document.getElementById('ready').textContent));
+  check('the wizard lists what is still missing, by step', /Goal.*Give the campaign a name.*Budget/s.test(await page.textContent('#stepper'))
+    && (await page.locator('#stepper li[data-state="todo"]').count()) >= 3);
   let lastCheck = null;
   const keepCheck = (r) => { if (/\/api\/builds\/check$/.test(r.url())) lastCheck = r.postData(); };
   page.on('request', keepCheck);
@@ -1433,7 +1521,12 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   const hugeBuild = await page.evaluate(async (b) => { const r = await fetch('/api/builds', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: b }); return { status: r.status, body: await r.json() }; }, lastCheck);
   await page.waitForTimeout(300);
   errors.splice(hugeBuildSeen); // the refusal logs an expected 400
-  check('a budget far above what runs now is refused (the button and the server)', await page.isDisabled('#nc-create') && hugeBuild.status === 400
+  await page.click('#nc-create');
+  await page.waitForSelector('#nc-form .field.error .err');
+  const ncMarked = await page.$$eval('#nc-form [aria-invalid="true"]', (els) => els.map((e) => e.name));
+  check('Create with problems marks each field (the budget, the form) and opens no confirmation', ncMarked[0] === 'budget'
+    && (await page.locator('dialog.confirm').count()) === 0 && (await page.evaluate(() => document.activeElement.name)) === 'budget', ncMarked.join());
+  check('a budget far above what runs now is refused (the check and the server)', /more than 3 times/.test(await page.textContent('[data-step="budget"]')) && hugeBuild.status === 400
     && (hugeBuild.body.problems || []).some((p) => p.step === 'budget' && /more than 3 times/.test(p.message)), `${hugeBuild.status} ${JSON.stringify(hugeBuild.body.problems)}`);
   await page.fill('#c-budget', '15');
   await page.click('#cr-add');
@@ -1479,6 +1572,24 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   const order = sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(','.join(r['level'] for r in db.query(\\"SELECT level FROM meta_changes WHERE action = 'status' AND new_value = 'ACTIVE' ORDER BY id DESC LIMIT 4\\")[::-1]))"`).trim();
   check('publishing turns on the ads, then the ad set, then the campaign last', order === 'ad,ad,adset,campaign' && Object.values(fake('_campaigns')).slice(-1)[0].status === 'ACTIVE', order);
   await page.screenshot({ path: `${OUT}/flow-new-campaign.png`, fullPage: true });
+
+  // 9.4e: New campaign has the same uploader, so an ad with nothing to start from gets its own picture here
+  // (a new account no longer has to go to New ad first, which needs an ad set it doesn't have yet).
+  await page.goto(BASE + '/new-campaign.html');
+  await page.waitForSelector('#a-tpl-0 option', { state: 'attached' });
+  await page.selectOption('#a-tpl-0', '');
+  await page.waitForFunction(() => document.getElementById('a-media-0').value === '');
+  // Someone types the words while the file goes up: the upload landing must not move the caret.
+  await page.fill('#a-body-0', 'Typing while it uploads');
+  await page.evaluate(() => { const t = document.getElementById('a-body-0'); t.focus(); t.setSelectionRange(6, 6); });
+  await page.setInputFiles('#nc-file', { name: 'qa-campaign.png', mimeType: 'image/png', buffer: Buffer.alloc(30 * 1024, 5) });
+  await page.waitForFunction(() => /^image:/.test(document.getElementById('a-media-0').value));
+  check('New campaign uploads a picture and puts it on the ad that had none', /qa-campaign\.png/.test(await page.textContent('#a-media-0 option:checked')));
+  const caret = await page.evaluate(() => ({ id: document.activeElement?.id, at: document.activeElement?.selectionStart, value: document.getElementById('a-body-0').value }));
+  check('an upload landing leaves the words being typed and the caret where they were', caret.id === 'a-body-0' && caret.at === 6 && caret.value === 'Typing while it uploads', JSON.stringify(caret));
+  await page.fill('#c-name', 'QA never made');
+  await page.waitForFunction(() => /Goal/.test(document.querySelector('#stepper li[data-state="done"]')?.textContent || ''));
+  check('a filled-in step is ticked with what it holds', /QA never made/.test(await page.textContent('#stepper li:nth-child(1)')));
 
   // A build whose campaign create Meta didn't answer: Finish creating adopts the campaign Meta made, never a second one.
   const lostBuild = sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.execute(\\"INSERT INTO campaign_builds (spec, made, status, created_by, account_id) SELECT spec || jsonb_build_object('name', 'QA lost campaign'), jsonb_build_object('unknown', 'campaign', 'ads', '{}'::jsonb), 'partial', created_by, account_id FROM campaign_builds ORDER BY id DESC LIMIT 1 RETURNING id\\", returning=True)['id'])"`).trim();

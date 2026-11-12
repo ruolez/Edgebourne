@@ -44,18 +44,18 @@
             <div class="panel-head"><span class="step-n">3</span><h2>Who sees it</h2></div>
             <div class="panel-body stack tight">
               <div class="grid-2">
-                <div class="field"><label for="s-template">Start from</label><select class="input" id="s-template"></select><span class="hint">Copies its places, ages and audience hints. From scratch: Meta's lead-form setup, places and ages as you set them.</span></div>
+                <div class="field"><label for="s-template">Start from</label><select class="input" id="s-template" name="adset_template"></select><span class="hint">Copies its places, ages and audience hints. From scratch: Meta's lead-form setup, places and ages as you set them.</span></div>
                 <div class="field"><label for="s-name">Ad set name</label><input class="input" id="s-name" name="adset" maxlength="200" placeholder="SoCal - Instant form" autocomplete="off"></div>
               </div>
-              <div class="field"><span class="label">Places</span><div id="places-box"></div></div>
+              <div class="field"><span class="label">Places</span><input type="hidden" name="locations"><div id="places-box"></div></div>
               <label class="check"><input type="checkbox" id="s-advantage"> <span>Advantage+ audience <span class="muted">(recommended)</span><span class="hint explain" data-explain="advantage_audience"></span></span></label>
               <div class="grid-2">
-                <div class="field"><span class="label">Age limits</span><div class="age-pair"><input class="input" type="number" id="s-age-min" min="18" max="65" aria-label="Youngest age"> to <input class="input" type="number" id="s-age-max" min="18" max="65" aria-label="Oldest age"></div></div>
+                <div class="field"><span class="label">Age limits</span><div class="age-pair"><input class="input" type="number" id="s-age-min" name="age" min="18" max="65" aria-label="Youngest age"> to <input class="input" type="number" id="s-age-max" min="18" max="65" aria-label="Oldest age"></div></div>
                 <div class="field" id="s-suggest"><span class="label">Suggested ages</span><div class="age-pair"><input class="input" type="number" id="s-sug-min" min="18" max="65" aria-label="Suggested youngest age"> to <input class="input" type="number" id="s-sug-max" min="18" max="65" aria-label="Suggested oldest age"></div></div>
               </div>
               <div class="grid-2">
                 <div class="field"><label for="s-start">Starts <span class="muted">(optional)</span></label><input class="input" type="date" id="s-start"><span class="hint">Empty: as soon as you publish.</span></div>
-                <div class="field"><label for="s-end">Ends <span class="muted">(optional)</span></label><input class="input" type="date" id="s-end"><span class="hint">Empty: runs until you turn it off.</span></div>
+                <div class="field"><label for="s-end">Ends <span class="muted">(optional)</span></label><input class="input" type="date" id="s-end" name="end"><span class="hint">Empty: runs until you turn it off.</span></div>
               </div>
               <label class="check" id="s-hints-row"><input type="checkbox" id="s-hints"> <span>Keep the audience hints: <span class="muted" id="s-hints-text"></span></span></label>
               <p class="muted small flush"><span data-explain="advantage_placements"></span> Estimated audience: <b id="s-estimate">—</b></p>
@@ -73,15 +73,25 @@
             <div class="panel-body stack tight">
               <div id="cr-list" class="stack tight"></div>
               <button type="button" class="btn btn-small" id="cr-add">Add an ad</button>
+              <div class="nc-upload">
+                <span class="label">Upload an image or video</span>
+                <p class="muted small flush">It goes to this account's media library and shows up in each ad's list.</p>
+                <div id="nc-uploader"></div>
+              </div>
             </div>
           </section>
-          <div class="row create-row">
-            <button class="btn btn-primary" type="submit" id="nc-create">Create everything (off)</button>
-            <span class="muted small">The campaign, ad set and ads are created switched off. You check the previews, then publish.</span>
-          </div>
         </form>
-        <aside class="stack tips">
-          <section class="panel review-card"><div class="panel-body stack tight" id="review"><b>Review</b><p class="muted flush">Fill in the steps; the check runs as you go.</p></div></section>
+        <aside class="stack build-side">
+          <section class="panel build-card" aria-labelledby="build-h"><div class="panel-body stack tight" id="review">
+            <h2 class="build-h" id="build-h">Your new campaign</h2>
+            <nav class="stepper" id="stepper" aria-label="Steps"></nav>
+            <div id="review-facts"></div>
+            <div class="build-go">
+              <p class="build-ready" id="ready" role="status">Checking…</p>
+              <div class="row"><button class="btn btn-primary" type="submit" form="nc-form" id="nc-create">Create everything (off)</button></div>
+              <p class="muted small flush">The campaign, ad set and ads are created switched off. You check the previews, then publish.</p>
+            </div>
+          </div></section>
         </aside>
       </div>
       <div class="content stack" id="build" hidden></div>

@@ -25,7 +25,7 @@
       </header>
       <div class="content new-ad-layout">
         <form class="stack" id="new-form" novalidate>
-          <section class="panel step">
+          <section class="panel step" data-step="where">
             <div class="panel-head"><span class="step-n">1</span><h2>Where</h2></div>
             <div class="panel-body stack tight">
               <div class="grid-2">
@@ -36,30 +36,24 @@
             </div>
           </section>
 
-          <section class="panel step">
+          <section class="panel step" data-step="media">
             <div class="panel-head"><span class="step-n">2</span><h2>Image or video</h2></div>
             <div class="panel-body stack tight">
-              <div class="segmented" id="media-tabs" role="tablist" aria-label="Image or video">
-                <button type="button" role="tab" id="mt-upload" aria-controls="tab-upload" data-tab="upload" aria-selected="true">Upload</button>
-                <button type="button" role="tab" id="mt-library" aria-controls="tab-library" data-tab="library" aria-selected="false">From your library</button>
-                <button type="button" role="tab" id="mt-same" aria-controls="tab-same" data-tab="same" aria-selected="false">Same as the starting ad</button>
+              <div class="field" id="media-field">
+                <div class="segmented" id="media-tabs" role="tablist" aria-label="Image or video">
+                  <button type="button" role="tab" id="mt-upload" aria-controls="tab-upload" data-tab="upload" aria-selected="true">Upload</button>
+                  <button type="button" role="tab" id="mt-library" aria-controls="tab-library" data-tab="library" aria-selected="false">From your library</button>
+                  <button type="button" role="tab" id="mt-same" aria-controls="tab-same" data-tab="same" aria-selected="false">Same as the starting ad</button>
+                </div>
+                <div id="tab-upload" role="tabpanel" aria-labelledby="mt-upload"></div>
+                <div id="tab-same" role="tabpanel" aria-labelledby="mt-same" hidden><p class="muted flush">Keeps the starting ad's image or video. Use this to test new words on a creative that already works.</p></div>
+                <div id="tab-library" role="tabpanel" aria-labelledby="mt-library" hidden><div class="media-grid" id="library"><div class="skeleton" role="status"><span></span><span></span><span></span><p>Loading…</p></div></div></div>
+                <div class="chosen" id="chosen" hidden></div>
               </div>
-              <div id="tab-upload" role="tabpanel" aria-labelledby="mt-upload">
-                <label class="drop" id="drop">
-                  <input type="file" id="file" accept="image/jpeg,image/png,video/mp4,video/quicktime" class="sr-only">
-                  <span class="drop-icon" id="drop-icon"></span>
-                  <b>Drop an image or video here, or choose a file</b>
-                  <span class="muted small">JPG or PNG up to 30 MB · MP4 or MOV up to 250 MB · 4:5 or 9:16 works best</span>
-                </label>
-                <div class="progress-bar" id="up-progress" hidden><i></i><span></span></div>
-              </div>
-              <div id="tab-same" role="tabpanel" aria-labelledby="mt-same" hidden><p class="muted flush">Keeps the starting ad's image or video. Use this to test new words on a creative that already works.</p></div>
-              <div id="tab-library" role="tabpanel" aria-labelledby="mt-library" hidden><div class="media-grid" id="library"><div class="skeleton" role="status"><span></span><span></span><span></span><p>Loading…</p></div></div></div>
-              <div class="chosen" id="chosen" hidden></div>
             </div>
           </section>
 
-          <section class="panel step">
+          <section class="panel step" data-step="words">
             <div class="panel-head"><span class="step-n">3</span><h2>Words</h2></div>
             <div class="panel-body stack tight">
               <div class="field"><label for="body">Primary text</label><textarea class="input" id="body" name="body" rows="6"></textarea><span class="hint" id="body-count"></span></div>
@@ -70,14 +64,18 @@
               <div class="field"><label for="name">Ad name <span class="muted">(only you see this)</span></label><input class="input" id="name" name="name" maxlength="200" placeholder="What it's about"></div>
             </div>
           </section>
-
-          <div class="row create-row">
-            <button class="btn btn-primary" type="submit" id="create">Create ad (off)</button>
-            <span class="muted small">It's created switched off. You'll see Meta's previews next, and turn it on when you're happy.</span>
-          </div>
         </form>
 
-        <aside class="stack tips">
+        <aside class="stack build-side">
+          <section class="panel build-card" aria-labelledby="build-h"><div class="panel-body stack tight" id="review">
+            <h2 class="build-h" id="build-h">Your new ad</h2>
+            <nav class="stepper" id="stepper" aria-label="Steps"></nav>
+            <div class="build-go">
+              <p class="build-ready" id="ready" role="status">Checking…</p>
+              <div class="row"><button class="btn btn-primary" type="submit" form="new-form" id="create">Create ad (off)</button></div>
+              <p class="muted small flush">It's created switched off. You'll see Meta's previews next, and turn it on when you're happy.</p>
+            </div>
+          </div></section>
           <section class="panel"><div class="panel-body stack tight">
             <b>What works on Meta</b>
             <ul class="tip-list">

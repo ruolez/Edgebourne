@@ -2,6 +2,8 @@ import { api } from "./api.js";
 import { boot, cancelLink, confirmDialog, entityLink, esc, fieldError, icon, toast, guardLeaving, markSaved, returnCrumbs } from "./ui.js";
 import { STATUS as FORMAT_STATUS, CTA_LABELS, money, currencySymbol } from "./format.js";
 import { placesHtml, placesWidget } from "./places.js";
+import { mountUploader, waitReady } from "./uploader.js";
+import { builder } from "./builder.js";
 
 const CLIENT_KEY = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -11,8 +13,11 @@ let places;
 let hints = [];
 let media = [];
 let ads = [];
+let steps = null;
+let lastReview = null;
+const videoPolls = new Map();  // video id → stops waiting for Meta to process it
 
-const STEP_NAMES = { goal: "Goal", budget: "Budget", adset: "Who sees it", form: "Lead form", ads: "Ads" };
+const STEPS = [{ id: "goal", name: "Goal" }, { id: "budget", name: "Budget" }, { id: "adset", name: "Who sees it" }, { id: "form", name: "Lead form" }, { id: "ads", name: "Ads" }];
 const STATUS = FORMAT_STATUS;
 const pill = (s) => { const [c, l] = STATUS[s] || ["", s ? s.toLowerCase().replace(/_/g, " ") : "Syncing…"]; return `<span class="pill ${c}">${esc(l)}</span>`; };
 
@@ -20,34 +25,33 @@ const pill = (s) => { const [c, l] = STATUS[s] || ["", s ? s.toLowerCase().repla
 
 function blankAd() {
   const t = opts.templates[0];
-  if (!t) {  // a new account: words and media of its own
-    const m = media[0];
-    return { name: "", title: "", body: "", template_ad_id: "", cta_type: "SIGN_UP",
-      media: m ? (m.kind === "image" ? { kind: "image", hash: m.hash } : { kind: "video", video_id: m.video_id }) : { kind: "none" } };
-  }
+  if (!t) return { name: "", title: "", body: "", template_ad_id: "", cta_type: "SIGN_UP", media: { kind: "none" } };  // a new account: its own words and media
   return { name: "", title: t.title || "", body: t.body || "", template_ad_id: t.id || "", cta_type: t.cta_type || "SIGN_UP", media: { kind: "same" } };
 }
 
+const mediaKey = (m) => `${m.kind}:${m.hash || m.video_id}`;
+const asChoice = (m) => (m.kind === "image" ? { kind: "image", hash: m.hash } : { kind: "video", video_id: m.video_id });
+
 function mediaOptions(ad) {
-  const v = ad.media.kind === "same" ? "same" : `${ad.media.kind}:${ad.media.hash || ad.media.video_id}`;
-  const same = ad.template_ad_id ? `<option value="same" ${v === "same" ? "selected" : ""}>Same image or video as the starting ad</option>`
-    : (media.length ? "" : '<option value="">Upload one in New ad first (Ads → New ad)</option>');
-  return same +
-    media.map((m) => { const k = `${m.kind}:${m.hash || m.video_id}`; return `<option value="${esc(k)}" ${k === v ? "selected" : ""}>${m.kind === "video" ? "Video" : "Image"}: ${esc(m.name || k)}</option>`; }).join("");
+  const v = ad.media.kind === "same" ? "same" : ad.media.kind === "none" ? "" : `${ad.media.kind}:${ad.media.hash || ad.media.video_id}`;
+  const same = ad.template_ad_id ? `<option value="same" ${v === "same" ? "selected" : ""}>Same image or video as the starting ad</option>` : "";
+  const none = v === "" ? `<option value="" selected>${media.length ? "Choose an image or video" : "Upload one below first"}</option>` : "";
+  return none + same +
+    media.map((m) => { const k = mediaKey(m); return `<option value="${esc(k)}" ${k === v ? "selected" : ""}>${m.kind === "video" ? "Video" : "Image"}: ${esc(m.name || k)}${m.kind === "video" && m.ready === false ? " (Meta is processing it)" : ""}</option>`; }).join("");
 }
 
 function adCard(ad, i) {
   return `<fieldset class="cw-card" data-ad="${i}"><legend>Ad ${i + 1}</legend>
     <div class="grid-2">
-      <div class="field"><label for="a-tpl-${i}">Starts from</label><select class="input" id="a-tpl-${i}" data-k="template_ad_id"><option value="" ${ad.template_ad_id ? "" : "selected"}>Nothing: new words and media</option>${opts.templates.map((t) => `<option value="${esc(t.id)}" ${t.id === ad.template_ad_id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></div>
-      <div class="field"><label for="a-media-${i}">Image or video</label><select class="input" id="a-media-${i}" data-k="media">${mediaOptions(ad)}</select></div>
+      <div class="field"><label for="a-tpl-${i}">Starts from</label><select class="input" id="a-tpl-${i}" name="ad${i}-template" data-k="template_ad_id"><option value="" ${ad.template_ad_id ? "" : "selected"}>Nothing: new words and media</option>${opts.templates.map((t) => `<option value="${esc(t.id)}" ${t.id === ad.template_ad_id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></div>
+      <div class="field"><label for="a-media-${i}">Image or video</label><select class="input" id="a-media-${i}" name="ad${i}-media" data-k="media">${mediaOptions(ad)}</select></div>
     </div>
-    <div class="field"><label for="a-body-${i}">Primary text</label><textarea class="input" id="a-body-${i}" data-k="body" rows="4">${esc(ad.body)}</textarea></div>
+    <div class="field"><label for="a-body-${i}">Primary text</label><textarea class="input" id="a-body-${i}" name="ad${i}-body" data-k="body" rows="4">${esc(ad.body)}</textarea></div>
     <div class="grid-2">
-      <div class="field"><label for="a-title-${i}">Headline</label><input class="input" id="a-title-${i}" data-k="title" value="${esc(ad.title)}" maxlength="255"></div>
-      <div class="field"><label for="a-cta-${i}">Button</label><select class="input" id="a-cta-${i}" data-k="cta_type">${opts.cta_types.map((c) => `<option value="${c}" ${c === ad.cta_type ? "selected" : ""}>${esc(CTA_LABELS[c] || c)}</option>`).join("")}</select></div>
+      <div class="field"><label for="a-title-${i}">Headline</label><input class="input" id="a-title-${i}" name="ad${i}-title" data-k="title" value="${esc(ad.title)}" maxlength="255"></div>
+      <div class="field"><label for="a-cta-${i}">Button</label><select class="input" id="a-cta-${i}" name="ad${i}-cta" data-k="cta_type">${opts.cta_types.map((c) => `<option value="${c}" ${c === ad.cta_type ? "selected" : ""}>${esc(CTA_LABELS[c] || c)}</option>`).join("")}</select></div>
     </div>
-    <div class="row"><div class="field grow"><label for="a-name-${i}">Ad name <span class="muted">(only you see this)</span></label><input class="input" id="a-name-${i}" data-k="name" value="${esc(ad.name)}" placeholder="N6 - What it's about" maxlength="200"></div>
+    <div class="row"><div class="field grow"><label for="a-name-${i}">Ad name <span class="muted">(only you see this)</span></label><input class="input" id="a-name-${i}" name="ad${i}-name" data-k="name" value="${esc(ad.name)}" placeholder="N6 - What it's about" maxlength="200"></div>
       ${ads.length > 1 ? `<button type="button" class="btn btn-quiet btn-small" data-ad-remove="${i}">Remove</button>` : ""}</div>
   </fieldset>`;
 }
@@ -55,6 +59,12 @@ function adCard(ad, i) {
 function renderAds() {
   $("cr-list").innerHTML = ads.map(adCard).join("");
   $("cr-add").hidden = ads.length >= opts.max_ads;
+}
+
+// Only each ad's media list is rewritten when an upload lands or a video is ready: the words someone is
+// typing (and where the caret is) are left alone.
+function refreshMediaLists() {
+  ads.forEach((ad, i) => { const sel = $(`a-media-${i}`); if (sel) sel.innerHTML = mediaOptions(ad); });
 }
 
 function readAds() {
@@ -85,33 +95,47 @@ function spec() {
 }
 
 function reviewHtml(r) {
-  return `<b>Review</b>
-    <dl class="facts review-facts">
+  return `<dl class="facts review-facts">
       <div><dt>Campaign</dt><dd>${esc(r.campaign)}</dd></div>
       <div><dt>Ad set</dt><dd>${esc(r.adset)}</dd></div>
       <div><dt>Form</dt><dd>${esc(r.form)}</dd></div>
       <div><dt>Ads</dt><dd>${r.ads.map((a) => `<p class="flush"><b>${esc(a.name)}</b> · “${esc(a.title)}” · ${esc(a.media)}${a.starts_from ? ` from ${esc(a.starts_from)}` : ""}</p>${a.warnings.map((w) => `<p class="note warn small-note">${esc(w)}</p>`).join("")}`).join("")}</dd></div>
-    </dl>
-    <div class="note ok">Ready to create. Everything starts switched off.</div>`;
+    </dl>`;
 }
 
-let seq = 0;
-let timer;
-function checkSoon() {
-  clearTimeout(timer);
-  timer = setTimeout(async () => {
-    const mine = ++seq;
-    try {
-      const r = await api("/api/builds/check", { method: "POST", body: spec() });
-      if (mine !== seq) return;
-      const groups = {};
-      r.problems.forEach((p) => { (groups[p.step] = groups[p.step] || []).push(p.message); });
-      $("review").innerHTML = r.problems.length
-        ? `<b>Still to do</b>${Object.entries(groups).map(([s, ms]) => `<div class="todo"><span class="label">${esc(STEP_NAMES[s] || s)}</span><ul>${ms.map((m) => `<li>${esc(m)}</li>`).join("")}</ul></div>`).join("")}`
-        : reviewHtml(r.review);
-      $("nc-create").disabled = r.problems.length > 0;
-    } catch (err) { /* advisory */ }
-  }, 350);
+// The server's check (POST /api/builds/check) plus what only this page knows: a chosen video Meta is
+// still processing can't go in an ad yet.
+async function check() {
+  const s = spec();
+  const r = await api("/api/builds/check", { method: "POST", body: s });
+  const waiting = s.ads.flatMap((a, i) => {
+    const m = a.media.kind === "video" && media.find((x) => x.video_id === a.media.video_id);
+    return m && m.ready === false ? [{ step: "ads", field: `ad${i}-media`, message: `Ad ${i + 1}: Meta is still processing its video; give it a minute` }] : [];
+  });
+  lastReview = r.review || null;
+  return [...r.problems, ...waiting];
+}
+
+function summary() {
+  const n = (v) => (v === "" ? null : Number(v));
+  const dollars = $("c-budget").value.trim();
+  const places_ = places.get();
+  const form = $("f-form").selectedOptions[0];
+  const named = ads.map((a) => a.name.trim()).filter(Boolean);
+  return {
+    goal: $("c-name").value.trim(),
+    budget: dollars && Number(dollars) > 0 ? `${money(Math.round(Number(dollars) * 100), { exact: true })} a day` : "",
+    adset: places_.length ? `${$("s-name").value.trim() || "Unnamed"} · ${places_.length === 1 ? "1 place" : `${places_.length} places`} · ages ${n($("s-age-min").value) ?? 18}–${n($("s-age-max").value) ?? 65}` : "",
+    form: form && form.value ? form.textContent : "",
+    ads: named.length ? named.join(", ") : "",
+  };
+}
+
+function ready(problems) {
+  const n = problems.length;
+  $("ready").textContent = n ? `${n} ${n === 1 ? "thing" : "things"} to finish first.` : "Ready to create. Everything starts switched off.";
+  $("ready").dataset.ok = String(!n);
+  $("review-facts").innerHTML = !n && lastReview ? reviewHtml(lastReview) : "";
 }
 
 let estSeq = 0;
@@ -130,7 +154,7 @@ function estimateSoon() {
   }, 450);
 }
 
-function changed() { checkSoon(); }
+function changed() { readAds(); if (steps) steps.soon(); }
 
 async function loadTemplate() {
   try {
@@ -228,8 +252,24 @@ if (me) {
       $("budget-hint").textContent = `Shared by everything in the campaign. What runs now: ${money(opts.running_daily_cents, { exact: true })} a day.`;
       ads = [blankAd()];
       renderAds();
-      await loadForms();
-      await loadTemplate();
+      steps = builder({ form: $("nc-form"), nav: $("stepper"), steps: STEPS, check, summary, onCheck: ready });
+      // One uploader for every ad: what goes up joins each ad's list and fills the first ad that has nothing yet.
+      mountUploader($("nc-uploader"), { id: "nc-file", onDone: (m) => {
+        readAds();
+        media = [m, ...media.filter((x) => mediaKey(x) !== mediaKey(m))];
+        const empty = ads.find((a) => a.media.kind === "none");
+        if (empty) empty.media = asChoice(m);
+        refreshMediaLists();
+        changed();
+        toast(m.kind === "video" ? "Uploaded. Meta is processing the video." : "Image uploaded");
+        if (m.kind === "video" && !videoPolls.has(m.video_id)) {
+          videoPolls.set(m.video_id, waitReady(m.video_id, () => {
+            videoPolls.delete(m.video_id);
+            media.forEach((x) => { if (x.video_id === m.video_id) x.ready = true; });
+            readAds(); refreshMediaLists(); changed();
+          }));
+        }
+      } });
       $("s-template").addEventListener("change", loadTemplate);
       $("s-advantage").addEventListener("change", () => { $("s-suggest").hidden = !$("s-advantage").checked; });
       $("f-reload").addEventListener("click", loadForms);
@@ -241,7 +281,8 @@ if (me) {
           const ad = ads[Number(tpl.closest("[data-ad]").dataset.ad)];
           const t = opts.templates.find((x) => x.id === tpl.value) || {};
           Object.assign(ad, { template_ad_id: tpl.value, title: t.title || ad.title, body: t.body || ad.body, cta_type: opts.cta_types.includes(t.cta_type) ? t.cta_type : ad.cta_type });
-          if (!tpl.value && ad.media.kind === "same") { const m = media[0]; ad.media = m ? (m.kind === "image" ? { kind: "image", hash: m.hash } : { kind: "video", video_id: m.video_id }) : { kind: "none" }; }
+          // Its own picture is picked (or uploaded) on purpose, never the newest one in the library by chance.
+          if (!tpl.value && ad.media.kind === "same") ad.media = { kind: "none" };
           renderAds();
         }
         changed();
@@ -253,6 +294,13 @@ if (me) {
       });
       $("nc-form").addEventListener("submit", async (e) => {
         e.preventDefault();
+        if ($("nc-create").disabled) return;
+        // Checked first, every field marked: the confirmation only opens when nothing is left to fix.
+        $("nc-create").disabled = true;
+        let ok = false;
+        try { ok = await steps.validate(); } catch (err) { toast(err.message, "bad"); }
+        $("nc-create").disabled = false;
+        if (!ok) return;
         const s = spec();
         const yes = await confirmDialog({ title: "Create everything, switched off?",
           body: `<p>A new campaign at ${esc(money(s.daily_budget_cents || 0, { exact: true }))} a day, one ad set and ${ads.length} ad${ads.length === 1 ? "" : "s"}. All switched off: nothing spends until you publish.</p>`,
@@ -264,6 +312,7 @@ if (me) {
           // One key per wizard: a double click or a retry after a timeout returns the same build.
           const b = await api("/api/builds", { method: "POST", body: { ...s, client_key: CLIENT_KEY } });
           markSaved();
+          videoPolls.forEach((stop) => stop()); videoPolls.clear();
           const keep = new URLSearchParams(location.search).get("from");
           history.replaceState(null, "", `?build=${b.id}${keep ? `&from=${encodeURIComponent(keep)}` : ""}`);
           buildView(b);
@@ -273,6 +322,9 @@ if (me) {
           toast(err.message, "bad");
         }
       });
+      // Listening first, then filling in: a quick choice (or Enter) while the lists load is never missed.
+      await loadForms();
+      await loadTemplate();
     }
   }
 }

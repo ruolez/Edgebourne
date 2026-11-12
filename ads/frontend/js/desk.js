@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, onRefresh, previewSkeleton, refreshClaudeNow, toast } from "./ui.js";
+import { boot, confirmDialog, editing, esc, keepFocus, onRefresh, previewSkeleton, refreshClaudeNow, toast } from "./ui.js";
 import { ACTIVE, wireTaskActions } from "./tasks.js";
 import { adsView, fillPreview, index, loadPreviews } from "./board.js";
 import { clock, decideHtml, decideKey, headHtml, liveTurn, listHtml, queuedTurn, threadTitle, turnHtml, turnKey, turnTitle } from "./conversation.js";
@@ -18,6 +18,9 @@ let kind = "question";
 let data = null;
 let ix = null;
 let scheduleList = null;
+let scheduleZone = null;
+const schedDirty = new Set();    // schedule forms with a time typed but not saved
+const openReports = new Set();   // By ad: reports someone opened stay open across polls
 let pollTimer;
 let freshKey = null;
 let lastJson = "";
@@ -50,16 +53,34 @@ const ago = (secs) => {
 };
 
 async function loadSchedules() {
-  try { scheduleList = (await api("/api/desk/schedules")).schedules; } catch (e) { /* the tab says Loading */ }
-  if (view === "schedules") $("view").innerHTML = schedulesView(scheduleList, data && data.bridge);
+  try { const r = await api("/api/desk/schedules"); scheduleList = r.schedules; scheduleZone = { tz: r.tz, label: r.tz_label }; } catch (e) { /* the tab says Loading */ }
+  if (view === "schedules") paintSchedules(true);
 }
 
+// Schedules redraw on every poll while Claude works: a time being typed (or typed and not saved) and an
+// open "Change when it runs" stay as they are.
+function paintSchedules(force = false) {
+  const box = $("view");
+  const shown = box.querySelector(".sched");
+  if (!force && shown && (schedDirty.size || (box.contains(document.activeElement) && editing()))) return;
+  if (!shown) schedDirty.clear();
+  const open = new Set([...box.querySelectorAll(".sched-edit[open]")].map((d) => d.closest(".sched").id));
+  keepFocus(() => {
+    box.innerHTML = schedulesView(scheduleList, data && data.bridge, scheduleZone);
+    open.forEach((id) => { const d = document.querySelector(`#${id} .sched-edit`); if (d) d.open = true; });
+  });
+}
+
+const OFF_STATES = new Set(["offline", "not_set_up", "sign_in"]);
+// The Mac's status in the server's words (desk_view.mac_status): the same on every page.
+const macStatus = () => (data && data.bridge.status) || { state: "idle", title: "", detail: "" };
+const macWait = () => { const m = macStatus(); return OFF_STATES.has(m.state) ? `${m.title}. ${m.detail}` : ""; };
+
 function renderMac(bridge) {
-  const b = data ? data.board : null;
-  const busy = b ? [b.working.length ? "1 working" : "", b.queue.length ? `${b.queue.length} in line` : ""].filter(Boolean).join(" · ") : "";
-  $("mac-led").className = `led ${bridge.online ? "on" : "off"}`;
-  $("mac-summary").textContent = !bridge.has_key ? "Set up your Mac" : bridge.online ? `Your Mac is connected${busy ? ` · ${busy}` : ""}`
-    : bridge.last_seen ? `Mac offline · last seen ${ago(bridge.last_seen)}` : "Mac not set up yet";
+  const m = bridge.status || macStatus();
+  $("mac-led").className = `led ${m.state === "offline" || m.state === "not_set_up" ? "off" : m.state === "sign_in" ? "bad" : "on"}`;
+  $("mac-summary").textContent = `${m.title}${m.state === "offline" && bridge.last_seen ? ` · last seen ${ago(bridge.last_seen)}` : ""}`;
+  $("mac-open").title = m.detail;
   const keyBox = freshKey ? `
     <div class="note claude-note stack">
       <b>Your Mac key (shown only now)</b>
@@ -69,7 +90,7 @@ function renderMac(bridge) {
   $("mac-body").innerHTML = `
     <p class="flush">A small helper on your Mac checks this page for new conversations and replies (instantly while the Mac is awake) and runs Claude Code with your Meta ads access. Results land back here.</p>
     <dl class="facts">
-      <div><dt>Status</dt><dd>${bridge.online ? "Connected" : bridge.has_key ? "Offline" : "Not set up"}${bridge.host ? ` · ${esc(bridge.host)}` : ""}</dd></div>
+      <div><dt>Status</dt><dd>${esc(m.title)}${bridge.host ? ` · ${esc(bridge.host)}` : ""}<br><span class="muted">${esc(m.detail)}</span></dd></div>
       <div><dt>Last check</dt><dd>${esc(ago(bridge.last_seen))}</dd></div>
       <div><dt>Key</dt><dd>${bridge.has_key ? `ends in ${esc(bridge.key_hint || "")}` : "none yet"}</dd></div>
     </dl>
@@ -196,7 +217,7 @@ function renderDock(sel) {
   if (queued) {
     const pos = data.board.queue.indexOf(queued.id);
     const mine = th.turns.filter((id) => ix.tasks.get(id).status === "queued").length;
-    line.innerHTML = `<span>${mine > 1 ? `${mine} messages waiting in this conversation.` : th.state === "working" ? "Your follow-up runs as soon as this finishes." : pos ? `${pos + 1}${["st", "nd", "rd"][pos] || "th"} in line. Starts when your Mac is free.` : data.bridge.online ? "Next in line." : "Your Mac is offline. This starts when it’s back."}</span>
+    line.innerHTML = `<span>${mine > 1 ? `${mine} messages waiting in this conversation.` : th.state === "working" ? "Your follow-up runs as soon as this finishes." : pos ? `${pos + 1}${["st", "nd", "rd"][pos] || "th"} in line. Starts when your Mac is free.` : macWait() || "Next in line."}</span>
       ${pos > 0 ? `<button class="btn btn-small" type="button" data-next="${queued.id}">Run next</button>` : ""}
       <button class="btn btn-small" type="button" data-cancel="${queued.id}">Cancel</button>`;
   }
@@ -243,7 +264,7 @@ function dockFoot(sel, th) {
     return;
   }
   if (sel === "new") {
-    hint.textContent = data.bridge.online ? "It never changes anything without your yes." : "Your Mac is offline, so this waits until it’s on.";
+    hint.textContent = macWait() || "It never changes anything without your yes.";
     btns.innerHTML = `<button class="btn btn-small" type="button" data-add-line ${has ? "" : "disabled"}>Add to line</button><button class="btn btn-small btn-claude" type="submit" ${has ? "" : "disabled"}>Send</button>`;
     return;
   }
@@ -253,8 +274,8 @@ function dockFoot(sel, th) {
     return;
   }
   hint.textContent = sel === "new"
-    ? (data.bridge.online ? "It never changes anything without your yes." : "Your Mac is offline, so this waits until it’s on.")
-    : !data.bridge.can_reply ? "Your Mac helper needs an update before Claude can pick this up." : data.bridge.online ? "Claude remembers this conversation." : "Your Mac is offline, so this waits until it’s on.";
+    ? (macWait() || "It never changes anything without your yes.")
+    : !data.bridge.can_reply ? "Your Mac helper needs an update before Claude can pick this up." : macWait() || "Claude remembers this conversation.";
   btns.innerHTML = `<button class="btn btn-small btn-claude" type="submit" ${has ? "" : "disabled"}>Send</button>`;
 }
 
@@ -320,7 +341,10 @@ function renderList(sel) {
   $("cl-list").innerHTML = listHtml(data, ix, { sel, query, showCleared, stopSure });
 }
 
-function renderView() {
+// Polls redraw the list, the conversation and the other views: keepFocus puts the keyboard back where it was.
+function renderView() { keepFocus(drawView); }
+
+function drawView() {
   ix = index(data);
   renderSubnav();
   const chat = view === "chat";
@@ -328,6 +352,7 @@ function renderView() {
   $("view").hidden = chat;
   document.body.classList.toggle("conv-page", chat);
   if (chat) {
+    $("view").innerHTML = "";  // one copy of each suggestion card on the page (ids, focus)
     resolveAddress();
     const sel = current();
     renderConv(sel);
@@ -336,9 +361,11 @@ function renderView() {
     return;
   }
   document.body.classList.remove("in-conv");
+  if (colFor !== null) { $("cv-col").innerHTML = ""; turnKeys.clear(); }
   colFor = null;
-  if (view === "schedules") { $("view").innerHTML = schedulesView(scheduleList, data.bridge); return; }
-  $("view").innerHTML = adsView(data, ix, new Set());
+  if (view === "schedules") { paintSchedules(); return; }
+  $("view").innerHTML = adsView(data, ix, openReports);
+  loadPreviews($("view"));
 }
 
 function route() {
@@ -486,7 +513,12 @@ async function onClick(e) {
     const id = Number(el.dataset.revise);
     const p = ix.proposals.get(id);
     const th = threadOf(ix.taskOf.get(id));
-    if (current() !== th) { location.hash = `r/${th}`; await new Promise((r) => setTimeout(r, 40)); }
+    if (view !== "chat" || current() !== th) {
+      // From By ad (or another conversation): open this one first, then point the reply at the suggestion.
+      const moved = new Promise((r) => window.addEventListener("hashchange", () => setTimeout(r, 0), { once: true }));
+      location.hash = `r/${th}`;
+      await moved;
+    }
     about = p;
     renderDock(th);
     $("prompt").focus();
@@ -561,7 +593,7 @@ async function load(force) {
     sel.value = keep || sel.dataset.want || "";
     delete sel.dataset.want;
     announceFinished();
-    const json = JSON.stringify([data.tasks, data.ads, data.board, data.bridge.online, data.bridge.can_stop, data.bridge.can_reply]);
+    const json = JSON.stringify([data.tasks, data.ads, data.board, data.bridge.online, data.bridge.status, data.bridge.can_stop, data.bridge.can_reply]);
     if (force || json !== lastJson) { lastJson = json; renderView(); }
   } catch (err) { toast(err.message, "bad"); }
   clearTimeout(pollTimer);
@@ -584,6 +616,8 @@ if (me) {
   main.addEventListener("toggle", (e) => {
     const d = e.target.closest && e.target.closest("details[data-sec]");
     if (d) openSecs.set(d.dataset.sec, d.open);
+    const r = e.target.closest && e.target.closest("#view details[data-report]");
+    if (r) { if (r.open) openReports.add(Number(r.dataset.report)); else openReports.delete(Number(r.dataset.report)); }
   }, true);
   $("ask-form").addEventListener("submit", (e) => { e.preventDefault(); send(); });
   $("prompt").addEventListener("input", () => { fitPrompt(); refreshDockFoot(); });
@@ -596,7 +630,8 @@ if (me) {
   $("mac-open").addEventListener("click", () => $("mac-dialog").showModal());
   $("mac-close").addEventListener("click", () => $("mac-dialog").close());
   wireTaskActions(main, reload, null);
-  wireSchedules($("view"), async () => { await loadSchedules(); reload(); });
+  wireSchedules($("view"), async () => { schedDirty.clear(); await loadSchedules(); reload(); });
+  $("view").addEventListener("input", (e) => { const f = e.target.closest("form[data-rule]"); if (f) schedDirty.add(f.dataset.rule); });
   loadSchedules();
   window.addEventListener("hashchange", route);
   phone.addEventListener("change", route);

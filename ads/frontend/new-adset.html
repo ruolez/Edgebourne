@@ -25,7 +25,7 @@
       </header>
       <div class="content new-ad-layout">
         <form class="stack" id="as-form" novalidate>
-          <section class="panel step">
+          <section class="panel step" data-step="where">
             <div class="panel-head"><span class="step-n">1</span><h2>Where it goes</h2></div>
             <div class="panel-body stack tight">
               <div class="grid-2">
@@ -36,7 +36,7 @@
             </div>
           </section>
 
-          <section class="panel step">
+          <section class="panel step" data-step="who">
             <div class="panel-head"><span class="step-n">2</span><h2>Who sees it</h2></div>
             <div class="panel-body stack tight">
               <div class="field" id="locations-field"><span class="label">Places</span>
@@ -54,7 +54,7 @@
             </div>
           </section>
 
-          <section class="panel step">
+          <section class="panel step" data-step="when">
             <div class="panel-head"><span class="step-n">3</span><h2>When and how much</h2></div>
             <div class="panel-body stack tight">
               <div class="grid-2">
@@ -66,20 +66,21 @@
             </div>
           </section>
 
-          <div class="row create-row">
-            <button class="btn btn-primary" type="submit" id="create">Create ad set (off)</button>
-            <span class="muted small">It's created switched off and empty. Add ads to it, then turn it on.</span>
-          </div>
         </form>
-        <aside class="stack tips">
-          <section class="panel"><div class="panel-body stack tight">
-            <b>Estimated audience</b>
-            <p class="estimate-big" id="estimate">—</p>
-            <p class="muted small flush" id="estimate-note">People a month Meta could show it to. Updates as you change places and ages.</p>
-          </div></section>
-          <section class="panel"><div class="panel-body stack tight">
-            <b>In one line</b>
-            <p class="flush" id="summary">—</p>
+        <aside class="stack build-side">
+          <section class="panel build-card" aria-labelledby="build-h"><div class="panel-body stack tight" id="review">
+            <h2 class="build-h" id="build-h">Your new ad set</h2>
+            <nav class="stepper" id="stepper" aria-label="Steps"></nav>
+            <div class="build-est">
+              <span class="label">Estimated audience</span>
+              <p class="estimate-big" id="estimate">—</p>
+              <p class="muted small flush" id="estimate-note">People a month Meta could show it to. Updates as you change places and ages.</p>
+            </div>
+            <div class="build-go">
+              <p class="build-ready" id="ready" role="status">Checking…</p>
+              <div class="row"><button class="btn btn-primary" type="submit" form="as-form" id="create">Create ad set (off)</button></div>
+              <p class="muted small flush">It's created switched off and empty. Add ads to it, then turn it on.</p>
+            </div>
           </div></section>
           <section class="panel"><div class="panel-body stack tight">
             <b>Before you add one</b>

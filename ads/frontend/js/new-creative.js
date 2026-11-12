@@ -1,11 +1,47 @@
 import { api } from "./api.js";
 import { boot, cancelLink, entityLink, esc, icon, toast, guardLeaving, markSaved, returnCrumbs, safePath } from "./ui.js";
 import { CTA_LABELS } from "./format.js";
+import { mountUploader, waitReady } from "./uploader.js";
+import { builder } from "./builder.js";
 
 const $ = (id) => document.getElementById(id);
 let options;
 let media = null; // { kind, hash | video_id, url, name, ready }
-let pollTimer;
+let stopWaiting = () => {};
+let steps = null;
+const changed = () => steps && steps.soon();
+
+// What New ad would send; the server checks it (POST /api/ads/new/check) before anything goes to Meta.
+function payload() {
+  return {
+    adset_id: $("aset-pick").value, template_ad_id: $("template").value, name: $("name").value.trim(),
+    body: $("body").value, title: $("title").value, cta_type: $("cta").value, form_id: $("form").value || null,
+    media: !media ? null : media.kind === "same" ? { kind: "same" } : { kind: media.kind, hash: media.hash, video_id: media.video_id },
+  };
+}
+
+async function check() {
+  const r = await api("/api/ads/new/check", { method: "POST", body: payload() });
+  const waiting = media && media.kind === "video" && !media.ready ? [{ field: "media", message: "Meta is still processing the video. Give it a minute." }] : [];
+  return [...r.problems, ...waiting];
+}
+
+function summary() {
+  const set = options.adsets.find((x) => x.id === $("aset-pick").value);
+  const tpl = options.templates.find((x) => x.id === $("template").value);
+  const form = $("form").selectedOptions[0];
+  return {
+    where: set ? `${set.name} · ${tpl ? `from ${tpl.name}` : "a new ad from scratch"}${form && form.value ? ` · form ${form.textContent}` : ""}` : "",
+    media: media ? `${media.name || (media.kind === "video" ? "Video" : "Image")}${media.kind === "video" && !media.ready ? " (Meta is processing it)" : ""}` : "",
+    words: $("title").value.trim() ? `“${$("title").value.trim()}” · ${CTA_LABELS[$("cta").value] || $("cta").value}` : "",
+  };
+}
+
+function ready(problems) {
+  const n = problems.length;
+  $("ready").textContent = n ? `${n} ${n === 1 ? "thing" : "things"} to finish first.` : "Ready to create. It starts switched off.";
+  $("ready").dataset.ok = String(!n);
+}
 
 function counter(input, out, soft) {
   const update = () => {
@@ -28,7 +64,7 @@ function fillFromTemplate() {
 
 function useSame() {
   const t = options.templates.find((x) => x.id === $("template").value);
-  if (!t) { media = null; showChosen(); pickTab("library"); return; }
+  if (!t) { media = null; showChosen(); pickTab("upload"); return; }
   media = { kind: "same", name: `Same as “${t ? t.name : "the starting ad"}”`, url: t && t.image_url, ready: true };
   showChosen();
 }
@@ -44,6 +80,7 @@ function pickTab(name) {
 
 function showChosen() {
   const el = $("chosen");
+  changed();
   if (!media) { el.hidden = true; return; }
   el.hidden = false;
   const waiting = media.kind === "video" && !media.ready;
@@ -54,53 +91,22 @@ function showChosen() {
       <span class="${waiting ? "progress" : "ok-text"}">${waiting ? '<span class="dot"></span>Meta is processing the video… you can fill in the words meanwhile' : "Ready"}</span>
       <button class="link-btn" type="button" id="clear-media">Choose a different one</button>
     </div>`;
-  $("clear-media").addEventListener("click", () => { media = null; clearTimeout(pollTimer); showChosen(); });
+  $("clear-media").addEventListener("click", () => { media = null; stopWaiting(); showChosen(); });
 }
 
-async function pollVideo() {
-  clearTimeout(pollTimer);
+// A video Meta hasn't finished processing can't go in an ad yet: wait for it, then say it's ready.
+function pollVideo() {
+  stopWaiting();
   if (!media || media.kind !== "video" || media.ready) return;
-  try {
-    const s = await api(`/api/media/video/${media.video_id}`);
-    if (s.ready) { media.ready = true; showChosen(); return; }
-  } catch (err) { /* keep waiting */ }
-  pollTimer = setTimeout(pollVideo, 4000);
+  const mine = media;
+  stopWaiting = waitReady(mine.video_id, () => { mine.ready = true; if (media === mine) showChosen(); });
 }
 
-function upload(file) {
-  const okType = ["image/jpeg", "image/png", "video/mp4", "video/quicktime"].includes(file.type);
-  if (!okType) { toast("Use a JPG or PNG image, or an MP4 or MOV video", "bad"); return; }
-  const isVideo = file.type.startsWith("video/");
-  if (file.size > (isVideo ? 250 : 30) * 1024 * 1024) { toast(`That file is too big (${isVideo ? "250" : "30"} MB max)`, "bad"); return; }
-  const bar = $("up-progress");
-  const fill = bar.querySelector("i");
-  const label = bar.querySelector("span");
-  bar.hidden = false;
-  fill.style.width = "0%";
-  label.textContent = "Uploading…";
-  const form = new FormData();
-  form.append("file", file);
-  const xhr = new XMLHttpRequest();
-  xhr.open("POST", "/api/media/upload");
-  xhr.setRequestHeader("X-Requested-With", "ebads");
-  xhr.upload.addEventListener("progress", (e) => {
-    if (!e.lengthComputable) return;
-    const p = Math.round((e.loaded / e.total) * 100);
-    fill.style.width = `${p}%`;
-    label.textContent = p < 100 ? `Uploading… ${p}%` : "Sending to Meta…";
-  });
-  xhr.addEventListener("load", () => {
-    let body = {};
-    try { body = JSON.parse(xhr.responseText); } catch (e) {}
-    if (xhr.status >= 300) { label.textContent = body.error || "Upload failed"; toast(body.error || "Upload failed", "bad"); return; }
-    bar.hidden = true;
-    media = { ...body, preview: URL.createObjectURL(file), ready: body.kind === "image" };
-    showChosen();
-    pollVideo();
-    toast(isVideo ? "Uploaded. Meta is processing the video." : "Image uploaded");
-  });
-  xhr.addEventListener("error", () => { label.textContent = "Upload failed: check your connection"; });
-  xhr.send(form);
+function uploaded(m) {
+  media = m;
+  showChosen();
+  pollVideo();
+  toast(m.kind === "video" ? "Uploaded. Meta is processing the video." : "Image uploaded");
 }
 
 async function loadLibrary() {
@@ -144,7 +150,7 @@ else if (me) {
   const templateId = q0.get("template") || (q0.get("from") && !safePath(q0.get("from")) ? q0.get("from") : null);
   const back = returnCrumbs("New ad");
   $("create")?.insertAdjacentHTML("afterend", cancelLink(back));
-  $("drop-icon").innerHTML = icon("upload");
+  mountUploader($("tab-upload"), { id: "file", name: "media", onDone: uploaded });
   if (me.role === "admin") $("claude-tip").hidden = false;
   try { options = await api("/api/ads/new/options"); } catch (err) { toast(err.message, "bad"); options = { adsets: [], templates: [], cta_types: [] }; }
   if (!options.adsets.length || (!options.templates.length && me.role !== "admin")) {
@@ -167,6 +173,10 @@ else if (me) {
     // Said once: a reload or coming back with Back doesn't announce it again.
     if (q0.has("made")) { const u = new URL(location.href); u.searchParams.delete("made"); history.replaceState(history.state, "", u); }
     counter($("body"), $("body-count"), 125);
+    steps = builder({ form: $("new-form"), nav: $("stepper"), check, summary, onCheck: ready,
+      steps: [{ id: "where", name: "Where" }, { id: "media", name: "Image or video" }, { id: "words", name: "Words" }] });
+    $("new-form").addEventListener("input", changed);
+    $("new-form").addEventListener("change", changed);
     counter($("title"), $("title-count"));
     fillFromTemplate();
     $("template").addEventListener("change", fillFromTemplate);
@@ -195,31 +205,20 @@ else if (me) {
         toast("Filled in from Claude's suggestion. Edit anything, then create.");
       } catch (err) { toast(err.message, "bad"); }
     }
-    $("file").addEventListener("change", (e) => { if (e.target.files[0]) upload(e.target.files[0]); e.target.value = ""; });
-    const drop = $("drop");
-    ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
-    ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
-    drop.addEventListener("drop", (e) => { const f = e.dataTransfer.files[0]; if (f) upload(f); });
+    changed();
 
     $("new-form").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const name = $("name").value.trim();
-      const problems = [];
-      if (!media) problems.push("choose an image or video");
-      if (!$("body").value.trim()) problems.push("write the primary text");
-      if (!$("title").value.trim()) problems.push("write a headline");
-      if (!name) problems.push("name the ad");
-      if (problems.length) { toast(`Almost: ${problems.join(", ")}.`, "bad"); return; }
-      if (media.kind === "video" && !media.ready) { toast("Meta is still processing the video. Give it a minute.", "bad"); return; }
       const btn = $("create");
+      if (btn.disabled) return;
       btn.disabled = true;
+      // Every field that needs something is marked first; nothing is sent to Meta until all are filled.
+      let ok = false;
+      try { ok = await steps.validate(); } catch (err) { toast(err.message, "bad"); }
+      if (!ok) { btn.disabled = false; return; }
       btn.textContent = "Creating…";
       try {
-        const r = await api("/api/ads/new", { method: "POST", body: {
-          adset_id: $("aset-pick").value, template_ad_id: $("template").value, name,
-          body: $("body").value, title: $("title").value, cta_type: $("cta").value, form_id: $("form").value || null,
-          media: media.kind === "same" ? { kind: "same" } : { kind: media.kind, hash: media.hash, video_id: media.video_id },
-        } });
+        const r = await api("/api/ads/new", { method: "POST", body: payload() });
         markSaved();
         location.href = `/ad.html?id=${encodeURIComponent(r.id)}&created=1`;
       } catch (err) { toast(err.message, "bad"); btn.disabled = false; btn.textContent = "Create ad (off)"; }

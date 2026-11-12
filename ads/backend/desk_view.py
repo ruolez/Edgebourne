@@ -236,6 +236,33 @@ def now(rows, show=5):
             "next": [{"id": t["id"], "thread": thread_key(t), "title": title(t)} for t in line[:show]], "queued": len(line)}
 
 
+def mac_status(bridge, working=None, queued=0):
+    """The one way every page says what the Mac and Claude are doing (9.4e): {state, title, detail, waits, queued}.
+    `working` = the run in progress ({title, progress}) or None; `queued` = runs waiting in line.
+    `waits` = what a waiting run waits for when the Mac can't take it (None when it can).
+    A Mac that stopped checking in is offline even if a run it took hasn't expired yet."""
+    def many(n, one, more):
+        return one if n == 1 else more.format(n=n)
+    if not bridge.get("has_key"):
+        state, title, detail = "not_set_up", "Your Mac isn't set up", "Set it up on the Claude page so Claude can work."
+    elif not bridge.get("online"):
+        state, title = "offline", "Your Mac is offline"
+        detail = many(queued, "1 waiting. It starts when the Mac is back.", "{n} waiting. They start when the Mac is back.") if queued \
+            else "Anything you send waits until it's back."
+    elif bridge.get("claude_sign_in_failed"):
+        state, title = "sign_in", "Claude can't sign in on your Mac"
+        detail = "Run claude setup-token on the Mac." + (f" {queued} waiting." if queued else "")
+    elif working:
+        state, title, detail = "working", "Claude is working", working.get("progress") or working.get("title") or ""
+    elif queued:
+        state, title, detail = "starting", "Claude is starting the next one", f"{queued} in line"
+    else:
+        state, title, detail = "idle", "Claude is idle", "Nothing in line. Anything you send starts right away."
+    waits = {"not_set_up": "It starts once your Mac is set up.", "offline": "It starts when your Mac is back online.",
+             "sign_in": "It starts once Claude can sign in on your Mac again."}.get(state)
+    return {"state": state, "title": title, "detail": detail, "waits": waits, "queued": queued}
+
+
 AD_CODE = re.compile(r"^([A-Z]{1,3}\d{1,3})\b")
 
 

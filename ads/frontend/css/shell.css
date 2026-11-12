@@ -618,7 +618,9 @@ body.has-bulk .content { padding-bottom: 96px; }
 .claude-now-bar { display: none; }
 .claude-now-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); opacity: .45; }
 [data-state="working"] > .claude-now-dot { background: var(--violet); opacity: 1; animation: pulse 1.4s ease-in-out infinite; }
-[data-state="waiting"] > .claude-now-dot { background: var(--amber); opacity: 1; }
+[data-state="starting"] > .claude-now-dot { background: var(--amber); opacity: 1; }
+[data-state="idle"] > .claude-now-dot { background: var(--signal); opacity: 1; }
+[data-state="sign_in"] > .claude-now-dot { background: var(--bad); opacity: 1; }
 .claude-now-text { flex: 1; min-width: 0; display: grid; gap: 1px; }
 .claude-now-text b { font-size: var(--t-s); font-weight: 500; }
 .claude-now-text time { font-family: var(--font-num); font-variant-numeric: tabular-nums; color: var(--ink-3); font-weight: 400; }

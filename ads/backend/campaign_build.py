@@ -27,39 +27,59 @@ def campaign_payload(spec):
 
 def problems(spec, known_forms, known_templates, current_daily_cents=None, currency="USD"):
     """[(step, message)] for anything that stops the build. `step` names the wizard step."""
+    return [(step, message) for step, _, message in field_problems(spec, known_forms, known_templates, current_daily_cents, currency)]
+
+
+ADSET_FIELDS = {"name": "adset", "locations": "locations", "age": "age", "end": "end"}
+
+
+def _missing_words(i, a):
+    """The first of the ad's primary text, headline and name left empty, in the order the card shows them."""
+    return next((f"ad{i}-{k}" for k in ("body", "title", "name") if not (a.get(k) or "").strip()), None)
+
+
+def field_problems(spec, known_forms, known_templates, current_daily_cents=None, currency="USD"):
+    """[(step, input name or None, message)]: problems() with the wizard input each one is about."""
     out = []
     if not (spec.get("name") or "").strip():
-        out.append(("goal", "Give the campaign a name"))
+        out.append(("goal", "name", "Give the campaign a name"))
     budget = spec.get("daily_budget_cents")
     if not budget or budget < MIN_DAILY_CENTS:
-        out.append(("budget", "Give it a daily budget of at least $1"))
+        out.append(("budget", "budget", "Give it a daily budget of at least $1"))
     elif current_daily_cents and budget > 3 * current_daily_cents:
-        out.append(("budget", f"{dollars(budget, currency)} a day is more than 3 times what runs now ({dollars(current_daily_cents, currency)}); start lower and raise it in steps"))
+        out.append(("budget", "budget", f"{dollars(budget, currency)} a day is more than 3 times what runs now ({dollars(current_daily_cents, currency)}); start lower and raise it in steps"))
     adset = spec.get("adset") or {}
-    out += [("adset", m) for _, m in ab.problems(adset, budget or 0)]  # the budget is the campaign's: its step reports it
+    # the budget is the campaign's: its own step reports it
+    out += [("adset", ADSET_FIELDS.get(f), m) for f, m in ab.problems(adset, budget or 0)]
     if spec.get("form_id") not in known_forms:
-        out.append(("form", "Pick the lead form people fill in"))
+        out.append(("form", "form", "Pick the lead form people fill in"))
     ads = spec.get("ads") or []
     if not ads:
-        out.append(("ads", "Add at least one ad"))
+        out.append(("ads", None, "Add at least one ad"))
     if len(ads) > MAX_ADS:
-        out.append(("ads", f"Start with at most {MAX_ADS} ads"))
-    names = [a.get("name", "").strip().lower() for a in ads]
-    for i, a in enumerate(ads, 1):
+        out.append(("ads", None, f"Start with at most {MAX_ADS} ads"))
+    for i, a in enumerate(ads):
+        n = i + 1
         # From scratch (no ad to start from) the ad needs its own image or video; "same" means the template's.
         if a.get("template_ad_id") and a["template_ad_id"] not in known_templates:
-            out.append(("ads", f"Ad {i}: pick the ad it starts from"))
+            out.append(("ads", f"ad{i}-template", f"Ad {n}: pick the ad it starts from"))
         if not a.get("template_ad_id") and (a.get("media") or {}).get("kind") == "same":
-            out.append(("ads", f"Ad {i}: choose its image or video (it doesn't start from another ad)"))
-        if not (a.get("name") or "").strip() or not (a.get("title") or "").strip() or not (a.get("body") or "").strip():
-            out.append(("ads", f"Ad {i}: give it a name, primary text and a headline"))
+            out.append(("ads", f"ad{i}-media", f"Ad {n}: choose its image or video (it doesn't start from another ad)"))
+        missing = _missing_words(i, a)
+        if missing:
+            out.append(("ads", missing, f"Ad {n}: give it a name, primary text and a headline"))
         if a.get("cta_type") and a["cta_type"] not in CTA_FOR_FORMS:
-            out.append(("ads", f"Ad {i}: that button doesn't open a lead form"))
+            out.append(("ads", f"ad{i}-cta", f"Ad {n}: that button doesn't open a lead form"))
         media = a.get("media") or {}
         if media.get("kind") not in ("same", "image", "video") or (media.get("kind") != "same" and not (media.get("hash") or media.get("video_id"))):
-            out.append(("ads", f"Ad {i}: choose its image or video"))
-    if len(set(n for n in names if n)) != len([n for n in names if n]):
-        out.append(("ads", "Two ads have the same name"))
+            out.append(("ads", f"ad{i}-media", f"Ad {n}: choose its image or video"))
+    seen = set()
+    for i, a in enumerate(ads):
+        name = (a.get("name") or "").strip().lower()
+        if name and name in seen:
+            out.append(("ads", f"ad{i}-name", "Two ads have the same name"))
+            break
+        seen.add(name)
     return out
 
 

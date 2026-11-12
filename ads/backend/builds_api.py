@@ -55,18 +55,18 @@ def clean(raw):
 def check(spec, forms=None):
     forms = forms if forms is not None else forms_by_id()
     tpl = templates()
-    errs = cb.problems(spec, set(forms), set(tpl), running_daily_cents(), account_info.currency())
+    errs = cb.field_problems(spec, set(forms), set(tpl), running_daily_cents(), account_info.currency())
     import money_rules
     cap = money_rules.ceiling(settings_store.get("max_daily_budget_cents"))
     if spec["daily_budget_cents"] and spec["daily_budget_cents"] > cap:
-        errs.append(("budget", f"That's above this account's ceiling of {cb.dollars(cap)} a day "
-                               "(Settings → Targets → highest daily budget)."))
+        errs.append(("budget", "budget", f"That's above this account's ceiling of {cb.dollars(cap)} a day "
+                                         "(Settings → Targets → highest daily budget)."))
     tid = spec["adset"]["template_adset_id"]
     if tid and not db.query("SELECT 1 FROM adsets WHERE id = %s", (tid,), one=True):
-        errs.append(("adset", "That ad set isn't there any more: pick another, or start from scratch"))
+        errs.append(("adset", "adset_template", "That ad set isn't there any more: pick another, or start from scratch"))
     if not settings_store.get("meta_page_id"):
-        errs.append(("goal", "Add this account's Facebook Page in Settings → Meta first"))
-    out = {"problems": [{"step": s, "message": m} for s, m in errs]}
+        errs.append(("goal", None, "Add this account's Facebook Page in Settings → Meta first"))
+    out = {"problems": [{"step": s, "field": f, "message": m} for s, f, m in errs]}
     if not errs:
         out["review"] = cb.review(spec, forms.get(spec["form_id"], ""), {k: v["name"] for k, v in tpl.items()}, account_info.currency())
     return out

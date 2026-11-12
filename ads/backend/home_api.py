@@ -10,7 +10,7 @@ import meta_client
 import settings_store
 import today
 from auth import current_user, login_required, visible_campaign_ids
-from desk_api import bridge_status
+from desk_api import bridge_status, bridge_with_status
 from performance_api import cap_snapshot, daily_budget_cents, overview_data
 
 bp = Blueprint("home", __name__, url_prefix="/api/home")
@@ -139,6 +139,6 @@ def home():
         out["desk"] = db.query("""SELECT id, kind, prompt, status, summary, finished_at FROM desk_tasks
                                   ORDER BY id DESC LIMIT 3""")
         out["pending_proposals"] = db.query("SELECT COUNT(*) AS n FROM desk_proposals WHERE status = 'pending'", one=True)["n"]
-        out["bridge"] = bridge_status()
+        out["bridge"] = bridge_with_status()
         out["cap"] = cap_snapshot()
     return jsonify(out)

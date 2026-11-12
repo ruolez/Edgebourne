@@ -91,12 +91,21 @@ export function proposalRow(p, ix) {
   return `<li class="prow">${pill(p.state)}<span class="prow-title">${esc(p.title)}${outcome(p, ix)}${decide}${look}${go}${why}</span></li>`;
 }
 
+// One Suggestion card everywhere (9.4e): what still waits for a decision is the same card as in the
+// conversation and on the ad page; decided ones stay one line each.
+function proposalsHtml(list, ix) {
+  const waiting = list.filter((p) => p.status === "pending");
+  const decided = list.filter((p) => p.status !== "pending");
+  return `${waiting.length ? `<div class="sg-list">${waiting.map((p) => suggestion(p, ix)).join("")}</div>` : ""}${
+    decided.length ? `<ul class="prows">${decided.map((p) => proposalRow(p, ix)).join("")}</ul>` : ""}`;
+}
+
 function runItem(t, ix, openReports) {
   const score = t.scorecard && t.scorecard.overall != null
     ? `<span class="score-chip ${scoreClass(t.scorecard.overall)}">${esc(t.scorecard.overall)}/5</span>` : "";
   const status = t.status === "done" ? "" : `<span class="pill ${ACTIVE.has(t.status) ? "claude" : t.status === "failed" ? "bad" : ""}">${esc({ queued: "Waiting for your Mac", claimed: "Starting", running: "Working", failed: "Didn't finish", cancelled: "Cancelled" }[t.status] || t.status)}</span>`;
   const reports = t.reports.map((r) => `<details class="report" data-report="${r.id}" ${openReports.has(r.id) ? "open" : ""}><summary>Read the report: ${esc(r.title)}</summary><div class="md">${renderMarkdown(r.body)}</div></details>`).join("");
-  const props = t.proposals.length ? `<ul class="prows">${t.proposals.map((p) => proposalRow(p, ix)).join("")}</ul>` : "";
+  const props = proposalsHtml(t.proposals, ix);
   return `<li class="run" id="run-${t.id}">
     <div class="run-when"><b>${esc((t.options && t.options.schedule) || RUN_WORDS[t.kind] || KIND_LABELS[t.kind] || t.kind)}</b><span class="muted small">${esc(when(t.created_at))}</span></div>
     <div class="run-body">
@@ -116,7 +125,7 @@ export function adsView(data, ix, openReports) {
         // proposals about this ad that came from runs filed elsewhere (e.g. a results review)
         (() => {
           const stray = f.proposals.map((id) => ix.proposals.get(id)).filter((p) => p && !f.tasks.includes(ix.taskOf.get(p.id).id));
-          return stray.length ? `<li class="run"><div class="run-when"><b>From other conversations</b></div><div class="run-body"><ul class="prows">${stray.map((p) => proposalRow(p, ix)).join("")}</ul></div></li>` : "";
+          return stray.length ? `<li class="run"><div class="run-when"><b>From other conversations</b></div><div class="run-body">${proposalsHtml(stray, ix)}</div></li>` : "";
         })()}</ol>
     </div>
   </section>`).join("");
@@ -125,11 +134,18 @@ export function adsView(data, ix, openReports) {
 // ---------------------------------------------------------------- previews
 
 const previewCache = new Map();
-const observer = new IntersectionObserver((entries) => entries.forEach((e) => {
-  if (!e.isIntersecting) return;
-  observer.unobserve(e.target);
-  fillPreview(e.target);
-}), { root: document.getElementById("cv-scroll"), rootMargin: "900px 0px" });
+const watch = (root) => {
+  const obs = new IntersectionObserver((entries) => entries.forEach((e) => {
+    if (!e.isIntersecting) return;
+    obs.unobserve(e.target);
+    fillPreview(e.target);
+  }), { root, rootMargin: "900px 0px" });
+  return obs;
+};
+// Conversations scroll in their own box; By ad scrolls with the page.
+const scroller = document.getElementById("cv-scroll");
+const observer = watch(scroller);
+const pageObserver = watch(null);
 
 export async function fillPreview(box) {
   const id = box.dataset.preview;
@@ -146,5 +162,5 @@ export async function fillPreview(box) {
 }
 
 export function loadPreviews(root) {
-  root.querySelectorAll("[data-preview]").forEach((el) => observer.observe(el));
+  root.querySelectorAll("[data-preview]").forEach((el) => (scroller && scroller.contains(el) ? observer : pageObserver).observe(el));
 }

@@ -59,6 +59,21 @@ def _ordinal(n):
     return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
 
+def tz_label(name):
+    """"America/Chicago" → "Chicago time": whose clock a schedule runs on, in plain words."""
+    if "/" not in (name or ""):
+        return name or "UTC"
+    return f"{name.rsplit('/', 1)[1].replace('_', ' ')} time"
+
+
+def local_when(at, tz):
+    """A run's moment on the account's clock, with the zone's abbreviation (CST / CDT), or None."""
+    if at is None:
+        return None
+    t = at.astimezone(tz)
+    return f"{t:%a %b} {t.day}, {(t.hour % 12) or 12}:{t.minute:02d} {'AM' if t.hour < 12 else 'PM'} {t:%Z}"
+
+
 def describe(rule):
     every = rule["every"]
     if every == "day":
@@ -126,6 +141,9 @@ def run(now=None):
 def listing():
     rows = db.query("SELECT s.*, t.status AS last_status, t.summary AS last_summary FROM desk_schedules s "
                     "LEFT JOIN desk_tasks t ON t.id = s.last_task_id ORDER BY s.position, s.id")
+    zone = tz()
     for r in rows:
         r["when"] = describe(r["rule"])
+        r["next_local"] = local_when(r.get("next_run_at"), zone) if r.get("enabled") else None
+        r["last_local"] = local_when(r.get("last_run_at"), zone)
     return rows

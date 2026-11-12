@@ -129,7 +129,8 @@ function render(d) {
 
   let claudeCard = "";
   if (d.desk) {
-    const mac = d.bridge.online ? '<span class="mac-dot on">Mac connected</span>' : `<span class="mac-dot">${d.bridge.has_key ? "Mac offline" : "Mac not set up"}</span>`;
+    const m = d.bridge.status || { state: "", title: "", detail: "" };
+    const mac = `<span class="mac-dot ${["offline", "not_set_up", "sign_in"].includes(m.state) ? "" : "on"}" title="${esc(m.detail)}">${esc(m.title)}</span>`;
     const lastDone = d.desk.find((t) => t.status === "done" && t.summary);
     const pend = d.pending_proposals || 0;
     claudeCard = `<section class="panel td-sec td-claude" aria-labelledby="h-claude">

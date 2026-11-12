@@ -131,21 +131,38 @@ def estimate():
     return jsonify({"lower": row.get("estimate_mau_lower_bound"), "upper": row.get("estimate_mau_upper_bound")})
 
 
+def check(data):
+    """(campaign row or None, spec, [(field, message)]): everything create() refuses, without asking Meta,
+    so the page can mark each field before its confirmation (9.4e)."""
+    spec = clean(data.get("spec") or {})
+    campaign = db.query("""SELECT id, name, daily_budget_cents FROM campaigns WHERE id = %s
+                           AND COALESCE(effective_status, '') NOT IN ('DELETED', 'ARCHIVED')""", (str(data.get("campaign_id") or ""),), one=True)
+    errs = [] if campaign else [("campaign", "Pick the campaign it goes in")]
+    errs += ab.problems(spec, campaign["daily_budget_cents"] if campaign else 0)
+    import targets
+    if campaign and spec.get("daily_budget_cents") and campaign["daily_budget_cents"] is None and spec["daily_budget_cents"] > targets.ceiling():
+        errs.append(("budget", f"That's above this account's ceiling of {targets.ceiling() / 100:,.2f} a day "
+                               "(Settings → Targets → highest daily budget)."))
+    tid = str(data.get("template_adset_id") or "")
+    if tid and not db.query("SELECT 1 FROM adsets WHERE id = %s", (tid,), one=True):
+        errs.append(("template", "That ad set isn't there any more: pick another, or start from scratch"))
+    return campaign, spec, errs
+
+
+@bp.post("/check")
+@admin_required
+def check_only():
+    _, _, errs = check(request.get_json(silent=True) or {})
+    return jsonify({"problems": [{"field": f, "message": m} for f, m in errs]})
+
+
 @bp.post("")
 @admin_required
 def create():
     data = request.get_json(silent=True) or {}
-    spec = clean(data.get("spec") or {})
-    campaign = db.query("SELECT id, name, daily_budget_cents FROM campaigns WHERE id = %s", (str(data.get("campaign_id") or ""),), one=True)
-    if not campaign:
-        return api_error("Pick the campaign it goes in", 400, field="campaign")
-    errs = ab.problems(spec, campaign["daily_budget_cents"])
+    campaign, spec, errs = check(data)
     if errs:
         return api_error(errs[0][1], 400, field=errs[0][0])
-    import targets
-    if spec.get("daily_budget_cents") and campaign["daily_budget_cents"] is None and spec["daily_budget_cents"] > targets.ceiling():
-        return api_error(f"That's above this account's ceiling of {targets.ceiling() / 100:,.2f} a day "
-                         "(Settings → Targets → highest daily budget).", 400, field="budget")
     import ads_api
     import insights
     user = current_user()

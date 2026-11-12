@@ -257,7 +257,7 @@ def overview():
                                   OR EXISTS (SELECT 1 FROM desk_proposals p WHERE p.task_id = t.id AND p.status = 'pending')""", [], 400)
     ads, families = desk_story(tasks)
     resp = jsonify({
-        "bridge": bridge_status(),
+        "bridge": bridge_with_status([t for t in tasks if t["status"] in ("queued", "claimed", "running")]),
         "tasks": tasks,
         "board": desk_view.board(tasks),
         "ads": ads,
@@ -295,7 +295,8 @@ def create_task():
 @bp.get("/schedules")
 @admin_required
 def list_schedules():
-    return jsonify({"schedules": schedules.listing(), "tz": account_info.tz_name()})
+    name = account_info.tz_name()
+    return jsonify({"schedules": schedules.listing(), "tz": name, "tz_label": schedules.tz_label(name)})
 
 
 @bp.patch("/schedules/<int:sid>")
@@ -459,9 +460,22 @@ def continue_proposal(proposal_id):
 def now():
     """What the Mac is doing right now, for the status line on every page."""
     expire_stale()
-    rows = db.query("""SELECT id, status, prompt, progress, options, thread_id, claimed_at, created_at, queue_rank FROM desk_tasks
+    n = desk_view.now(open_runs())
+    bridge = bridge_status()
+    return jsonify({**n, "online": bridge["online"], "mac": desk_view.mac_status(bridge, n["working"], n["queued"])})
+
+
+def open_runs():
+    return db.query("""SELECT id, status, prompt, progress, options, thread_id, claimed_at, created_at, queue_rank FROM desk_tasks
                        WHERE status IN ('queued', 'claimed', 'running')""")
-    return jsonify({**desk_view.now(rows), "online": bridge_status()["online"]})
+
+
+def bridge_with_status(rows=None):
+    """bridge_status() plus the one status sentence every page shows (desk_view.mac_status)."""
+    bridge = bridge_status()
+    n = desk_view.now(open_runs() if rows is None else rows)
+    bridge["status"] = desk_view.mac_status(bridge, n["working"], n["queued"])
+    return bridge
 
 
 @bp.post("/tasks/<int:task_id>/next")

@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { boot, cancelLink, confirmDialog, esc, fieldError, icon, toast, guardLeaving, markSaved, returnCrumbs, withFrom } from "./ui.js";
 import { money } from "./format.js";
 import { placeLabel, placesHtml, placesWidget } from "./places.js";
+import { builder } from "./builder.js";
 
 const $ = (id) => document.getElementById(id);
 let opts;
@@ -9,6 +10,7 @@ let hints = [];
 const locations_ = () => places.get();
 
 let places;
+let steps = null;
 const label = placeLabel;
 
 function spec() {
@@ -46,14 +48,39 @@ function syncAdvantage() {
   $("age-hint").textContent = on ? `Hard limits. With Advantage+ audience the minimum can be at most ${opts.advantage_max_age_min}.` : "Only people in this range see it.";
 }
 
-function summary() {
+function whoLine() {
   const s = spec();
   const parts = [`Ages ${s.age_min ?? 18}–${s.age_max ?? 65}${(s.age_max ?? 65) >= 65 ? "+" : ""}`];
   const locations = locations_();
   if (locations.length) parts.push(locations.length <= 3 ? locations.map((l) => `${label(l)}${l.radius ? ` (${l.radius} mi)` : ""}`).join(", ") : `${locations.length} places`);
   if (s.keep_hints && hints.length) parts.push(`Hints: ${hints.slice(0, 3).join(", ")}${hints.length > 3 ? ` +${hints.length - 3}` : ""}`);
   if (s.advantage) parts.push("Advantage+ audience");
-  $("summary").textContent = parts.join(" · ");
+  return parts.join(" · ");
+}
+
+// The server's own check (POST /api/adsets/check), so the steps and the fields say what Create would refuse.
+async function check() {
+  const r = await api("/api/adsets/check", { method: "POST", body: { campaign_id: $("campaign").value, template_adset_id: $("template").value, spec: spec() } });
+  return r.problems;
+}
+
+function summary() {
+  const c = campaign();
+  const s = spec();
+  const tpl = $("template").selectedOptions[0];
+  const dates = s.start_day || s.end_day ? `${s.start_day ? `from ${s.start_day}` : "from when it's turned on"}${s.end_day ? ` to ${s.end_day}` : ""}` : "Runs while it's on";
+  const money_ = c && c.daily_budget_cents != null ? "shares the campaign's budget" : s.daily_budget_cents ? `${money(s.daily_budget_cents, { exact: true })} a day` : "";
+  return {
+    where: c ? `${s.name.trim() || "Unnamed"} · in ${c.name}${tpl && tpl.value ? ` · from ${tpl.textContent}` : ""}` : "",
+    who: places.get().length ? whoLine() : "",
+    when: [dates, money_].filter(Boolean).join(" · "),
+  };
+}
+
+function ready(problems) {
+  const n = problems.length;
+  $("ready").textContent = n ? `${n} ${n === 1 ? "thing" : "things"} to finish first.` : "Ready to create. It starts switched off and empty.";
+  $("ready").dataset.ok = String(!n);
 }
 
 let estSeq = 0;
@@ -76,7 +103,7 @@ function estimateSoon() {
   }, 400);
 }
 
-function changed() { summary(); estimateSoon(); }
+function changed() { estimateSoon(); if (steps) steps.soon(); }
 
 async function loadTemplate() {
   try {
@@ -112,22 +139,30 @@ if (me) {
       $("campaign").insertAdjacentHTML("afterbegin", '<option value="" disabled>Pick a campaign</option>');
       $("campaign").value = "";
     }
+    steps = builder({ form: $("as-form"), nav: $("stepper"), check, summary, onCheck: ready,
+      steps: [{ id: "where", name: "Where it goes" }, { id: "who", name: "Who sees it" }, { id: "when", name: "When and how much" }] });
     syncCampaign();
     if (want && !campaign()) $("budget-note").textContent = "The campaign you came from is deleted or archived, so it can't get new ad sets. Pick one that's still running.";
     await loadTemplate();
     $("campaign").addEventListener("change", () => { syncCampaign(); loadTemplate(); });
+    $("as-form").addEventListener("change", (e) => { if (e.target.id !== "campaign" && e.target.id !== "template") changed(); });
     $("template").addEventListener("change", loadTemplate);
     $("as-form").addEventListener("input", (e) => { if (e.target.id !== "pl-q") changed(); });
     $("advantage").addEventListener("change", () => { syncAdvantage(); changed(); });
     $("as-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const form = $("as-form");
-      fieldError(form, null);
+      if ($("create").disabled) return;
+      // Checked first, every field marked: the confirmation only opens when there's nothing left to fix.
+      $("create").disabled = true;
+      let ok = false;
+      try { ok = await steps.validate(); } catch (err) { toast(err.message, "bad"); }
+      $("create").disabled = false;
+      if (!ok) return;
       const c = campaign();
-      if (!c) { fieldError(form, "campaign", "Pick the campaign it goes in"); return; }
       const s = spec();
       const yes = await confirmDialog({ title: `Create “${s.name || "the ad set"}”?`,
-        body: `<p>In ${esc(c.name)}, switched off and with no ads yet. ${c.daily_budget_cents != null ? "It shares the campaign's budget once it's on." : `Its budget: ${esc(money(s.daily_budget_cents || 0, { exact: true }))} a day once it's on.`}</p><p class="muted">${esc($("summary").textContent)}</p>`,
+        body: `<p>In ${esc(c.name)}, switched off and with no ads yet. ${c.daily_budget_cents != null ? "It shares the campaign's budget once it's on." : `Its budget: ${esc(money(s.daily_budget_cents || 0, { exact: true }))} a day once it's on.`}</p><p class="muted">${esc(whoLine())}</p>`,
         confirm: "Create (off)" });
       if (!yes) return;
       $("create").disabled = true;
@@ -140,8 +175,7 @@ if (me) {
         $("create").disabled = false;
         const field = err.body && err.body.field;
         if (field) {
-          const target = { name: "name", locations: "locations", age: "age", end: "end", budget: "budget", campaign: "campaign" }[field];
-          fieldError(form, target, err.message);
+          fieldError(form, field, err.message);
         } else toast(err.message, "bad");
       }
     });

@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { setCurrency, currencySymbol, money, moneyWhole, explain } from "./format.js";
 
 const ICONS = {
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
   close: '<path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
   leads: '<path d="M4 5h16v11H8l-4 4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   team: '<circle cx="9" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3 19c.8-3.2 3.2-5 6-5s5.2 1.8 6 5M16 5.5a3 3 0 0 1 0 5.6M18 14.5c1.6.6 2.6 2.1 3 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -254,6 +255,24 @@ function paintUpdated() {
 export function editing() {
   const a = document.activeElement;
   return Boolean((a && a.matches("input, textarea, select, [contenteditable]")) || document.querySelector("dialog[open]"));
+}
+
+// A poll that redraws part of a page must not throw away where the keyboard is: the focused control is
+// found again in the new markup (by id, a data-* attribute or its link) and focused without scrolling.
+function focusKey(el) {
+  const tag = el.tagName.toLowerCase();
+  if (el.id) return `#${CSS.escape(el.id)}`;
+  const data = [...el.attributes].find((a) => a.name.startsWith("data-") && a.value !== "" && a.name !== "data-state");
+  if (data) return `${tag}[${data.name}="${CSS.escape(data.value)}"]`;
+  const href = el.getAttribute("href");
+  return href ? `${tag}[href="${CSS.escape(href)}"]` : null;
+}
+export function keepFocus(draw) {
+  const was = document.activeElement;
+  const key = was && was !== document.body ? focusKey(was) : null;
+  const out = draw();
+  if (key && !was.isConnected) document.querySelector(key)?.focus({ preventScroll: true });
+  return out;
 }
 
 // The server pulls from Meta by itself; when it has newer data, this page reloads its own.
@@ -778,20 +797,21 @@ function startClaudeNow(top) {
   paintClaudeNow = async () => {
     let n;
     try { n = await (await fetch("/api/desk/now", { credentials: "same-origin" })).json(); } catch (e) { return; }
-    if (!n || n.error) return;
-    const w = n.working;
+    if (!n || n.error || !n.mac) return;
+    // The words come from the server (desk_view.mac_status), the same on every page and on the Claude page.
+    const m = n.mac;
+    const w = m.state === "working" ? n.working : null;
     since = w ? new Date(w.since).getTime() : null;
-    const state = w ? "working" : n.queued ? "waiting" : "idle";
-    const title = w ? 'Claude working <time data-now-clock></time>' : n.queued || !n.online ? (n.online ? "Claude is starting the next one" : "Your Mac is offline") : "Claude is idle";
-    const detail = w ? esc(w.progress || w.title) : n.queued ? esc(n.next[0]?.title || "") : n.online ? "Nothing in line" : "Anything you ask waits until it’s back";
-    const line = n.queued ? `<em>${n.queued} in line</em>` : "";
+    const title = `${esc(m.title)}${w ? " <time data-now-clock></time>" : ""}`;
+    const detail = m.state === "starting" ? esc(n.next[0]?.title || m.detail) : esc(m.detail);
+    const line = n.queued && ["working", "starting"].includes(m.state) ? `<em>${n.queued} in line</em>` : "";
     const href = w ? `/desk.html#r/${w.thread}` : "/desk.html#list";
     [card, bar].forEach((el) => {
       el.href = href;
-      el.dataset.state = state;
+      el.dataset.state = m.state;
       el.innerHTML = `<span class="claude-now-dot" aria-hidden="true"></span><span class="claude-now-text"><b>${title}</b><small>${detail}</small></span>${line}`;
     });
-    bar.hidden = state === "idle";
+    bar.hidden = !w && !n.queued;
     tick();
   };
   paintClaudeNow();

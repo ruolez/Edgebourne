@@ -20,6 +20,7 @@ import ranges
 import db
 import delivery
 import desk_view
+import creative_build
 import insights
 import meta_client
 import settings_store
@@ -1069,14 +1070,9 @@ def prepare_creative(user, data):
     media = dict(data.get("media") or {})
     cta = data.get("cta_type") or None
     form_id = str(data.get("form_id") or "").strip() or None
-    if form_id and not form_id.isdigit():
-        return None, ("Unknown lead form", 400)
-    if not name or not body or not title:
-        return None, ("Give the ad a name, primary text and a headline", 400)
-    if media.get("kind") not in ("image", "video", "same") or (media["kind"] != "same" and not (media.get("hash") or media.get("video_id"))):
-        return None, ("Choose an image or video", 400)
-    if cta and cta not in CTA_TYPES:
-        return None, ("Unknown button", 400)
+    missing = creative_build.problems({**data, "adset_id": adset_id}, CTA_TYPES)
+    if missing:
+        return None, (missing[0][1], 400)
     if template:
         try:
             tpl = meta_client.get(template["creative_id"], fields="object_story_spec,degrees_of_freedom_spec")
@@ -1088,10 +1084,6 @@ def prepare_creative(user, data):
         page = settings_store.get("meta_page_id")
         if not page:
             return None, ("Add this account's Facebook Page in Settings → Meta first", 400)
-        if not form_id:
-            return None, ("Pick the lead form the button opens", 400)
-        if media["kind"] == "same":
-            return None, ("Choose an image or video", 400)
         cta = cta or "SIGN_UP"
         tpl = {"object_story_spec": {"page_id": page}}
     story = tpl.get("object_story_spec")
@@ -1143,6 +1135,37 @@ def create_ad_from(user, data, proposal_id=None, sync=True):
     if sync:
         after_write("structure sync", insights.sync_structure)
     return ad["id"], None
+
+
+def new_ad_problems(user, data):
+    """[(field, message)] for New ad, without asking Meta: the checks that run before the ad is created,
+    every one at once (9.4e: the page marks each field before anything is sent)."""
+    out = creative_build.problems(data, CTA_TYPES)
+    adset_id = str(data.get("adset_id") or "")
+    if adset_id and not any(f == "adset_id" for f, _ in out):
+        adset = db.query("""SELECT s.campaign_id, s.effective_status IN ('DELETED', 'ARCHIVED') OR c.effective_status IN ('DELETED', 'ARCHIVED') AS gone
+                            FROM adsets s JOIN campaigns c ON c.id = s.campaign_id WHERE s.id = %s""", (adset_id,), one=True)
+        if not adset or not can_touch(user, adset["campaign_id"]):
+            out.insert(0, ("adset_id", "Pick the ad set it goes in"))
+        elif adset["gone"]:
+            out.insert(0, ("adset_id", "That ad set was deleted or archived on Meta. Pick another."))
+    tpl = str(data.get("template_ad_id") or "")
+    if tpl:
+        row = db.query("SELECT campaign_id FROM ads WHERE id = %s", (tpl,), one=True)
+        if not row or not can_touch(user, row["campaign_id"]):
+            out.insert(1 if out and out[0][0] == "adset_id" else 0, ("template_ad_id", "The ad it starts from isn't there any more. Pick another."))
+    elif not settings_store.get("meta_page_id"):
+        out.insert(0, ("template_ad_id", "Add this account's Facebook Page in Settings → Meta first"))
+    return out
+
+
+@bp.post("/ads/new/check")
+@login_required
+def check_new_ad():
+    user = current_user()
+    if user["role"] == "client" or not _may_create(user):
+        return api_error("No campaigns are assigned to you", 403)
+    return jsonify({"problems": [{"field": f, "message": m} for f, m in new_ad_problems(user, request.get_json(silent=True) or {})]})
 
 
 @bp.post("/ads/new")

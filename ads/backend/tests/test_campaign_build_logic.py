@@ -36,6 +36,34 @@ class ProblemTests(unittest.TestCase):
         self.assertEqual(cb.problems({**SPEC, "ads": [AD, {**AD}]}, {"f1"}, {"t1"}), [("ads", "Two ads have the same name")])
 
 
+class FieldProblemTests(unittest.TestCase):
+    """9.4e: each problem also names the input it is about, so the wizard can mark that field."""
+    def test_each_problem_points_at_its_input(self):
+        bad = {**SPEC, "name": " ", "daily_budget_cents": 50, "form_id": "nope",
+               "adset": {**ADSET, "name": "", "locations": [], "age_min": 40, "age_max": 30, "suggest_min": None, "suggest_max": None},
+               "ads": [{**AD, "template_ad_id": "x", "cta_type": "SHOP_NOW", "media": {"kind": "image"}},
+                       {**AD, "name": "N7", "body": "", "title": ""}, {**AD, "name": "n7"}]}
+        self.assertEqual([(s, f) for s, f, _ in cb.field_problems(bad, {"f1"}, {"t1"})], [
+            ("goal", "name"), ("budget", "budget"), ("adset", "adset"), ("adset", "locations"), ("adset", "age"), ("form", "form"),
+            ("ads", "ad0-template"), ("ads", "ad0-cta"), ("ads", "ad0-media"), ("ads", "ad1-body"), ("ads", "ad2-name")])
+
+    def test_a_missing_headline_points_at_the_headline_when_the_text_is_there(self):
+        spec = {**SPEC, "ads": [{**AD, "title": ""}]}
+        self.assertEqual(cb.field_problems(spec, {"f1"}, {"t1"}), [("ads", "ad0-title", "Ad 1: give it a name, primary text and a headline")])
+
+    def test_from_scratch_same_media_points_at_the_media(self):
+        spec = {**SPEC, "ads": [{**AD, "template_ad_id": "", "media": {"kind": "same"}}]}
+        self.assertEqual([f for _, f, _ in cb.field_problems(spec, {"f1"}, set())], ["ad0-media"])
+
+    def test_problems_without_an_input_name_none(self):
+        self.assertEqual([cb.field_problems({**SPEC, "ads": []}, {"f1"}, {"t1"}), cb.field_problems({**SPEC, "ads": [AD] * 7}, {"f1"}, {"t1"})[0]],
+                         [[("ads", None, "Add at least one ad")], ("ads", None, "Start with at most 6 ads")])
+
+    def test_problems_is_the_same_list_without_the_inputs(self):
+        bad = {**SPEC, "name": "", "ads": [{**AD, "title": ""}, {**AD}]}
+        self.assertEqual(cb.problems(bad, {"f1"}, {"t1"}), [(s, m) for s, _, m in cb.field_problems(bad, {"f1"}, {"t1"})])
+
+
 class PayloadAndOrderTests(unittest.TestCase):
     def test_the_campaign_is_a_paused_leads_campaign_with_its_budget_in_cents(self):
         self.assertEqual(cb.campaign_payload(SPEC), {"name": "EB - Payroll - Leads", "objective": "OUTCOME_LEADS", "buying_type": "AUCTION",

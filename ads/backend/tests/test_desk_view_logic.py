@@ -230,6 +230,52 @@ class NowTest(unittest.TestCase):
         self.assertEqual(([n["id"] for n in out["next"]], out["queued"]), ([1, 2, 3], 8))
 
 
+class MacStatusTest(unittest.TestCase):
+    """One status everywhere (9.4e): the Claude page, the sidebar, the phone bar, Today and Research say the same."""
+    ON = {"has_key": True, "online": True, "claude_sign_in_failed": False}
+    OFF = {**ON, "online": False}
+    WORKING = {"title": "Review the week", "progress": "Reading Meta"}
+
+    def test_each_state_in_words(self):
+        cases = [
+            (({"has_key": False, "online": False}, None, 0), ("not_set_up", "Your Mac isn't set up", "Set it up on the Claude page so Claude can work.")),
+            ((self.OFF, None, 0), ("offline", "Your Mac is offline", "Anything you send waits until it's back.")),
+            ((self.OFF, None, 1), ("offline", "Your Mac is offline", "1 waiting. It starts when the Mac is back.")),
+            ((self.OFF, None, 3), ("offline", "Your Mac is offline", "3 waiting. They start when the Mac is back.")),
+            (({**self.ON, "claude_sign_in_failed": True}, None, 2), ("sign_in", "Claude can't sign in on your Mac", "Run claude setup-token on the Mac. 2 waiting.")),
+            ((self.ON, self.WORKING, 4), ("working", "Claude is working", "Reading Meta")),
+            ((self.ON, {**self.WORKING, "progress": None}, 0), ("working", "Claude is working", "Review the week")),
+            ((self.ON, None, 2), ("starting", "Claude is starting the next one", "2 in line")),
+            ((self.ON, None, 0), ("idle", "Claude is idle", "Nothing in line. Anything you send starts right away.")),
+        ]
+        for (bridge, working, queued), want in cases:
+            with self.subTest(bridge=bridge, working=working, queued=queued):
+                got = desk_view.mac_status(bridge, working, queued)
+                self.assertEqual((got["state"], got["title"], got["detail"]), want)
+
+    def test_a_run_the_offline_mac_left_behind_is_not_called_working(self):
+        # The Mac went quiet mid-run: until the run expires, saying "working" would be a guess.
+        self.assertEqual(desk_view.mac_status(self.OFF, self.WORKING, 0)["state"], "offline")
+
+    def test_what_a_waiting_run_waits_for_in_each_state(self):
+        # Only an offline Mac comes "back"; a Mac that isn't set up or can't sign in waits for a fix.
+        cases = [
+            (({"has_key": False, "online": False}, None, 1), "It starts once your Mac is set up."),
+            ((self.OFF, None, 1), "It starts when your Mac is back online."),
+            (({**self.ON, "claude_sign_in_failed": True}, None, 1), "It starts once Claude can sign in on your Mac again."),
+            ((self.ON, self.WORKING, 1), None),
+            ((self.ON, None, 1), None),
+            ((self.ON, None, 0), None),
+        ]
+        for (bridge, working, queued), want in cases:
+            with self.subTest(bridge=bridge, working=working):
+                self.assertEqual(desk_view.mac_status(bridge, working, queued)["waits"], want)
+
+    def test_it_says_how_many_wait_whatever_the_state(self):
+        self.assertEqual([desk_view.mac_status(b, w, n)["queued"] for b, w, n in ((self.OFF, None, 3), (self.ON, self.WORKING, 4), (self.ON, None, 0))],
+                         [3, 4, 0])
+
+
 class TranscriptTest(unittest.TestCase):
     def turn(self, tid, **kw):
         return {"id": tid, "kind": "review", "prompt": f"ask {tid}", "status": "done", "summary": f"said {tid}", "error": None,

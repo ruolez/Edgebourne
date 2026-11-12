@@ -16,7 +16,8 @@ function libraryUrl(q, country, active) {
 async function load() {
   try {
     const d = await api("/api/desk");
-    $("mac-line").textContent = d.bridge.online ? "Your Mac is connected: Claude starts right away." : "Your Mac is offline: this waits until it's on.";
+    const m = d.bridge.status;
+    $("mac-line").textContent = m ? `${m.title}. ${m.detail}` : "";
     const tasks = d.tasks.filter((t) => t.kind === "research");
     const json = JSON.stringify(tasks);
     if (json !== lastJson) {

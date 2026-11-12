@@ -5,6 +5,12 @@ import { esc, skeleton, switchHtml, toast, when } from "./ui.js";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const LAST = { done: "finished", failed: "didn't finish", queued: "waiting for your Mac", claimed: "starting", running: "running", cancelled: "cancelled" };
 
+// Schedules run on the ad account's clock: every time says which one, and the viewer's own time is added
+// when their device is somewhere else.
+let zone = { tz: "", label: "" };
+const elsewhere = () => zone.tz && Intl.DateTimeFormat().resolvedOptions().timeZone !== zone.tz;
+const yourTime = (iso) => (iso && elsewhere() ? ` <span class="muted">(${esc(new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }))} your time)</span>` : "");
+
 function ruleForm(s) {
   const r = s.rule;
   const opt = (v, label, cur) => `<option value="${v}" ${String(cur) === String(v) ? "selected" : ""}>${label}</option>`;
@@ -17,7 +23,7 @@ function ruleForm(s) {
         ${DAYS.map((d, i) => opt(i, d, r.weekday ?? 0)).join("")}</select></div>
       <div class="field" data-for="month"><label for="monthday-${s.id}">On day</label><select class="input" id="monthday-${s.id}" name="monthday">
         ${Array.from({ length: 28 }, (_, i) => opt(i + 1, String(i + 1), r.monthday || 1)).join("")}</select></div>
-      <div class="field"><label for="at-${s.id}">At</label><input class="input" type="time" id="at-${s.id}" name="at" value="${esc(r.at)}" step="300"></div>
+      <div class="field"><label for="at-${s.id}">At <span class="muted">(${esc(zone.label || "account time")})</span></label><input class="input" type="time" id="at-${s.id}" name="at" value="${esc(r.at)}" step="300"></div>
       <div class="field sched-save"><button class="btn" type="submit">Save time</button></div>
     </form>`;
 }
@@ -29,7 +35,7 @@ function showFields(form) {
 
 function card(s) {
   const last = s.last_task_id
-    ? `Last run ${when(s.last_run_at || "")}: ${LAST[s.last_status] || s.last_status || "removed"}${s.last_status === "done" && s.last_summary ? `. ${esc(s.last_summary)}` : ""} <a href="#runs" data-goto-run="${s.last_task_id}">See it</a>`
+    ? `Last run ${esc(s.last_local || when(s.last_run_at || ""))}: ${LAST[s.last_status] || s.last_status || "removed"}${s.last_status === "done" && s.last_summary ? `. ${esc(s.last_summary)}` : ""} <a href="#runs" data-goto-run="${s.last_task_id}">See it</a>`
     : "Hasn't run yet.";
   return `<article class="panel sched" id="sched-${s.id}">
     <div class="panel-body stack tight">
@@ -37,7 +43,7 @@ function card(s) {
         <div><h3>${esc(s.name)}</h3><p class="muted">${esc(s.about)}</p></div>
         ${switchHtml(s.enabled, `data-sched-toggle="${s.id}"`, `${s.name} on or off`)}
       </div>
-      <p class="sched-when"><b>${esc(s.when)}</b>${s.enabled && s.next_run_at ? ` · next ${when(s.next_run_at)}` : s.enabled ? "" : " · off"}</p>
+      <p class="sched-when"><b>${esc(s.when)}</b>${s.enabled && s.next_run_at ? ` · next ${esc(s.next_local || when(s.next_run_at))}${yourTime(s.next_run_at)}` : s.enabled ? "" : " · off"}</p>
       <p class="small muted">${last}${s.skipped ? ` Skipped ${s.skipped} time${s.skipped === 1 ? "" : "s"} because the run before was still waiting for your Mac.` : ""}</p>
       <details class="sched-edit"><summary>Change when it runs</summary>${ruleForm(s)}</details>
       <div class="row"><button class="btn btn-quiet" type="button" data-sched-run="${s.id}">Run it now</button></div>
@@ -45,10 +51,14 @@ function card(s) {
   </article>`;
 }
 
-export function schedulesView(list, mac) {
+export function schedulesView(list, mac, tz) {
   if (!list) return `<section class="panel"><div class="panel-body">${skeleton()}</div></section>`;
+  if (tz) zone = tz;
   const on = list.filter((s) => s.enabled).length;
-  const intro = `<p class="muted sched-intro">Claude runs these by itself on your Mac, with the same read-only access as when you ask. It never changes anything: what it finds lands here as a report, and ideas wait for your yes.${mac && !mac.online ? " <b>Your Mac is offline</b>, so runs wait until it's back." : ""} When one finishes you get a message (Telegram if you connected it, otherwise email).</p>`;
+  const m = mac && mac.status;
+  const off = m && ["offline", "not_set_up", "sign_in"].includes(m.state);
+  const intro = `<p class="muted sched-intro">Claude runs these by itself on your Mac, with the same read-only access as when you ask. It never changes anything: what it finds lands here as a report, and ideas wait for your yes.${off ? ` <b>${esc(m.title)}.</b> Runs wait: ${esc((m.waits || "").replace(/^It /, "each one "))}` : ""} When one finishes you get a message (Telegram if you connected it, otherwise email).</p>
+    ${zone.label ? `<p class="sched-zone" id="sched-zone">Times are ${esc(zone.label)}, the ad account's time zone${elsewhere() ? `; your device is on ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone.split("/").pop().replace(/_/g, " "))} time` : ""}.</p>` : ""}`;
   return intro + list.map(card).join("") + (on ? "" : '<p class="muted small">All are off. Switch on the ones you want.</p>');
 }
 

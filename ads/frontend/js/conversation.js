@@ -99,6 +99,16 @@ function matches(th, ix, q) {
   return th.turns.some((id) => { const t = ix.tasks.get(id); return `${t.prompt} ${t.summary || ""}`.toLowerCase().includes(q); });
 }
 
+// The Mac's status in the server's words (desk_view.mac_status), as on every other page. With work in the
+// list only a Mac that can't run it gets a line; with none, the status itself is the line.
+function macLine(data, busy) {
+  const m = data.bridge.status;
+  if (!m) return "";
+  const off = ["offline", "not_set_up", "sign_in"].includes(m.state);
+  if (busy) return off ? `<p class="cl-note" data-mac="${m.state}"><b>${esc(m.title)}.</b> ${esc(m.detail)}</p>` : "";
+  return `<p class="cl-idle" data-mac="${m.state}"><b>${esc(m.title)}.</b> ${esc(m.detail)}</p>`;
+}
+
 export function listHtml(data, ix, ctx) {
   const b = data.board;
   const T = (id) => b.threads[id];
@@ -109,8 +119,8 @@ export function listHtml(data, ix, ctx) {
   const lineRows = b.queue.map((id, i) => queueRow(ix.tasks.get(id), i, data, ix, ctx)).join("");
   const onMac = `<section class="cl-group cl-now">
       <header class="cl-head"><h2>On your Mac</h2>${b.queue.length ? '<button type="button" data-clear="queue">Clear the line</button>' : ""}</header>
-      ${!data.bridge.online && b.queue.length ? '<p class="cl-note">Your Mac is offline. These start when it’s back.</p>' : ""}
-      ${working.length || b.queue.length ? `<ul>${working.map((th) => row(th, data, ix, ctx)).join("")}${lineRows}</ul>` : data.bridge.online ? '<p class="cl-idle">Claude is idle. Anything you send starts right away.</p>' : '<p class="cl-idle">Your Mac is offline. Anything you send waits until it’s back.</p>'}
+      ${macLine(data, working.length || b.queue.length)}
+      ${working.length || b.queue.length ? `<ul>${working.map((th) => row(th, data, ix, ctx)).join("")}${lineRows}</ul>` : ""}
     </section>`;
   const recent = shown(b.recent);
   const days = ["Today", "Yesterday", "Earlier"].map((day) => {
@@ -209,7 +219,9 @@ function answer(t, th, data, ix, ctx) {
   if (t.status === "queued") {
     const ahead = data.board.queue.indexOf(t.id);
     const working = data.board.working.length > 0;
-    return `<p class="cv-note cv-wait"><span>${ahead > 0 ? `${ahead} ahead of this one in line. Your Mac does one at a time.` : working ? "This one is next, as soon as Claude finishes the current one." : data.bridge.online ? "Starting…" : "Your Mac is offline, so this starts when it’s back."}</span><button class="btn btn-small btn-quiet" type="button" data-cancel="${t.id}">Cancel</button></p>`;
+    const m = data.bridge.status || {};
+    const off = ["offline", "not_set_up", "sign_in"].includes(m.state);
+    return `<p class="cv-note cv-wait"><span>${off ? `${esc(m.title)}. ${esc(m.waits || "")}` : ahead > 0 ? `${ahead} ahead of this one in line. Your Mac does one at a time.` : working ? "This one is next, as soon as Claude finishes the current one." : "Starting…"}</span><button class="btn btn-small btn-quiet" type="button" data-cancel="${t.id}">Cancel</button></p>`;
   }
   if (isLive(t)) return (t.steps || []).length ? trail(t, true) : `<p class="cv-progress"><span class="dot" aria-hidden="true"></span>${esc(t.progress || "Starting…")}</p>`;
   if (t.status === "failed") return `<p class="cv-note bad">${esc(t.error || "It stopped without saying why.")}</p><div class="cv-acts"><button class="btn btn-small" type="button" data-again="${t.id}">Try again</button></div>`;
@@ -243,7 +255,7 @@ export function turnHtml(t, th, data, ix, ctx) {
 
 export function turnKey(t, data) {
   return JSON.stringify([t.status, t.progress, t.summary, t.error, t.mentions, (t.steps || []).length, (t.swipes || []).length, t.scorecard && t.scorecard.overall,
-    t.proposals.map((p) => [p.id, p.status, p.state]), t.reports.map((r) => r.id), data.board.queue.indexOf(t.id), data.board.working.length, data.bridge.online]);
+    t.proposals.map((p) => [p.id, p.status, p.state]), t.reports.map((r) => r.id), data.board.queue.indexOf(t.id), data.board.working.length, data.bridge.online, data.bridge.status && data.bridge.status.state]);
 }
 
 // ---------------------------------------------------------------- every waiting suggestion
