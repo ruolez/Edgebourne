@@ -230,6 +230,20 @@ Decisions: design + workflows (no automation rules), new Creative section (Resea
 - [ ] 9.5 Creative section and the loop
 - [ ] 9.6 Finish
 
+### Audit 3 (2026-11-11): 134 verified findings fixed, then 11 new features
+Eugene: "full detailed audit… data consistency, feature abundance… new useful features… UI/UX… reliable and secure". 9.0 mockup treated as approved.
+- [x] Fixes, 9 clusters (all pushed): QA harness can fail + RLS/leak coverage (cf2398a), account isolation (b065419), lead pipeline + migration 031 (b3dcb9d), money writes read Meta fresh + migration 032 (1eee589), sync integrity (892fe47), one number everywhere (8543d68), desk/bridge binding + sandbox, bridge 2.0, migration 033 (b533dc6), sign-in sessions + migration 034 (660d810), parallel reads + migration 035 (73c4622). Left open on purpose: per-account keys on leads/campaigns/adsets/ads (A3-17), a sandbox-exec around node in render runs (A3-4), thread summaries on the Claude board (A3-127)
+- [ ] **[Eugene]** after the Update: everyone signs in once more (034); reinstall the bridge (2.0); live checks listed in the 2026-11-11 log line
+- Features (specs in `docs/features/`, plan and Eugene's answers in `00-PLAN.md` §7; build order D2 → W2 → W1a → L1 A+B → L2 → W1b → D3 → D1):
+- [ ] D2 Edits made in Ads Manager + change markers on charts
+- [ ] W2 Client report review
+- [ ] W1a Snooze alerts + quality alerts
+- [ ] L1 Follow-up queue + booked-call tracking (manual only, no booking webhook)
+- [ ] L2 Lost reasons, lead quality, repeat and junk leads
+- [ ] W1b Diagnose with Claude
+- [ ] D3 "Did it work?" check
+- [ ] D1 Match Ads Manager
+
 ---
 
 ## 3. The plan, step by step
@@ -691,3 +705,4 @@ Append one line per session: date · steps touched · commits · what's next / b
 - 2026-11-10 · 5.4 Fix Meta's advice with Claude (advice runs, 9:16 update proposals, placement creative with read-back), bridge 1.7 installed on the Mac; 344 unit tests, QA 279 PASS; not committed · next: Eugene says commit/push → Update → first live Fix with Claude on the Reels advice
 - 2026-11-10 · 5.5 update ads in place (same ad keeps its ID and results, per-version results, switch back, either way round); 418 unit tests; not committed · next: Eugene says push, runs Update, then `bridge/install.sh`; first live test on one ad with his yes
 - 2026-11-10 · Phase 9 started (UI/UX audit, plan in `docs/UX-AUDIT.md`): 9.0 baseline shots + clickable mockup in `.superdesign/audit/` waiting for Eugene; 9.1 broken items fixed, QA 364 PASS, 418 unit tests, leak test clean; next: Eugene's mockup review, then 9.2
+- 2026-11-11 · Audit 3: 134 verified findings fixed in 9 clusters and pushed (cf2398a…73c4622), 572 unit tests, QA green with exit code now honest; migrations 031–035 run on the next Update (034 signs everyone out once); bridge 2.0 needs `ads/bridge/install.sh` after the Update. Live checks owed: Telegram fallback on a blocked bot, organic form leads (is_organic), webhook Test sample code, lifetime_budget/end_time fields, ad_studies listing, ?ids= reads, archived ad read-back, backfill chunks, /activities budget extra_data, a headless run's Grep/Glob under Read(//…) rules, an account-2 render upload. Feature specs committed in `docs/features/`
