@@ -115,7 +115,7 @@ def evaluate(snap, rules, today):
         seen = _sum(rows, "impressions") or ad.get("today_impressions")
         if r["on"] and ad["effective_status"] == "ACTIVE" and ad["age_hours"] >= r["hours"] and not seen:
             add("no_delivery", ad["id"], "warn", f"“{ad['name']}” is on but nobody has seen it",
-                [f"No impressions {ad['age_hours']:.0f} hours after it went live."], ad["campaign_id"], href)
+                [f"No views {ad['age_hours']:.0f} hours after it went live."], ad["campaign_id"], href)
         r = rules["fatigue"]
         tired = r["on"] and ad["effective_status"] == "ACTIVE" and _fatigue(rows, today, r, (snap.get("reach_7d") or {}).get(ad["id"]))
         if tired:

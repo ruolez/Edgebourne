@@ -3,7 +3,7 @@
 import { api, startLoad } from "./api.js";
 import { boot, esc, icon, onRefresh, setCrumbs, switchHtml, toast, when, errorState } from "./ui.js";
 import { columnChart } from "./charts.js";
-import { count, dayLabel, money, moneyWhole } from "./format.js";
+import { count, dayLabel, explain, money, moneyWhole, rangeSelect } from "./format.js";
 import * as UrlState from "./urlstate.js";
 import { LIVE, bulkBarHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, statusCell, tableHtml, unlistedNote, wire } from "./manager.js";
 
@@ -11,7 +11,6 @@ const $ = (id) => document.getElementById(id);
 const LEVEL = document.body.dataset.level;
 const id = new URLSearchParams(location.search).get("id");
 const DEFAULTS = { id: "", tab: LEVEL === "campaign" ? "adsets" : "ads", range: "14", vs: true, sort: "spend", dir: "desc" };
-const RANGES = [["7", "7 days"], ["14", "14 days"], ["30", "30 days"], ["mtd", "This month"], ["lastmonth", "Last month"]];
 let state = UrlState.read({ ...DEFAULTS, id });
 let data = null, me = null, rows = null;
 const selected = new Set();
@@ -27,8 +26,7 @@ function learningCard(s) {
   const got = l.conversions;
   const edited = l.last_sig_edit_ts ? new Date(l.last_sig_edit_ts * 1000) : null;
   const words = stage === "SUCCESS" ? "Finished learning: delivery is stable."
-    : stage === "FAIL" ? "Learning limited: too few results for Meta to settle. Usually fewer ad sets, a bigger budget or a broader audience help; avoid frequent edits."
-    : "Learning: Meta is still working out who to show it to. Results wobble until about 50 results in a week.";
+    : stage === "FAIL" ? explain("learning_limited") : explain("learning").replace(/^Learning: /, "");
   const pct = got != null ? Math.min(100, Math.round((got / 50) * 100)) : null;
   return `<section class="panel learn"><div class="panel-head"><h2>Learning</h2><p>${esc(words)}</p></div><div class="panel-body">
     ${got != null ? `<div class="learn-row"><b class="tnum">${count(got)} of 50</b><span class="muted">results since the last big edit</span></div><span class="bar ${stage === "FAIL" ? "warn" : ""}"><i data-w="${pct}"></i></span>` : ""}
@@ -60,10 +58,10 @@ function render() {
     <div class="charts"><section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
       <section class="panel"><div class="panel-head"><h2>Leads per day</h2></div><div class="chart" id="c-leads"></div></section></div>
     ${LEVEL === "adset" ? learningCard(e) : ""}
-    <div class="cr-toolbar"><div class="tabs-inline" role="tablist" aria-label="Show" data-tabpanel="en-panel">${tabs.map(([k, l, n]) => `<button type="button" role="tab" class="view-chip" data-tab="${k}" aria-selected="${state.tab === k}">${l}<span>${n}</span></button>`).join("")}</div>
+    <div class="cr-toolbar"><div class="tabs" role="tablist" aria-label="Show" data-tabpanel="en-panel">${tabs.map(([k, l, n]) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${state.tab === k}">${l}<span class="n">${n}</span></button>`).join("")}</div>
       <span class="spacer"></span>
-      <select class="input tool" id="range-pick" aria-label="Dates">${RANGES.map(([k, l]) => `<option value="${k}" ${k === state.range ? "selected" : ""}>${l}</option>`).join("")}</select>
-      <button type="button" class="tool-tg" id="vs" aria-pressed="${state.vs}">vs before</button></div>
+      ${rangeSelect("range-pick", state.range)}
+      <button type="button" class="view-chip" id="vs" aria-pressed="${state.vs}">vs before</button></div>
     <div id="en-panel">${body}</div>
     <p class="muted small flush">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}).${esc(unlistedNote(e.m, rows.ad))}</p>`;
   document.querySelectorAll("#cr-all [data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });

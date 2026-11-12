@@ -52,10 +52,12 @@ function openDialog(member) {
   $("member-dialog").showModal();
 }
 
+// Shown once, so it is a notice with one button (the shared dialog, no Cancel).
 function showPassword(name, pw) {
-  $("pw-who").textContent = name;
-  $("pw-value").textContent = pw;
-  $("pw-dialog").showModal();
+  confirmDialog({
+    title: "Temporary password", confirm: "Done", cancel: false,
+    body: `<p class="flush">Give this to <b>${esc(name)}</b>. They'll be asked to choose their own the first time they sign in. It won't be shown again.</p><div class="secret-box" id="pw-value">${esc(pw)}</div>`,
+  });
 }
 
 me = await boot({ page: "team", admin: true });

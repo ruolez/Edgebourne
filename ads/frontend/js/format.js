@@ -23,6 +23,40 @@ export const CTA_LABELS = {
   APPLY_NOW: "Apply now", SUBSCRIBE: "Subscribe", DOWNLOAD: "Download", CONTACT_US: "Contact us",
 };
 
+// The console's one vocabulary (UX-AUDIT 9.2): every page names these things the same way, from here.
+// Meta's "impressions" are Views, "reach" is People reached, Claude's proposals are Suggestions you Accept,
+// and the work you start with Claude is a Conversation.
+export const WORDS = {
+  spend: "Spent", leads: "Leads", qualified: "Qualified leads", impressions: "Views", reach: "People reached",
+  frequency: "Views per person", clicks: "Link clicks", cpl: "Cost per lead", cpql: "Cost per qualified lead",
+  ctr: "Click rate", hook: "Hook rate", hold: "Hold rate", status: "Status",
+  suggestion: "Suggestion", suggestions: "Suggestions", accept: "Accept", accepted: "Accepted",
+  conversation: "Conversation", conversations: "Conversations",
+};
+
+// Plain explanations of Meta's own terms, shown next to the term wherever it appears.
+export const EXPLAIN = {
+  impressions: "How many times the ad was shown, counting repeats.",
+  reach: "Different people who saw it at least once.",
+  frequency: "Views ÷ people reached: how often the same person saw it.",
+  ctr: "Of the views, the share that clicked the link.",
+  hook: "Of the video's views, the share that watched at least 3 seconds: how well the opening stops the scroll.",
+  hold: "Of the people who watched 3 seconds, the share who kept watching to the end (or 15 seconds).",
+  advantage_audience: "Advantage+ audience lets Meta show the ad to people outside the ages and places you set when it expects cheaper results there. Anything you mark as a hard limit stays a limit.",
+  advantage_placements: "Advantage+ placements: Meta puts the ad wherever it costs least (Facebook, Instagram, Messenger and its partner apps), so you don't have to pick.",
+  advantage_creative: "Advantage+ creative: small changes Meta may make to an ad on its own for each person, like brightness, music or where the text sits. You choose which ones are allowed.",
+  learning: "Learning: Meta is still finding out who responds, so results swing for a few days. It settles after about 50 results in a week.",
+  learning_limited: "Learning limited: too few results for Meta to settle (about 50 a week is the goal). Fewer ad sets, a bigger budget or a broader audience usually help; avoid frequent edits.",
+  swipe_file: "Swipe file: competitor ads you saved to learn from. Claude can turn one into an idea for your own ad.",
+};
+export const explain = (key) => EXPLAIN[key] || "";
+
+// The date ranges every page offers, and the one picker that shows them.
+export const RANGES = [["7", "Last 7 days"], ["14", "Last 14 days"], ["30", "Last 30 days"], ["mtd", "This month"], ["lastmonth", "Last month"]];
+const escText = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+export const rangeSelect = (id, value, ranges = RANGES, label = "Dates") =>
+  `<select class="input tool" id="${id}" aria-label="${escText(label)}">${ranges.map(([k, l]) => `<option value="${k}" ${String(k) === String(value) ? "selected" : ""}>${escText(l)}</option>`).join("")}</select>`;
+
 // Meta's effective_status → [pill class, words people use]. The one status vocabulary of the console.
 export const STATUS = {
   ACTIVE: ["ok", "Delivering"], PAUSED: ["", "Off"], CAMPAIGN_PAUSED: ["", "Off (campaign is off)"],
@@ -35,3 +69,8 @@ export const PROBLEM_STATES = ["DISAPPROVED", "WITH_ISSUES", "PENDING_BILLING_IN
 // An ad set's learning phase, in words: LEARNING / SUCCESS / FAIL (Ads Manager's "Learning limited").
 export const LEARNING = { LEARNING: ["info", "Learning"], FAIL: ["warn", "Learning limited"] };
 export const statusOf = (s) => STATUS[s] || ["", (s || "Unknown").replace(/_/g, " ").toLowerCase()];
+// The one status pill: colour, dot and word (never colour alone). `fallback` names a missing status.
+export const statusPill = (s, fallback = "Unknown") => {
+  const [cls, label] = s ? statusOf(s) : ["", fallback];
+  return `<span class="pill ${cls}">${escText(label)}</span>`;
+};

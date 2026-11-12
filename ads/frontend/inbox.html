@@ -26,9 +26,9 @@
         <button class="btn" type="button" id="ib-all" hidden>Mark all read</button>
       </header>
       <div class="content">
-        <div class="ib-filters" role="tablist" aria-label="Show" id="ib-filters" data-tabpanel="ib-panel"></div>
+        <div class="tabs ib-tabs" role="tablist" aria-label="Show" id="ib-filters" data-tabpanel="ib-panel"></div>
         <div class="ib-layout" id="ib-panel">
-          <ul class="ib-list" id="ib-list" aria-live="polite"><li class="muted">Loading…</li></ul>
+          <ul class="ib-list" id="ib-list" aria-live="polite"><li class="skeleton" role="status"><span></span><span></span><span></span><p>Loading…</p></li></ul>
           <section class="ib-detail panel" id="ib-detail" aria-live="polite"></section>
         </div>
       </div>

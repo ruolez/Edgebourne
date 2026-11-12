@@ -48,7 +48,7 @@
                 <div class="field"><label for="s-name">Ad set name</label><input class="input" id="s-name" name="adset" maxlength="200" placeholder="SoCal - Instant form" autocomplete="off"></div>
               </div>
               <div class="field"><span class="label">Places</span><div id="places-box"></div></div>
-              <label class="check"><input type="checkbox" id="s-advantage"> <span>Advantage+ audience <span class="muted">· Meta may reach beyond the hints when it finds likely leads (recommended)</span></span></label>
+              <label class="check"><input type="checkbox" id="s-advantage"> <span>Advantage+ audience <span class="muted">(recommended)</span><span class="hint explain" data-explain="advantage_audience"></span></span></label>
               <div class="grid-2">
                 <div class="field"><span class="label">Age limits</span><div class="age-pair"><input class="input" type="number" id="s-age-min" min="18" max="65" aria-label="Youngest age"> to <input class="input" type="number" id="s-age-max" min="18" max="65" aria-label="Oldest age"></div></div>
                 <div class="field" id="s-suggest"><span class="label">Suggested ages</span><div class="age-pair"><input class="input" type="number" id="s-sug-min" min="18" max="65" aria-label="Suggested youngest age"> to <input class="input" type="number" id="s-sug-max" min="18" max="65" aria-label="Suggested oldest age"></div></div>
@@ -58,7 +58,7 @@
                 <div class="field"><label for="s-end">Ends <span class="muted">(optional)</span></label><input class="input" type="date" id="s-end"><span class="hint">Empty: runs until you turn it off.</span></div>
               </div>
               <label class="check" id="s-hints-row"><input type="checkbox" id="s-hints"> <span>Keep the audience hints: <span class="muted" id="s-hints-text"></span></span></label>
-              <p class="muted small flush">Placements: Advantage+. Estimated audience: <b id="s-estimate">—</b></p>
+              <p class="muted small flush"><span data-explain="advantage_placements"></span> Estimated audience: <b id="s-estimate">—</b></p>
             </div>
           </section>
           <section class="panel step" data-step="form">

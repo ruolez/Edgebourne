@@ -29,6 +29,12 @@ class JudgeTests(unittest.TestCase):
         j = ex.judge("cpl", [arm("A", 3000, 2), arm("B", 9000, 3)], target_cents=2000, days_run=5)
         self.assertEqual((j["state"], j["needs"]), ("early", {"A": "$10 more spend and 1 more lead"}))
 
+    def test_a_rate_test_counts_views_not_impressions(self):
+        # One vocabulary (9.2): Meta's impressions are "views" on screen. 400 of the 1,000 needed.
+        needed = ex.MIN_IMPRESSIONS - 400
+        clicks = ex.MIN_SUCCESSES
+        self.assertEqual(ex.needs("ctr", arm("A", impressions=400, clicks=clicks), None), f"{needed:,} more views")
+
     def test_what_an_arm_needs_is_in_the_account_currency(self):
         j = ex.judge("cpl", [arm("A", 3000, 2), arm("B", 9000, 3)], target_cents=2000, days_run=5, currency="GBP")
         self.assertEqual(j["needs"], {"A": "£10 more spend and 1 more lead"})

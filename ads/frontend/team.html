@@ -34,15 +34,7 @@
           <div class="field"><label for="m-role">Access</label>
             <select class="input" id="m-role" name="role"><option value="member">Team member: their campaigns' leads</option><option value="client">Client: this account's results and leads, read-only</option><option value="account_admin">Admin of this account: everything here, including its settings</option><option value="admin" data-owner-only>Admin of every account: the whole console</option></select></div>
           <fieldset class="field bare"><legend class="legend">Campaigns</legend><div id="m-campaigns" class="stack tight"></div></fieldset>
-          <div class="dialog-actions"><button class="btn" value="cancel" type="button" id="m-cancel">Cancel</button><button class="btn btn-primary" type="submit" id="m-save">Add teammate</button></div>
-        </form>
-      </dialog>
-      <dialog id="pw-dialog">
-        <form method="dialog">
-          <h2>Temporary password</h2>
-          <p class="flush">Give this to <b id="pw-who"></b>. They'll be asked to choose their own the first time they sign in. It won't be shown again.</p>
-          <div class="secret-box" id="pw-value"></div>
-          <div class="dialog-actions"><button class="btn btn-primary" value="ok">Done</button></div>
+          <div class="row end"><button class="btn" value="cancel" type="button" id="m-cancel">Cancel</button><button class="btn btn-primary" type="submit" id="m-save">Add teammate</button></div>
         </form>
       </dialog>
     </main>

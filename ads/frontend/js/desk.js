@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, onRefresh, refreshClaudeNow, toast } from "./ui.js";
+import { boot, confirmDialog, esc, onRefresh, previewSkeleton, refreshClaudeNow, toast } from "./ui.js";
 import { ACTIVE, wireTaskActions } from "./tasks.js";
 import { adsView, fillPreview, index, loadPreviews } from "./board.js";
 import { clock, decideHtml, decideKey, headHtml, liveTurn, listHtml, queuedTurn, threadTitle, turnHtml, turnKey, turnTitle } from "./conversation.js";
@@ -67,13 +67,13 @@ function renderMac(bridge) {
       <span>On your Mac, open Terminal and run the command below. Paste this key when it asks. The key goes into the Mac's Keychain; don't put it anywhere else.</span>
     </div>` : "";
   $("mac-body").innerHTML = `
-    <p class="flush">A small helper on your Mac checks this page for new requests (instantly while the Mac is awake) and runs Claude Code with your Meta ads access. Results land back here.</p>
+    <p class="flush">A small helper on your Mac checks this page for new conversations and replies (instantly while the Mac is awake) and runs Claude Code with your Meta ads access. Results land back here.</p>
     <dl class="facts">
       <div><dt>Status</dt><dd>${bridge.online ? "Connected" : bridge.has_key ? "Offline" : "Not set up"}${bridge.host ? ` · ${esc(bridge.host)}` : ""}</dd></div>
       <div><dt>Last check</dt><dd>${esc(ago(bridge.last_seen))}</dd></div>
       <div><dt>Key</dt><dd>${bridge.has_key ? `ends in ${esc(bridge.key_hint || "")}` : "none yet"}</dd></div>
     </dl>
-    ${bridge.needs_update ? `<div class="note warn" id="mac-update"><b>Update the helper on your Mac</b> (version ${esc(bridge.version || "?")}). Until it's on 2.0, requests from teammates and clients wait in line, and Claude runs without the per-request limits. Run the command below on the Mac.</div>` : ""}
+    ${bridge.needs_update ? `<div class="note warn" id="mac-update"><b>Update the helper on your Mac</b> (version ${esc(bridge.version || "?")}). Until it's on 2.0, conversations from teammates and clients wait in line, and Claude works without the limits each conversation should have. Run the command below on the Mac.</div>` : ""}
     ${keyBox}
     <div class="stack tight">
       <b>Set up or reinstall on your Mac</b>
@@ -226,7 +226,7 @@ function dockFoot(sel, th) {
   $("cv-chip").hidden = !about;
   if (about) $("cv-chip").innerHTML = `<span>About: ${esc(about.title)}</span><button type="button" data-unchip aria-label="Remove">×</button>`;
   if (live && stopSure === th.id) {
-    hint.textContent = "Stop this job? Nothing changes on your ads.";
+    hint.textContent = "Stop Claude here? Nothing changes on your ads.";
     btns.innerHTML = `<button class="btn btn-small btn-quiet" type="button" data-keep>Keep going</button><button class="btn btn-small btn-danger" type="button" data-stop="${th.id}">Stop it</button>`;
     return;
   }
@@ -421,8 +421,8 @@ function previewCr(id) {
 function previewProposal(id, compare) {
   const p = ix.proposals.get(id);
   const reels = p.payload.vertical;
-  const proposed = { label: "Proposed", url: (f) => `/api/proposals/${id}/preview?format=${f}` };
-  const now = { label: "Running now", url: (f) => `/api/ads/ad/${encodeURIComponent(p.about_ad)}/preview?format=${f}` };
+  const proposed = { label: "Suggested", url: (f) => `/api/proposals/${id}/preview?format=${f}` };
+  const now = { label: "Now", url: (f) => `/api/ads/ad/${encodeURIComponent(p.about_ad)}/preview?format=${f}` };
   openViewer({ title: p.title, panes: compare ? [now, proposed] : [proposed], format: reels ? "INSTAGRAM_REELS" : PLACEMENTS[0][0], placements: reels ? [["INSTAGRAM_REELS", "Reels"]] : PLACEMENTS });
 }
 
@@ -502,7 +502,7 @@ async function onClick(e) {
     media.querySelectorAll("[data-pf]").forEach((b) => b.setAttribute("aria-selected", String(b === el)));
     const box = media.querySelector("[data-preview]");
     box.dataset.format = el.dataset.pf;
-    box.innerHTML = '<div class="preview-skeleton"><span></span><span></span><span></span><p>Loading Meta\'s preview…</p></div>';
+    box.innerHTML = previewSkeleton();
     fillPreview(box);
     return;
   }
@@ -530,7 +530,7 @@ async function onClick(e) {
   if ((el = hit("data-continue"))) { act(`/api/desk/proposals/${el.dataset.continue}/continue`, undefined, "Claude is picking this up"); return; }
   if ((el = hit("data-clear"))) {
     const n = data.board.queue.length;
-    const yes = await confirmDialog({ title: "Clear the line?", body: `<p>Cancels ${n === 1 ? "the 1 job" : `all ${n} jobs`} that haven't started. Whatever is running keeps going.</p>`, confirm: `Cancel ${n}`, danger: true });
+    const yes = await confirmDialog({ title: "Clear the line?", body: `<p>Cancels ${n === 1 ? "the one" : `all ${n}`} waiting in line that haven't started. Whatever Claude is working on keeps going.</p>`, confirm: `Cancel ${n}`, danger: true });
     if (yes) act("/api/desk/clear", { what: "queue" }, (r) => `${r.cleared} cancelled`);
     return;
   }
@@ -542,7 +542,7 @@ function announceFinished() {
   const active = new Set(data.tasks.filter((t) => ACTIVE.has(t.status)).map((t) => t.id));
   if (lastActive) {
     const done = data.tasks.filter((t) => lastActive.has(t.id) && !active.has(t.id) && t.status === "done");
-    if (done.length) toast(done.length === 1 ? `Claude finished: ${turnTitle(done[0]).slice(0, 70)}` : `Claude finished ${done.length} jobs`);
+    if (done.length) toast(done.length === 1 ? `Claude finished: ${turnTitle(done[0]).slice(0, 70)}` : `Claude finished ${done.length} answers`);
   }
   lastActive = active;
 }

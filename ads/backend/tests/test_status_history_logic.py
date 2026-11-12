@@ -112,7 +112,7 @@ class TimelineWordsTests(unittest.TestCase):
         cases = [
             ({"field": "created", "old": None, "new": "IN_PROCESS"}, "Created · in review"),
             ({"field": "effective_status", "old": "IN_PROCESS", "new": "ACTIVE"}, "Approved · delivering"),
-            ({"field": "effective_status", "old": "PENDING_REVIEW", "new": "DISAPPROVED"}, "Rejected by Meta"),
+            ({"field": "effective_status", "old": "PENDING_REVIEW", "new": "DISAPPROVED"}, "Rejected"),
             ({"field": "effective_status", "old": "ACTIVE", "new": "WITH_ISSUES"}, "Has issues"),
             ({"field": "effective_status", "old": "ACTIVE", "new": "PAUSED"}, "Turned off"),
             ({"field": "learning", "old": "LEARNING", "new": "FAIL"}, "Learning limited"),

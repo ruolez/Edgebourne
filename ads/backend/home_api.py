@@ -50,7 +50,7 @@ def attention(user, scope_ids):
     pend = [] if user["role"] == "client" else db.query("SELECT entity_id FROM desk_proposals WHERE status = 'pending'")
     mine = [p for p in pend if scope_ids is None or (p["entity_id"] and _campaign_of(p["entity_id"]) in scope_ids)]
     if mine:
-        items.append({"level": "claude", "kind": "claude", "text": f"Claude has {len(mine)} proposal{'s' if len(mine) != 1 else ''} waiting for your decision.",
+        items.append({"level": "claude", "kind": "claude", "text": f"Claude has {len(mine)} suggestion{'s' if len(mine) != 1 else ''} waiting for your decision.",
                       "href": "/desk.html" if user["role"] == "admin" else "/ads.html", "action": "Review"})
     if user["role"] == "admin":
         if not settings_store.get("meta_system_token") or not settings_store.get("meta_ad_account_id"):

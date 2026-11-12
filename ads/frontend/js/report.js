@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { boot, esc, toast } from "./ui.js";
-import { count, dayLabel, money, setCurrency } from "./format.js";
+import { EXPLAIN, WORDS, count, dayLabel, money, setCurrency } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -36,7 +36,7 @@ function reportHtml(r) {
         <div><span>Spent</span><b>${money(n.spend_cents)}</b></div>
         <div><span>Leads (Meta)</span><b>${count(n.leads)}</b></div>
         <div><span>Cost per lead</span><b>${cpl ? money(cpl, { exact: true }) : "—"}</b></div>
-        <div><span>Qualified</span><b>${count(n.qualified)}</b></div>
+        <div><span>${WORDS.qualified}</span><b>${count(n.qualified)}</b></div>
         <div><span>Cost per qualified lead</span><b>${cpq ? money(cpq, { exact: true }) : "—"}</b>${r.target_cents ? `<small>target ${money(r.target_cents)}</small>` : ""}</div>
       </div>
       <table class="table r-funnel"><thead><tr><th>Step</th><th class="num">People</th><th class="num">Of the step before</th></tr></thead>
@@ -44,7 +44,7 @@ function reportHtml(r) {
       ${n.median_minutes != null ? `<p class="muted flush small">Half of the leads heard back within ${n.median_minutes < 90 ? `${n.median_minutes} minutes` : `${Math.round(n.median_minutes / 60)} hours`}.</p>` : ""}
     </section>
     <section class="r-sec"><h3>2. Why</h3>
-      ${r.ads.length ? `<table class="table r-ads"><thead><tr><th>Ad</th><th class="num">Spent</th><th class="num">Leads</th><th class="num">Cost per lead</th><th class="num">Click rate</th><th class="num">Stopped scrolling</th></tr></thead>
+      ${r.ads.length ? `<table class="table r-ads"><thead><tr><th>Ad</th><th class="num">${WORDS.spend}</th><th class="num">${WORDS.leads}</th><th class="num">${WORDS.cpl}</th><th class="num" title="${esc(EXPLAIN.ctr)}">${WORDS.ctr}</th><th class="num" title="${esc(EXPLAIN.hook)}">${WORDS.hook}</th></tr></thead>
         <tbody>${r.ads.map((a) => `<tr><th scope="row">${esc(a.name || "")}</th><td class="num">${money(a.spend_cents)}</td><td class="num">${count(a.leads)}</td><td class="num">${a.cpl_cents ? money(a.cpl_cents, { exact: true }) : "—"}</td><td class="num">${a.ctr != null ? `${a.ctr}%` : "—"}</td><td class="num">${a.hook != null ? `${a.hook}%` : "—"}</td></tr>`).join("")}</tbody></table>
         <p class="muted small flush" id="r-top-note">${r.ads_total > r.ads.length ? `The ${r.ads.length} that spent the most, of ${r.ads_total}. ` : ""}Earlier versions of an ad are counted under its name.</p>` : '<p class="muted flush">No ad spent money in this period.</p>'}
       ${r.ideas && r.ideas.best ? `<p class="flush">Of the ideas behind the ads, <b>${esc(r.ideas.best)}</b> brought the cheapest leads${r.ideas.clear ? ` (${r.ideas.sure}% sure)` : `, but only ${r.ideas.sure}% sure, so it could still be chance`}.</p>` : ""}

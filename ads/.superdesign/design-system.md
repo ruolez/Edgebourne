@@ -22,6 +22,10 @@ Source of truth: `.superdesign/redesign/a.css` (tokens, light + dark) and `base.
 - Desktop stays dense; phones: every control 44 × 44 px, fields 16px, pinch zoom off (Eugene's call in 8.11).
 - Keyboard and screen readers: skip link, real tablists, `aria-invalid` on field errors, focus kept in the quick look and returned, a table or phone list is one Tab stop (↑ ↓ move between rows, Enter opens), money confirms and the Accept sheet start on Cancel, a toast raised over a dialog lives inside it (so it is announced, not inert), charts carry a sentence summary and are drawn at their box's width under 560px (12px labels stay 12px), phone `<summary>`s draw their own › marker, reduced motion honoured.
 
+### Components and vocabulary (Phase 9.2b, 2026-11-11)
+- One of each, defined once in `css/app.css` (QA `componentDrift` fails on a second base rule or a retired build): Tabs (underline, switch panels), Segmented (one way to see the same thing), Filter chips (narrow a list, with counts), Status pill (tables too; the old `.st` dot is retired), Date range select, Table, Empty state, Skeleton, Dialog, Suggestion card.
+- Words come from `js/format.js` (`WORDS`, `EXPLAIN`): Views (not impressions), People reached, Hook rate, Cost per lead, Delivering / Off / In review / Rejected, Suggestion + Accept (not proposal / approve), Conversation (not job / request). Meta's terms carry a plain explanation (`data-explain` in HTML). QA `vocabularyLeaks` fails on the old words.
+
 ## Previous identity: "Seal & ledger" (2026-11-09 to 2026-11-10)
 - Font: Plus Jakarta Sans only (variable 400-800), self-hosted. Titles 600-700 with -0.02em tracking; body 15-16px; tabular numbers everywhere money or counts appear.
 - Page (paper) #F4F6F5; cards white with a layered hairline shadow (0 0 0 1px rgba(28,43,51,.06), 0 1px 2px -1px rgba(28,43,51,.08), 0 2px 6px rgba(28,43,51,.04)); inset fields #EBEFED.

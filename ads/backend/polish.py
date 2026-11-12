@@ -45,7 +45,7 @@ PASSES = [
                 "Harmony and flow: one shape or line carries the eye", "Nothing important sits under a plate or chip"]},
     {"id": "ai_signal", "label": "AI signal", "icon": "toggle",
      "summary": "AI present, optional, never too small",
-     "checks": ["The AI chip sits inside the solution object, in a row with the job it does",
+     "checks": ["The AI chip sits inside the solution object, in a row with what it does",
                 "One chip size across the set, OPTIONAL text ≥ 32 px", "OPTIONAL plus a switch that visibly flicks",
                 "The entrance pop stays ≤ 1.12× and doesn't spill over neighbours"]},
     {"id": "placements", "label": "Placements", "icon": "phone",
@@ -63,7 +63,7 @@ PASSES = [
                 "Claims are true and specific to Edge Bourne", "Landing / form matches what the ad promises"]},
     {"id": "performance", "label": "Performance read", "icon": "chart",
      "summary": "What the numbers say about this ad",
-     "checks": ["Hook rate (3-second views ÷ impressions) and hold rate (ThruPlays ÷ 3-second views)",
+     "checks": ["Hook rate (share of views watched for 3 seconds) and hold rate (ThruPlays ÷ 3-second views)",
                 "Click rate and cost per lead against the other ads", "Frequency and signs of fatigue",
                 "Meta's quality, engagement and conversion rankings", "Enough data yet? (2× target spend and 3 results)"]},
 ]

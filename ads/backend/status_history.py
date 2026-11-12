@@ -155,7 +155,7 @@ def headline(ev):
             if old in ("DISAPPROVED", "WITH_ISSUES"):
                 return "Fixed · delivering again"
             return "Delivering again" if old in ("PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED") else "Delivering"
-        return {"DISAPPROVED": "Rejected by Meta", "WITH_ISSUES": "Has issues", "PAUSED": "Turned off",
+        return {"DISAPPROVED": "Rejected", "WITH_ISSUES": "Has issues", "PAUSED": "Turned off",
                 "IN_PROCESS": "Sent to review", "PENDING_REVIEW": "Sent to review",
                 "PREAPPROVED": "Approved · waiting to start", "CAMPAIGN_PAUSED": "Stopped: campaign is off",
                 "ADSET_PAUSED": "Stopped: ad set is off", "ARCHIVED": "Archived", "DELETED": "Deleted",

@@ -1,13 +1,13 @@
 import { api, startLoad } from "./api.js";
-import { boot, esc, icon, onRefresh, toast, when, showLoadError } from "./ui.js";
+import { boot, esc, icon, onRefresh, skeleton, toast, when, showLoadError } from "./ui.js";
 import { barList, columnChart } from "./charts.js";
-import { STATUS as FORMAT_STATUS, count, dayLabel, money, pct, per, moneyWhole, currencySymbol } from "./format.js";
+import { EXPLAIN, RANGES, STATUS as FORMAT_STATUS, WORDS, count, dayLabel, money, pct, per, moneyWhole, currencySymbol, rangeSelect, statusPill } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
 let data;
 let range = "7";
-const RANGE_KEYS = ["7", "14", "30", "mtd", "lastmonth"];
+const RANGE_KEYS = RANGES.map(([k]) => k);
 try { const saved = localStorage.getItem("ebads-range"); if (RANGE_KEYS.includes(saved)) range = saved; } catch (e) {}
 const qs = new URLSearchParams(location.search);
 if (RANGE_KEYS.includes(qs.get("range"))) range = qs.get("range");
@@ -22,13 +22,13 @@ const FILTERS = {
 const COLUMNS = [
   { key: "name", label: "Ad", text: true, value: (a) => (a.name || "").toLowerCase() },
   { key: "status", label: "Status", text: true, value: (a) => (STATUS[a.effective_status] || ["", a.effective_status || ""])[1] },
-  { key: "spend", label: "Spent", value: (a) => a.spend_cents },
-  { key: "impressions", label: "Impressions", value: (a) => a.impressions },
-  { key: "ctr", label: "Click rate", value: (a) => (a.impressions ? a.link_clicks / a.impressions : null), title: "Link clicks ÷ impressions" },
+  { key: "spend", label: WORDS.spend, value: (a) => a.spend_cents },
+  { key: "impressions", label: WORDS.impressions, value: (a) => a.impressions, title: EXPLAIN.impressions },
+  { key: "ctr", label: WORDS.ctr, value: (a) => (a.impressions ? a.link_clicks / a.impressions : null), title: EXPLAIN.ctr },
   { key: "leads", label: "Leads", value: (a) => a.leads },
-  { key: "cpl", label: "Cost per lead", value: (a) => (a.leads ? a.spend_cents / a.leads : null), low: true },
-  { key: "qualified", label: "Qualified", value: (a) => a.qualified, title: "Marked Qualified or Won in the leads inbox" },
-  { key: "cpq", label: "Per qualified", value: (a) => (a.qualified ? a.spend_cents / a.qualified : null), low: true },
+  { key: "cpl", label: WORDS.cpl, value: (a) => (a.leads ? a.spend_cents / a.leads : null), low: true },
+  { key: "qualified", label: WORDS.qualified, value: (a) => a.qualified, title: "Marked Qualified or Won in the leads inbox" },
+  { key: "cpq", label: WORDS.cpql, value: (a) => (a.qualified ? a.spend_cents / a.qualified : null), low: true },
 ];
 const EARLY = 3; // fewer leads than this: too early to judge an ad's cost per lead
 let table = { filter: "spent", sort: "spend", dir: "desc", q: "" };
@@ -38,7 +38,6 @@ if (!COLUMNS.some((c) => c.key === table.sort)) { table.sort = "spend"; table.di
 const saveTable = () => { try { localStorage.setItem("ebads-results", JSON.stringify({ filter: table.filter, sort: table.sort, dir: table.dir })); } catch (e) {} };
 
 const STATUS = FORMAT_STATUS;
-const statusPill = (s) => { const [k, l] = STATUS[s] || ["", (s || "Unknown").toLowerCase()]; return `<span class="pill ${k}">${esc(l)}</span>`; };
 
 function yesterdayLine(y) {
   if (!y) return "";
@@ -98,12 +97,12 @@ function render() {
 
   const extra = `<section class="panel"><div class="panel-head wrap"><h2>Who and where</h2><p>${campaign ? "This campaign" : "All ads"}, same period</p><span class="spacer"></span>
       <div class="format-scroll"><div class="segmented" id="acc-by">${[["placement", "Placement"], ["age", "Age"], ["gender", "Gender"], ["device", "Device"], ["region", "Region"], ["hour", "Hour"]].map(([k, l]) => `<button type="button" data-by="${k}" aria-pressed="${k === accBy}">${l}</button>`).join("")}</div></div></div>
-      <div class="panel-body aud-grid"><div><h3 class="chart-title">Share of spend</h3><div id="acc-spend"><p class="muted">Loading from Meta…</p></div></div>
+      <div class="panel-body aud-grid"><div><h3 class="chart-title">Share of spend</h3><div id="acc-spend">${skeleton("Loading from Meta…")}</div></div>
       <div><h3 class="chart-title">Leads and cost per lead</h3><div id="acc-leads"></div></div></div></section>
-    ${me.role === "admin" ? `<section class="panel"><div class="panel-head"><h2>What changed on Meta</h2><p>Last 14 days, from Meta's own history: Ads Manager, this dashboard and Meta's automatic changes</p></div><div class="panel-body" id="activity"><p class="muted">Loading…</p></div></section>` : ""}`;
+    ${me.role === "admin" ? `<section class="panel"><div class="panel-head"><h2>What changed on Meta</h2><p>Last 14 days, from Meta's own history: Ads Manager, this dashboard and Meta's automatic changes</p></div><div class="panel-body" id="activity">${skeleton()}</div></section>` : ""}`;
   const ideas = `<section class="panel" id="ideas-panel"><div class="panel-head wrap"><h2>By idea</h2><p>Ads grouped by their tags, last 30 days</p><span class="spacer"></span>
       <div class="format-scroll"><div class="segmented" id="idea-by" role="group" aria-label="Group by">${[["hook", "Hook"], ["angle", "Angle"], ["persona", "Who it's for"], ["format", "Format"], ["offer", "Offer"]].map(([k, l]) => `<button type="button" data-idea="${k}" aria-pressed="${k === ideaBy}">${l}</button>`).join("")}</div></div></div>
-      <div class="panel-body" id="ideas"><p class="muted flush">Loading…</p></div></section>`;
+      <div class="panel-body" id="ideas">${skeleton()}</div></section>`;
   $("perf").innerHTML = alerts + cap + figures + charts + ads + ideas + extra;
   loadIdeas();
   renderAds();
@@ -176,8 +175,8 @@ function renderAds() {
         <button type="button" class="btn btn-quiet btn-small" data-clear>Show all ads</button></div>`;
   const head = box.querySelector(".results-bar");
   const bar = `<div class="panel-head wrap results-bar"><h2>Ads</h2><a class="more" href="/ads.html?range=${encodeURIComponent(range)}&vs=1" title="Turn ads on or off, compare or change several at once">Manage in Ads</a>
-      <div class="segmented" id="cr-filter" role="group" aria-label="Show ads">${Object.entries(FILTERS).map(([k, [l]]) =>
-        `<button type="button" data-filter="${k}" aria-pressed="${k === table.filter}">${esc(l)} <span class="n">${counts[k]}</span></button>`).join("")}</div>
+      <div class="filters" id="cr-filter" role="group" aria-label="Show ads">${Object.entries(FILTERS).map(([k, [l]]) =>
+        `<button type="button" class="view-chip" data-filter="${k}" aria-pressed="${k === table.filter}">${esc(l)} <span class="n">${counts[k]}</span></button>`).join("")}</div>
       <div class="search">${icon("search")}<label class="sr-only" for="cr-q">Find an ad</label><input class="input" id="cr-q" type="search" placeholder="Find an ad" autocomplete="off" value="${esc(table.q)}"></div>
     </div>`;
   if (!head) box.innerHTML = bar + '<div class="panel-body" id="cr-results"></div>';
@@ -298,7 +297,7 @@ async function loadIdeas() {
         : `<p class="note"><b>${esc(best.value)}</b> is cheapest so far, but only ${d.best_confidence}% sure: the difference could be chance. Keep the ideas running side by side.</p>`;
     box.innerHTML = `${verdict}<div class="scroll-x"><table class="table middle ideas-table">
       <thead><tr><th>${esc(d.dimensions[d.by][0])}</th><th class="num">Ads</th><th class="num">Spent</th><th class="num">Leads</th><th class="num">Cost per lead</th>
-        <th class="num" title="3-second views ÷ impressions">Hook rate</th><th class="num" title="ThruPlays ÷ 3-second views">Hold</th><th class="num" title="Qualified or won ÷ leads">Qualified</th></tr></thead>
+        <th class="num" title="${esc(EXPLAIN.hook)}">${WORDS.hook}</th><th class="num" title="${esc(EXPLAIN.hold)}">${WORDS.hold}</th><th class="num" title="Qualified or won ÷ leads">Qualified rate</th></tr></thead>
       <tbody>${d.groups.map((g) => `<tr class="${g.best ? "lead" : ""}${g.value === "Not tagged" ? " untagged" : ""}">
         <th scope="row"><b>${esc(g.value)}</b>${g.best ? ' <span class="pill ok">cheapest</span>' : ""}${g.enough ? "" : ' <span class="pill" title="Fewer than 3 leads or less than twice the target cost spent">too early</span>'}<span class="idea-ads">${g.ad_names.map(esc).join(", ")}</span></th>
         <td class="num">${count(g.ads)}</td><td class="num">${money(g.spend_cents)}</td><td class="num">${count(g.leads)}</td>
@@ -335,7 +334,7 @@ async function loadActivity() {
 }
 
 async function load() {
-  document.querySelectorAll("#range button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.range === range)));
+  if ($("range-pick")) $("range-pick").value = range; else $("range-box").outerHTML = rangeSelect("range-pick", range);
   syncUrl();
   const superseded = startLoad("performance");
   let d;
@@ -371,10 +370,9 @@ if (me) {
   });
   wireAds();
   $("campaign").addEventListener("change", () => { campaign = $("campaign").value; load(); });
-  $("range").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-range]");
-    if (!b) return;
-    range = b.dataset.range;
+  document.querySelector(".page-head").addEventListener("change", (e) => {
+    if (e.target.id !== "range-pick") return;
+    range = e.target.value;
     try { localStorage.setItem("ebads-range", range); } catch (err) {}
     load();
   });

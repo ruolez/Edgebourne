@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, icon, onRefresh, toast, when, editing, showLoadError } from "./ui.js";
+import { boot, confirmDialog, esc, icon, onRefresh, skeleton, toast, when, editing, showLoadError } from "./ui.js";
 import { money, per, plural } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -97,8 +97,8 @@ function render(d) {
   // Today → Inbox: the latest unread (Meta's approvals and rejections, leads, Claude, money), then what you changed.
   const inReview = (d.ads?.IN_PROCESS || 0) + (d.ads?.PENDING_REVIEW || 0);
   const changesCard = `<section class="panel changes-card" aria-labelledby="h-changes"><div class="card-head"><h2 id="h-changes">Inbox</h2>
-      ${inReview ? `<span class="st st-warn">${inReview} in review at Meta</span>` : ""}<a class="more" href="/inbox.html">Open Inbox</a></div>
-    <ul class="today-inbox" id="today-inbox"><li class="muted">Loading…</li></ul>
+      ${inReview ? `<span class="pill warn">${inReview} in review</span>` : ""}<a class="more" href="/inbox.html">Open Inbox</a></div>
+    <ul class="today-inbox" id="today-inbox"><li>${skeleton()}</li></ul>
     <details class="today-changes"><summary>Changes made from the console</summary>${changes}</details></section>`;
 
   const adviceCard = d.bridge ? `<section class="panel advice-card" aria-labelledby="h-advice" id="advice"><div class="card-head"><h2 id="h-advice">Meta's advice</h2></div><p class="muted flush">Reading from Meta…</p></section>` : "";
@@ -109,7 +109,7 @@ function render(d) {
     if (!el) return;
     const tone = { bad: "bad", warn: "warn", ok: "ok", lead: "ok", claude: "claude" };
     const live = ib.items.filter((i) => !i.resolved);
-    el.innerHTML = live.length ? live.slice(0, 5).map((i) => `<li><a href="${esc(i.href || "/inbox.html")}"><span class="st st-${tone[i.level] || "info"}"></span><span><b>${esc(i.title)}</b><small>${esc(when(i.at))}</small></span></a></li>`).join("")
+    el.innerHTML = live.length ? live.slice(0, 5).map((i) => `<li><a href="${esc(i.href || "/inbox.html")}"><span class="tone-dot ${tone[i.level] || ""}" aria-hidden="true"></span><span><b>${esc(i.title)}</b><small>${esc(when(i.at))}</small></span></a></li>`).join("")
       + (live.length > 5 ? `<li class="muted small">${live.length - 5} more in the Inbox</li>` : "")
       : '<li class="muted">Nothing new. Approvals, rejections and new leads show up here.</li>';
   }).catch(() => { const el = $("today-inbox"); if (el) el.innerHTML = ""; });
@@ -198,14 +198,14 @@ function adviceHtml(a) {
     ${bench}`;
 }
 
-// Advice the console can't apply goes to Claude on the Mac; its run and proposals show here.
+// Advice the console can't apply goes to Claude on the Mac; its conversation and suggestions show here.
 function fixButton(r) {
   const run = r.fix_run;
   if (run && ["queued", "claimed", "running"].includes(run.status)) {
     return `<a class="btn btn-quiet btn-small" href="/desk.html#r/${run.id}">${icon("spark")}${run.status === "queued" ? "Waiting for your Mac" : "Claude is on it"}</a>`;
   }
   if (run && run.waiting) {
-    return `<a class="btn btn-claude btn-small" href="/desk.html#waiting">${icon("spark")}${run.waiting} to approve</a>`;
+    return `<a class="btn btn-claude btn-small" href="/desk.html#waiting">${icon("spark")}${run.waiting} to accept</a>`;
   }
   return `<button type="button" class="btn btn-claude-outline btn-small" data-fix="${esc(r.key)}" data-label="${esc(r.label)}" data-plan="${esc(r.fix)}">${icon("spark")}${run ? "Fix again with Claude" : "Fix with Claude"}</button>`;
 }
@@ -223,7 +223,7 @@ document.addEventListener("click", async (e) => {
   if (fix) {
     const yes = await confirmDialog({
       title: `Fix “${fix.dataset.label}” with Claude?`, claude: true, confirm: "Send to Claude",
-      body: `<p>${esc(fix.dataset.plan)}</p><p class="muted">It runs on your Mac and can take a while. Nothing changes on Meta until you approve a change on the Claude page.</p>`,
+      body: `<p>${esc(fix.dataset.plan)}</p><p class="muted">It runs on your Mac and can take a while. Nothing changes on Meta until you accept a suggestion on the Claude page.</p>`,
     });
     if (!yes) return;
     fix.disabled = true;

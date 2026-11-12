@@ -10,9 +10,9 @@ import money_rules
 VERSION_REQUEST = "make a new version"
 LINK_WINDOW = timedelta(minutes=5)
 RESULT_STATES = {
-    "ACTIVE": ("live", "On"), "IN_PROCESS": ("review", "In review at Meta"),
-    "PENDING_REVIEW": ("review", "In review at Meta"), "ARCHIVED": ("archived", "Archived"),
-    "DELETED": ("deleted", "Deleted"), "DISAPPROVED": ("failed", "Rejected by Meta"),
+    "ACTIVE": ("live", "Delivering"), "IN_PROCESS": ("review", "In review"),
+    "PENDING_REVIEW": ("review", "In review"), "ARCHIVED": ("archived", "Archived"),
+    "DELETED": ("deleted", "Deleted"), "DISAPPROVED": ("failed", "Rejected"),
 }
 DECIDED = {"pending": ("waiting", "Waiting for you"), "declined": ("declined", "Declined"),
            "expired": ("expired", "Expired"), "failed": ("failed", "Meta refused it"),
@@ -76,7 +76,7 @@ def proposal_state(p, result_ad, followup, made_state=None):
         if followup["status"] != "done":
             return ("failed", "Claude didn't finish")
         return made_state or ("done", "Made")
-    return ("approved", "Approved")
+    return ("approved", "Accepted")
 
 
 def after_claim(changes, ended=True, sent=False):

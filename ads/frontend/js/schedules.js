@@ -1,6 +1,6 @@
 // Claude page → Schedules: Claude's regular checks, each an ordinary run when it's due.
 import { api } from "./api.js";
-import { esc, switchHtml, toast, when } from "./ui.js";
+import { esc, skeleton, switchHtml, toast, when } from "./ui.js";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const LAST = { done: "finished", failed: "didn't finish", queued: "waiting for your Mac", claimed: "starting", running: "running", cancelled: "cancelled" };
@@ -46,7 +46,7 @@ function card(s) {
 }
 
 export function schedulesView(list, mac) {
-  if (!list) return '<section class="panel empty"><p class="muted">Loading…</p></section>';
+  if (!list) return `<section class="panel"><div class="panel-body">${skeleton()}</div></section>`;
   const on = list.filter((s) => s.enabled).length;
   const intro = `<p class="muted sched-intro">Claude runs these by itself on your Mac, with the same read-only access as when you ask. It never changes anything: what it finds lands here as a report, and ideas wait for your yes.${mac && !mac.online ? " <b>Your Mac is offline</b>, so runs wait until it's back." : ""} When one finishes you get a message (Telegram if you connected it, otherwise email).</p>`;
   return intro + list.map(card).join("") + (on ? "" : '<p class="muted small">All are off. Switch on the ones you want.</p>');

@@ -1166,10 +1166,10 @@ def proposal_plan(p, apply_as=None):
 def check_proposal(proposal_id):
     p = db.query("SELECT * FROM desk_proposals WHERE id = %s", (proposal_id,), one=True)
     if not p or current_user()["role"] == "client":
-        return api_error("Proposal not found", 404)
+        return api_error("Suggestion not found", 404)
     level, row = proposal_target(p)
     if row and not can_touch(current_user(), row["campaign_id"]):
-        return api_error("Proposal not found", 404)
+        return api_error("Suggestion not found", 404)
     try:
         return jsonify(proposal_plan(p, request.args.get("as")))
     except meta_client.MetaError as exc:
@@ -1223,30 +1223,30 @@ def undecline(proposal_id):
 @login_required
 def decide(proposal_id, decision):
     if decision not in ("approve", "decline"):
-        return api_error("approve or decline", 400)
+        return api_error("Accept or decline only", 400)
     user = current_user()
     p = db.query("SELECT * FROM desk_proposals WHERE id = %s", (proposal_id,), one=True)
     if not p:
-        return api_error("Proposal not found", 404)
+        return api_error("Suggestion not found", 404)
     if p["status"] != "pending":
-        return api_error("This proposal was already decided", 409)
+        return api_error("This suggestion was already decided", 409)
     level, row = proposal_target(p)
     if row and not can_touch(user, row["campaign_id"]):
         return api_error("This campaign isn't assigned to you", 403)
     if not row and user["role"] != "admin" and p["kind"] not in ("tags",):
-        return api_error("Only admins can decide account-wide proposals", 403)
+        return api_error("Only admins can decide account-wide suggestions", 403)
     if decision == "decline":
         done = db.execute("""UPDATE desk_proposals SET status = 'declined', decided_by = %s, decided_at = now()
                              WHERE id = %s AND status = 'pending' RETURNING id""", (user["id"], proposal_id), returning=True)
         if not done:
-            return api_error("This proposal was already decided", 409)
+            return api_error("This suggestion was already decided", 409)
         log_activity("proposal.declined", subject=str(proposal_id), details={"title": p["title"]})
         return jsonify({"status": "declined"})
     # Claimed before anything reaches Meta: a double click or a second tab gets a 409, not a second ad.
     claimed = db.execute("""UPDATE desk_proposals SET status = 'applying', applying_at = now()
                             WHERE id = %s AND status = 'pending' RETURNING applying_at""", (proposal_id,), returning=True)
     if not claimed:
-        return api_error("This proposal is already being applied or was decided", 409)
+        return api_error("This suggestion is already being applied or was decided", 409)
     meta_client.watch_writes()
     try:
         return _approve(user, p, level, row, request.get_json(silent=True) or {})
@@ -1355,7 +1355,7 @@ def _approve(user, p, level, row, data):
     if error and error.startswith(CHECKED):
         return api_error(f"Not applied: {error_words(error)}", 400)
     if error:
-        return api_error(f"Approved, but Meta refused the change: {error}", 400)
+        return api_error(f"Accepted, but Meta refused the change: {error}", 400)
     return jsonify({"status": "applied", "applied": True, "ad_id": new_id,
                     "updated_ad": value["template_ad_id"] if kind == "update" else None})
 
@@ -1419,7 +1419,7 @@ def proposal_preview(proposal_id):
     """Meta's own rendering of a proposed new ad before it exists (generatepreviews)."""
     p = db.query("SELECT * FROM desk_proposals WHERE id = %s", (proposal_id,), one=True)
     if not p or p["kind"] != "creative" or not p.get("payload") or current_user()["role"] == "client":
-        return api_error("Only new-ad proposals have a preview", 404)
+        return api_error("Only new-ad suggestions have a preview", 404)
     fmt = request.args.get("format", "MOBILE_FEED_STANDARD")
     if fmt not in dict(PREVIEW_FORMATS):
         return api_error("Unknown preview format", 400)
@@ -1449,11 +1449,11 @@ def proposal_preview(proposal_id):
 def get_proposal(proposal_id):
     p = db.query("SELECT * FROM desk_proposals WHERE id = %s", (proposal_id,), one=True)
     if not p or current_user()["role"] == "client":
-        return api_error("Proposal not found", 404)
+        return api_error("Suggestion not found", 404)
     tid = (p.get("payload") or {}).get("template_ad_id") or p.get("entity_id")
     level, row = find_entity(tid) if tid else (None, None)
     if row and not can_touch(current_user(), row["campaign_id"]):
-        return api_error("Proposal not found", 404)
+        return api_error("Suggestion not found", 404)
     return jsonify(p)
 
 

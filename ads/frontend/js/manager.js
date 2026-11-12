@@ -3,10 +3,10 @@
 // budget, archive: every money move previewed and confirmed), and a peek drawer. File and class names
 // avoid "ad"-like tokens: ad blockers hide those.
 import { api } from "./api.js";
-import { confirmDialog, esc, icon, switchHtml, toast, when } from "./ui.js";
+import { confirmDialog, esc, icon, skeleton, switchHtml, toast, when } from "./ui.js";
 import { columnChart } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
-import { LEARNING, PROBLEM_STATES, REVIEW_STATES, count, money, moneyWhole, pct, per, statusOf } from "./format.js";
+import { EXPLAIN, LEARNING, PROBLEM_STATES, REVIEW_STATES, WORDS, count, money, moneyWhole, pct, per, statusOf } from "./format.js";
 
 export const LEVEL_WORDS = { campaign: ["campaign", "campaigns"], adset: ["ad set", "ad sets"], ad: ["ad", "ads"] };
 const isOn = (s) => s === "ACTIVE";
@@ -61,7 +61,7 @@ function track(r) {
 export function statusCell(r) {
   const [cls, label] = statusOf(r.effective_status);
   const learn = r.level === "adset" && LEARNING[r.learning_stage];
-  return `<span class="st st-${cls || "mute"}">${esc(label)}</span>${learn ? `<span class="st st-${learn[0]} st-2">${esc(learn[1])}</span>` : ""}`;
+  return `<span class="pill ${cls}">${esc(label)}</span>${learn ? `<span class="pill ${learn[0]}" title="${esc(EXPLAIN[r.learning_stage === "FAIL" ? "learning_limited" : "learning"])}">${esc(learn[1])}</span>` : ""}`;
 }
 
 function thumb(r) {
@@ -75,7 +75,7 @@ export function href(r) {
 
 function nameCell(r) {
   const sub = r.level === "ad" ? r.adset?.name : r.level === "adset" ? r.campaign?.name : r.objective ? r.objective.replace("OUTCOME_", "").toLowerCase() : "Campaign";
-  const tags = `${isTest(r) ? '<span class="mini-tag">Test</span>' : ""}${r.pending_proposals ? `<span class="mini-tag claude" title="Claude has an idea for this">${icon("spark")}</span>` : ""}`;
+  const tags = `${isTest(r) ? '<span class="mini-tag">Test</span>' : ""}${r.pending_proposals ? `<span class="mini-tag claude" title="Claude has a suggestion for this">${icon("spark")}</span>` : ""}`;
   return `<span class="tbl-name">${r.level === "ad" ? thumb(r) : ""}<span><span class="tbl-l1"><a href="${href(r)}" class="tbl-link">${esc(r.name)}</a>${tags}</span><small>${esc(sub || "")}</small></span></span>`;
 }
 
@@ -93,18 +93,18 @@ const C = {
   name: { key: "name", label: "Name", sort: (r) => r.name.toLowerCase(), cell: nameCell, cls: "c-name" },
   status: { key: "status", label: "Delivery", sub: "last 14 days", sort: (r) => r.effective_status || "", cell: (r) => `${track(r)}${statusCell(r)}`, cls: "c-st" },
   budget: { key: "budget", label: "Budget", num: true, sort: (r) => r.daily_budget_cents || 0, cell: budgetCell },
-  spend: num("spend", "Spent", (r) => r.m.spend_cents, (r) => money(r.m.spend_cents, { exact: true })),
-  leads: num("leads", "Leads", (r) => r.m.leads || 0, (r) => count(r.m.leads)),
-  cpl: num("cpl", "Per lead", (r) => cpl(r.m) ?? Infinity, (r) => `<b>${per(r.m.spend_cents, r.m.leads)}</b>`),
+  spend: num("spend", WORDS.spend, (r) => r.m.spend_cents, (r) => money(r.m.spend_cents, { exact: true })),
+  leads: num("leads", WORDS.leads, (r) => r.m.leads || 0, (r) => count(r.m.leads)),
+  cpl: num("cpl", WORDS.cpl, (r) => cpl(r.m) ?? Infinity, (r) => `<b>${per(r.m.spend_cents, r.m.leads)}</b>`),
   vs: num("vs", "vs before", (r) => (r.prev && cpl(r.prev) && cpl(r.m) ? cpl(r.m) / cpl(r.prev) : Infinity), (r) => delta(cpl(r.m), cpl(r.prev), true), { title: vsTitle() }),
-  qualified: num("qualified", "Qualified", (r) => r.m.qualified || 0, (r) => count(r.m.qualified)),
-  ctr: num("ctr", "Click rate", (r) => -(rate(r.m.link_clicks, r.m.impressions) || 0), (r) => pct(r.m.link_clicks, r.m.impressions)),
-  hook: num("hook", "Hook rate", (r) => -(rate(r.m.video_3s, r.m.video_impressions) || 0), (r) => (r.m.video_impressions ? pct(r.m.video_3s, r.m.video_impressions) : "—"), { title: "3-second views ÷ impressions of the video ads" }),
-  hold: num("hold", "Hold", (r) => -(rate(r.m.thruplays, r.m.video_3s) || 0), (r) => pct(r.m.thruplays, r.m.video_3s), { title: "ThruPlays ÷ 3-second views" }),
-  impressions: num("impressions", "Views", (r) => r.m.impressions || 0, (r) => count(r.m.impressions), { title: "Times it was shown (impressions)" }),
-  reach: num("reach", "People", (r) => r.m.reach || 0, (r) => count(r.m.reach), { title: "Different people who saw it at least once" }),
-  freq: num("freq", "Times each", (r) => rate(r.m.impressions, r.m.reach) || 0, (r) => (r.m.reach ? (r.m.impressions / r.m.reach).toFixed(2) : "—")),
-  cpm: num("cpm", "Per 1,000", (r) => rate(r.m.spend_cents * 1000, r.m.impressions) ?? Infinity, (r) => (r.m.impressions ? money((r.m.spend_cents * 1000) / r.m.impressions, { exact: true }) : "—")),
+  qualified: num("qualified", WORDS.qualified, (r) => r.m.qualified || 0, (r) => count(r.m.qualified)),
+  ctr: num("ctr", WORDS.ctr, (r) => -(rate(r.m.link_clicks, r.m.impressions) || 0), (r) => pct(r.m.link_clicks, r.m.impressions), { title: EXPLAIN.ctr }),
+  hook: num("hook", WORDS.hook, (r) => -(rate(r.m.video_3s, r.m.video_impressions) || 0), (r) => (r.m.video_impressions ? pct(r.m.video_3s, r.m.video_impressions) : "—"), { title: EXPLAIN.hook }),
+  hold: num("hold", WORDS.hold, (r) => -(rate(r.m.thruplays, r.m.video_3s) || 0), (r) => pct(r.m.thruplays, r.m.video_3s), { title: EXPLAIN.hold }),
+  impressions: num("impressions", WORDS.impressions, (r) => r.m.impressions || 0, (r) => count(r.m.impressions), { title: EXPLAIN.impressions }),
+  reach: num("reach", WORDS.reach, (r) => r.m.reach || 0, (r) => count(r.m.reach), { title: EXPLAIN.reach }),
+  freq: num("freq", WORDS.frequency, (r) => rate(r.m.impressions, r.m.reach) || 0, (r) => (r.m.reach ? (r.m.impressions / r.m.reach).toFixed(2) : "—"), { title: EXPLAIN.frequency }),
+  cpm: num("cpm", "Per 1,000 views", (r) => rate(r.m.spend_cents * 1000, r.m.impressions) ?? Infinity, (r) => (r.m.impressions ? money((r.m.spend_cents * 1000) / r.m.impressions, { exact: true }) : "—")),
   on: { key: "on", label: "On", cell: (r) => (r.can_control && LIVE.includes(r.status) ? switchHtml(isOn(r.status), `data-toggle="${r.level}:${r.id}" data-name="${esc(r.name)}"`, `${r.name} on or off`) : ""), cls: "c-on" },
   spark: { key: "spark", label: "Leads / day", cell: (r) => sparkline(r.spark), cls: "c-sp" },
 };
@@ -187,7 +187,7 @@ export function cardsHtml(rows) {
         ${ad.can_control && ["ACTIVE", "PAUSED"].includes(ad.status) ? switchHtml(isOn(ad.status), `data-toggle="ad:${ad.id}" data-name="${esc(ad.name)}"`, `${ad.name} on or off`) : ""}</div>
         ${ad.title ? `<p class="cr-headline">${esc(ad.title)}</p>` : ""}
         <dl class="cr-stats"><div><dt>Spent</dt><dd>${money(m.spend_cents, { exact: true })}</dd></div><div><dt>Leads</dt><dd>${count(m.leads)}</dd></div>
-          <div><dt>Per lead</dt><dd>${per(m.spend_cents, m.leads)}</dd></div><div><dt>${ad.object_type === "VIDEO" ? "Hook rate" : "Click rate"}</dt><dd>${ad.object_type === "VIDEO" ? pct(m.video_3s, m.video_impressions) : pct(m.link_clicks, m.impressions)}</dd></div></dl>
+          <div><dt>${WORDS.cpl}</dt><dd>${per(m.spend_cents, m.leads)}</dd></div><div><dt>${ad.object_type === "VIDEO" ? WORDS.hook : WORDS.ctr}</dt><dd>${ad.object_type === "VIDEO" ? pct(m.video_3s, m.video_impressions) : pct(m.link_clicks, m.impressions)}</dd></div></dl>
       </div></article>`;
   }).join("")}</div>`;
 }
@@ -213,13 +213,13 @@ export function figuresHtml(m, prev, target, { today = null, ever = null } = {})
   const f = (label, value, d) => `<div class="fig"><span class="fig-l">${label}</span><b class="fig-v">${value}</b>${d || ""}</div>`;
   const qcpl = m.qualified ? m.spend_cents / m.qualified : null;
   return `<div class="figs">
-    ${f("Spent", money(m.spend_cents, { exact: true }), prev ? delta(m.spend_cents, prev.spend_cents, null).replace(/d-(good|bad)/, "d-mute") : "")}
-    ${f("Views", count(m.impressions), `${prev ? delta(m.impressions, prev.impressions, false) : ""}${todayEver(today, ever, "impressions")}`)}
-    ${f("People reached", count(m.reach) + (m.reach_summed ? "*" : ""), `${prev && !m.reach_summed ? delta(m.reach, prev.reach, false) : ""}${todayEver(today, ever, "reach")}`)}
+    ${f(WORDS.spend, money(m.spend_cents, { exact: true }), prev ? delta(m.spend_cents, prev.spend_cents, null).replace(/d-(good|bad)/, "d-mute") : "")}
+    ${f(WORDS.impressions, count(m.impressions), `${prev ? delta(m.impressions, prev.impressions, false) : ""}${todayEver(today, ever, "impressions")}`)}
+    ${f(WORDS.reach, count(m.reach) + (m.reach_summed ? "*" : ""), `${prev && !m.reach_summed ? delta(m.reach, prev.reach, false) : ""}${todayEver(today, ever, "reach")}`)}
     ${f("Leads", count(m.leads), prev ? delta(m.leads, prev.leads, false) : "")}
-    ${f("Cost per lead", per(m.spend_cents, m.leads), prev ? delta(cpl(m), cpl(prev), true) : "")}
-    ${f("Qualified", count(m.qualified), prev ? delta(m.qualified, prev.qualified, false) : "")}
-    ${f("Per qualified lead", qcpl ? money(qcpl, { exact: true }) : "—", target ? `<span class="delta d-mute">target ${money(target)}</span>` : "")}
+    ${f(WORDS.cpl, per(m.spend_cents, m.leads), prev ? delta(cpl(m), cpl(prev), true) : "")}
+    ${f(WORDS.qualified, count(m.qualified), prev ? delta(m.qualified, prev.qualified, false) : "")}
+    ${f(WORDS.cpql, qcpl ? money(qcpl, { exact: true }) : "—", target ? `<span class="delta d-mute">target ${money(target)}</span>` : "")}
   </div>`;
 }
 
@@ -346,7 +346,7 @@ export function wire(root, ctx) {
 // ---------------------------------------------------------------- peek drawer
 
 let drawer = null;
-const RANK_TONE = { ABOVE_AVERAGE: "ok", AVERAGE: "mute", BELOW_AVERAGE_35: "warn", BELOW_AVERAGE_20: "bad", BELOW_AVERAGE_10: "bad" };
+const RANK_TONE = { ABOVE_AVERAGE: "ok", AVERAGE: "", BELOW_AVERAGE_35: "warn", BELOW_AVERAGE_20: "bad", BELOW_AVERAGE_10: "bad" };
 
 // Everything we know about one row, without leaving the list: the period's figures against the period
 // before, the rest of the numbers, a daily chart, Meta's own rankings and watch funnel (ads), who it's
@@ -356,14 +356,14 @@ function moreNumbers(r) {
   const cell = (label, value, title = "") => `<div ${title ? `title="${esc(title)}"` : ""}><dt>${label}</dt><dd>${value}</dd></div>`;
   const video = (m.video_impressions || 0) > 0;
   return `<dl class="pk-grid">
-    ${cell("Times each person saw it", m.reach ? (m.impressions / m.reach).toFixed(2) : "—", "Views ÷ people reached (frequency)")}
+    ${cell(WORDS.frequency, m.reach ? (m.impressions / m.reach).toFixed(2) : "—", EXPLAIN.frequency)}
     ${cell("Link clicks", count(m.link_clicks))}
-    ${cell("Click rate", pct(m.link_clicks, m.impressions), "Link clicks ÷ views")}
+    ${cell(WORDS.ctr, pct(m.link_clicks, m.impressions), EXPLAIN.ctr)}
     ${cell("Cost per click", per(m.spend_cents, m.link_clicks))}
     ${cell("Cost per 1,000 views", m.impressions ? money((m.spend_cents * 1000) / m.impressions, { exact: true }) : "—", "CPM")}
     ${cell("Leads per 1,000 views", m.impressions ? ((m.leads * 1000) / m.impressions).toFixed(2) : "—")}
-    ${video ? cell("Hook rate", pct(m.video_3s, m.video_impressions), "3-second views ÷ views of the video ads") : ""}
-    ${video ? cell("Hold rate", pct(m.thruplays, m.video_3s), "ThruPlays ÷ 3-second views") : ""}
+    ${video ? cell(WORDS.hook, pct(m.video_3s, m.video_impressions), EXPLAIN.hook) : ""}
+    ${video ? cell(WORDS.hold, pct(m.thruplays, m.video_3s), EXPLAIN.hold) : ""}
     ${video ? cell("ThruPlays", count(m.thruplays), "Watched 15 s or to the end") : ""}
     ${cell("Lead rate", pct(m.leads, m.link_clicks), "Leads ÷ link clicks")}
     ${r.level === "ad" && r.created_time ? cell("Created", esc(when(r.created_time))) : ""}
@@ -381,7 +381,7 @@ function context(r) {
   if (r.level === "adset") {
     const learn = LEARNING[r.learning_stage];
     parts.push(`<div class="pk-where"><span class="pk-lbl">Who sees it</span><p>${esc(r.targeting_summary || "—")}</p>
-      ${learn || r.learning_stage === "SUCCESS" ? `<p class="small">${learn ? `<span class="st st-${learn[0]}">${learn[1]}</span>` : '<span class="st st-ok">Finished learning</span>'}</p>` : ""}
+      ${learn || r.learning_stage === "SUCCESS" ? `<p class="small">${learn ? `<span class="pill ${learn[0]}">${learn[1]}</span>` : '<span class="pill ok">Finished learning</span>'}</p>` : ""}
       <p><a href="${href(r.campaign)}">${esc(r.campaign.name)}</a></p></div>`);
   }
   if (r.level === "campaign") {
@@ -399,10 +399,10 @@ async function diagnostics(r) {
     const d = await api(`/api/insights/ad/${encodeURIComponent(r.id)}/diagnostics`);
     const ranks = [["quality_ranking", "Quality"], ["engagement_rate_ranking", "Engagement"], ["conversion_rate_ranking", "Conversion"]];
     const f = d.funnel || {};
-    const steps = r.object_type === "VIDEO" && f.impressions ? [["Views", f.impressions], ["3 seconds", f.video_3s], ["25%", f.p25], ["50%", f.p50], ["75%", f.p75], ["To the end", f.p100]] : [];
+    const steps = r.object_type === "VIDEO" && f.impressions ? [[WORDS.impressions, f.impressions], ["3 seconds", f.video_3s], ["25%", f.p25], ["50%", f.p50], ["75%", f.p75], ["To the end", f.p100]] : [];
     const top = Math.max(...steps.map(([, v]) => v), 1);
     box.innerHTML = `<h3 class="pk-h">How Meta rates it <small>last 30 days, against ads competing for the same people</small></h3>
-      <dl class="pk-ranks">${ranks.map(([k, label]) => { const v = d.rankings[k] || {}; return `<div><dt>${label}</dt><dd><span class="st st-${RANK_TONE[v.value] || "mute"}">${esc(v.label || "Not enough data yet")}</span></dd></div>`; }).join("")}</dl>
+      <dl class="pk-ranks">${ranks.map(([k, label]) => { const v = d.rankings[k] || {}; return `<div><dt>${label}</dt><dd><span class="pill ${RANK_TONE[v.value] || ""}">${esc(v.label || "Not enough data yet")}</span></dd></div>`; }).join("")}</dl>
       ${d.avg_watch_seconds ? `<p class="small muted">Average watch: <b>${d.avg_watch_seconds} s</b></p>` : ""}
       ${steps.length ? `<h3 class="pk-h">Who watched how far <small>since it started</small></h3><ul class="pk-funnel">${steps.map(([label, v]) => `<li><span>${label}</span><span class="pk-bar"><i data-w="${((v / top) * 100).toFixed(1)}"></i></span><b class="tnum">${count(v)}</b><small class="tnum">${f.impressions ? `${((v / f.impressions) * 100).toFixed(1)}%` : ""}</small></li>`).join("")}</ul>` : ""}
       ${d.error ? `<p class="muted small">Meta didn't answer for the rankings: ${esc(d.error)}</p>` : ""}`;
@@ -459,7 +459,7 @@ export async function peek(r, { onClose, focus = true } = {}) {
     ${moreNumbers(r)}
     ${(r.spark || []).length ? `<h3 class="pk-h">Day by day</h3><div class="pk-charts"><p class="pk-cap">Spent</p><div class="chart" id="pk-spend"></div><p class="pk-cap">Leads</p><div class="chart" id="pk-leads"></div></div>` : ""}
     <div class="pk-diag"><p class="muted small">Asking Meta how it rates this ad…</p></div>
-    <h3 class="pk-h">What happened</h3><ol class="pk-tl"><li class="muted">Loading…</li></ol>`;
+    <h3 class="pk-h">What happened</h3><ol class="pk-tl"><li>${skeleton()}</li></ol>`;
   drawer.classList.add("open");
   drawer.inert = false;
   drawer.scrollTop = 0;

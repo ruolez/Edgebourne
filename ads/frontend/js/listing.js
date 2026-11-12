@@ -2,13 +2,12 @@
 // columns, search, selection → bulk bar / compare, and a peek drawer. Everything is in the URL.
 import { api, startLoad } from "./api.js";
 import { boot, confirmDialog, esc, icon, onRefresh, toast, showLoadError } from "./ui.js";
-import { count, dayLabel } from "./format.js";
+import { RANGES, count, dayLabel, rangeSelect } from "./format.js";
 import * as UrlState from "./urlstate.js";
 import { COLUMN_SETS, LEVEL_WORDS, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, tableHtml, unlistedNote, wire } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = { level: "ad", view: "all", range: "7", vs: true, cols: "results", sort: "spend", dir: "desc", q: "", campaign: "", archived: false, display: "table", peek: "" };
-const RANGES = [["7", "7 days"], ["14", "14 days"], ["30", "30 days"], ["mtd", "This month"], ["lastmonth", "Last month"]];
 const MONTHS = ["mtd", "lastmonth"];
 // The URL and saved views always carry the dates, so a link opens on the same days in any browser.
 const KEEP = { ...DEFAULTS, range: "" };
@@ -70,10 +69,10 @@ function toolbar() {
     <span class="spacer"></span>
     ${camps.length > 1 ? `<select class="input tool" id="camp-pick" aria-label="Campaign"><option value="">All campaigns</option>${camps.map((c) => `<option value="${esc(c.id)}" ${c.id === state.campaign ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>` : ""}
     <label class="tool-search">${icon("search")}<input class="input" id="cr-search" type="search" placeholder="Filter by name" value="${esc(state.q)}" aria-label="Filter by name"></label>
-    <select class="input tool" id="range-pick" aria-label="Dates">${RANGES.map(([k, l]) => `<option value="${k}" ${k === state.range ? "selected" : ""}>${l}</option>`).join("")}</select>
-    <button type="button" class="tool-tg" id="vs" aria-pressed="${state.vs}" title="${MONTHS.includes(state.range) ? "Compare with the same days of the month before" : "Compare with the same number of days just before"}">vs before</button>
+    ${rangeSelect("range-pick", state.range)}
+    <button type="button" class="view-chip" id="vs" aria-pressed="${state.vs}" title="${MONTHS.includes(state.range) ? "Compare with the same days of the month before" : "Compare with the same number of days just before"}">vs before</button>
     ${state.display === "table" ? `<select class="input tool" id="cols-pick" aria-label="Columns">${Object.entries(COLUMN_SETS).map(([k, [l]]) => `<option value="${k}" ${k === state.cols ? "selected" : ""}>Columns: ${l}</option>`).join("")}</select>` : ""}
-    ${data.archived ? `<button type="button" class="tool-tg" id="archived" aria-pressed="${state.archived}">${state.archived ? "Hide" : "Show"} archived <span class="n">${data.archived}</span></button>` : ""}
+    ${data.archived ? `<button type="button" class="view-chip" id="archived" aria-pressed="${state.archived}">${state.archived ? "Hide" : "Show"} archived <span class="n">${data.archived}</span></button>` : ""}
     ${state.level === "ad" ? `<div class="segmented icon-seg" role="group" aria-label="Display">
       <button type="button" data-display="table" aria-pressed="${state.display === "table"}" title="Table">${icon("table")}<span class="sr-only">Table</span></button>
       <button type="button" data-display="cards" aria-pressed="${state.display === "cards"}" title="Cards">${icon("grid")}<span class="sr-only">Cards</span></button></div>` : ""}

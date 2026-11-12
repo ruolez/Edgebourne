@@ -43,7 +43,7 @@ function render(groups) {
   const ul = dlg.querySelector(".pal-list");
   items = groups.flatMap(([, list]) => list);
   sel = Math.min(sel, Math.max(items.length - 1, 0));
-  if (!items.length) { ul.innerHTML = `<li class="pal-empty">Nothing found. Try a campaign, ad or lead name.</li>`; return; }
+  if (!items.length) { ul.innerHTML = `<li class="empty compact">Nothing found. Try a campaign, ad or lead name.</li>`; return; }
   let n = 0;
   ul.innerHTML = groups.filter(([, list]) => list.length).map(([label, list]) => `<li class="pal-group" role="presentation">${esc(label)}</li>`
     + list.map((i) => `<li class="pal-item" role="option" id="pal-${n}" data-i="${n}" aria-selected="${n++ === sel}">${icon(i.icon || TYPE_ICON[i.type])}<span class="pal-t">${esc(i.title)}</span><small>${esc(i.sub || "")}</small></li>`).join("")).join("");

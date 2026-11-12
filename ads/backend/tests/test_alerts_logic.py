@@ -37,6 +37,8 @@ class AdRuleTests(unittest.TestCase):
         found = alerts.evaluate(snap(ads=ads, ad_days={"a2": days(2, impressions=0, reach=0, link_clicks=0, spend_cents=0, leads=0)}), RULES, TODAY)
         self.assertEqual([(a["rule"], a["entity_id"], a["key"]) for a in found],
                          [("ad_rejected", "a1", "ad_rejected:a1:2026-11-09"), ("no_delivery", "a2", "no_delivery:a2:2026-11-09")])
+        # One vocabulary (9.2): Meta's impressions are "views" everywhere a person reads them.
+        self.assertEqual(found[1]["lines"], ["No views 30 hours after it went live."])
 
     def test_an_ad_first_seen_today_is_not_called_unseen(self):
         # Live for 30 hours, nothing on the complete days, 600 impressions so far today (audit A3-63).

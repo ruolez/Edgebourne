@@ -21,13 +21,13 @@ APPLY_HERE = {"ADVANTAGE_PLUS_AUDIENCE", "AUTOMATIC_PLACEMENTS", "SCALE_GOOD_CAM
 # What "Fix with Claude" does for advice the console can't apply itself (a Desk run, kind 'advice').
 CLAUDE_FIX = {
     "REELS_PC_RECOMMENDATION": "Claude makes a 9:16 version with sound of each running ad on your Mac and sends each "
-                               "back for a yes or no. Approving one updates that ad: 4:5 in feeds, 9:16 in Reels and Stories.",
+                               "back for a yes or no. Accepting one updates that ad: 4:5 in feeds, 9:16 in Reels and Stories.",
     "CREATIVE_FATIGUE": "Claude finds the tired ads and makes new versions on your Mac, each sent back for a yes or no.",
-    "CREATIVE_LIMITED": "Claude writes 2-4 genuinely different ad ideas for this ad set; approving one creates it switched off.",
-    "FRAGMENTATION": "Claude checks which ad sets overlap and proposes how to combine them, for a yes or no.",
+    "CREATIVE_LIMITED": "Claude writes 2-4 genuinely different ad ideas for this ad set; accepting one creates it switched off.",
+    "FRAGMENTATION": "Claude checks which ad sets overlap and suggests how to combine them, for a yes or no.",
 }
 DEFAULT_FIX = ("Claude checks the suggestion against your numbers and the playbook, says whether it fits, "
-               "and proposes the changes for a yes or no.")
+               "and suggests the changes for a yes or no.")
 BIG_STEP = 0.20
 
 

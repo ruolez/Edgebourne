@@ -19,6 +19,12 @@ class RatesTests(unittest.TestCase):
         mixed, image = m(1000, 1, impressions=8000, v3=1200, video_impressions=4000), m(1000, 1, impressions=4000, v3=0, thru=0, video_impressions=0)
         self.assertEqual((compare.rates(mixed)["hook"], compare.rates(image)["hook"]), (0.3, None))
 
+    def test_rows_use_the_console_vocabulary(self):
+        # format.js WORDS (9.2): the same names as the Ads manager columns and the figures.
+        labels = {k: label for k, label, _ in compare.ROWS}
+        self.assertEqual((labels["cpq_cents"], labels["frequency"], labels["cpl_cents"]),
+                         ("Cost per qualified lead", "Views per person", "Cost per lead"))
+
     def test_hold_is_labelled_hold_rate_like_the_video_tab(self):
         # The Video tab's "Watched to the end" is a different number (p100 ÷ impressions; audit A3-39).
         self.assertEqual({k: label for k, label, _ in compare.ROWS}["hold"], "Hold rate")

@@ -354,7 +354,7 @@ def stop_task(task_id):
     if not bridge_status()["can_stop"]:
         return api_error("This Mac helper is too old to stop a run. Re-run ads/bridge/install.sh on the Mac.", 426)
     if not stop_run(task_id):
-        return api_error("This request isn't running any more", 409)
+        return api_error("Claude isn't working on this any more", 409)
     return jsonify({"ok": True})
 
 
@@ -471,7 +471,7 @@ def run_next(task_id):
     row = db.execute("UPDATE desk_tasks SET queue_rank = %s WHERE id = %s AND status = 'queued' RETURNING id",
                      (front_rank(), task_id), returning=True)
     if not row:
-        return api_error("This request has already started", 409)
+        return api_error("Claude has already started on this", 409)
     return jsonify({"ok": True})
 
 

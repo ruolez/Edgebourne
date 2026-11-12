@@ -1,6 +1,6 @@
 // Shared UI: app frame, icons, toasts, formatting.
 import { api } from "./api.js";
-import { setCurrency, currencySymbol, money, moneyWhole } from "./format.js";
+import { setCurrency, currencySymbol, money, moneyWhole, explain } from "./format.js";
 
 const ICONS = {
   close: '<path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -382,12 +382,24 @@ export function setCrumbs(items) {
   if (title && items.length) title.firstChild.textContent = items[items.length - 1].label;
 }
 
+// The one empty state: a title, a plain sentence (HTML) and at most one or two actions (HTML).
+// `tag` li for lists; `panel: false` when it sits inside a panel already; `variant` "center" or "compact".
+export function emptyState({ title, body = "", actions = "", tag = "section", panel = true, role = "", variant = "" }) {
+  const cls = `${panel && tag !== "li" ? "panel " : ""}empty${variant ? ` ${variant}` : ""}`;
+  return `<${tag} class="${cls}"${role ? ` role="${role}"` : ""}>${title ? `<h3>${esc(title)}</h3>` : ""}${body ? `<p>${body}</p>` : ""}${actions ? `<div class="row">${actions}</div>` : ""}</${tag}>`;
+}
+
+// The one loading placeholder: shimmering bars and a line saying what is coming.
+// `preview` draws the tall bar of an ad preview.
+export const skeleton = (text = "Loading…", { preview = false } = {}) =>
+  `<div class="skeleton${preview ? " preview" : ""}" role="status"><span></span><span></span><span></span><p>${esc(text)}</p></div>`;
+
 // A page whose data didn't arrive: says what happened and offers another try, instead of staying blank.
 export function errorState(el, err, retry, back) {
   const missing = err && err.status === 404;
-  const body = `<h3>${missing ? "Not found" : "This didn't load"}</h3><p>${esc((err && err.message) || "Something went wrong.")}</p>
-    <div class="row">${retry && !missing ? '<button type="button" class="btn" data-retry>Try again</button>' : ""}${back ? `<a class="btn btn-quiet" href="${esc(back.href)}">${esc(back.label)}</a>` : ""}</div>`;
-  el.innerHTML = el.tagName === "UL" ? `<li class="empty" role="alert">${body}</li>` : `<section class="panel empty" role="alert">${body}</section>`;
+  const actions = `${retry && !missing ? '<button type="button" class="btn" data-retry>Try again</button>' : ""}${back ? `<a class="btn btn-quiet" href="${esc(back.href)}">${esc(back.label)}</a>` : ""}`;
+  el.innerHTML = emptyState({ title: missing ? "Not found" : "This didn't load", body: esc((err && err.message) || "Something went wrong."),
+    actions, tag: el.tagName === "UL" ? "li" : "section", role: "alert" });
   el.querySelector("[data-retry]")?.addEventListener("click", () => retry());
 }
 
@@ -436,6 +448,8 @@ export async function boot({ page, admin = false }) {
   if (me.role === "client") document.documentElement.classList.add("read-only");
   if (me.role === "client" && me.account.clients_update_leads) document.documentElement.classList.add("client-leads");
   setCurrency(me.account.currency);
+  // Meta's own terms carry their plain explanation from format.js (one wording everywhere).
+  document.querySelectorAll("[data-explain]").forEach((el) => { el.textContent = explain(el.dataset.explain); });
   document.querySelectorAll(".money-input").forEach((el) => { if (el.firstChild && el.firstChild.nodeType === 3) el.firstChild.textContent = currencySymbol(); });
   window.ebadsMe = me;
   const isAdmin = me.role === "admin";
@@ -593,7 +607,7 @@ function banners(me) {
   if (me.worker_stale) items.push(`<b>The console's background work has stopped</b> (new leads, alerts and automatic refresh wait). Run Update on the server, or ask for help.`);
   if (me.meta_token_error) items.push(`<b>Meta stopped accepting the access token</b> on ${esc(me.meta_token_error.slice(0, 10))}. Paste a new System User token in <a href="/settings.html#meta-form">Settings → Meta</a>.`);
   if (me.bridge_outdated) items.push(`<b>The Mac helper is out of date</b> (version ${esc(me.bridge_outdated)}). Re-run <code>ads/bridge/install.sh</code> on the Mac so Claude works on the right account.`);
-  if (me.claude_sign_in_failed) items.push(`<b>Claude can't sign in on your Mac</b> (its sign-in expired), so Claude's runs fail. On the Mac run <code>claude setup-token</code> and store it again with <code>ads/bridge/install.sh</code>.`);
+  if (me.claude_sign_in_failed) items.push(`<b>Claude can't sign in on your Mac</b> (its sign-in expired), so Claude can't work on anything. On the Mac run <code>claude setup-token</code> and store it again with <code>ads/bridge/install.sh</code>.`);
   if (!items.length) return;
   const box = document.createElement("div");
   box.className = "sys-banners";
@@ -629,8 +643,8 @@ function startClaudeNow(top) {
     const w = n.working;
     since = w ? new Date(w.since).getTime() : null;
     const state = w ? "working" : n.queued ? "waiting" : "idle";
-    const title = w ? 'Claude working <time data-now-clock></time>' : n.queued || !n.online ? (n.online ? "Claude is starting the next job" : "Your Mac is offline") : "Claude is idle";
-    const detail = w ? esc(w.progress || w.title) : n.queued ? esc(n.next[0]?.title || "") : n.online ? "Nothing in line" : "Requests wait until it’s back";
+    const title = w ? 'Claude working <time data-now-clock></time>' : n.queued || !n.online ? (n.online ? "Claude is starting the next one" : "Your Mac is offline") : "Claude is idle";
+    const detail = w ? esc(w.progress || w.title) : n.queued ? esc(n.next[0]?.title || "") : n.online ? "Nothing in line" : "Anything you ask waits until it’s back";
     const line = n.queued ? `<em>${n.queued} in line</em>` : "";
     const href = w ? `/desk.html#r/${w.thread}` : "/desk.html#list";
     [card, bar].forEach((el) => {
@@ -684,7 +698,8 @@ export function fieldError(form, name, message) {
 // ---------- confirm dialog ----------
 // confirmDialog({ title, body (HTML), confirm, danger, field }) → Promise<false | true | field value>.
 // `field` = { label, value, prefix, suffix, inputmode, validate(v) → error|null, hint(v) → html } adds one input.
-export function confirmDialog({ title, body = "", confirm = "Confirm", danger = false, claude = false, field = null }) {
+// `cancel: false` makes it a notice with one button (nothing to decide, e.g. a password shown once).
+export function confirmDialog({ title, body = "", confirm = "Confirm", danger = false, claude = false, field = null, cancel = "Cancel" }) {
   return new Promise((resolve) => {
     const dlg = document.createElement("dialog");
     dlg.className = "confirm";
@@ -694,7 +709,7 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
       ${field ? `<div class="field"><label for="cd-input">${esc(field.label)}</label>
         <div class="affix">${field.prefix ? `<span>${esc(field.prefix)}</span>` : ""}<input class="input" id="cd-input" inputmode="${field.inputmode || "text"}" value="${esc(field.value ?? "")}" autocomplete="off" aria-describedby="cd-hint">${field.suffix ? `<span>${esc(field.suffix)}</span>` : ""}</div>
         <span class="hint" id="cd-hint" aria-live="polite"></span><span class="err" id="cd-err" role="alert" hidden></span></div>` : ""}
-      <div class="row end"><button class="btn" type="button" value="cancel" id="cd-cancel">Cancel</button>
+      <div class="row end">${cancel ? `<button class="btn" type="button" value="cancel" id="cd-cancel">${esc(cancel)}</button>` : ""}
         <button class="btn ${danger ? "btn-danger" : claude ? "btn-claude" : "btn-primary"}" type="submit" id="cd-ok">${esc(confirm)}</button></div>
     </form>`;
     document.body.appendChild(dlg);
@@ -708,7 +723,7 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
     };
     if (input) { input.addEventListener("input", () => { err.hidden = true; invalid(false); refresh(); }); refresh(); }
     let result = false;
-    dlg.querySelector("#cd-cancel").addEventListener("click", () => dlg.close());
+    dlg.querySelector("#cd-cancel")?.addEventListener("click", () => dlg.close());
     dlg.querySelector("form").addEventListener("submit", (e) => {
       if (field) {
         const problem = field.validate ? field.validate(input.value) : null;
@@ -720,7 +735,7 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
     dlg.showModal();
     // Safe default: a stray Enter or Space never confirms. With a field, focus is on it (typing is deliberate);
     // otherwise on Cancel, never on the button that acts.
-    (input || dlg.querySelector("#cd-cancel")).focus();
+    (input || dlg.querySelector("#cd-cancel") || dlg.querySelector("#cd-ok")).focus();
     if (input) input.select();
   });
 }
@@ -731,8 +746,7 @@ export const switchHtml = (on, attrs, label) =>
 
 // Meta's previews take a few seconds and the iframe is blank white until then: keep the
 // skeleton up until the frame has loaded, and offer a new tab if Meta is slow.
-const SKELETON = (text) => `<div class="preview-skeleton" role="status"><span></span><span></span><span></span><p>${text}</p></div>`;
-export const previewSkeleton = () => SKELETON("Loading Meta's preview…");
+export const previewSkeleton = () => skeleton("Loading Meta's preview…", { preview: true });
 
 export function showPreviewFrame(box, p, { title, width, height }) {
   const frame = document.createElement("iframe");
@@ -743,13 +757,13 @@ export function showPreviewFrame(box, p, { title, width, height }) {
   frame.style.height = `${height}px`;
   frame.className = "preview-loading";
   const slow = setTimeout(() => {
-    const note = box.querySelector(".preview-skeleton p");
+    const note = box.querySelector(".skeleton p");
     if (note) note.innerHTML = `Meta is slow to answer. <a href="${p.src}" target="_blank" rel="noopener noreferrer">Open the preview in a new tab</a>`;
   }, 12000);
   frame.addEventListener("load", () => {
     clearTimeout(slow);
     frame.classList.remove("preview-loading");
-    box.querySelector(".preview-skeleton")?.remove();
+    box.querySelector(".skeleton")?.remove();
   }, { once: true });
   box.innerHTML = previewSkeleton();
   box.append(frame);

@@ -26,7 +26,7 @@ function renderFilters() {
   const all = Object.values(c).reduce((a, b) => a + b, 0);
   const n = { open, all, ...c };
   $("filters").innerHTML = FILTERS.map((f) =>
-    `<button type="button" data-f="${f.id}" aria-pressed="${state.filter === f.id}">${f.label}<span class="n">${n[f.id] || 0}</span></button>`
+    `<button type="button" class="view-chip" data-f="${f.id}" aria-pressed="${state.filter === f.id}">${f.label}<span class="n">${n[f.id] || 0}</span></button>`
   ).join("");
   setNewCount(c.new || 0);
 }

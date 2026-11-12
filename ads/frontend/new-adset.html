@@ -44,7 +44,7 @@
                 <div id="places-box"></div>
                 <span class="hint">People who live in or were recently in these places. Cities take a radius of 10 to 50 miles.</span>
               </div>
-              <label class="check"><input type="checkbox" id="advantage"> <span>Advantage+ audience <span class="muted">· Meta may reach beyond the hints below when it finds people likely to fill in the form (recommended)</span></span></label>
+              <label class="check"><input type="checkbox" id="advantage"> <span>Advantage+ audience <span class="muted">(recommended)</span><span class="hint explain" data-explain="advantage_audience"></span></span></label>
               <div class="grid-2" id="age-field">
                 <div class="field"><span class="label">Age limits</span><div class="age-pair"><input class="input" type="number" id="age_min" name="age" min="18" max="65"> to <input class="input" type="number" id="age_max" min="18" max="65"></div>
                   <span class="hint" id="age-hint"></span></div>
@@ -62,7 +62,7 @@
                 <div class="field"><label for="end_day">Ends <span class="muted">(optional)</span></label><input class="input" type="date" id="end_day" name="end"><span class="hint">Empty: runs until you turn it off.</span></div>
               </div>
               <div class="field" id="budget-field" hidden><label for="budget">Daily budget</label><span class="money-input">$<input class="input" id="budget" name="budget" inputmode="decimal" placeholder="20"></span><span class="hint" id="budget-hint"></span></div>
-              <p class="muted small flush">Placements: Advantage+ (Facebook, Instagram and Meta's other places, wherever leads are cheapest). Meta no longer offers picking placements by hand for lead campaigns.</p>
+              <p class="muted small flush"><span data-explain="advantage_placements"></span> Meta no longer offers picking placements by hand for lead campaigns.</p>
             </div>
           </section>
 

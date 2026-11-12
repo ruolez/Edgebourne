@@ -4,12 +4,11 @@
 import { api, startLoad } from "./api.js";
 import { boot, esc, icon, onRefresh, toast, errorState } from "./ui.js";
 import { lineChart } from "./charts.js";
-import { count, money, statusOf, moneyWhole } from "./format.js";
+import { count, money, statusOf, moneyWhole, rangeSelect } from "./format.js";
 import * as UrlState from "./urlstate.js";
 
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = { ids: "", range: "14", vs: true, chart: "leads" };
-const RANGES = [["7", "7 days"], ["14", "14 days"], ["30", "30 days"], ["mtd", "This month"], ["lastmonth", "Last month"]];
 const LOWER = { cpl_cents: 1, cpq_cents: 1, cpm_cents: 1 };
 let state = UrlState.read(DEFAULTS);
 let data = null, all = null;
@@ -49,7 +48,7 @@ function tableHtml() {
     const [cls, label] = statusOf(it.effective_status);
     const img = it.image_url || it.thumbnail_url;
     return `<th><div class="cmp-h">${img ? `<img class="cmp-th" src="${esc(img)}" alt="" referrerpolicy="no-referrer">` : '<span class="cmp-th ph"></span>'}
-      <a href="/ad.html?id=${encodeURIComponent(it.id)}" class="tbl-link">${esc(it.name)}</a><span class="st st-${cls || "mute"}">${esc(label)}</span>
+      <a href="/ad.html?id=${encodeURIComponent(it.id)}" class="tbl-link">${esc(it.name)}</a><span class="pill ${cls}">${esc(label)}</span>
       <span class="cmp-key"><i class="sw s${i + 1}"></i>${ids().length > 2 ? `<button type="button" class="link-btn small" data-drop="${esc(it.id)}">Remove</button>` : ""}</span></div></th>`;
   }).join("")}</tr>`;
   const rows = data.rows.map((r) => `<tr><th scope="row">${esc(r.label)}</th>${r.cells.map((c, i) => {
@@ -77,8 +76,8 @@ function render() {
   const n = data.items.length;
   $("cmp-title").textContent = `Compare ${n} ads`;
   $("cmp-sub").textContent = `${data.range.label}${state.vs && data.prev_range ? ` vs the ${data.prev_range.label} before` : ""} · complete days only`;
-  $("cmp-actions").innerHTML = `<select class="input tool" id="cmp-range" aria-label="Dates">${RANGES.map(([k, l]) => `<option value="${k}" ${k === state.range ? "selected" : ""}>${l}</option>`).join("")}</select>
-    <button type="button" class="tool-tg" id="cmp-vs" aria-pressed="${state.vs}">vs before</button>
+  $("cmp-actions").innerHTML = `${rangeSelect("cmp-range", state.range)}
+    <button type="button" class="view-chip" id="cmp-vs" aria-pressed="${state.vs}">vs before</button>
     ${n < 6 && all ? `<select class="input tool" id="cmp-add" aria-label="Add an ad"><option value="">+ Add an ad</option>${all.filter((a) => !ids().includes(a.id)).map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select>` : ""}
     ${window.ebadsMe?.role === "admin" ? `<a class="btn btn-claude-outline" href="/desk.html?ask=1">${icon("spark")}Ask Claude which to keep</a>` : ""}`;
   const charts = [["leads", "Leads, running total"], ["cpl", "Cost per lead"], ["spend", "Spent per day"]];

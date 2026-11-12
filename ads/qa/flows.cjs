@@ -87,7 +87,7 @@ const guards = require('./guards.cjs');
   await page.click('#formats button[data-format="INSTAGRAM_STORY"]');
   await page.waitForSelector('#preview-frame iframe');
   await page.waitForSelector('#preview-frame iframe:not(.preview-loading)', { timeout: 15000 });
-  check('the preview placeholder stays until Meta\'s frame has loaded', (await page.locator('#preview-frame .preview-skeleton').count()) === 0);
+  check('the preview placeholder stays until Meta\'s frame has loaded', (await page.locator('#preview-frame .skeleton').count()) === 0);
   check('preview loads an iframe for Instagram Stories', /INSTAGRAM_STORY/.test(await page.getAttribute('#preview-frame iframe', 'src')));
   await page.click('#dup');
   await page.waitForSelector('dialog.confirm #cd-input');
@@ -159,15 +159,50 @@ const guards = require('./guards.cjs');
     renderDialogs === 1 && rendersAfter.length === rendersBefore + 1 && !(await page.locator('dialog.confirm[open]').count()), `${renderDialogs} dialogs, ${rendersBefore} → ${rendersAfter.length}`);
   const newRender = rendersAfter.sort((a, b) => b.id - a.id)[0];
   if (newRender) sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE desk_tasks SET status = 'cancelled' WHERE id = %s\\", (${newRender.id},))"`);
-  const create = page.locator('.proposal.variant [data-approve]').first();
-  if (await create.count()) {
-    await create.click();
-    await page.waitForSelector('dialog.confirm');
-    await Promise.all([page.waitForURL('**created=1**'), page.click('dialog.confirm #cd-ok')]);
+  // The inline Suggestion card on the ad page (9.2b, suggest.js): Accept reads Meta fresh and asks first; Cancel,
+  // and Cancel on Decline, change nothing; a new-copy card names the ad (never its id) and creates the ad, off.
+  {
+    const N3 = '120252672230740312', CAMP0 = '120252638288040312';
+    const n3 = (await getJson(`/api/ads/ad/${N3}`)).ad;
+    const liveBudget = Number(metaObj(CAMP0).daily_budget);
+    const shq = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+    const seedArgs = [CAMP0, N3, `Raise to $${Math.round(liveBudget * 1.1 / 100)}/day`, n3.title || 'One system for the whole shop'].map(shq).join(' ');
+    const seed = JSON.parse(sh(`docker cp dev/qa_inline_suggestions.py edgebourne-ads-backend:/app/qa_inline_suggestions.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_inline_suggestions.py ${seedArgs}; docker exec edgebourne-ads-backend rm -f /app/qa_inline_suggestions.py`).trim().split('\n').pop());
+    const propStatus = (id) => sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query('SELECT status FROM desk_proposals WHERE id = ${id}', one=True)['status'])"`).trim();
+    await page.goto(BASE + `/ad.html?id=${N3}#tab=overview`);
+    await page.reload();
+    const budgetCard = page.locator(`#props [data-proposal="${seed.budget}"]`);
+    await budgetCard.waitFor();
+    await budgetCard.locator('[data-approve]').click();
+    await page.waitForSelector('dialog.confirm[open]');
+    const ask = (await page.textContent('dialog.confirm[open]')).replace(/\s+/g, ' ');
+    await page.click('dialog.confirm[open] #cd-cancel');
+    await page.waitForTimeout(500);
+    check('Accept on the ad page asks first with the budget read from Meta; Cancel leaves the suggestion and Meta alone',
+      /Accept “QA inline budget”/.test(ask) && ask.includes(`$${(liveBudget / 100).toFixed(2)}`) && propStatus(seed.budget) === 'pending'
+      && Number(metaObj(CAMP0).daily_budget) === liveBudget && await budgetCard.locator('[data-approve]').isEnabled(), ask.slice(0, 200));
+    await budgetCard.locator('[data-decline]').click();
+    await page.waitForSelector('dialog.confirm[open]');
+    const declineAsk = await page.textContent('dialog.confirm[open] h2');
+    await page.click('dialog.confirm[open] #cd-cancel');
+    await page.waitForTimeout(400);
+    const stillPending = propStatus(seed.budget) === 'pending' && (await budgetCard.count()) === 1;
+    await budgetCard.locator('[data-decline]').click();
+    await page.click('dialog.confirm[open] #cd-ok');
+    await budgetCard.waitFor({ state: 'detached' });
+    check('Decline on the ad page asks first: Cancel keeps the suggestion, Decline takes it off the page and Meta is not touched',
+      /Decline “QA inline budget”/.test(declineAsk) && stillPending && propStatus(seed.budget) === 'declined' && Number(metaObj(CAMP0).daily_budget) === liveBudget, declineAsk);
+    const copyCard = page.locator(`#props [data-proposal="${seed.creative}"]`);
+    const copyText = await copyCard.textContent();
+    check("a new-copy card on the ad page shows what stays the same and never Meta's ad id",
+      !copyText.includes(N3) && /\(same as now\)/.test(copyText) && (await copyCard.locator('[data-as="update"]').count()) === 1, copyText.replace(/\s+/g, ' ').slice(0, 200));
+    await copyCard.locator('[data-approve]:not([data-as])').click();
+    await page.waitForSelector('dialog.confirm[open]');
+    await Promise.all([page.waitForURL('**created=1**'), page.click('dialog.confirm[open] #cd-ok')]);
     await page.waitForSelector('#cr-status .pill');
-    check('approving a new-copy proposal creates that ad, switched off',
-      (await page.textContent('#cr-title')).includes('·') && (await page.textContent('#cr-status')).includes('Off'), await page.textContent('#cr-title'));
-  } else results.push('SKIP new-headline proposal — none pending');
+    check('accepting a new-copy suggestion creates that ad, switched off',
+      (await page.textContent('#cr-title')).includes('QA inline copy') && (await page.textContent('#cr-status')).includes('Off') && propStatus(seed.creative) === 'applied', await page.textContent('#cr-title'));
+  }
 
   // Refresh: on every page, pulls from Meta, then the page reloads its data and the label updates.
   require('child_process').execSync(`docker exec -w /app edgebourne-ads-backend python -c "import settings_store,time;settings_store.set('last_refresh_at',str(time.time()-600))"`); // outside the 60 s throttle
@@ -645,15 +680,15 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   await page.fill('#cr-q', 'order portal');
   const found = await cells(0);
   check('Find an ad narrows the table to matching names', found.length > 0 && found.every((t) => /order portal/i.test(t)), found.join(' | '));
-  const rangeBefore = await page.getAttribute('#range button[aria-pressed="true"]', 'data-range');
+  const rangeBefore = await page.inputValue('#range-pick');
   await page.$eval('#cr-q', (i) => { i.dataset.old = '1'; });
-  await page.click(`#range button[data-range="${rangeBefore === '30' ? '14' : '30'}"]`);
+  await page.selectOption('#range-pick', rangeBefore === '30' ? '14' : '30');
   await page.waitForSelector('#cr-q:not([data-old])');
   await page.waitForSelector('.results-table tbody tr');
   const kept = await cells(0);
   check('changing the dates keeps the search box showing what still filters the table', (await page.inputValue('#cr-q')) === 'order portal' && kept.every((t) => /order portal/i.test(t)), `${await page.inputValue('#cr-q')} / ${kept.join(' | ')}`);
-  await page.click(`#range button[data-range="${rangeBefore}"]`);
-  await page.waitForFunction((r) => document.querySelector(`#range button[data-range="${r}"]`).getAttribute('aria-pressed') === 'true' && document.querySelector('.results-table tbody tr'), rangeBefore);
+  await page.selectOption('#range-pick', rangeBefore);
+  await page.waitForFunction((r) => document.querySelector('#range-pick').value === r && document.querySelector('.results-table tbody tr'), rangeBefore);
   await page.fill('#cr-q', 'zzz no such ad');
   check('no match says so and offers every ad', /No ad called/.test(await page.textContent('#cr-panel')) && await page.isVisible('#cr-panel [data-clear]'));
   await page.click('#cr-panel [data-clear]');
@@ -803,7 +838,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
     && (await page.isVisible('#cv-col')) && !(await page.locator('dialog.viewer[open]').count()));
   await headlines.locator('[data-compare]').click();
   await page.waitForFunction(() => document.querySelectorAll('dialog.viewer .viewer-panes figure').length === 2);
-  check('a suggested ad can be compared with what runs now', /Running now.*Proposed/s.test(await page.textContent('dialog.viewer .viewer-panes')));
+  check('a suggested ad can be compared with what runs now', /Now.*Suggested/s.test(await page.textContent('dialog.viewer .viewer-panes')));
   await page.click('dialog.viewer [data-viewer-close]');
   await headlines.locator('[data-revise]').click();
   check('Ask to change names the suggestion in the reply box', /About: New headline: Type it once/.test(await page.textContent('#cv-chip')));
@@ -893,7 +928,7 @@ with account_ctx.use(1):
   await page.click('#cv-line [data-cancel]');
   await page.waitForSelector('#cv-btns [data-stop]');
   await page.click('#cv-btns [data-stop]');
-  await page.waitForFunction(() => /Stop this job/.test(document.querySelector('#cv-hint')?.textContent || ''));
+  await page.waitForFunction(() => /Stop Claude here/.test(document.querySelector('#cv-hint')?.textContent || ''));
   check('Stop asks once, right where you clicked', (await desk()).tasks.filter((t) => ['claimed', 'running'].includes(t.status)).length === 1 && !(await page.locator('dialog.confirm[open]').count()));
   await page.click('#cv-btns [data-stop]');
   await page.waitForFunction(() => /You stopped this after/.test(document.querySelector('#cv-col')?.textContent || ''));
@@ -1474,8 +1509,10 @@ print(r['id'])"`).trim();
   check('advice the console cannot apply offers "Fix with Claude"', (await reels.locator('[data-fix]').count()) === 1 && (await reels.locator('[data-apply]').count()) === 0);
   await reels.locator('[data-fix]').click();
   await page.waitForSelector('dialog.confirm');
-  check('the dialog says what Claude will do and that nothing changes until approved',
-    /9:16 version with sound of each running ad/.test(await page.textContent('dialog.confirm')) && /Nothing changes on Meta until you approve/.test(await page.textContent('dialog.confirm')));
+  const fixWords = (await page.textContent('dialog.confirm')).replace(/\s+/g, ' ');
+  check('the dialog says what Claude will do and that nothing changes until accepted, in the console\'s words (accept, not approve)',
+    /9:16 version with sound of each running ad/.test(fixWords) && /Nothing changes on Meta until you accept/.test(fixWords)
+    && /Accepting one updates that ad/.test(fixWords) && !/Approving|proposes/.test(fixWords), fixWords.slice(0, 240));
   await page.click('dialog.confirm #cd-ok');
   await page.waitForFunction(() => /Waiting for your Mac/.test(document.querySelector('.advice-list')?.textContent || ''));
   const fixTask = sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;r=db.query(\\"SELECT id FROM desk_tasks WHERE kind='advice' ORDER BY id DESC LIMIT 1\\", one=True);print(r['id'])"`).trim();
@@ -1487,7 +1524,7 @@ print(r['id'])"`).trim();
     && /^Meta's advice: Add a vertical 9:16 video for Reels \(\+4 points\)/.test(mac.task.prompt) && mac.added.added === 2, JSON.stringify(mac).slice(0, 200));
   await page.reload();
   await page.waitForSelector('.advice-list');
-  check('Today shows the fixes waiting for a yes', /2 to approve/.test(await page.locator('.advice-list li', { hasText: 'vertical 9:16' }).textContent()));
+  check('Today shows the fixes waiting for a yes', /2 to accept/.test(await page.locator('.advice-list li', { hasText: 'vertical 9:16' }).textContent()));
   await page.goto(BASE + '/desk.html#waiting');
   const vcard = page.locator('#cv-col .sg', { hasText: `9:16 for Reels: N3` });
   await vcard.waitFor();
@@ -1588,14 +1625,14 @@ print(r['id'])"`).trim();
   check('each version shows only its own days and spend', verRows.length === 2 && /Version 2/.test(verRows[0][0]) && Number(verRows[0][1]) === expected.new_days && verRows[0][2].includes(verDollars(expected.new))
     && /Version 1/.test(verRows[1][0]) && Number(verRows[1][1]) === expected.old_days && verRows[1][2].includes(verDollars(expected.old)), JSON.stringify([verRows, expected]));
   check('the versions table fits its panel, so Switch back is never scrolled out of sight', await page.$eval('.ver-tbl', (t) => t.parentElement.scrollWidth <= t.parentElement.clientWidth));
-  check('the current version is marked and the days around the switch are explained', /Running now/.test(verRows[0][0]) && new RegExp(`${expected.mid_days} days around a switch`).test(await page.textContent('.ver-tbl >> xpath=ancestor::section')));
+  check('the current version is marked and the days around the switch are explained', /On the ad now/.test(verRows[0][0]) && new RegExp(`${expected.mid_days} days around a switch`).test(await page.textContent('.ver-tbl >> xpath=ancestor::section')));
   await page.screenshot({ path: `${OUT}/flow-versions.png`, fullPage: true });
   // Switching back puts the old creative on the same ad.
   await page.click('[data-restore="1"]');
   await page.waitForSelector('dialog.confirm');
   await page.click('dialog.confirm #cd-ok');
   await page.waitForFunction(() => document.querySelectorAll('.ver-tbl tbody tr').length === 3);
-  check('switching back restores the original creative as a new version', fakeAd(n5).creative_id === n5creative && /Back to version 1/.test(await page.locator('.ver-tbl tbody tr').first().textContent()) && /Running now/.test(await page.locator('.ver-tbl tbody tr').first().textContent()));
+  check('switching back restores the original creative as a new version', fakeAd(n5).creative_id === n5creative && /Back to version 1/.test(await page.locator('.ver-tbl tbody tr').first().textContent()) && /On the ad now/.test(await page.locator('.ver-tbl tbody tr').first().textContent()));
   // The other way round stays possible: a separate new ad, the current one untouched.
   await page.goto(BASE + '/desk.html#waiting');
   await cardOf('C').waitFor();
@@ -2000,7 +2037,7 @@ with account_ctx.use(a2):
   await page.goto(BASE + `/ad.html?id=${N3}#tab=history`);
   await page.waitForSelector('.st-tl');
   const n3Timeline = await page.locator('.st-tl').innerText();
-  check('Meta review steps show on the ad\'s History tab in plain words', ['Sent to review', 'Rejected by Meta', 'Personal attributes', 'Fixed · delivering again'].every((w) => n3Timeline.includes(w))
+  check('Meta review steps show on the ad\'s History tab in plain words', ['Sent to review', 'Rejected', 'Personal attributes', 'Fixed · delivering again'].every((w) => n3Timeline.includes(w))
     && !/Fixed · delivering again\s*\n\s*by /.test(n3Timeline), n3Timeline.replace(/\n+/g, ' | ').slice(0, 300));
   const again = (await call('GET', `/api/ads/ad/${N3}`)).body.timeline.length;
   pull();
@@ -2196,7 +2233,7 @@ print(','.join(left))
   await Promise.all([page.waitForURL((u) => /ad\.html\?id=/.test(u.href) && u.href.split('#')[0] !== fromAd.split('#')[0]), page.keyboard.press('Enter')]);
   check('⌘K finds an ad by name and Enter opens it', /ad\.html\?id=/.test(page.url()), `${target} → ${page.url()}`);
   await page.goto(BASE + '/inbox.html');
-  await page.waitForSelector('.ib-item, .ib-empty');
+  await page.waitForSelector('.ib-item, .ib-none');
   check('the Inbox page lists items with read state and filters', (await page.locator('#ib-filters [data-f]').count()) === 7 && (await page.locator('.ib-item').count()) > 0);
   // 8.6 Ads manager: select → bulk bar (Cancel changes nothing, confirm turns off), peek with the timeline, level in the URL,
   // a saved view from the toolbar, campaign and ad set pages with breadcrumbs.
@@ -2353,11 +2390,11 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
     return new URL(req.url()).searchParams.get('range');
   };
   const mtdAsked = await perfRange();
-  await page.waitForSelector('#range [data-range="mtd"][aria-pressed="true"]');
+  await page.waitForFunction(() => document.querySelector('#range-pick')?.value === 'mtd');
   check('Results honours a month range picked on Ads', mtdAsked === 'mtd', mtdAsked);
   await page.evaluate(() => localStorage.setItem('ebads-range', 'nonsense'));
   const unknownAsked = await perfRange();
-  await page.waitForSelector('#range [data-range="7"][aria-pressed="true"]');
+  await page.waitForFunction(() => document.querySelector('#range-pick')?.value === '7');
   check('Results ignores a range it does not know', unknownAsked === '7', unknownAsked);
   await page.evaluate(() => localStorage.removeItem('ebads-range'));
   await page.goto(BASE + '/leads.html');
@@ -2378,6 +2415,33 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   check('the Claude list link shows a conversation on desktop', (await page.getAttribute('#cv', 'data-state')) !== 'none');
   await page.goto(BASE + '/team.html');
   await page.waitForSelector('#team-table tbody tr');
+  {
+    // Team's temporary password is the one notice dialog: shown once, one Done button, focused.
+    const QA_MATE = 'qa-teammate@example.com';
+    const mate = (await getJson('/api/team')).members.find((m) => m.email === QA_MATE);
+    let pwResponse;
+    if (mate) {
+      await page.click(`[data-reset="${mate.id}"]`);
+      await page.waitForSelector('dialog.confirm[open]');
+      [pwResponse] = await Promise.all([page.waitForResponse((r) => r.request().method() === 'PATCH' && /api\/team\//.test(r.url())), page.click('dialog.confirm[open] #cd-ok')]);
+    } else {
+      await page.click('#add-btn');
+      await page.fill('#m-name', 'QA Teammate');
+      await page.fill('#m-email', QA_MATE);
+      [pwResponse] = await Promise.all([page.waitForResponse((r) => r.request().method() === 'POST' && /api\/team$/.test(r.url())), page.click('#m-save')]);
+    }
+    const temp = (await pwResponse.json()).temporary_password;
+    await page.waitForSelector('dialog.confirm[open] #pw-value');
+    const pwNotice = await page.evaluate(() => ({ pw: document.querySelector('dialog.confirm[open] #pw-value').textContent, cancel: !!document.querySelector('dialog.confirm[open] #cd-cancel'), focus: document.activeElement.id }));
+    await page.click('dialog.confirm[open] #cd-ok');
+    await page.waitForSelector('dialog.confirm[open]', { state: 'detached' }).catch(() => {});
+    check("Team shows a teammate's temporary password once, in the one notice dialog with a single Done button",
+      Boolean(temp) && pwNotice.pw === temp && !pwNotice.cancel && pwNotice.focus === 'cd-ok', JSON.stringify({ ...pwNotice, pw: pwNotice.pw === temp ? 'matches' : 'differs' }));
+    const added = (await getJson('/api/team')).members.find((m) => m.email === QA_MATE);
+    if (added && added.is_active) await page.evaluate(async (id) => { await fetch(`/api/team/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: false }) }); }, added.id);
+    await page.reload();
+    await page.waitForSelector('#team-table tbody tr');
+  }
   await page.evaluate(() => { const b = document.createElement('button'); b.id = 'qa-danger'; b.className = 'btn btn-danger'; b.textContent = 'Delete'; document.querySelector('.content').prepend(b); });
   await page.hover('#qa-danger');
   const dangerHover = await page.$eval('#qa-danger', (b) => { const c = getComputedStyle(b); return [c.color, c.backgroundColor]; });
@@ -2430,6 +2494,48 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   check('every text colour token pair reads at 4.5:1 (marks 3:1) in light and dark', lowContrast.length === 0, lowContrast.join(' | '));
   const retired = await guards.retiredTokens(page);
   check('no stylesheet uses a retired token (--seal, --rust, --pine, --fog, --lift)', retired.length === 0, retired.join(' | '));
+  // 9.2 part 2: one component of each kind and one vocabulary on every main screen.
+  const drift = [], leaks = [];
+  for (const p of guards.VOCAB_PAGES) {
+    await page.goto(BASE + p);
+    if (p.includes('#')) await page.reload();
+    await page.waitForTimeout(1300);
+    drift.push(...(await guards.componentDrift(page)).map((x) => `${p}: ${x}`));
+    leaks.push(...(await guards.vocabularyLeaks(page)).map((x) => `${p}: ${x}`));
+  }
+  check('one Tabs, Filter, Status, Table, Empty state, Skeleton, Suggestion card and Dialog: no retired builds, each styled once', drift.length === 0, [...new Set(drift)].slice(0, 8).join(' | '));
+  check('one vocabulary on every screen (Views, Cost per lead, Hook rate, Suggestion, Accept, Conversation)', leaks.length === 0, [...new Set(leaks)].slice(0, 8).join(' | '));
+  const rangeWords = async (url, sel) => { await page.goto(BASE + url); await page.waitForSelector(sel); return page.$$eval(`${sel} option`, (o) => o.map((x) => `${x.value}:${x.textContent}`).join(',')); };
+  const ranges = [await rangeWords('/ads.html', '#range-pick'), await rangeWords('/performance.html', '#range-pick'),
+    await rangeWords('/campaign.html?id=120252638288040312', '#range-pick'), await rangeWords('/compare.html?ids=120252672232030312,120252672233160312', '#cmp-range')];
+  check('one date range picker: Ads, Results, Campaign and Compare offer the same periods in the same words', new Set(ranges).size === 1 && /mtd:This month/.test(ranges[0]) && /^7:Last 7 days/.test(ranges[0]), ranges.join(' / '));
+  const chipsOk = async (url, sel) => { await page.goto(BASE + url); await page.waitForSelector(`${sel} button`); return page.$$eval(`${sel} button`, (bs) => bs.length > 1 && bs.every((b) => b.classList.contains('view-chip'))); };
+  check('list filters are the one Filter chip (Leads, Tests, Research, Results)', await chipsOk('/leads.html', '#filters') && await chipsOk('/experiments.html', '#show')
+    && await chipsOk('/research.html', '#swipe-filter') && await chipsOk('/performance.html', '#cr-filter'));
+  await page.goto(BASE + '/new-adset.html?campaign=120252638288040312');
+  await page.waitForFunction(() => document.querySelector('[data-explain="advantage_audience"]')?.textContent);
+  const advWords = await page.textContent('[data-explain="advantage_audience"]');
+  const placeWords = await page.textContent('[data-explain="advantage_placements"]');
+  await page.goto(BASE + '/research.html');
+  await page.waitForFunction(() => document.querySelector('[data-explain="swipe_file"]')?.textContent);
+  const swipeWords = await page.textContent('[data-explain="swipe_file"]');
+  check('Advantage+ and the swipe file are explained in plain words, from the one vocabulary', /Advantage\+ audience lets Meta/.test(advWords) && /wherever it costs least/.test(placeWords) && /competitor ads you saved/i.test(swipeWords), `${advWords} | ${placeWords} | ${swipeWords}`);
+  await page.goto(BASE + '/adset.html?id=120252672227950312');
+  await page.waitForSelector('#cr-all .tabs [role="tab"]');
+  check('the ad set page switches its lists with the one Tabs component', (await page.locator('#cr-all .tabs [role="tab"][aria-selected="true"]').count()) === 1 && (await page.locator('#cr-all .view-chip[role="tab"]').count()) === 0);
+  await page.route(/\/api\/ads\?/, async (r) => { await new Promise((ok) => setTimeout(ok, 1500)); await r.continue(); });
+  await page.goto(BASE + '/ads.html');
+  const skelShown = await page.locator('#cr-all .skeleton[role="status"]').isVisible();
+  await page.unroute(/\/api\/ads\?/);
+  await page.waitForSelector('#cr-all .cr-toolbar');
+  check('a page waiting for data shows the one loading skeleton, then the data', skelShown && (await page.locator('#cr-all .skeleton').count()) === 0);
+  await page.evaluate(async () => { const m = await import('/js/ui.js'); m.confirmDialog({ title: 'QA notice', confirm: 'Done', cancel: false }); });
+  await page.waitForSelector('dialog.confirm[open]');
+  const notice = await page.evaluate(() => ({ cancel: !!document.querySelector('dialog.confirm #cd-cancel'), focus: document.activeElement.id }));
+  await page.click('dialog.confirm #cd-ok');
+  check('a notice is the one dialog with a single button, focused (Team uses it for a temporary password)', !notice.cancel && notice.focus === 'cd-ok', JSON.stringify(notice));
+  const accepted = await page.evaluate(async () => { const r = await fetch('/api/proposals/999999999/approve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); return (await r.json()).error; });
+  check('the server speaks the same words: a missing suggestion is "Suggestion not found"', accepted === 'Suggestion not found', accepted);
   await page.keyboard.press('Tab');
   const firstStop = await page.evaluate(() => document.activeElement.className);
   const hashBefore = await page.evaluate(() => location.hash);

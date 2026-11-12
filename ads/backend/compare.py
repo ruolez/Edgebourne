@@ -7,11 +7,11 @@ ROWS = (  # key, label, direction (+1 higher is better, -1 lower is better, 0 no
     ("leads", "Leads", 1),
     ("cpl_cents", "Cost per lead", -1),
     ("qualified", "Qualified leads", 1),
-    ("cpq_cents", "Per qualified lead", -1),
+    ("cpq_cents", "Cost per qualified lead", -1),
     ("ctr", "Click rate", 1),
     ("hook", "Hook rate", 1),
     ("hold", "Hold rate", 1),
-    ("frequency", "Times each person saw it", 0),
+    ("frequency", "Views per person", 0),
     ("cpm_cents", "Cost per 1,000 views", -1),
 )
 

@@ -183,7 +183,7 @@ else if (me) {
         if (pl.cta_type) $("cta").value = pl.cta_type;
         if (!pl.media || pl.media.kind === "same") pickTab("same");
         else { media = { ...pl.media, name: `Claude's new ${pl.media.kind}`, ready: pl.media.kind === "image" }; showChosen(); pollVideo(); }
-        toast("Filled in from Claude's proposal. Edit anything, then create.");
+        toast("Filled in from Claude's suggestion. Edit anything, then create.");
       } catch (err) { toast(err.message, "bad"); }
     }
     $("file").addEventListener("change", (e) => { if (e.target.files[0]) upload(e.target.files[0]); e.target.value = ""; });

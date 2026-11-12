@@ -76,7 +76,7 @@ function resultWords(item, r) {
 export async function acceptSheet(ids, onDone) {
   const dlg = document.createElement("dialog");
   dlg.className = "confirm accept-sheet";
-  dlg.innerHTML = '<form method="dialog"><h2>Checking with Meta…</h2><p class="muted flush">Reading today’s numbers so what you approve is live.</p></form>';
+  dlg.innerHTML = '<form method="dialog"><h2>Checking with Meta…</h2><p class="muted flush">Reading today’s numbers so what you accept is live.</p></form>';
   document.body.appendChild(dlg);
   dlg.showModal();
   let items;

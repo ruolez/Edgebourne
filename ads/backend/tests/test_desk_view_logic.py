@@ -35,15 +35,16 @@ class ProposalStateTest(unittest.TestCase):
         cases = [
             (proposal(1, 2), None, None, ("waiting", "Waiting for you")),
             (proposal(1, 2, status="declined"), None, None, ("declined", "Declined")),
-            (proposal(1, 2, status="applied"), {"effective_status": "ACTIVE"}, None, ("live", "On")),
+            (proposal(1, 2, status="applied"), {"effective_status": "ACTIVE"}, None, ("live", "Delivering")),
             (proposal(1, 2, status="applied"), {"effective_status": "PAUSED"}, None, ("off", "Created, off")),
-            (proposal(1, 2, status="applied"), {"effective_status": "IN_PROCESS"}, None, ("review", "In review at Meta")),
+            (proposal(1, 2, status="applied"), {"effective_status": "IN_PROCESS"}, None, ("review", "In review")),
+            (proposal(1, 2, status="applied"), {"effective_status": "DISAPPROVED"}, None, ("failed", "Rejected")),
             (proposal(1, 2, status="applied"), {"effective_status": "ARCHIVED"}, None, ("archived", "Archived")),
             (proposal(1, 2, status="applied", kind="status"), None, None, ("applied", "Applied on Meta")),
             (proposal(1, 2, status="failed"), None, None, ("failed", "Meta refused it")),
             (proposal(1, 2, status="approved"), None, {"status": "running"}, ("working", "Claude is making it")),
             (proposal(1, 2, status="approved"), None, {"status": "failed"}, ("failed", "Claude didn't finish")),
-            (proposal(1, 2, status="approved"), None, None, ("approved", "Approved")),
+            (proposal(1, 2, status="approved"), None, None, ("approved", "Accepted")),
         ]
         for p, result, followup, expected in cases:
             self.assertEqual(desk_view.proposal_state(p, result, followup), expected, (p["status"], result, followup))
@@ -52,7 +53,7 @@ class ProposalStateTest(unittest.TestCase):
         made = proposal(5, 3, kind="creative", status="applied")
         state = desk_view.proposal_state(proposal(4, 2, status="approved"), None, {"status": "done"},
                                          made_state=desk_view.proposal_state(made, {"effective_status": "ACTIVE"}, None))
-        self.assertEqual(state, ("live", "On"))
+        self.assertEqual(state, ("live", "Delivering"))
 
 
 class FollowupTest(unittest.TestCase):

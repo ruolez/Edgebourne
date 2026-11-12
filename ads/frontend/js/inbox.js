@@ -1,5 +1,5 @@
 // Inbox: everything that changed or waits for someone: Meta's approvals and rejections, issues,
-// learning limited, new leads, Claude's proposals, money and tracking alerts. Read/unread per person.
+// learning limited, new leads, Claude's suggestions, money and tracking alerts. Read/unread per person.
 import { api, startLoad } from "./api.js";
 import { boot, esc, icon, onRefresh, toast, when, errorState } from "./ui.js";
 
@@ -21,7 +21,7 @@ function renderFilters() {
   const c = data.counts || {};
   $("ib-filters").innerHTML = FILTERS.map(([k, label]) => {
     const n = k === "unread" ? c.unread : k === "all" ? 0 : c[k];
-    return `<button type="button" role="tab" class="view-chip" aria-selected="${k === filter}" data-f="${k}">${label}${n ? `<span>${n}</span>` : ""}</button>`;
+    return `<button type="button" role="tab" aria-selected="${k === filter}" data-f="${k}">${label}${n ? `<span class="n">${n}</span>` : ""}</button>`;
   }).join("");
   $("ib-sub").textContent = c.unread ? `${c.unread} unread · approvals, rejections, leads, Claude and alerts in one place` : "All caught up";
   $("ib-all").hidden = !c.unread;
@@ -37,7 +37,7 @@ function itemHtml(i) {
 function renderList() {
   const items = data.items;
   if (!items.length) {
-    $("ib-list").innerHTML = `<li class="ib-empty">${filter === "unread" ? "Nothing new. Meta's approvals and rejections, new leads and Claude's ideas show up here." : "Nothing here yet."}</li>`;
+    $("ib-list").innerHTML = `<li class="empty compact ib-none">${filter === "unread" ? "Nothing new. Meta's approvals and rejections, new leads and Claude's suggestions show up here." : "Nothing here yet."}</li>`;
     return;
   }
   const today = new Date().toDateString();

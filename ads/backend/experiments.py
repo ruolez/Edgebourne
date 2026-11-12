@@ -83,7 +83,7 @@ def needs(metric, arm, target_cents, currency="USD"):
             out.append(f"{MIN_RESULTS - n} more {m['result']}{'' if MIN_RESULTS - n == 1 else 's'}")
     else:
         if (arm.get("impressions") or 0) < MIN_IMPRESSIONS:
-            out.append(f"{MIN_IMPRESSIONS - (arm.get('impressions') or 0):,} more impressions")
+            out.append(f"{MIN_IMPRESSIONS - (arm.get('impressions') or 0):,} more views")
         if n < MIN_SUCCESSES:
             out.append(f"{MIN_SUCCESSES - n} more {m['result']}{'' if MIN_SUCCESSES - n == 1 else 's'}")
     return " and ".join(out)

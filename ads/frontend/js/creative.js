@@ -1,6 +1,6 @@
 import { api, startLoad } from "./api.js";
-import { boot, confirmDialog, esc, icon, onRefresh, previewSkeleton, setCrumbs, shortWait, showPreviewFrame, switchHtml, toast, when, errorState } from "./ui.js";
-import { CTA_LABELS, count, money, pct, per, statusOf, moneyWhole } from "./format.js";
+import { boot, confirmDialog, esc, icon, onRefresh, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, switchHtml, toast, when, errorState } from "./ui.js";
+import { CTA_LABELS, EXPLAIN, RANGES, WORDS, count, money, pct, per, rangeSelect, statusOf, moneyWhole } from "./format.js";
 import { barList, columnChart } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
 import { ACTIVE, proposalCard, taskCard, wireTaskActions } from "./tasks.js";
@@ -34,7 +34,7 @@ function changeLine(c) {
   else what = `Created “${c.new_value || ""}”`;
   // The console's own read-back check refused Meta's copy ("creative … not used"): Meta didn't refuse anything.
   const why = / not used$/.test(String(c.new_value)) ? "Not applied" : "Meta refused";
-  return `<li><span>${esc(what)}${c.ok ? "" : ` <b class="bad-text">(${why}: ${esc(c.error || "")})</b>`}</span><small>${esc(when(c.created_at))}${c.user_name ? ` · ${esc(c.user_name)}` : ""}${c.proposal_id ? " · Claude's proposal" : ""}</small></li>`;
+  return `<li><span>${esc(what)}${c.ok ? "" : ` <b class="bad-text">(${why}: ${esc(c.error || "")})</b>`}</span><small>${esc(when(c.created_at))}${c.user_name ? ` · ${esc(c.user_name)}` : ""}${c.proposal_id ? " · Claude's suggestion" : ""}</small></li>`;
 }
 
 function reviewNotes(ad) {
@@ -100,12 +100,15 @@ async function loadPreview() {
   }
 }
 
+// This ad, as the Suggestion card's index: its name and words, so a card shows what would change.
+const adIndex = () => ({ ads: { [data.ad.id]: data.ad } });
+
 function versionsHtml(v, ad) {
   if (!v) return "";
   const video = ad.object_type === "VIDEO";
   const day = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   const rows = [...v.versions].reverse().map((x) => `<tr>
-    <td class="ver-name"><b>Version ${x.number}</b><small>${esc(x.label || "")}${x.started_on ? ` · from ${esc(day(x.started_on))}` : ""}</small>${x.current ? '<span class="pill ok">Running now</span>' : ad.can_control ? `<button class="btn btn-small" type="button" data-restore="${x.number}">Switch back</button>` : ""}</td>
+    <td class="ver-name"><b>Version ${x.number}</b><small>${esc(x.label || "")}${x.started_on ? ` · from ${esc(day(x.started_on))}` : ""}</small>${x.current ? '<span class="pill ok">On the ad now</span>' : ad.can_control ? `<button class="btn btn-small" type="button" data-restore="${x.number}">Switch back</button>` : ""}</td>
     <td class="num">${x.days}</td><td class="num">${money(x.spend_cents, { exact: true })}</td><td class="num">${count(x.leads)}</td>
     <td class="num">${per(x.spend_cents, x.leads)}</td><td class="num">${pct(x.link_clicks, x.impressions)}</td>
     ${video ? `<td class="num">${x.impressions ? pct(x.video_3s, x.impressions) : "—"}</td>` : ""}</tr>`).join("");
@@ -113,7 +116,7 @@ function versionsHtml(v, ad) {
   return `<section class="panel">
     <div class="panel-head"><h2>Versions</h2><p>Complete days only</p></div>
     <div class="panel-body stack tight">
-      <div class="tbl-wrap"><table class="tbl ver-tbl"><thead><tr><th>Version</th><th class="num">Days</th><th class="num">Spent</th><th class="num">Leads</th><th class="num">Per lead</th><th class="num">Click rate</th>${video ? '<th class="num">Hook rate</th>' : ""}</tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="tbl-wrap"><table class="tbl ver-tbl"><thead><tr><th>Version</th><th class="num">Days</th><th class="num">Spent</th><th class="num">Leads</th><th class="num">${WORDS.cpl}</th><th class="num">${WORDS.ctr}</th>${video ? `<th class="num">${WORDS.hook}</th>` : ""}</tr></thead><tbody>${rows}</tbody></table></div>
       ${c.days ? `<p class="muted small flush">${c.days} ${c.days === 1 ? "day" : "days"} around a switch count for neither version, because either could have been showing: ${money(c.spend_cents, { exact: true })}, ${count(c.leads)} ${c.leads === 1 ? "lead" : "leads"}.</p>` : ""}
       ${v.versions.some((x) => !x.enough) ? '<p class="muted small flush">Too early to judge: a version needs at least 3 leads and twice your target cost per lead in spend.</p>' : ""}
     </div></section>`;
@@ -141,18 +144,18 @@ function renderOverview() {
         </div>
       </section>
       <div class="stack">
-        ${pending.length ? `<section class="panel claude-panel"><div class="panel-head"><h2>Claude suggests</h2></div><div class="panel-body stack tight" id="props">${pending.map(proposalCard).join("")}</div></section>` : ""}
+        ${pending.length ? `<section class="panel claude-panel"><div class="panel-head"><h2>Claude suggests</h2></div><div class="panel-body stack tight" id="props">${pending.map((p) => proposalCard(p, null, adIndex())).join("")}</div></section>` : ""}
         <section class="panel">
           <div class="panel-head"><h2>Results</h2><p>Since it started, today so far included</p></div>
           <div class="panel-body">
             <dl class="mini-figs wide six seven">
               <div><dt>Spent</dt><dd>${money(lifetime.spend_cents, { exact: true })}</dd></div>
               <div><dt>Leads</dt><dd>${count(lifetime.leads)}</dd></div>
-              <div><dt>Per lead</dt><dd>${per(lifetime.spend_cents, lifetime.leads)}</dd></div>
-              <div><dt>Views</dt><dd>${count(lifetime.impressions)}<small class="dd-sub">today ${count(lifetime.today_impressions)}</small></dd></div>
-              <div title="Different people who saw it at least once"><dt>People reached</dt><dd>${count(lifetime.reach)}${lifetime.reach_summed ? "*" : ""}<small class="dd-sub">today ${count(lifetime.today_reach)}</small></dd></div>
-              <div><dt>Click rate</dt><dd>${pct(lifetime.link_clicks, lifetime.impressions)}</dd></div>
-              ${ad.object_type === "VIDEO" ? `<div><dt>Hook rate</dt><dd>${hook}</dd></div>` : ""}
+              <div><dt>${WORDS.cpl}</dt><dd>${per(lifetime.spend_cents, lifetime.leads)}</dd></div>
+              <div title="${esc(EXPLAIN.impressions)}"><dt>${WORDS.impressions}</dt><dd>${count(lifetime.impressions)}<small class="dd-sub">today ${count(lifetime.today_impressions)}</small></dd></div>
+              <div title="${esc(EXPLAIN.reach)}"><dt>${WORDS.reach}</dt><dd>${count(lifetime.reach)}${lifetime.reach_summed ? "*" : ""}<small class="dd-sub">today ${count(lifetime.today_reach)}</small></dd></div>
+              <div title="${esc(EXPLAIN.ctr)}"><dt>${WORDS.ctr}</dt><dd>${pct(lifetime.link_clicks, lifetime.impressions)}</dd></div>
+              ${ad.object_type === "VIDEO" ? `<div title="${esc(EXPLAIN.hook)}"><dt>${WORDS.hook}</dt><dd>${hook}</dd></div>` : ""}
             </dl>
             <div class="charts single"><div><h3 class="chart-title">Spend per day, last 30 days</h3><div class="chart" id="c-spend"></div></div>
             <div><h3 class="chart-title">Leads per day</h3><div class="chart" id="c-leads"></div></div></div>
@@ -184,10 +187,11 @@ function renderOverview() {
         </section>
         <section class="panel" id="idea-panel">
           <div class="panel-head"><h2>The idea</h2><p>Tags that group ads on Results</p></div>
-          <form class="panel-body stack tight" id="idea" novalidate><p class="muted flush">Loading…</p></form>
+          <form class="panel-body stack tight" id="idea" novalidate>${skeleton()}</form>
         </section>
         <section class="panel" id="enh-panel">
-          <div class="panel-head"><h2>Meta's automatic changes</h2><p>Advantage+ creative</p></div>
+          <div class="panel-head"><h2>Meta's automatic changes</h2></div>
+          <p class="muted small explain-line">${esc(EXPLAIN.advantage_creative)}</p>
           <div class="panel-body" id="enh"><p class="muted flush">Reading from Meta…</p></div>
         </section>
         <section class="panel">
@@ -305,13 +309,13 @@ async function renderPolish() {
             <span class="spacer"></span>
             <button class="btn btn-claude" type="submit" id="run-polish">${icon("spark")}<span>Run polish</span></button>
           </div>
-          <p class="muted small flush">Claude runs this on your Mac with your Meta access and the design rules from our rounds. Nothing changes on Meta until you approve: a new version goes on this same ad, so it keeps its results.</p>
+          <p class="muted small flush">Claude runs this on your Mac with your Meta access and the design rules from our rounds. Nothing changes on Meta until you accept the suggestion: a new version goes on this same ad, so it keeps its results.</p>
         </form>
       </section>
       <section class="panel render-panel">
         <div class="panel-head"><h2>Make a new version</h2></div>
         <form class="panel-body stack tight" id="render-form" novalidate>
-          <p class="flush muted small">Claude rebuilds the creative on your Mac (same pipeline as N1–N5), uploads it and sends it back for you to approve. Approving updates this ad. Takes 10–40 minutes.</p>
+          <p class="flush muted small">Claude rebuilds the creative on your Mac (same pipeline as N1–N5), uploads it and sends it back as a suggestion. Accepting it updates this ad. Takes 10–40 minutes.</p>
           ${last ? `<label class="check"><input type="checkbox" id="use-fixes" checked> Apply the fixes from the latest polish (score ${last.scorecard.overall}/5)</label>` : ""}
           <div class="field"><label for="render-direction">What should change</label>
             <textarea class="input" id="render-direction" rows="3" placeholder="e.g. Shorter headline, bigger Tap below note, AI chip inside the report card."></textarea></div>
@@ -319,8 +323,8 @@ async function renderPolish() {
         </form>
       </section>
     </div>
-    <h2 class="section-h">Runs</h2>
-    <div class="stack" id="runs">${runs.length ? runs.map((t) => taskCard(t, openReports)).join("") : '<section class="panel empty"><h3>No polish runs yet</h3><p>Pick the passes above and run them. Results show here with a score per pass, the fixes, and new versions of the copy you can put on this ad.</p></section>'}</div>`;
+    <h2 class="section-h">Polish checks</h2>
+    <div class="stack" id="runs">${runs.length ? runs.map((t) => taskCard(t, openReports, adIndex())).join("") : '<section class="panel empty"><h3>No polish checks yet</h3><p>Pick the passes above and run them. Results show here with a score per pass, the fixes, and new versions of the copy you can put on this ad.</p></section>'}</div>`;
   $("direction").value = typed.direction;
   $("render-direction").value = typed.render;
 
@@ -366,7 +370,7 @@ async function renderPolish() {
     const useFixes = $("use-fixes") && $("use-fixes").checked;
     const ok = await confirmDialog({
       title: "Make a new version?",
-      body: "<p>Claude rebuilds the creative on your Mac and uploads it to your Meta media library. You get it back as a proposal; nothing changes on this ad until you approve it.</p>",
+      body: "<p>Claude rebuilds the creative on your Mac and uploads it to your Meta media library. You get it back as a suggestion; nothing changes on this ad until you accept it.</p>",
       confirm: "Make it", claude: true,
     });
     if (!ok) { renderSending = false; return; }
@@ -395,18 +399,18 @@ async function renderAudience() {
   $("cr-main").innerHTML = `
     <section class="panel">
       <div class="panel-head wrap"><h2>Who saw it, and where</h2><span class="spacer"></span>
-        <div class="segmented" id="aud-range">${[["7", "7 days"], ["14", "14 days"], ["30", "30 days"], ["lifetime", "All time"]].map(([k, l]) => `<button type="button" data-r="${k}" aria-pressed="${k === audienceRange}">${l}</button>`).join("")}</div></div>
+        ${rangeSelect("aud-range", audienceRange, [...RANGES.slice(0, 3), ["lifetime", "All time"]])}</div>
       <div class="panel-body stack">
         <div class="format-scroll"><div class="segmented" id="aud-by">${BY.map(([k, l]) => `<button type="button" data-by="${k}" aria-pressed="${k === audienceBy}">${l}</button>`).join("")}</div></div>
         <div class="aud-grid">
-          <div><h3 class="chart-title">Share of spend</h3><div id="aud-spend"><p class="muted">Loading from Meta…</p></div></div>
+          <div><h3 class="chart-title">Share of spend</h3><div id="aud-spend">${skeleton("Loading from Meta…")}</div></div>
           <div><h3 class="chart-title">Leads and cost per lead</h3><div id="aud-leads"></div></div>
         </div>
         <p class="muted small flush" id="aud-note"></p>
       </div>
     </section>`;
   $("aud-by").addEventListener("click", (e) => { const b = e.target.closest("[data-by]"); if (b) { audienceBy = b.dataset.by; renderAudience(); } });
-  $("aud-range").addEventListener("click", (e) => { const b = e.target.closest("[data-r]"); if (b) { audienceRange = b.dataset.r; renderAudience(); } });
+  $("aud-range").addEventListener("change", (e) => { audienceRange = e.target.value; renderAudience(); });
   const superseded = startLoad("tab");
   try {
     const d = await api(`/api/insights/breakdown?level=ad&id=${encodeURIComponent(adId)}&by=${audienceBy}&range=${audienceRange}`);
@@ -421,14 +425,14 @@ async function renderAudience() {
 // ---------------------------------------------------------------- video
 
 async function renderVideo() {
-  $("cr-main").innerHTML = '<section class="panel"><div class="panel-body"><p class="muted">Loading…</p></div></section>';
+  $("cr-main").innerHTML = `<section class="panel"><div class="panel-body">${skeleton()}</div></section>`;
   const superseded = startLoad("tab");
   try {
     const d = await api(`/api/insights/ad/${encodeURIComponent(adId)}/diagnostics`);
     if (superseded()) return;
     const f = d.funnel;
     const steps = [
-      { label: "Shown (impressions)", v: f.impressions }, { label: "Watched 3 seconds", v: f.video_3s }, { label: "Watched 25%", v: f.p25 },
+      { label: WORDS.impressions, v: f.impressions }, { label: "Watched 3 seconds", v: f.video_3s }, { label: "Watched 25%", v: f.p25 },
       { label: "Watched 50%", v: f.p50 }, { label: "Watched 75%", v: f.p75 }, { label: "Watched to the end", v: f.p100 },
     ];
     const hook = f.impressions ? f.video_3s / f.impressions : null;
@@ -445,11 +449,11 @@ async function renderVideo() {
             <div class="panel-head"><h2>Hook and hold</h2></div>
             <div class="panel-body">
               <dl class="mini-figs wide three">
-                <div><dt>Hook rate</dt><dd>${hook == null ? "—" : `${(hook * 100).toFixed(1)}%`}</dd></div>
-                <div><dt>Hold rate</dt><dd>${hold == null ? "—" : `${(hold * 100).toFixed(1)}%`}</dd></div>
+                <div><dt>${WORDS.hook}</dt><dd>${hook == null ? "—" : `${(hook * 100).toFixed(1)}%`}</dd></div>
+                <div><dt>${WORDS.hold}</dt><dd>${hold == null ? "—" : `${(hold * 100).toFixed(1)}%`}</dd></div>
                 <div><dt>Avg. watch</dt><dd>${d.avg_watch_seconds ? `${d.avg_watch_seconds}s` : "—"}</dd></div>
               </dl>
-              <p class="muted small flush">Hook rate = people who watched 3 seconds ÷ impressions (stopping the scroll). Hold rate = ThruPlays ÷ 3-second views (staying for the message). Rules of thumb: hook above 25–30%, hold above 30%.</p>
+              <p class="muted small flush">${esc(EXPLAIN.hook)} ${esc(EXPLAIN.hold)} Rules of thumb: hook above 25–30%, hold above 30%.</p>
             </div>
           </section>
           <section class="panel">
@@ -492,7 +496,7 @@ function commentHtml(c) {
 }
 
 async function renderComments() {
-  $("cr-main").innerHTML = '<section class="panel"><div class="panel-body"><p class="muted">Loading comments from Facebook…</p></div></section>';
+  $("cr-main").innerHTML = `<section class="panel"><div class="panel-body">${skeleton("Loading comments from Facebook…")}</div></section>`;
   const superseded = startLoad("tab");
   try {
     const d = await api(`/api/insights/ad/${encodeURIComponent(adId)}/comments`);
@@ -546,7 +550,7 @@ function renderHistory() {
       <div class="panel-body">${tl.length ? `<ol class="st-tl">${tl.map((r) => `<li class="st-ev ${tone(r)}"><span class="st-dot"></span><span class="st-when">${esc(when(r.at))}</span><span class="st-what"><b>${esc(r.headline)}</b>${r.by_name ? `<small>by ${esc(r.by_name)}</small>` : ""}</span><span class="st-src">${src[r.source] || ""}</span></li>`).join("")}</ol>` : '<p class="muted flush">Nothing recorded yet. Changes appear here from the next refresh.</p>'}</div></section>
     <section class="panel"><div class="panel-head"><h2>Changes</h2><p>Made from this dashboard</p></div>
       <div class="panel-body">${data.changes.length ? `<ul class="chg-list">${data.changes.map(changeLine).join("")}</ul>` : '<p class="muted flush">No changes yet.</p>'}</div></section>
-    ${decided.length ? `<section class="panel"><div class="panel-head"><h2>Claude's earlier proposals</h2></div><div class="panel-body stack tight">${decided.map(proposalCard).join("")}</div></section>` : ""}`;
+    ${decided.length ? `<section class="panel"><div class="panel-head"><h2>Claude's earlier suggestions</h2></div><div class="panel-body stack tight">${decided.map((p) => proposalCard(p, null, adIndex())).join("")}</div></section>` : ""}`;
 }
 
 // ---------------------------------------------------------------- load

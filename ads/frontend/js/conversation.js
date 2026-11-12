@@ -1,6 +1,6 @@
 // The Claude page's conversations: the list on the left, one conversation on the right.
 // A conversation is one or more runs (data.board.threads); each run is what you said and Claude's answer.
-import { esc, icon, when } from "./ui.js";
+import { emptyState, esc, icon, when } from "./ui.js";
 import { renderMarkdown } from "./markdown.js";
 import { scorecardHtml } from "./tasks.js";
 import { RUN_WORDS, firstLine, proposalRow, suggestion, suggestionType } from "./board.js";
@@ -81,7 +81,7 @@ function row(th, data, ix, ctx, pos) {
   </li>`;
 }
 
-// One job waiting on the Mac. A follow-up shows which conversation it belongs to.
+// One thing waiting on the Mac. A follow-up shows which conversation it belongs to.
 function queueRow(t, i, data, ix, ctx) {
   const key = t.thread_id || t.id;
   const th = data.board.threads[key];
@@ -90,7 +90,7 @@ function queueRow(t, i, data, ix, ctx) {
     <a class="cl-row" href="#r/${t.id}" ${ctx.sel === key ? 'aria-current="true"' : ""}>
       <span class="cl-dot pos" aria-hidden="true">${i + 1}</span>
       <span class="cl-text"><b>${esc(turnTitle(t))}</b><small>${sub}</small></span>
-    </a><span class="cl-tools">${i ? `<button class="cl-x" type="button" data-next="${t.id}" aria-label="Run this next" title="Run next">↑</button>` : ""}<button class="cl-x" type="button" data-cancel="${t.id}" aria-label="Cancel this job" title="Cancel">${icon("close")}</button></span>
+    </a><span class="cl-tools">${i ? `<button class="cl-x" type="button" data-next="${t.id}" aria-label="Run this next" title="Run next">↑</button>` : ""}<button class="cl-x" type="button" data-cancel="${t.id}" aria-label="Cancel this one" title="Cancel">${icon("close")}</button></span>
   </li>`;
 }
 
@@ -209,7 +209,7 @@ function answer(t, th, data, ix, ctx) {
   if (t.status === "queued") {
     const ahead = data.board.queue.indexOf(t.id);
     const working = data.board.working.length > 0;
-    return `<p class="cv-note cv-wait"><span>${ahead > 0 ? `${plural(ahead, "job")} ahead of this one. Your Mac runs one at a time.` : working ? "This one is next, as soon as the current job finishes." : data.bridge.online ? "Starting…" : "Your Mac is offline, so this starts when it’s back."}</span><button class="btn btn-small btn-quiet" type="button" data-cancel="${t.id}">Cancel</button></p>`;
+    return `<p class="cv-note cv-wait"><span>${ahead > 0 ? `${ahead} ahead of this one in line. Your Mac does one at a time.` : working ? "This one is next, as soon as Claude finishes the current one." : data.bridge.online ? "Starting…" : "Your Mac is offline, so this starts when it’s back."}</span><button class="btn btn-small btn-quiet" type="button" data-cancel="${t.id}">Cancel</button></p>`;
   }
   if (isLive(t)) return (t.steps || []).length ? trail(t, true) : `<p class="cv-progress"><span class="dot" aria-hidden="true"></span>${esc(t.progress || "Starting…")}</p>`;
   if (t.status === "failed") return `<p class="cv-note bad">${esc(t.error || "It stopped without saying why.")}</p><div class="cv-acts"><button class="btn btn-small" type="button" data-again="${t.id}">Try again</button></div>`;
@@ -251,7 +251,7 @@ export function turnKey(t, data) {
 export function decideHtml(data, ix) {
   const tasks = data.tasks.filter((t) => pendingIn(t).length);
   if (!tasks.length) {
-    return `<div class="cv-empty"><h2>Nothing to decide</h2><p>When Claude suggests a change it shows up here too, under the question it came from.</p></div>`;
+    return emptyState({ title: "Nothing to decide", body: "When Claude suggests a change it shows up here too, under the question it came from.", tag: "div", panel: false, variant: "center" });
   }
   return tasks.map((t) => `<section class="cv-group" data-group="${t.id}">
       <header><a class="cv-group-q" href="#r/${t.id}">${esc(turnTitle(t))}</a><small>${esc(kindWord(t))} · ${esc(when(t.created_at))}</small>
