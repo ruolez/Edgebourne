@@ -183,7 +183,7 @@ def evaluate(snap, rules, today):
     if r["on"] and meta >= 2 and inbox == 0:
         add("tracking", "account", "bad", "Leads aren't reaching the inbox",
             [f"Meta counted {meta} leads in the last two days, but none arrived here. Check the Page connection in Settings → Meta."],
-            None, "/settings.html")
+            None, "/settings.html#meta")
 
     r = rules["events_quiet"]
     t = snap.get("tracking") or {}
@@ -196,7 +196,7 @@ def evaluate(snap, rules, today):
     if r["on"] and snap.get("connected") and age is not None and age > r["hours"]:
         add("stale_data", "account", "warn", "Meta hasn't answered for a while",
             [f"The last pull from Meta was {age:.0f} hours ago. The token or the connection may need a look in Settings → Meta."],
-            None, "/settings.html")
+            None, "/settings.html#meta")
     return found
 
 

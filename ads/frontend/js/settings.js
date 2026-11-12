@@ -1,9 +1,66 @@
 import { api } from "./api.js";
 import { money, currencySymbol } from "./format.js";
-import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when, errorState, guardLeaving, markSaved, safePath } from "./ui.js";
+import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when, errorState, guardLeaving, markSaved, safePath, setCrumbs } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let s;
+let owner = false;
+
+// One section at a time (9.4f). The address names it: #<section id>, the id of anything inside it (#meta-form,
+// #mt-form, #tg-targets… from the days of the long page, and the links stored in alerts), or a short alias.
+// Anything else, or a whole-console section for someone who isn't the console's owner, opens Meta connection.
+const SECTION_ALIASES = { reports: "reports-panel", activity: "activity-panel", accounts: "accounts-panel", refresh: "auto",
+  smtp: "email", "ab-tests": "ab", stages: "crm", numbers: "tracking" };
+
+function sectionFor(hash) {
+  let id = hash;
+  try { id = decodeURIComponent(hash); } catch (e) { /* a broken address opens the first section */ }
+  id = SECTION_ALIASES[id] || id;
+  const el = id ? document.getElementById(id) : null;
+  const sec = el && el.closest("[data-section]");
+  return sec && (owner || !sec.closest("#grp-console")) ? { sec, target: el } : { sec: $("meta"), target: null };
+}
+
+const navLink = (id) => document.querySelector(`.settings-nav [data-set="${id}"]`);
+
+function showSection({ first = false } = {}) {
+  const { sec, target } = sectionFor(location.hash.slice(1));
+  const whole = Boolean(sec.closest("#grp-console"));
+  document.querySelectorAll("[data-section]").forEach((x) => { x.hidden = x !== sec; });
+  $("grp-console").hidden = !whole;
+  const link = navLink(sec.id);
+  document.querySelectorAll(".settings-nav [data-set]").forEach((a) => { if (a === link) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+  const label = link.firstChild.textContent;
+  $("set-scope").textContent = whole ? "Whole console · every account" : `This account · ${me.account.name}`;
+  setCrumbs([{ label: "Settings", href: "/settings.html" }, { label }]);
+  document.title = `${label} · Settings | Edge Bourne Ads`;
+  const fold = target && (target.tagName === "DETAILS" ? target : target.closest("details"));
+  if (fold) fold.open = true;
+  // A section opens at the top of the page (with the list above it on phones); only something inside it,
+  // like #crm-code, is scrolled to. The browser's own jump to #<section> on arrival is undone, also once the page has loaded.
+  const deep = target && target !== sec && !target.matches("[data-section] > form, [data-section] > .panel-body");
+  const place = () => (deep ? target.scrollIntoView({ block: "start" }) : window.scrollTo(0, 0));
+  if (deep || !first || location.hash) place();
+  if (first && location.hash && document.readyState !== "complete") window.addEventListener("load", () => requestAnimationFrame(place), { once: true });
+  // Phones: the section row scrolls sideways; keep the open one in view.
+  const nav = link.parentElement;
+  if (nav.scrollWidth > nav.clientWidth) {
+    const l = link.getBoundingClientRect(), n = nav.getBoundingClientRect();
+    nav.scrollLeft += l.left - n.left - (n.width - l.width) / 2;
+  }
+}
+
+// A section with typed, unsaved work keeps a dot in the list, so switching away doesn't hide it.
+const unsavedForms = new Set();
+function paintUnsaved() {
+  document.querySelectorAll(".settings-nav [data-set]").forEach((a) => {
+    const on = [...unsavedForms].some((f) => f.closest("[data-section]")?.id === a.dataset.set);
+    const dot = a.querySelector(".set-dirty");
+    if (on && !dot) a.insertAdjacentHTML("beforeend", '<span class="set-dirty"><span class="sr-only">, not saved yet</span></span>');
+    if (!on && dot) dot.remove();
+  });
+}
+function saved(form) { markSaved(form); unsavedForms.delete(form); paintUnsaved(); }
 
 function fill(form, section) {
   for (const [key, value] of Object.entries(section)) {
@@ -253,6 +310,8 @@ function renderSmtp() {
   const use = s.smtp_in_use || { source: "none" };
   const note = $("smtp-source");
   note.hidden = false;
+  // The website's mailbox needs nothing here, so the mailbox fields stay folded under Advanced.
+  $("smtp-own").open = use.source !== "website";
   note.textContent = use.source === "website"
     ? `Using the website's email settings: ${use.host}, sending from ${use.from_email}. Nothing to fill in here. Change them in the website admin under Email, or enter a different mailbox below to send ad alerts from it instead.`
     : use.source === "own"
@@ -274,8 +333,6 @@ function renderTargets() {
 // What every account shares: only the console's owner changes it, from Edge Bourne's own Settings.
 async function renderConsole() {
   const group = $("grp-console");
-  document.querySelectorAll(".console-only").forEach((el) => { el.hidden = !s.owner; });
-  group.hidden = !s.owner;
   if (!s.owner) return;
   const note = $("console-note");
   note.hidden = s.console_editable;
@@ -342,8 +399,16 @@ const describe = (r) => ACTIONS[r.action] || r.action;
 const me = await boot({ page: "settings", admin: true });
 if (me) {
   guardLeaving();
-  $("meta-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); markSaved(e.target); toast("Meta settings saved"); fill($("meta-form"), s.meta); renderMeta(); }); });
-  $("app-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); markSaved(e.target); toast("Meta app saved"); fillApp(); renderMeta(); }); });
+  owner = Boolean(me.owner);
+  document.querySelectorAll(".console-only").forEach((el) => { el.hidden = !owner; });
+  showSection({ first: true });
+  window.addEventListener("hashchange", () => showSection());
+  document.addEventListener("input", (e) => {
+    const form = e.target.closest("[data-section] form");
+    if (form && e.target.matches("input:not([type=checkbox]):not([type=radio]):not([type=search]):not([data-no-guard]), textarea:not([data-no-guard])")) { unsavedForms.add(form); paintUnsaved(); }
+  });
+  $("meta-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); saved(e.target); toast("Meta settings saved"); fill($("meta-form"), s.meta); renderMeta(); }); });
+  $("app-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); saved(e.target); toast("Meta app saved"); fillApp(); renderMeta(); }); });
   $("tg-targets").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     fieldError(e.target);
     const raisedTo = Math.round(Number($("t-max").value) * 100);
@@ -351,7 +416,7 @@ if (me) {
       body: `<p>No budget in this account can go above this. It goes from <b>${money(s.targets.max_daily_cents, { exact: true })}</b> to <b>${money(raisedTo, { exact: true })}</b> a day.</p>`, confirm: `Raise to ${money(raisedTo, { exact: true })}` }))) return;
     try { s = await api("/api/settings/targets", { method: "PUT", body: values(e.target) }); }
     catch (err) { if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; } throw err; }
-    markSaved(e.target); toast("Targets saved"); renderTargets(); renderAlerts();
+    saved(e.target); toast("Targets saved"); renderTargets(); renderAlerts();
   }); });
   $("acct-list").addEventListener("click", async (e) => {
     const ren = e.target.closest("[data-acct-rename]");
@@ -378,7 +443,7 @@ if (me) {
     if (!yes) return;
     try { await api("/api/reports/revoke", { method: "POST" }); toast("Old links stopped"); } catch (err) { toast(err.message, "bad"); }
   });
-  $("smtp-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/smtp", { method: "PUT", body: values(e.target) }); markSaved(e.target); toast("Email settings saved"); fill($("smtp-form"), s.smtp); renderSmtp(); }); });
+  $("smtp-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/smtp", { method: "PUT", body: values(e.target) }); saved(e.target); toast("Email settings saved"); fill($("smtp-form"), s.smtp); renderSmtp(); }); });
   $("tg-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     fieldError(e.target);
     try {
@@ -387,7 +452,7 @@ if (me) {
       if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; }
       throw err;
     }
-    markSaved(e.target); toast(`Telegram bot @${s.telegram.username} is ready`); renderTelegram();
+    saved(e.target); toast(`Telegram bot @${s.telegram.username} is ready`); renderTelegram();
   }); });
   $("tg-remove").addEventListener("click", (e) => run(e.currentTarget, async () => {
     if (!(await confirmDialog({ title: "Remove the Telegram bot?", body: "Nobody gets Telegram alerts until a bot is added again. People's links are kept.", confirm: "Remove", danger: true }))) return;
@@ -410,12 +475,12 @@ if (me) {
       if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; }
       throw err;
     }
-    markSaved(e.target); toast(auto ? "Saved. New leads get a reply by themselves." : "Saved"); renderReplies();
+    saved(e.target); toast(auto ? "Saved. New leads get a reply by themselves." : "Saved"); renderReplies();
   }); });
   $("rp-auto").addEventListener("change", (e) => { $("rp-auto-pick").hidden = !e.target.checked; });
   $("tpl-list").addEventListener("click", (e) => { const b = e.target.closest("[data-edit]"); if (b) editTemplate(Number(b.dataset.edit)); });
   $("tpl-add").addEventListener("click", () => editTemplate("new"));
-  $("tpl-cancel").addEventListener("click", closeTemplate);
+  $("tpl-cancel").addEventListener("click", () => { closeTemplate(); saved($("tpl-form")); });
   ["tpl-subject", "tpl-body"].forEach((id) => $(id).addEventListener("input", previewTemplate));
   $("tpl-chips").addEventListener("click", (e) => {
     const b = e.target.closest("[data-insert]");
@@ -436,7 +501,7 @@ if (me) {
       if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; }
       throw err;
     }
-    markSaved(e.target); toast("Template saved"); closeTemplate(); renderReplies();
+    saved(e.target); toast("Template saved"); closeTemplate(); renderReplies();
   }); });
   $("tpl-delete").addEventListener("click", (e) => run(e.currentTarget, async () => {
     const t = s.replies.templates.find((x) => x.id === editing);
@@ -452,11 +517,11 @@ if (me) {
       else r[el.dataset.key] = el.dataset.key === "target_cents" ? (el.value === "" ? null : Math.round(Number(el.value) * 100)) : el.value;
     });
     s = await api("/api/settings/alerts", { method: "PUT", body: { rules } });
-    markSaved(e.target); toast("Alerts saved"); renderAlerts();
+    saved(e.target); toast("Alerts saved"); renderAlerts();
   }); });
   $("auto-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     s = await api("/api/settings/refresh", { method: "PUT", body: { minutes: Number($("auto-minutes").value) } });
-    markSaved(e.target); toast(`The latest now comes from Meta ${every(s.auto_refresh_minutes).toLowerCase()}`); renderAuto();
+    saved(e.target); toast(`The latest now comes from Meta ${every(s.auto_refresh_minutes).toLowerCase()}`); renderAuto();
   }); });
   $("tr-fresh").addEventListener("click", () => loadTracking(true));
   $("rep-form").addEventListener("submit", async (e) => {
@@ -465,7 +530,7 @@ if (me) {
     try {
       await api("/api/reports/settings", { method: "PUT", body: { email: $("rep-email").value } });
       s = await api("/api/settings/client-access", { method: "PUT", body: { update_leads: $("rep-leads").checked } });
-      markSaved(e.target); toast("Report settings saved"); loadReports();
+      saved(e.target); toast("Report settings saved"); loadReports();
     } catch (err) { if (err.body && err.body.field) fieldError(e.target, err.body.field, err.message); else toast(err.message, "bad"); }
   });
   $("mt-form").addEventListener("submit", async (e) => {
@@ -476,16 +541,16 @@ if (me) {
       confirm: "Allow" }))) { $("mt-on").checked = false; return; }
     run(e.submitter, async () => {
       s = await api("/api/settings/meta-tests", { method: "PUT", body: { on } });
-      markSaved(e.target); toast(on ? "Meta A/B tests are on" : "Meta A/B tests are off"); renderMetaTests();
+      saved(e.target); toast(on ? "Meta A/B tests are on" : "Meta A/B tests are off"); renderMetaTests();
     });
   });
   $("crm-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     s = await api("/api/settings/meta", { method: "PUT", body: { meta_dataset_id: $("meta_dataset_id").value, crm_send_enabled: $("crm_send_enabled").checked ? "1" : "" } });
-    markSaved(e.target); toast($("crm_send_enabled").checked ? "Lead stages now go to Meta" : "Lead stages are no longer sent"); renderCrm();
+    saved(e.target); toast($("crm_send_enabled").checked ? "Lead stages now go to Meta" : "Lead stages are no longer sent"); renderCrm();
   }); });
   $("crm-test").addEventListener("click", (e) => run(e.currentTarget, async () => {
     const r = await api("/api/settings/meta/crm-test", { method: "POST", body: { code: $("crm-code").value } });
-    $("crm-result").innerHTML = `<p class="note ok">Meta received ${esc(String(r.received ?? 0))} event. Check Test events in Events Manager.</p>`;
+    $("crm-test-result").innerHTML = `<p class="note ok">Meta received ${esc(String(r.received ?? 0))} event. Check Test events in Events Manager.</p>`;
   }));
   $("smtp-test").addEventListener("click", (e) => run(e.currentTarget, async () => { const r = await api("/api/settings/smtp/test", { method: "POST" }); toast(`Test email sent to ${r.sent_to}${r.source === "website" ? " using the website's mailbox" : ""}`); }));
   $("meta-test").addEventListener("click", (e) => run(e.currentTarget, async () => {
@@ -494,5 +559,5 @@ if (me) {
   }));
   $("meta-connect").addEventListener("click", (e) => run(e.currentTarget, async () => { await api("/api/settings/meta/connect-page", { method: "POST" }); toast("The Page now sends new leads here"); await refreshStatus(); }));
   $("meta-sync").addEventListener("click", (e) => run(e.currentTarget, async () => { const r = await api("/api/settings/meta/sync", { method: "POST", body: { days: 30 } }); toast(`${r.campaigns} campaign(s) synced, ${r.new_leads} new lead(s)`); await refreshStatus(); }));
-  load().catch((err) => errorState(document.querySelector(".content"), err, () => location.reload()));
+  load().catch((err) => errorState($("set-pane"), err, () => location.reload()));
 }

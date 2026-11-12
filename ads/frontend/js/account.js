@@ -3,14 +3,20 @@ import { applyTheme, boot, canInstall, confirmDialog, currentTheme, esc, fieldEr
 
 const me = await boot({ page: "account" });
 if (me) {
+  document.getElementById("me-initials").textContent = me.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  document.getElementById("me-name").textContent = me.name;
+  document.getElementById("me-email").textContent = me.email;
+  document.getElementById("me-role").textContent = me.owner ? "Admin of every account" : me.role === "admin" ? `Admin of ${me.account.name}`
+    : me.role === "client" ? `Client of ${me.account.name}` : `Team member, ${me.account.name}`;
+  // The one place the theme is chosen (the command menu's Switch theme steps through the same three).
   const choice = document.getElementById("theme-choice");
   const mark = () => choice.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeChoice === currentTheme())));
   mark();
+  document.addEventListener("ebads:theme", mark);
   choice.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-theme-choice]");
     if (!b) return;
     applyTheme(b.dataset.themeChoice);
-    mark();
   });
   document.getElementById("account-signout").addEventListener("click", async () => {
     await api("/api/auth/logout", { method: "POST" });
@@ -51,9 +57,9 @@ if (me) {
   const renderTg = (t) => {
     clearTimeout(tgPoll);
     if (!t.bot) {
-      tg.innerHTML = `<p class="muted">Telegram alerts: ${me.role === "admin" ? 'add the bot in <a href="/settings.html">Settings → Telegram</a> first.' : "an admin sets up the bot first."}</p>`;
+      tg.innerHTML = `<p class="muted">Telegram alerts: ${me.owner ? 'add the bot in <a href="/settings.html#telegram">Settings → Telegram</a> first.' : me.role === "admin" ? "the console's owner sets up the bot first." : "an admin sets up the bot first."}</p>`;
     } else if (t.linked) {
-      tg.innerHTML = `<label class="check"><input type="checkbox" id="tg-on" ${t.enabled ? "checked" : ""}> Send new leads and reminders to my Telegram <span class="muted">(${esc(t.name || "connected")})</span></label>
+      tg.innerHTML = `<label class="check"><input type="checkbox" id="tg-on" ${t.enabled ? "checked" : ""}><span>Send new leads and reminders to my Telegram<span class="explain">Connected as ${esc(t.name || "you")}.</span></span></label>
         <div class="row"><button class="btn" type="button" id="tg-test">Send a test</button><button class="btn btn-danger-text" type="button" id="tg-off">Disconnect Telegram</button></div>`;
     } else if (t.pending) {
       tg.innerHTML = `<p>Open Telegram and tap <b>Start</b> in the chat with @${esc(t.bot)}. This page notices by itself.</p>

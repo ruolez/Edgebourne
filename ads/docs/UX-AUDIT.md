@@ -120,7 +120,7 @@ Each phase ships on its own and follows ROADMAP §4: tests first for pure logic,
 | Claude: Conversations, By ad, Schedules | Status always says the same thing (Mac offline vs idle). Polling keeps focus. Timezone on schedules. One suggestion card everywhere. |
 | New ad, New ad set, New campaign | Stepper with a summary beside it, field errors, validate before the confirm. One shared uploader with cancel and retry, also usable inside New campaign, which ends the empty-account loop. |
 | Settings | One section at a time. Any existing anchor (`#meta-form`, `#mt-form`, `#tracking`, `#meta`, and links stored in alerts) resolves to its section. Grouped This account / Whole console, specific Save labels, technical fields under Advanced. |
-| Team, Account, Login, Offline | Phone cards, copy password, one theme control, field-specific login errors. |
+| Team, Account, Login, Offline | Phone cards, copy password, one theme control, field-specific login errors. Built (9.4f): the theme lives on Your account only (the sidebar and More buttons are gone; ⌘K Switch theme stays); Settings' list keeps its two group names on phones (the mockup hid them; 9.2a had added them back), and Team stays a tab under Settings rather than an item in the list. |
 
 ### 9.5 Creative section and the loop
 - Add the Creative section to `SECTIONS` / `SUBNAV` in `ui.js`, the phone More sheet and ⌘K. Remove Research from Claude's tabs. No URL changes.

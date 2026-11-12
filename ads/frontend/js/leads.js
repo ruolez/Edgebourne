@@ -196,7 +196,7 @@ async function loadDraft(lead, templateId) {
   $("reply-body").value = d.body;
   const note = $("reply-mail-note");
   note.hidden = d.mail_ready;
-  note.innerHTML = d.mail_ready ? "" : `Email isn't set up yet, so this can't be sent.${state.me.role === "admin" ? ' <a href="/settings.html">Set it up in Settings → Email</a>.' : " Ask an admin to set it up."}`;
+  note.innerHTML = d.mail_ready ? "" : `Email isn't set up yet, so this can't be sent.${state.me.owner ? ' <a href="/settings.html#email">Set it up in Settings → Email</a>.' : state.me.role === "admin" ? " Ask Edge Bourne to set it up." : " Ask an admin to set it up."}`;
   $("reply-send").disabled = !d.mail_ready;
 }
 

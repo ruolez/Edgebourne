@@ -129,6 +129,14 @@ class ResultRuleTests(unittest.TestCase):
              rules_of(alerts.evaluate(snap(last_pull_age_h=4, connected=False), RULES, TODAY))],
             [["stale_data"], [], []])
 
+    def test_settings_alerts_open_the_settings_section_they_name(self):
+        y, d2 = TODAY - timedelta(days=1), TODAY - timedelta(days=2)
+        found = alerts.evaluate(snap(meta_leads={y: 2, d2: 1}, inbox_leads={}, last_pull_age_h=4,
+                                     tracking={"state": "quiet", "headline": "Nothing for two days."}), RULES, TODAY)
+        self.assertEqual(sorted((a["rule"], a["href"]) for a in found),
+                         [("events_quiet", "/settings.html#tracking"), ("stale_data", "/settings.html#meta"),
+                          ("tracking", "/settings.html#meta")])
+
 
 class RulesWithTests(unittest.TestCase):
     def test_saved_values_override_defaults_and_unknown_keys_are_dropped(self):

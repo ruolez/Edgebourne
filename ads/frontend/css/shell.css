@@ -537,17 +537,32 @@ body.has-bulk .content { padding-bottom: 96px; }
 /* Today → Inbox card */
 .card-head .pill { margin-left: 4px; }
 
-/* Settings: section list on the left on wide screens */
-@media (min-width: 1200px) {
-  .content:has(> .settings-nav) { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 16px 32px; align-items: start; max-width: 1180px; }
-  .content:has(> .settings-nav) > :not(.settings-nav) { grid-column: 2; }
-  .content > .settings-nav { grid-column: 1; grid-row: 1 / span 60; position: sticky; top: 16px; display: flex; flex-direction: column; flex-wrap: nowrap; gap: 1px; padding: 0; background: none; }
-  .settings-nav .muted.small { margin: 10px 10px 4px; font-size: var(--t-xs); font-weight: 500; }
-  .settings-nav .muted.small:first-child { margin-top: 0; }
-  .settings-nav a { padding: 6px 10px; border-radius: var(--radius-s); color: var(--ink-2); font-size: var(--t-s); }
-  .settings-nav a:hover { background: var(--surface-2); color: var(--ink); }
-}
-.settings-nav a { color: var(--ink-2); }
+/* Settings: one section at a time (9.4f). The sections on the left, grouped This account / Whole console;
+   phones get them as one row that scrolls sideways (below). */
+.set-layout { display: grid; grid-template-columns: 200px minmax(0, 720px); gap: 16px 32px; align-items: start; }
+.settings-nav { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 1px; }
+.set-group { padding: 14px 10px 4px; color: var(--ink-3); font-size: var(--t-xs); font-weight: 500; }
+.set-group:first-child { padding-top: 0; }
+.settings-nav a { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 10px; border-radius: var(--radius-s); color: var(--ink-2); font-size: var(--t-s); font-weight: 500; text-decoration: none; }
+.settings-nav a:hover { background: var(--surface-2); color: var(--ink); }
+.settings-nav a[aria-current="page"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-2); }
+.set-dirty { flex: none; width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--amber); }
+.set-pane { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.set-scope { margin: 0; color: var(--ink-3); font-size: var(--t-xs); font-weight: 500; }
+.console-group { display: flex; flex-direction: column; gap: 12px; }
+.set-pane [id] { scroll-margin-top: 16px; }
+@media (max-width: 960px) { .set-pane [id] { scroll-margin-top: calc(112px + env(safe-area-inset-top)); } }
+/* Advanced: the technical part of a section, folded under one quiet line. */
+details.tech { border-top: 1px solid var(--line); padding-top: 4px; }
+details.tech > summary { display: flex; align-items: center; gap: 8px; min-height: 36px; cursor: pointer; list-style: none; color: var(--ink-2); font-size: var(--t-s); font-weight: 600; }
+details.tech > summary::-webkit-details-marker { display: none; }
+details.tech > summary::after { content: "›"; color: var(--ink-3); font-size: var(--t-l); line-height: 1; transition: transform .15s var(--ease); }
+details.tech[open] > summary::after { transform: rotate(90deg); }
+details.tech > summary small { color: var(--ink-3); font-weight: 400; }
+details.tech[open] > summary { margin-bottom: 8px; }
+details.tech > .field, details.tech > .row, details.tech > .stack { margin-top: 12px; }
+details.tech > summary + .row, details.tech > summary + .field, details.tech > summary + .stack { margin-top: 0; }
+@media (prefers-reduced-motion: reduce) { details.tech > summary::after { transition: none; } }
 /* The breadcrumb line (desktop) and the top bar back arrow (phones) replace the old per-page "‹ Ads" links. */
 .page-head > a.crumb { display: none; }
 .figs { grid-template-columns: repeat(6, minmax(0, 1fr)); }
@@ -684,12 +699,12 @@ dialog { max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   details > summary { min-height: var(--target); display: flex; align-items: center; gap: 6px; }
   details > summary.panel-body { display: flex; }
   /* A flex summary loses the browser's ▸, so plain ones draw their own (menus and those with a marker of their own keep theirs). */
-  details:not(.menu, .fulltext, .cv-sec, .score-row, .fold) > summary:not(.btn) { list-style: none; }
-  details:not(.menu, .fulltext, .cv-sec, .score-row, .fold) > summary:not(.btn)::-webkit-details-marker { display: none; }
-  details:not(.menu, .fulltext, .cv-sec, .score-row, .fold) > summary:not(.btn)::before {
+  details:not(.menu, .fulltext, .cv-sec, .score-row, .fold, .tech) > summary:not(.btn) { list-style: none; }
+  details:not(.menu, .fulltext, .cv-sec, .score-row, .fold, .tech) > summary:not(.btn)::-webkit-details-marker { display: none; }
+  details:not(.menu, .fulltext, .cv-sec, .score-row, .fold, .tech) > summary:not(.btn)::before {
     content: "›"; flex: none; display: inline-block; width: 1em; text-align: center; font-size: var(--t-l); line-height: 1; color: var(--ink-2); transition: transform .15s ease;
   }
-  details[open]:not(.menu, .fulltext, .cv-sec, .score-row) > summary:not(.btn)::before { transform: rotate(90deg); }
+  details[open]:not(.menu, .fulltext, .cv-sec, .score-row, .tech) > summary:not(.btn)::before { transform: rotate(90deg); }
   a.more, .link-btn, .campaign-add, .tbl-link, .pl-b .tbl-link {
     display: inline-block; padding-top: 12px; padding-bottom: 12px; margin-top: -12px; margin-bottom: -12px;
   }
@@ -707,12 +722,15 @@ dialog { max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .idea-ads .ent-link { display: inline-block; padding: 15px 0; margin: -15px 0; }
   .places .radius { min-height: var(--target); }
   .al-num .input, .sort .input, .acct-select, .rail .acct-select { min-height: var(--target); }
-  /* Settings' section links: one row that scrolls sideways instead of five rows of 44px links. */
-  .settings-nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; align-items: center; padding-top: 0; padding-bottom: 0; }
+  /* Settings' sections: one row that scrolls sideways instead of fifteen rows of 44px links. */
+  .set-layout { grid-template-columns: minmax(0, 1fr); }
+  .settings-nav { position: static; flex-direction: row; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); }
+  .settings-nav::-webkit-scrollbar { display: none; }
   /* The two group names stay in the row as plain words, so per-account and whole-console links read apart. */
-  .settings-nav .muted.small { flex: none; white-space: nowrap; margin: 0; font-size: var(--t-xs); font-weight: 600; }
-  .settings-nav span.console-only { margin-left: 4px; padding-left: 14px; border-left: 1px solid var(--line-strong); }
-  .settings-nav a { display: inline-flex; align-items: center; min-height: var(--target); min-width: var(--target); justify-content: center; white-space: nowrap; flex: none; }
+  .set-group { flex: none; white-space: nowrap; padding: 0 4px 0 0; font-weight: 600; }
+  .set-group.console-only { margin-left: 6px; padding-left: 12px; border-left: 1px solid var(--line-strong); }
+  .settings-nav a { flex: none; min-height: var(--target); min-width: var(--target); justify-content: center; padding: 0 12px; white-space: nowrap; }
+  details.tech > summary { min-height: var(--target); }
   /* The switch keeps its 26px track but takes a 44px tall tap area. */
   .switch, .switch[aria-checked] { height: var(--target); background: none; }
   .switch::before { content: ""; position: absolute; left: 0; right: 0; top: 9px; height: 26px; border-radius: var(--radius-pill); background: var(--line-strong); transition: background .15s ease; }

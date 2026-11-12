@@ -113,11 +113,31 @@ def _public(user):
                                  "notify_new_leads", "notify_reminders", "notify_alerts")}
 
 
+def login_problems(email, password):
+    """What's wrong with the sign-in form itself, field by field ([{field, message}]), before any account is
+    looked at. A wrong email or password is never said apart: that answer names neither field."""
+    email = (email or "").strip()
+    problems = []
+    if not email:
+        problems.append({"field": "email", "message": "Type the email you sign in with."})
+    else:
+        name, at, domain = email.partition("@")
+        # Lenient on purpose: anything a teammate was added with (team_api only asks for an @) can sign in.
+        if not (name and at and domain and "@" not in domain and not any(c.isspace() for c in email)):
+            problems.append({"field": "email", "message": "Check the email: it looks like name@example.com."})
+    if not password:
+        problems.append({"field": "password", "message": "Type your password."})
+    return problems
+
+
 @bp.post("/login")
 def login():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
+    problems = login_problems(email, password)
+    if problems:
+        return api_error(problems[0]["message"], 400, field=problems[0]["field"], errors=problems)
     user = db.query("SELECT * FROM users WHERE email = %s AND is_active", (email,), one=True)
     if not check_password_hash(user["password_hash"] if user else _DUMMY_HASH, password) or not user:
         return api_error("That email and password don't match", 401)

@@ -33,6 +33,13 @@ const guards = require('./guards.cjs');
   const metaObj = (id) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/v24.0/?ids=${id}').read().decode())"`))[id];
   const getJson = (url) => page.evaluate(async (u) => (await fetch(u)).json(), url);
   // The ad Overview folds Versions, Words, The idea and Meta's automatic changes (9.4c): open one before using it.
+  // Settings shows one section at a time (9.4f): open the one a check works in, freshly loaded (the form ids stay).
+  const openSettings = async (section, p = page) => {
+    const same = p.url().split('#')[0] === `${BASE}/settings.html`;
+    await p.goto(`${BASE}/settings.html#${section}`);
+    if (same) await p.reload();
+    await p.waitForSelector(`#${section}[data-section]:not([hidden])`);
+  };
   const openFold = async (id, p = page) => { await p.waitForSelector(`#fold-${id}`, { state: 'attached' }); await p.$eval(`#fold-${id}`, (d) => { d.open = true; }); };
   const macSeen = (secondsAgo) => sh(`docker exec -w /app edgebourne-ads-backend python -c "import time, settings_store; settings_store.set('bridge_last_seen', str(time.time() - ${secondsAgo})); settings_store.set('bridge_version', '2.0')"`);
   await page.goto(BASE + '/login.html');
@@ -331,7 +338,7 @@ import db
 db.execute(\\"DELETE FROM leads WHERE meta_lead_id = '9876543210123456'\\")
 r = db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, campaign_id, campaign_name) VALUES ('9876543210123456', now() - interval '2 hours', 'QA Stage Lead', '120252638288040312', 'Edge Bourne - Free intro call - Leads') RETURNING id\\", returning=True)
 print(r['id'])"`).toString().trim());
-  await page.goto(BASE + '/settings.html');
+  await openSettings('crm');
   await page.waitForSelector('#crm-state .pill');
   if (!(await page.isChecked('#crm_send_enabled'))) await page.check('#crm_send_enabled');
   await page.click('#crm-form button[type=submit]');
@@ -356,7 +363,7 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   await page.check('#tests');
   await page.waitForFunction(() => /QA Test Lead/.test(document.querySelector('#list')?.textContent || ''));
   check('Show test leads lists them, marked Test', /Test/.test(await page.textContent('#list .lead-row:has-text("QA Test Lead")')));
-  await page.goto(BASE + '/settings.html');
+  await openSettings('crm');
   await page.waitForSelector('#crm-state .pill');
   await page.uncheck('#crm_send_enabled');
   await page.click('#crm-form button[type=submit]');
@@ -364,6 +371,7 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   check('Settings turns lead stages off again', !(await getJson('/api/settings')).meta.crm_send_enabled);
 
   // Automatic refresh: the interval is set in Settings; open pages reload when the server has newer data.
+  await openSettings('auto');
   await page.selectOption('#auto-minutes', '5');
   await page.click('#auto-form button[type=submit]');
   await page.waitForFunction(() => document.querySelector('#auto-state')?.textContent === 'Every 5 minutes');
@@ -385,7 +393,7 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   await page.waitForTimeout(800);
   check('an open page reloads its data after an automatic pull', adsLoads === 1, `${adsLoads} loads`);
   page.off('request', countAds);
-  await page.goto(BASE + '/settings.html');
+  await openSettings('auto');
   await page.waitForSelector('#auto-state .pill');
   await page.selectOption('#auto-minutes', '15');
   await page.click('#auto-form button[type=submit]');
@@ -394,7 +402,7 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   // Telegram: the admin adds the bot, a person connects their chat, a new lead reaches it within seconds.
   const tgSent = () => JSON.parse(sh(`docker exec edgebourne-ads-backend python -c "import requests;print(requests.get('http://fake-meta:5001/telegram/_sent').text)"`));
   sh(`docker exec edgebourne-ads-backend python -c "import db;db.execute('UPDATE users SET telegram_chat_id=NULL, telegram_name=NULL, telegram_link_code=NULL');db.execute(\\"DELETE FROM leads WHERE full_name = 'Telegram QA Lead'\\")"`);
-  await page.goto(BASE + '/settings.html');
+  await openSettings('telegram');
   await page.waitForSelector('#tg-state .pill');
   if (await page.isVisible('#tg-remove')) {
     await page.click('#tg-remove');
@@ -415,8 +423,14 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   await page.goto(BASE + '/account.html');
   const themeWas = await page.evaluate(() => localStorage.getItem('ebads-theme') || 'system');
   await page.click('#theme-choice [data-theme-choice="dark"]');
-  const themeLabels = await page.$$eval('[data-theme-btn]', (b) => b.map((x) => x.textContent.trim()));
-  check('picking a theme on Your account relabels the sidebar and More sheet buttons', themeLabels.length >= 2 && themeLabels.every((t) => t === 'Theme: dark'), themeLabels.join(' | '));
+  const themeNow = await page.evaluate(() => ({ attr: document.documentElement.dataset.theme, saved: localStorage.getItem('ebads-theme'),
+    pressed: document.querySelector('#theme-choice [aria-pressed="true"]')?.dataset.themeChoice, others: document.querySelectorAll('[data-theme-btn]').length }));
+  check('the theme is chosen in one place, Your account: Dark applies at once and is kept, and the sidebar and More carry no other theme button',
+    themeNow.attr === 'dark' && themeNow.saved === 'dark' && themeNow.pressed === 'dark' && themeNow.others === 0, JSON.stringify(themeNow));
+  const meCard = await page.evaluate(() => ({ name: document.getElementById('me-name').textContent, email: document.getElementById('me-email').textContent,
+    role: document.getElementById('me-role').textContent, out: !!document.querySelector('.me-card #account-signout') }));
+  check('Your account opens on who is signed in (name, email, access) with Sign out beside it',
+    meCard.name === 'Eugene' && meCard.email === 'eugene@edgebourne.com' && meCard.role === 'Admin of every account' && meCard.out, JSON.stringify(meCard));
   await page.click(`#theme-choice [data-theme-choice="${themeWas}"]`);
   await page.click('#tg-link');
   await page.waitForSelector('#tg-open');
@@ -444,7 +458,7 @@ print(requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'
 
   // Lead replies: templates in Settings, an email from the lead page, then the automatic reply.
   const mailSent = () => JSON.parse(sh(`docker exec edgebourne-ads-backend python -c "import requests;print(requests.get('http://fake-meta:5001/mail/_sent').text)"`));
-  await page.goto(BASE + '/settings.html');
+  await openSettings('replies');
   await page.evaluate(() => fetch('/api/settings/smtp', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ smtp_host: 'fake-meta', smtp_port: '1025', smtp_security: 'none', smtp_username: '', smtp_from_email: 'ads@edgebourne.test', smtp_from_name: 'Edge Bourne Ads' }) }));
   await page.evaluate(() => fetch('/api/settings/replies', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto: false, booking_link: '' }) }));
@@ -481,7 +495,21 @@ print(requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'
   check('the email goes out with the edits, from Eugene, answers back to him', Boolean(mail) && /Thanks a lot for asking/.test(mail.text) && /Eugene/.test(mail.from) && mail.reply_to === 'eugene@edgebourne.com', mail ? `${mail.from} / ${mail.reply_to}` : 'no mail');
   check('sending moves the lead to Contacted and lists the email', (await page.getAttribute('[data-stage="contacted"]', 'aria-pressed')) === 'true' && /emailed them/.test(await page.textContent('.history')));
   await page.screenshot({ path: `${OUT}/flow-lead-reply.png`, fullPage: true });
-  await page.goto(BASE + '/settings.html');
+  // Email not set up: the note's link opens Settings on the Email section itself (Eugene owns the console).
+  const replyRoute = '**/api/leads/*/reply*';
+  await page.route(replyRoute, async (r) => {
+    if (r.request().method() !== 'GET') return r.continue();
+    return r.fulfill({ json: { templates: [], template_id: null, subject: '', body: '', mail_ready: false } });
+  });
+  await page.reload();
+  await page.waitForSelector('#reply-open');
+  await page.click('#reply-open');
+  await page.waitForSelector('#reply-mail-note:not([hidden]) a');
+  await Promise.all([page.waitForURL('**/settings.html#email'), page.click('#reply-mail-note a')]);
+  await page.waitForSelector('#email[data-section]:not([hidden])');
+  check("the lead page's 'Set it up in Settings → Email' opens the Email section", await page.isHidden('#meta'), page.url());
+  await page.unroute(replyRoute);
+  await openSettings('replies');
   await page.waitForSelector('#tpl-list li'); // the settings have loaded, so rendering won't untick the box after
   await page.check('#rp-auto');
   await page.click('#rp-form button[type=submit]');
@@ -571,7 +599,7 @@ r = db.query(\\"SELECT processed_at IS NOT NULL AS done, error, attempts FROM we
 print(('done' if r and r['done'] else 'open') + '|' + str(r and r['error']) + '|' + str(r and r['attempts']))"`).trim();
   }
   check("Meta's webhook Test sample is closed at once, never retried", /^done\|Meta's webhook Test sample.*\|0$/.test(sample), sample);
-  await page.goto(BASE + '/settings.html');
+  await openSettings('replies');
   await page.waitForFunction(() => document.querySelector('#rp-state')?.textContent === 'Automatic reply on');
   await page.uncheck('#rp-auto');
   await page.click('#rp-form button[type=submit]');
@@ -659,23 +687,40 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,json;db.execute('UPDATE desk_schedules SET enabled=FALSE, next_run_at=NULL, skipped=0, last_task_id=NULL, rule=%s WHERE id = 1', (json.dumps({'every': 'day', 'at': '08:30'}),))"`);
 
   // Alerts: rules in Settings; a rejected ad raises one alert (Telegram + Today), not twice, and it clears by itself.
-  await page.goto(BASE + '/settings.html');
+  await openSettings('alerts');
   await page.waitForSelector('#al-rules li');
   check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 16);
+  check('Settings shows one section at a time, named in the list, the breadcrumb and the tab title', await page.evaluate(() =>
+    [...document.querySelectorAll('[data-section]')].filter((x) => !x.hidden).map((x) => x.id).join() === 'alerts'
+    && document.querySelector('.settings-nav [aria-current="page"]')?.dataset.set === 'alerts'
+    && /Alerts/.test(document.querySelector('.crumbs [aria-current]')?.textContent || '') && /^Alerts · Settings/.test(document.title)));
   await page.fill('[data-rule="no_leads"][data-key="days"]', '4');
   await page.click('#al-form button[type=submit]');
   await page.waitForTimeout(500);
-  // Targets live in one place now (audit A19): the cost-per-lead target is in Targets, the alert reads it.
+  // Targets live in one place now (audit A19), in their own section: the alert's Change link opens it, the alert reads it.
+  await page.click('#al-rules a[href="#targets"]');
+  await page.waitForSelector('#targets[data-section]:not([hidden])');
+  check("the cost-per-lead alert's Change link opens the Targets section", await page.isHidden('#alerts') && /#targets$/.test(page.url()), page.url());
   await page.fill('#t-lead', '15');
+  // Typed and not saved: switching sections keeps it, and the list marks the section until it's saved.
+  await page.click('.settings-nav [data-set="alerts"]');
+  await page.waitForSelector('#alerts[data-section]:not([hidden])');
+  const dirtyDot = await page.evaluate(() => [...document.querySelectorAll('.settings-nav .set-dirty')].map((d) => d.parentElement.dataset.set).join());
+  await page.goBack();
+  await page.waitForSelector('#targets[data-section]:not([hidden])');
+  check('typed work survives switching sections, marked "not saved yet" in the list, and Back returns to the section',
+    dirtyDot === 'targets' && (await page.inputValue('#t-lead')) === '15', `${dirtyDot} ${await page.inputValue('#t-lead')}`);
   await page.click('#tg-targets button[type=submit]');
   await page.waitForTimeout(500);
-  await page.reload();
-  await page.waitForSelector('#al-rules li');
+  check('saving takes the "not saved yet" mark away', (await page.locator('.settings-nav .set-dirty').count()) === 0);
+  await openSettings('alerts');
   check('alert thresholds are saved', (await page.inputValue('[data-rule="no_leads"][data-key="days"]')) === '4' && (await page.inputValue('#t-lead')) === '15');
   check('the cost-per-lead alert names the target from Targets', /Target \$15\.00 per lead/.test(await page.textContent('#al-rules')));
   await page.fill('[data-rule="no_leads"][data-key="days"]', '3');
   await page.click('#al-form button[type=submit]');
   await page.waitForTimeout(400);
+  await page.click('.settings-nav [data-set="targets"]');
+  await page.waitForSelector('#targets[data-section]:not([hidden])');
   await page.fill('#t-lead', '');
   await page.click('#tg-targets button[type=submit]');
   await page.waitForTimeout(500);
@@ -1262,7 +1307,7 @@ print(r['id'])"`).trim();
     body: JSON.stringify({ start_day: '2030-01-02', end_day: '2030-01-09', daily_budget_cents: 1000, confirm_total_cents: 7000 }) })).status, mtId);
   errors.splice(offSeen);
   check('while off, the server refuses to create one', refused === 403 && Object.keys(fakeStudies()).length === studiesBefore);
-  await page.goto(BASE + '/settings.html');
+  await openSettings('ab');
   await page.waitForSelector('#mt-state .pill');
   await page.check('#mt-on');
   await page.click('#mt-form button[type=submit]');
@@ -1928,7 +1973,7 @@ print(r['id'])"`).trim();
   check('replies and hiding are logged', sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(','.join(r['action'] for r in db.query('SELECT action FROM meta_changes ORDER BY id DESC LIMIT 3')[::-1]))"`).trim() === 'comment_reply,comment_hide,comment_show');
 
   // Tracking health: what Meta's dataset received (here: the lead stages sent earlier in this run), and what to do.
-  await page.goto(BASE + '/settings.html');
+  await openSettings('tracking');
   await page.waitForSelector('#tr-body .tr-headline');
   await page.click('#tr-fresh');
   await page.waitForFunction(() => /Lead/.test(document.getElementById('tr-body').textContent) && /Healthy|Something to fix/.test(document.getElementById('tr-state').textContent));
@@ -2336,7 +2381,7 @@ with account_ctx.use(a2):
   check('a link from an alert switches to the account it names', (await page.inputValue('#acct-rail')) === String(leak.account2) && !/acct=/.test(page.url()), page.url());
   const sharedKeys = await call('PUT', '/api/settings/meta', { meta_app_secret: 'x'.repeat(32) });
   check("Meta's app keys can't be changed from another account's Settings", sharedKeys.status === 403, JSON.stringify(sharedKeys.body));
-  await page.goto(BASE + '/settings.html');
+  await openSettings('email');
   await page.waitForSelector('#console-note:not([hidden])');
   check('Settings marks the console-wide part and locks it outside Edge Bourne', await page.isDisabled('#smtp-form button[type=submit]'));
   // Client access: off by default, on in Settings, only the stage.
@@ -2721,9 +2766,53 @@ print(','.join(left))
     Object.entries(firstFor).every(([, t]) => !/wanted/.test(t)), JSON.stringify(firstFor));
   await palette('targets');
   await Promise.all([page.waitForURL('**/settings.html#targets'), page.keyboard.press('Enter')]);
+  await page.waitForSelector('#targets[data-section]:not([hidden])');
   await page.waitForTimeout(300);
-  const targetsTop = await page.evaluate(() => Math.round(document.getElementById('targets').getBoundingClientRect().top));
-  check('⌘K → "Settings: Targets" opens Settings on that section', targetsTop >= 0 && targetsTop < 200, String(targetsTop));
+  const targetsOpen = await page.evaluate(() => ({ top: Math.round(document.getElementById('targets').getBoundingClientRect().top),
+    shown: [...document.querySelectorAll('[data-section]')].filter((x) => !x.hidden).map((x) => x.id).join() }));
+  check('⌘K → "Settings: Targets" opens Settings on that section alone', targetsOpen.shown === 'targets' && targetsOpen.top >= 0 && targetsOpen.top < 300, JSON.stringify(targetsOpen));
+  // Every address the long page had (and the links alerts stored) opens its section; a deep one opens its fold too.
+  const anchors = {};
+  for (const [hash, want] of [['meta-form', 'meta'], ['mt-form', 'ab'], ['tracking', 'tracking'], ['meta', 'meta'], ['tg-targets', 'targets'], ['reports-panel', 'reports-panel'],
+    ['crm-code', 'crm'], ['smtp-form', 'email'], ['activity', 'activity-panel'], ['nonsense', 'meta'], ['', 'meta']]) {
+    await page.goto(`${BASE}/settings.html${hash ? '#' + hash : ''}`);
+    await page.reload();
+    await page.waitForSelector('[data-section]:not([hidden])');
+    const got = await page.evaluate((h) => ({ shown: [...document.querySelectorAll('[data-section]')].filter((x) => !x.hidden).map((x) => x.id).join(),
+      fold: h === 'crm-code' ? document.getElementById('crm-adv').open : true }), hash);
+    if (got.shown !== want || !got.fold) anchors[hash || '(none)'] = `${got.shown}${got.fold ? '' : ' (fold shut)'}`;
+  }
+  check('every old Settings address (#meta-form, #mt-form, #tracking, #meta…) opens its section, a field inside a fold opens the fold', Object.keys(anchors).length === 0, JSON.stringify(anchors));
+  // A Meta test code is never saved, so typing one doesn't mark Lead stages as unsaved (nor warn on leaving).
+  await page.goto(`${BASE}/settings.html#crm-code`);
+  await page.reload();
+  await page.waitForSelector('#crm-code');
+  await page.fill('#crm-code', 'TEST1');
+  await page.click('.settings-nav [data-set="meta"]');
+  await page.waitForSelector('#meta[data-section]:not([hidden])');
+  check('typing a Meta test code leaves no "not saved yet" mark', (await page.locator('.settings-nav .set-dirty').count()) === 0);
+  // The Settings links the server writes into alerts and Today (from the alert rules themselves), plus any stored ones.
+  const storedLinks = py(`
+from datetime import timedelta
+import alerts, db, account_ctx
+from tests.test_alerts_logic import snap, TODAY, RULES
+y, d2 = TODAY - timedelta(days=1), TODAY - timedelta(days=2)
+found = alerts.evaluate(snap(meta_leads={y: 2, d2: 1}, inbox_leads={}, last_pull_age_h=4, tracking={'state': 'quiet', 'headline': 'x'}), RULES, TODAY)
+links = {a['href'] for a in found if (a['href'] or '').startswith('/settings.html')}
+with account_ctx.all_accounts():
+    links |= {r['href'] for r in db.query('SELECT DISTINCT href FROM alerts WHERE left(href, 14) = \\'/settings.html\\'')}
+print(' '.join(sorted(links)))`).split(' ').filter(Boolean);
+  const unresolved = [];
+  for (const href of storedLinks) {
+    await page.goto(BASE + href);
+    await page.reload();
+    await page.waitForSelector('[data-section]:not([hidden])');
+    const shown = await page.evaluate(() => [...document.querySelectorAll('[data-section]')].filter((x) => !x.hidden).map((x) => x.id).join());
+    const hash = href.split('#')[1];
+    if (hash && !(await page.evaluate(([h, id]) => { const el = document.getElementById(h); return !!el && el.closest('[data-section]').id === id; }, [hash, shown]))) unresolved.push(`${href} → ${shown}`);
+  }
+  check('the Settings links alerts carry (Meta connection, Tracking health) open their section', unresolved.length === 0
+    && ['/settings.html#meta', '/settings.html#tracking'].every((h) => storedLinks.includes(h)), `${storedLinks.join(' ')} ${unresolved.join(' | ')}`);
   // A saved view is one Enter away.
   const qaView = await page.evaluate(async () => (await (await fetch('/api/views', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page: 'ads', name: 'QA menu view', query: 'view=off&level=adset' }) })).json()).id);
   await page.goto(BASE + '/home.html');
@@ -3334,6 +3423,12 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
     const temp = (await pwResponse.json()).temporary_password;
     await page.waitForSelector('dialog.confirm[open] #pw-value');
     const pwNotice = await page.evaluate(() => ({ pw: document.querySelector('dialog.confirm[open] #pw-value').textContent, cancel: !!document.querySelector('dialog.confirm[open] #cd-cancel'), focus: document.activeElement.id }));
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE });
+    await page.click('dialog.confirm[open] #pw-copy');
+    await page.waitForFunction(() => document.querySelector('dialog.confirm[open] #pw-copy')?.textContent === 'Copied');
+    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    check("Copy beside the teammate's temporary password puts exactly that password on the clipboard, and says so", copied === temp
+      && /Password copied/.test(await page.textContent('dialog.confirm[open]')), copied === temp ? 'same' : 'differs');
     await page.click('dialog.confirm[open] #cd-ok');
     await page.waitForSelector('dialog.confirm[open]', { state: 'detached' }).catch(() => {});
     check("Team shows a teammate's temporary password once, in the one notice dialog with a single Done button",
@@ -3598,6 +3693,41 @@ with account_ctx.all_accounts():
   await calm.goto(BASE + '/login.html');
   const calmMs = await calm.evaluate(() => { const b = document.querySelector('.btn, button'); return parseFloat(getComputedStyle(b).transitionDuration) * 1000; });
   check('with reduced motion asked for, transitions are cut to nothing', calmMs < 1, `${calmMs} ms`);
+  // Sign-in errors sit on the field they're about; what isn't about one field sits above Sign in.
+  {
+    let tries = 0;
+    calm.on('request', (r) => { if (/\/api\/auth\/login$/.test(r.url())) tries++; });
+    await calm.click('button[type=submit]');
+    const blank = await calm.evaluate(() => [...document.querySelectorAll('#login .field.error')].map((f) => `${f.querySelector('input').name}: ${f.querySelector('.err').textContent}`));
+    await calm.fill('#email', 'eugene');
+    await calm.fill('#password', 'something');
+    await calm.click('button[type=submit]');
+    const badEmail = await calm.evaluate(() => ({ marked: [...document.querySelectorAll('#login [aria-invalid="true"]')].map((i) => i.name).join(), focus: document.activeElement.id }));
+    check('sign-in marks each empty or wrong field on its own, focuses the first, and asks the server nothing',
+      blank.join(' | ') === 'email: Type the email you sign in with. | password: Type your password.' && badEmail.marked === 'email' && badEmail.focus === 'email' && tries === 0,
+      `${blank.join(' | ')} / ${JSON.stringify(badEmail)} / ${tries} requests`);
+    const server = await calm.evaluate(async () => { const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: ' ', password: '' }) });
+      return { status: r.status, fields: ((await r.json()).errors || []).map((e) => e.field).join() }; });
+    check('the server names the same fields (400 with each one)', server.status === 400 && server.fields === 'email,password', JSON.stringify(server));
+    await calm.fill('#email', 'eugene@edgebourne.com');
+    await calm.route('**/api/auth/login', (r) => r.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: "That email and password don't match" }) }), { times: 1 });
+    await calm.click('button[type=submit]');
+    await calm.waitForSelector('#login-error:not([hidden])');
+    await calm.waitForTimeout(300); // let the border colours finish their change
+    const wrong = await calm.evaluate(() => ({ note: document.getElementById('login-error').textContent, marked: [...document.querySelectorAll('#login [aria-invalid="true"]')].map((i) => i.name).join(),
+      fieldErrs: document.querySelectorAll('#login .field .err').length, focus: document.activeElement.id, border: getComputedStyle(document.getElementById('email')).borderTopColor }));
+    check("a wrong email or password is said once above Sign in (naming neither), both fields marked, the password ready to type again",
+      /don't match/.test(wrong.note) && wrong.marked === 'email,password' && wrong.fieldErrs === 0 && wrong.focus === 'password', JSON.stringify(wrong));
+    await calm.type('#password', 'x');
+    await calm.waitForTimeout(300);
+    const calmBorder = await calm.evaluate(() => getComputedStyle(document.getElementById('email')).borderTopColor);
+    check('typing again clears that message', await calm.isHidden('#login-error'));
+    check('a marked sign-in field is drawn in the error colour, not just flagged for screen readers', wrong.border === 'rgb(200, 55, 45)' && calmBorder !== wrong.border, `${wrong.border} vs ${calmBorder}`);
+    await calm.route('**/api/auth/login', (r) => r.fulfill({ status: 429, contentType: 'text/html', body: '<html>429</html>' }), { times: 1 });
+    await calm.click('button[type=submit]');
+    await calm.waitForSelector('#login-error:not([hidden])');
+    check('too many tries says so in plain words, not "Request failed"', /Too many tries/.test(await calm.textContent('#login-error')), await calm.textContent('#login-error'));
+  }
   await calm.context().close();
   }
   // Phones: no page wider than the screen.
@@ -3647,10 +3777,29 @@ with account_ctx.all_accounts():
   });
   check('on a phone a "show more" summary still shows its ▸ marker', phoneLook.marker, JSON.stringify(phoneLook));
   check('on a phone charts are drawn at their real width, so 12px labels stay 12px', Math.abs(phoneLook.scale - 1) < 0.02, String(phoneLook.scale));
-  await phonePage.goto(BASE + '/settings.html');
-  await phonePage.waitForSelector('.settings-nav a');
-  const groups = await phonePage.evaluate(() => [...document.querySelectorAll('.settings-nav .muted.small')].filter((e) => e.getBoundingClientRect().width > 0).map((e) => e.textContent));
-  check('on a phone Settings\' section row keeps "This account:" and "Whole console:"', groups.join('|') === 'This account:|Whole console:', groups.join('|'));
+  await openSettings('email', phonePage);
+  const groups = await phonePage.evaluate(() => {
+    const nav = document.querySelector('.settings-nav'), cur = nav.querySelector('[aria-current="page"]').getBoundingClientRect(), box = nav.getBoundingClientRect();
+    return { names: [...nav.querySelectorAll('.set-group')].filter((e) => e.getBoundingClientRect().width > 0).map((e) => e.textContent).join('|'),
+      oneRow: new Set([...nav.querySelectorAll('a')].map((a) => Math.round(a.getBoundingClientRect().top))).size === 1, inView: cur.left >= box.left && cur.right <= box.right };
+  });
+  check('on a phone Settings\' sections are one row that keeps "This account" and "Whole console", scrolled to the open one',
+    groups.names === 'This account|Whole console' && groups.oneRow && groups.inView, JSON.stringify(groups));
+  // Team on a phone: one card per person, nothing scrolls sideways; Team, Your account and sign-in have 44px controls.
+  await phonePage.goto(BASE + '/team.html');
+  await phonePage.waitForSelector('#team-table tbody tr');
+  const teamCards = await phonePage.evaluate(() => { const t = document.getElementById('team-table'), box = t.parentElement;
+    return { sideways: box.scrollWidth - box.clientWidth, head: getComputedStyle(t.querySelector('thead')).display,
+      labels: [...t.querySelectorAll('tbody tr:first-child td[data-label]')].map((td) => getComputedStyle(td, '::before').content).join('|') }; });
+  check('on a phone Team is one card per person with the labels written in, and nothing scrolls sideways',
+    teamCards.sideways <= 1 && teamCards.head === 'none' && teamCards.labels === '"Access"|"Campaigns"|"Last signed in"', JSON.stringify(teamCards));
+  const smallMore = [];
+  for (const p of ['/team.html', '/account.html', '/login.html', '/settings.html#email']) {
+    await phonePage.goto(BASE + p); await phonePage.waitForTimeout(1200);
+    const small = await phonePage.evaluate(guards.smallTargets);
+    if (small.length) smallMore.push(`${p}: ${small.slice(0, 4).join(', ')}`);
+  }
+  check('on a phone every control on Team, Your account, sign-in and a whole-console Settings section is at least 44 × 44 px', smallMore.length === 0, smallMore.join(' | '));
   }
   // ← All leads on a phone keeps the source filter in the URL, which the next poll reads.
   await phonePage.goto(`${BASE}/leads.html?ad=${adOpt.slice(2)}`);

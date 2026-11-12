@@ -48,7 +48,7 @@ def _extras(user):
     if failed:
         rows.append({"key": "sys:crm", "category": "system", "rule": "crm_failed", "level": "warn",
                      "title": f"{failed} lead stage{'s' if failed != 1 else ''} didn't reach Meta",
-                     "line": "Settings shows why, with Try again.", "href": "/settings.html", "action": "Open Settings"})
+                     "line": "Settings shows why.", "href": "/settings.html#crm", "action": "Open Settings"})
     queued = db.query("SELECT COUNT(*) AS n FROM desk_tasks WHERE status = 'queued'", one=True)["n"]
     if queued and not bridge_status()["online"]:
         rows.append({"key": "sys:mac", "category": "system", "rule": "mac_offline", "level": "warn",

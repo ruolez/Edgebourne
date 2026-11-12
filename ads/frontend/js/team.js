@@ -18,14 +18,14 @@ function render() {
     <tbody>${data.members.map((m) => `
       <tr class="${m.is_active ? "" : "muted"}">
         <td><b>${esc(m.name)}</b><br><span class="muted">${esc(m.email)}</span></td>
-        <td>${m.is_active ? (m.access === "admin" ? '<span class="pill ok">Admin, every account</span>' : m.access === "account_admin" ? '<span class="pill ok">Admin of this account</span>' : m.role === "client" ? `<span class="pill claude">Client${me.account.clients_update_leads ? "" : " (read-only)"}</span>` : '<span class="pill">Team member</span>') : '<span class="pill bad">Deactivated</span>'}</td>
-        <td>${m.role === "admin" ? '<span class="muted">All campaigns</span>' : m.role === "client" ? '<span class="muted">This whole account</span>' : campaignNames(m.campaign_ids)}</td>
-        <td>${m.last_login_at ? when(m.last_login_at) : '<span class="muted">Never</span>'}</td>
-        <td class="row end">
-          ${m.access === "admin" && !data.owner ? "" : `<button class="btn" data-edit="${m.id}">Edit</button>`}
+        <td data-label="Access">${m.is_active ? (m.access === "admin" ? '<span class="pill ok">Admin, every account</span>' : m.access === "account_admin" ? '<span class="pill ok">Admin of this account</span>' : m.role === "client" ? `<span class="pill claude">Client${me.account.clients_update_leads ? "" : " (read-only)"}</span>` : '<span class="pill">Team member</span>') : '<span class="pill bad">Deactivated</span>'}</td>
+        <td data-label="Campaigns">${m.role === "admin" ? '<span class="muted">All campaigns</span>' : m.role === "client" ? '<span class="muted">This whole account</span>' : campaignNames(m.campaign_ids)}</td>
+        <td data-label="Last signed in">${m.last_login_at ? when(m.last_login_at) : '<span class="muted">Never</span>'}</td>
+        <td class="tm-acts"><div class="row">
+          ${m.access === "admin" && !data.owner ? "" : `<button class="btn" data-edit="${m.id}" aria-label="Edit ${esc(m.name)}">Edit</button>`}
           ${m.id === me.id || (m.access === "admin" && !data.owner) ? "" : `<button class="btn btn-quiet" data-reset="${m.id}">Reset password</button>
           <button class="btn btn-quiet ${m.is_active ? "btn-danger" : ""}" data-active="${m.id}">${m.is_active ? "Deactivate" : "Reactivate"}</button>`}
-        </td>
+        </div></td>
       </tr>`).join("")}</tbody>`;
 }
 
@@ -53,11 +53,27 @@ function openDialog(member) {
   $("member-dialog").showModal();
 }
 
-// Shown once, so it is a notice with one button (the shared dialog, no Cancel).
+// Shown once, so it is a notice with one button (the shared dialog, no Cancel), and a Copy beside the password.
 function showPassword(name, pw) {
   confirmDialog({
     title: "Temporary password", confirm: "Done", cancel: false,
-    body: `<p class="flush">Give this to <b>${esc(name)}</b>. They'll be asked to choose their own the first time they sign in. It won't be shown again.</p><div class="secret-box" id="pw-value">${esc(pw)}</div>`,
+    body: `<p class="flush">Give this to <b>${esc(name)}</b>. They'll be asked to choose their own the first time they sign in. It won't be shown again.</p>
+      <div class="secret-row"><div class="secret-box" id="pw-value">${esc(pw)}</div><button type="button" class="btn" id="pw-copy">Copy</button></div>`,
+  });
+  const copy = $("pw-copy");
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(pw);
+      copy.textContent = "Copied";
+      toast("Password copied. Paste it in a message to them.");
+    } catch (err) {
+      // No clipboard (an older browser, or permission refused): select it so a long press or ⌘C copies it.
+      const range = document.createRange();
+      range.selectNodeContents($("pw-value"));
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+      toast("The password is selected: copy it from there");
+    }
   });
 }
 

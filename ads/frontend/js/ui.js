@@ -210,12 +210,13 @@ const THEMES = ["system", "light", "dark"];
 export function currentTheme() {
   try { return localStorage.getItem("ebads-theme") || "system"; } catch (e) { return "system"; }
 }
-const themeLabel = (t) => ({ system: "Theme: auto", light: "Theme: light", dark: "Theme: dark" }[t]);
+// The theme is chosen on Your account (one control); the command menu's Switch theme steps through the same three.
+const themeLabel = (t) => ({ system: "Theme: match my device", light: "Theme: light", dark: "Theme: dark" }[t]);
 export function applyTheme(t) {
   if (t === "system") document.documentElement.removeAttribute("data-theme");
   else document.documentElement.setAttribute("data-theme", t);
   try { localStorage.setItem("ebads-theme", t); } catch (e) {}
-  document.querySelectorAll("[data-theme-btn]").forEach((b) => { (b.querySelector("span") || b).textContent = themeLabel(t); });
+  document.dispatchEvent(new CustomEvent("ebads:theme"));
 }
 
 // ---------- frame ----------
@@ -551,7 +552,7 @@ export const markSaved = (form) => { if (form) unsaved.delete(form); else unsave
 export function guardLeaving() {
   document.addEventListener("input", (e) => {
     const form = e.target.closest("form");
-    if (e.target.matches('input:not([type=checkbox]):not([type=radio]):not([type=search]), textarea') && form && !e.target.closest("dialog")) unsaved.add(form);
+    if (e.target.matches('input:not([type=checkbox]):not([type=radio]):not([type=search]):not([data-no-guard]), textarea:not([data-no-guard])') && form && !e.target.closest("dialog")) unsaved.add(form);
   });
   window.addEventListener("beforeunload", (e) => { if ([...unsaved].some((f) => f.isConnected)) { e.preventDefault(); e.returnValue = ""; } });
 }
@@ -619,7 +620,6 @@ export async function boot({ page, admin = false }) {
         <span class="who"><b>${esc(me.name)}</b><small>${esc(roleLabel)}</small></span>
       </a>
       <div class="rail-actions">
-        <button type="button" data-theme-btn>${themeLabel(currentTheme())}</button>
         <button type="button" data-signout>Sign out</button>
       </div>
     </div>`;
@@ -693,7 +693,6 @@ export async function boot({ page, admin = false }) {
       ${allowed("settings") ? sheetLink(SECTIONS.settings.href, "Settings", "settings", section === "settings") : ""}
       <a href="/account.html" ${cur("account")}>${icon("user")}<span>Your account</span></a>
       <div class="sep"></div>
-      <button type="button" class="item" data-theme-btn>${icon("moon")}<span>${themeLabel(currentTheme())}</span></button>
       <button type="button" class="item" data-signout>${icon("logout")}Sign out</button>
     </nav>`;
   document.body.append(sheet);
@@ -703,7 +702,6 @@ export async function boot({ page, admin = false }) {
 
   document.querySelectorAll("[data-refresh]").forEach((b) => b.addEventListener("click", doRefresh));
   document.querySelectorAll("[data-palette]").forEach((b) => b.addEventListener("click", () => openPalette()));
-  document.querySelectorAll("[data-theme-btn]").forEach((b) => b.addEventListener("click", nextTheme));
   document.querySelectorAll("[data-signout]").forEach((b) => b.addEventListener("click", signOut));
   shortcuts(isAdmin);
 

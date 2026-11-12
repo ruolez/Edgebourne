@@ -20,16 +20,16 @@
     <aside class="rail"></aside>
     <main class="main">
       <header class="page-head"><h1>Settings</h1></header>
-      <p class="note acct-note" id="acct-note" hidden></p>
-      <div class="content stack medium">
+      <div class="content set-layout">
         <nav class="settings-nav" aria-label="Settings sections">
-          <span class="muted small">This account:</span>
-          <a href="#meta">Meta</a><a href="#targets">Targets</a><a href="#alerts">Alerts</a><a href="#reports-panel">Clients and reports</a><a href="#replies">Lead replies</a><a href="#tracking">Tracking</a><a href="#crm">Lead stages</a><a href="#ab">A/B tests</a><a href="#activity-panel">Activity</a>
-          <span class="console-only muted small">Whole console:</span>
-          <a class="console-only" href="#meta-app">Meta app</a><a class="console-only" href="#auto">Refresh</a><a class="console-only" href="#telegram">Telegram</a><a class="console-only" href="#email">Email</a><a class="console-only" href="#accounts-panel">Accounts</a>
+          <span class="set-group">This account</span>
+          <a href="#meta" data-set="meta">Meta connection</a><a href="#targets" data-set="targets">Targets</a><a href="#alerts" data-set="alerts">Alerts</a><a href="#reports-panel" data-set="reports-panel">Clients and reports</a><a href="#replies" data-set="replies">Lead replies</a><a href="#tracking" data-set="tracking">Tracking health</a><a href="#crm" data-set="crm">Lead stages to Meta</a><a href="#ab" data-set="ab">Meta A/B tests</a><a href="#activity-panel" data-set="activity-panel">Activity</a>
+          <span class="set-group console-only" hidden>Whole console</span>
+          <a class="console-only" href="#meta-app" data-set="meta-app" hidden>Meta app</a><a class="console-only" href="#auto" data-set="auto" hidden>Automatic refresh</a><a class="console-only" href="#email" data-set="email" hidden>Email</a><a class="console-only" href="#telegram" data-set="telegram" hidden>Telegram</a><a class="console-only" href="#accounts-panel" data-set="accounts-panel" hidden>Accounts</a>
         </nav>
-        <h2 class="group-title" id="grp-account">This account: <span data-acct-name></span></h2>
-        <section class="panel" id="meta">
+        <div class="set-pane" id="set-pane">
+        <p class="set-scope" id="set-scope"></p>
+        <section class="panel" id="meta" data-section hidden>
           <div class="panel-head"><h2>Meta connection</h2><p id="meta-state"></p></div>
           <form class="panel-body stack" id="meta-form" novalidate>
             <div class="field"><label for="meta_system_token">System User token</label><input class="input" id="meta_system_token" name="meta_system_token" type="password" autocomplete="off"><span class="hint" data-hint="meta_system_token"></span><span class="hint" id="token-inherit" hidden></span></div>
@@ -38,17 +38,19 @@
               <div class="field"><label for="meta_ad_account_id">Ad account ID</label><input class="input" id="meta_ad_account_id" name="meta_ad_account_id" inputmode="numeric"><span class="hint">Digits only, without act_.</span></div>
             </div>
             <div class="row">
-              <button class="btn btn-primary" type="submit">Save</button>
+              <button class="btn btn-primary" type="submit">Save connection</button>
               <button class="btn" type="button" id="meta-test">Test connection</button>
               <button class="btn" type="button" id="meta-connect">Start receiving leads</button>
               <button class="btn" type="button" id="meta-sync">Sync campaigns and recent leads</button>
             </div>
             <div class="note" id="sync-note" hidden></div>
             <div id="meta-result"></div>
-            <div class="row status-hooks"><span id="sw-status"></span><span class="hint" id="sw-status-note"></span></div>
+            <details class="tech" id="meta-adv"><summary>Advanced <small>Instant status updates</small></summary>
+              <div class="row status-hooks"><span id="sw-status"></span><span class="hint" id="sw-status-note"></span></div>
+            </details>
           </form>
         </section>
-        <section class="panel" id="targets">
+        <section class="panel" id="targets" data-section hidden>
           <div class="panel-head"><h2>Targets</h2><p>What this account's results are measured against, and the most the console may set as a budget.</p></div>
           <form class="panel-body stack" id="tg-targets" novalidate>
             <div class="grid-2">
@@ -62,7 +64,7 @@
             <div class="row"><button class="btn btn-primary" type="submit">Save targets</button></div>
           </form>
         </section>
-        <section class="panel" id="alerts">
+        <section class="panel" id="alerts" data-section hidden>
           <div class="panel-head"><h2>Alerts</h2><p>Checked after every pull from Meta. Each one goes to the admins once a day per ad or campaign, and shows on Today until it's fixed.</p></div>
           <form class="panel-body stack" id="al-form" novalidate>
             <ul class="al-rules" id="al-rules"></ul>
@@ -70,17 +72,17 @@
             <div id="al-recent"></div>
           </form>
         </section>
-        <section class="panel" id="reports-panel">
+        <section class="panel" id="reports-panel" data-section hidden>
           <div class="panel-head"><h2>Clients and reports</h2><p id="rep-state"></p></div>
           <form class="panel-body stack tight" id="rep-form" novalidate>
             <div class="field"><label for="rep-email">Email the report to this account's clients</label><select class="input" id="rep-email" name="email">
               <option value="off">Off</option><option value="weekly">Every Monday (last week)</option><option value="monthly">On the 1st (last month)</option></select>
               <span class="hint" id="rep-clients"></span></div>
             <label class="check"><input type="checkbox" id="rep-leads"> Clients may move leads through stages and add notes <span class="muted">(otherwise they only look)</span></label>
-            <div class="row"><button class="btn btn-primary" type="submit">Save</button><a class="btn btn-quiet" href="/report.html">Open the report</a><span class="spacer"></span><button class="btn btn-danger-text" type="button" id="rep-revoke">Stop all shared links</button></div>
+            <div class="row"><button class="btn btn-primary" type="submit">Save report settings</button><a class="btn btn-quiet" href="/report.html">Open the report</a><span class="spacer"></span><button class="btn btn-danger-text" type="button" id="rep-revoke">Stop all shared links</button></div>
           </form>
         </section>
-        <section class="panel" id="replies">
+        <section class="panel" id="replies" data-section hidden>
           <div class="panel-head"><h2>Lead replies</h2><p id="rp-state"></p></div>
           <div class="panel-body stack">
             <p class="muted">Emails to leads, sent from the lead page with “Email them”. Write them once here; each one can still be edited before it goes. The lead's answer goes back to whoever sent it.</p>
@@ -88,7 +90,7 @@
               <div class="field"><label for="booking_link">Booking link <span class="muted">(optional)</span></label><input class="input" id="booking_link" name="booking_link" inputmode="url" placeholder="https://calendly.com/…"><span class="hint">Fills {booking_link}. Without one, the line that uses it is left out.</span></div>
               <label class="check"><input type="checkbox" id="rp-auto"> Also send a reply by itself to every new lead that left an email</label>
               <div class="field" id="rp-auto-pick" hidden><label for="rp-auto-template">Automatic reply uses</label><select class="input" id="rp-auto-template"></select><span class="hint" id="rp-auto-hint"></span></div>
-              <div class="row"><button class="btn btn-primary" type="submit">Save</button></div>
+              <div class="row"><button class="btn btn-primary" type="submit">Save reply settings</button></div>
             </form>
             <h3 class="section-title">Templates</h3>
             <ul class="tpl-list" id="tpl-list"></ul>
@@ -104,40 +106,40 @@
             <div id="rp-result"></div>
           </div>
         </section>
-        <section class="panel" id="tracking">
+        <section class="panel" id="tracking" data-section hidden>
           <div class="panel-head"><h2>Tracking health</h2><p id="tr-state"></p><span class="spacer"></span><button type="button" class="link-btn" id="tr-fresh">Check now</button></div>
           <div class="panel-body stack tight" id="tr-body"><p class="muted flush">Reading from Meta…</p></div>
         </section>
-        <section class="panel" id="crm">
+        <section class="panel" id="crm" data-section hidden>
           <div class="panel-head"><h2>Lead stages to Meta</h2><p id="crm-state"></p></div>
           <form class="panel-body stack" id="crm-form" novalidate>
             <p class="muted">When you move a lead to Contacted, Qualified, Won or Lost, Meta hears about it. Over time it learns which people become clients and finds more like them. Test leads are never sent.</p>
             <div class="field"><label for="meta_dataset_id">Dataset ID</label><input class="input" id="meta_dataset_id" name="meta_dataset_id" inputmode="numeric"><span class="hint">Events Manager → Data sources → your dataset.</span></div>
             <label class="check"><input type="checkbox" id="crm_send_enabled"> Send lead stages to Meta</label>
-            <div class="row">
-              <button class="btn btn-primary" type="submit">Save</button>
-            </div>
-            <div class="field"><label for="crm-code">Test code</label><input class="input" id="crm-code" autocomplete="off" placeholder="TEST12345"><span class="hint">Events Manager → your dataset → Test events. Sends one "Lead" event for the newest lead; it shows there within a minute and counts for nothing.</span></div>
-            <div class="row"><button class="btn" type="button" id="crm-test">Send test event</button></div>
+            <div class="row"><button class="btn btn-primary" type="submit">Save lead stages</button></div>
             <div id="crm-result"></div>
+            <details class="tech" id="crm-adv"><summary>Advanced <small>Send a test event</small></summary>
+              <div class="field"><label for="crm-code">Test code</label><input class="input" id="crm-code" autocomplete="off" data-no-guard placeholder="TEST12345"><span class="hint">Events Manager → your dataset → Test events. Sends one "Lead" event for the newest lead; it shows there within a minute and counts for nothing.</span></div>
+              <div class="row"><button class="btn" type="button" id="crm-test">Send test event</button></div>
+              <div id="crm-test-result"></div>
+            </details>
           </form>
         </section>
-        <section class="panel" id="ab">
+        <section class="panel" id="ab" data-section hidden>
           <div class="panel-head"><h2>Meta A/B tests</h2><p id="mt-state"></p></div>
           <form class="panel-body stack" id="mt-form" novalidate>
             <p class="muted">Lets admins run a tracked test as an A/B test on Meta from the Tests page. Meta then splits the people into groups that don't overlap, so the comparison is clean. Ad tests spend a test budget on top of the campaign's; each one shows its cost and needs a yes, and starts tomorrow at the earliest.</p>
             <label class="check"><input type="checkbox" id="mt-on"> Allow creating A/B tests on Meta</label>
-            <div class="row"><button class="btn btn-primary" type="submit">Save</button></div>
+            <div class="row"><button class="btn btn-primary" type="submit">Save A/B test setting</button></div>
           </form>
         </section>
-        <section class="panel" id="activity-panel">
+        <section class="panel" id="activity-panel" data-section hidden>
           <div class="panel-head"><h2>Activity</h2><p>Every change made here, by anyone.</p></div>
           <div class="panel-body scroll-x"><table class="table" id="activity"></table></div>
         </section>
-        <div class="console-group stack medium" id="grp-console">
-        <h2 class="group-title">Whole console <span class="muted">(every account)</span></h2>
+        <div class="console-group" id="grp-console" hidden>
         <p class="note" id="console-note" hidden></p>
-        <section class="panel" id="meta-app">
+        <section class="panel" id="meta-app" data-section hidden>
           <div class="panel-head"><h2>Meta app</h2><p id="app-state"></p></div>
           <form class="panel-body stack" id="app-form" novalidate>
             <p class="muted">The app that receives every account's lead webhooks. Change these only when Meta's app changes.</p>
@@ -145,22 +147,22 @@
               <div class="field"><label for="meta_app_id">App ID</label><input class="input" id="meta_app_id" name="meta_app_id" inputmode="numeric"></div>
               <div class="field"><label for="meta_app_secret">App secret</label><input class="input" id="meta_app_secret" name="meta_app_secret" type="password" autocomplete="off"><span class="hint" data-hint="meta_app_secret"></span></div>
             </div>
-            <div class="grid-2">
-              <div class="field"><label for="meta_verify_token">Webhook verify token</label><input class="input" id="meta_verify_token" name="meta_verify_token" type="password" autocomplete="off"><span class="hint" data-hint="meta_verify_token"></span></div>
-              <div class="field"><label for="meta_graph_version">Graph API version</label><input class="input" id="meta_graph_version" name="meta_graph_version"><span class="hint" id="graph-default"></span></div>
-            </div>
+            <div class="field"><label for="meta_verify_token">Webhook verify token</label><input class="input" id="meta_verify_token" name="meta_verify_token" type="password" autocomplete="off"><span class="hint" data-hint="meta_verify_token"></span></div>
             <div class="note" id="webhook-note"></div>
-            <div class="row"><button class="btn btn-primary" type="submit">Save</button></div>
+            <details class="tech" id="app-adv"><summary>Advanced <small>Graph API version</small></summary>
+              <div class="field"><label for="meta_graph_version">Graph API version</label><input class="input" id="meta_graph_version" name="meta_graph_version"><span class="hint" id="graph-default"></span></div>
+            </details>
+            <div class="row"><button class="btn btn-primary" type="submit">Save Meta app</button></div>
           </form>
         </section>
-        <section class="panel" id="auto">
+        <section class="panel" id="auto" data-section hidden>
           <div class="panel-head"><h2>Automatic refresh</h2><p id="auto-state"></p></div>
           <form class="panel-body stack" id="auto-form" novalidate>
             <div class="field"><label for="auto-minutes">Get the latest from Meta</label><select class="input" id="auto-minutes" name="minutes"></select><span class="hint">Ads, results, today's spend and any missed leads. Open pages update themselves; the Refresh button still works any time.</span></div>
-            <div class="row"><button class="btn btn-primary" type="submit">Save</button></div>
+            <div class="row"><button class="btn btn-primary" type="submit">Save how often</button></div>
           </form>
         </section>
-        <section class="panel" id="telegram">
+        <section class="panel" id="telegram" data-section hidden>
           <div class="panel-head"><h2>Telegram</h2><p id="tg-state"></p></div>
           <form class="panel-body stack" id="tg-form" novalidate>
             <p class="muted">New leads and reminders reach each person's phone through your own Telegram bot. Each person then connects it once from Your account.</p>
@@ -170,14 +172,17 @@
               <li>Copy the token it sends back and paste it here.</li>
             </ol>
             <div class="field"><label for="telegram_bot_token">Bot token</label><input class="input" id="telegram_bot_token" name="telegram_bot_token" autocomplete="off" spellcheck="false"><span class="hint" id="tg-hint">Looks like 123456789:AAH…</span></div>
-            <div class="row"><button class="btn btn-primary" type="submit">Save</button><button class="btn btn-danger-text" type="button" id="tg-remove" hidden>Remove the bot</button></div>
+            <div class="row"><button class="btn btn-primary" type="submit">Save bot</button><button class="btn btn-danger-text" type="button" id="tg-remove" hidden>Remove the bot</button></div>
             <div id="tg-result"></div>
           </form>
         </section>
-        <section class="panel" id="email">
+        <section class="panel" id="email" data-section hidden>
           <div class="panel-head"><h2>Email</h2><p>Sends the new-lead alerts.</p></div>
           <form class="panel-body stack" id="smtp-form" novalidate>
             <p class="note" id="smtp-source" role="status" hidden></p>
+            <div class="row"><button class="btn" type="button" id="smtp-test">Send me a test email</button></div>
+            <details class="tech" id="smtp-own"><summary>Advanced <small>Your own mailbox</small></summary>
+            <div class="stack">
             <div class="grid-2">
               <div class="field"><label for="smtp_host">SMTP server</label><input class="input" id="smtp_host" name="smtp_host" placeholder="mail.edgebourne.com"></div>
               <div class="grid-2 tight">
@@ -193,13 +198,16 @@
               <div class="field"><label for="smtp_from_email">Send from</label><input class="input" id="smtp_from_email" name="smtp_from_email" type="email" placeholder="ads@edgebourne.com"></div>
               <div class="field"><label for="smtp_from_name">Sender name</label><input class="input" id="smtp_from_name" name="smtp_from_name" placeholder="Edge Bourne Ads"></div>
             </div>
-            <div class="row"><button class="btn btn-primary" type="submit">Save</button><button class="btn" type="button" id="smtp-test">Send me a test email</button></div>
+            <div class="row"><button class="btn btn-primary" type="submit">Save mailbox</button></div>
+            </div>
+            </details>
           </form>
         </section>
-        <section class="panel" id="accounts-panel">
+        <section class="panel" id="accounts-panel" data-section hidden>
           <div class="panel-head"><h2>Accounts</h2><p>Every business this console runs ads for.</p></div>
           <div class="panel-body stack tight"><ul class="acct-list" id="acct-list"></ul></div>
         </section>
+        </div>
         </div>
       </div>
     </main>

@@ -22,32 +22,38 @@
       <header class="page-head"><h1>Your account</h1></header>
       <div class="content stack narrow">
         <p class="note warn" id="first-note" hidden>Set your own password before you start. The one you signed in with was temporary.</p>
+        <section class="panel me-card" aria-label="You">
+          <div class="panel-body row">
+            <span class="avatar big" id="me-initials" aria-hidden="true"></span>
+            <span class="me-who"><b id="me-name"></b><small id="me-email"></small><small id="me-role"></small></span>
+            <span class="spacer"></span>
+            <button class="btn" type="button" id="account-signout">Sign out</button>
+          </div>
+        </section>
         <section class="panel">
-          <div class="panel-head"><h2>Password</h2></div>
+          <div class="panel-head"><h2>Password</h2><p>Changing it signs you out on your other devices.</p></div>
           <form class="panel-body stack" id="pw-form" novalidate>
             <div class="field"><label for="current">Current password</label><input class="input" id="current" name="current" type="password" autocomplete="current-password"></div>
             <div class="field"><label for="new">New password</label><input class="input" id="new" name="new" type="password" autocomplete="new-password"><span class="hint">At least 10 characters.</span></div>
             <div><button class="btn btn-primary" type="submit">Change password</button></div>
           </form>
         </section>
-        <section class="panel">
-          <div class="panel-head"><h2>Appearance</h2></div>
+        <section class="panel" id="appearance">
+          <div class="panel-head"><h2>Appearance</h2><p>For this device.</p></div>
           <div class="panel-body row">
             <div class="segmented" role="group" aria-label="Theme" id="theme-choice">
               <button type="button" data-theme-choice="system">Match my device</button>
               <button type="button" data-theme-choice="light">Light</button>
               <button type="button" data-theme-choice="dark">Dark</button>
             </div>
-            <span class="spacer"></span>
-            <button class="btn" type="button" id="account-signout">Sign out</button>
           </div>
         </section>
         <section class="panel">
           <div class="panel-head"><h2>Lead alerts</h2></div>
           <div class="panel-body stack">
-            <label class="check"><input type="checkbox" id="notify"> Email me when a new lead arrives in my campaigns</label>
-            <label class="check"><input type="checkbox" id="remind"> Remind me about leads nobody has contacted <span class="muted">(after 5 minutes if they're mine; admins also after an hour and a list at 8 AM)</span></label>
-            <label class="check" id="alerts-row" hidden><input type="checkbox" id="alerts-on"> Tell me when something is wrong with the ads <span class="muted">(rejected ads, no delivery, tired ads, overspend, no leads; set the rules in Settings → Alerts)</span></label>
+            <label class="check"><input type="checkbox" id="notify"><span>Email me when a new lead arrives in my campaigns</span></label>
+            <label class="check"><input type="checkbox" id="remind"><span>Remind me about leads nobody has contacted<span class="explain">After 5 minutes if they're mine; admins also after an hour, and a list at 8 AM.</span></span></label>
+            <label class="check" id="alerts-row" hidden><input type="checkbox" id="alerts-on"><span>Tell me when something is wrong with the ads<span class="explain">Rejected ads, no delivery, tired ads, overspend, no leads. The rules are in <a href="/settings.html#alerts">Settings → Alerts</a>.</span></span></label>
             <div class="tg-box" id="tg" aria-live="polite"></div>
           </div>
         </section>
