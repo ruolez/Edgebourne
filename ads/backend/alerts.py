@@ -15,6 +15,7 @@ import config
 import db
 import notify
 import settings_store
+import snooze
 
 log = logging.getLogger(__name__)
 
@@ -99,35 +100,49 @@ def _fatigue(rows, today, rule, people):
     return None
 
 
+def _dry_streak(rows, today):
+    """Days in a row, ending yesterday, with spend and no lead (a missing day ends the streak)."""
+    by_day = {r["day"]: r for r in rows}
+    n = 0
+    while n < 14:
+        r = by_day.get(today - timedelta(days=n + 1))
+        if not r or (r.get("spend_cents") or 0) <= 0 or (r.get("leads") or 0) > 0:
+            break
+        n += 1
+    return n
+
+
 def evaluate(snap, rules, today):
     found = []
 
     def money(cents):
         return account_info.money(cents, snap.get("currency") or "USD", whole=not cents % 100)
 
-    def add(rule, entity, level, title, lines, campaign_id=None, href=None):
+    def add(rule, entity, level, title, lines, campaign_id=None, href=None, measure=None):
+        # measure: the figure the rule judged (snooze.WORSE), so a snoozed alert can tell "clearly worse".
         found.append({"rule": rule, "entity_id": entity, "key": f"{rule}:{entity}:{today.isoformat()}", "level": level,
-                      "title": title, "lines": lines, "campaign_id": campaign_id, "href": href})
+                      "title": title, "lines": lines, "campaign_id": campaign_id, "href": href, "measure": measure})
 
     for ad in snap["ads"]:
         href = f"/ad.html?id={ad['id']}"
         rows = snap["ad_days"].get(ad["id"], [])
         if rules["ad_rejected"]["on"] and ad["effective_status"] in ("DISAPPROVED", "WITH_ISSUES"):
             add("ad_rejected", ad["id"], "bad", f"Meta stopped “{ad['name']}”",
-                [f"Status: {ad['effective_status'].replace('_', ' ').lower()}. Open the ad to see why and fix it."], ad["campaign_id"], href)
+                [f"Status: {ad['effective_status'].replace('_', ' ').lower()}. Open the ad to see why and fix it."], ad["campaign_id"], href,
+                measure=2 if ad["effective_status"] == "DISAPPROVED" else 1)
         r = rules["no_delivery"]
         # Today's partial day counts here: an ad first shown today has been seen (audit A3-63).
         seen = _sum(rows, "impressions") or ad.get("today_impressions")
         if r["on"] and ad["effective_status"] == "ACTIVE" and ad["age_hours"] >= r["hours"] and not seen:
             add("no_delivery", ad["id"], "warn", f"“{ad['name']}” is on but nobody has seen it",
-                [f"No views {ad['age_hours']:.0f} hours after it went live."], ad["campaign_id"], href)
+                [f"No views {ad['age_hours']:.0f} hours after it went live."], ad["campaign_id"], href, measure=round(ad["age_hours"]))
         r = rules["fatigue"]
         tired = r["on"] and ad["effective_status"] == "ACTIVE" and _fatigue(rows, today, r, (snap.get("reach_7d") or {}).get(ad["id"]))
         if tired:
             freq, drop, rise = tired
             add("fatigue", ad["id"], "warn", f"“{ad['name']}” looks tired",
                 [f"People see it about {freq:.1f} times a week; clicks are down {drop:.0f}% and cost per 1,000 views up {rise:.0f}% since its first week.",
-                 "Time for a fresh version."], ad["campaign_id"], href)
+                 "Time for a fresh version."], ad["campaign_id"], href, measure=round(freq, 1))
 
     for c in snap["campaigns"]:
         budget = c.get("daily_budget_cents") or 0
@@ -138,11 +153,13 @@ def evaluate(snap, rules, today):
         spent_today = (snap.get("today_spend") or {}).get(c["id"], 0)
         if r["on"] and budget and spent_today > r["times"] * budget:
             add("day_overspend", c["id"], "info", f"{money(spent_today)} spent today on a {money(budget)} daily budget",
-                ["Meta may spend up to 1.75× the daily budget on one day and evens it out over the week. Just a heads-up."], c["id"], href)
+                ["Meta may spend up to 1.75× the daily budget on one day and evens it out over the week. Just a heads-up."], c["id"], href,
+                measure=spent_today)
         r = rules["week_overspend"]
         if r["on"] and budget and len(week) == 7 and _sum(week, "spend_cents") > r["times"] * budget:
             add("week_overspend", c["id"], "warn", f"{money(_sum(week, 'spend_cents'))} spent in 7 days on a {money(budget)} daily budget",
-                [f"That's more than {r['times']:g}× the daily budget. Check the budget and the schedule."], c["id"], href)
+                [f"That's more than {r['times']:g}× the daily budget. Check the budget and the schedule."], c["id"], href,
+                measure=_sum(week, "spend_cents"))
         r = rules["cpl_high"]
         spend, leads = _sum(week, "spend_cents"), _sum(week, "leads")
         if r["on"] and r["target_cents"] and spend >= 3 * r["target_cents"]:
@@ -150,12 +167,15 @@ def evaluate(snap, rules, today):
             if cpl is None or cpl > r["times"] * r["target_cents"]:
                 add("cpl_high", c["id"], "warn",
                     f"Leads cost {money(cpl) if cpl else 'more than ' + money(spend)} each in “{c['name']}”",
-                    [f"Last 7 days: {money(spend)} spent, {leads} lead{'s' if leads != 1 else ''}; your target is {money(r['target_cents'])}."], c["id"], href)
+                    [f"Last 7 days: {money(spend)} spent, {leads} lead{'s' if leads != 1 else ''}; your target is {money(r['target_cents'])}."], c["id"], href,
+                    measure=round(cpl) if cpl else spend)
         r = rules["no_leads"]
-        recent = _last(rows, today, r["days"])
-        if r["on"] and len(recent) == r["days"] and all((x.get("spend_cents") or 0) > 0 for x in recent) and not _sum(recent, "leads"):
-            add("no_leads", c["id"], "bad", f"No leads for {r['days']} days in “{c['name']}”",
-                [f"{money(_sum(recent, 'spend_cents'))} spent since {recent[0]['day'].strftime('%b %-d')} and not one lead. Check the form and the ads."], c["id"], href)
+        streak = _dry_streak(rows, today)
+        if r["on"] and streak >= r["days"]:
+            recent = _last(rows, today, streak)
+            add("no_leads", c["id"], "bad", f"No leads for {streak} days in “{c['name']}”",
+                [f"{money(_sum(recent, 'spend_cents'))} spent since {recent[0]['day'].strftime('%b %-d')} and not one lead. Check the form and the ads."],
+                c["id"], href, measure=streak)
 
     r = rules["spend_cap"]
     cap = snap.get("cap")
@@ -166,7 +186,7 @@ def evaluate(snap, rules, today):
             add("spend_cap", "account", "bad" if done else "warn",
                 "The account spending limit is reached" if done else f"{used:.0f}% of the account spending limit is used",
                 [f"{money(cap['spent_cents'])} of {money(cap['limit_cents'])}. Every ad stops when it's reached; raise it in Meta's billing settings if you want them to keep running."],
-                None, "/performance.html")
+                None, "/performance.html", measure=round(used, 1))
 
     p = snap.get("pacing") or {}
     r = rules["cap_soon"]
@@ -174,12 +194,12 @@ def evaluate(snap, rules, today):
         when = date.fromisoformat(p["cap_date"]).strftime("%a %b %-d")
         add("cap_soon", "account", "warn", f"The spending limit runs out in about {p['cap_days']} day{'s' if p['cap_days'] != 1 else ''}",
             [f"At the current pace every ad stops around {when}. Raise the limit in Meta's billing settings to keep them running."],
-            None, "/performance.html")
+            None, "/performance.html", measure=p["cap_days"])
     r = rules["pace_over"]
     if r["on"] and p.get("vs_target_pct") is not None and p["vs_target_pct"] > r["percent"]:
         add("pace_over", "account", "warn", f"This month is heading {p['vs_target_pct']}% over your target",
             [f"At the current pace the month ends near {money(p['projected_cents'])} against {money(p['target_cents'])}."],
-            None, "/performance.html")
+            None, "/performance.html", measure=p["vs_target_pct"])
 
     r = rules["tracking"]
     two = [today - timedelta(days=1), today - timedelta(days=2)]
@@ -188,7 +208,7 @@ def evaluate(snap, rules, today):
     if r["on"] and meta >= 2 and inbox == 0:
         add("tracking", "account", "bad", "Leads aren't reaching the inbox",
             [f"Meta counted {meta} leads in the last two days, but none arrived here. Check the Page connection in Settings → Meta."],
-            None, "/settings.html#meta")
+            None, "/settings.html#meta", measure=meta)
 
     r = rules["events_quiet"]
     t = snap.get("tracking") or {}
@@ -201,7 +221,7 @@ def evaluate(snap, rules, today):
     if r["on"] and snap.get("connected") and age is not None and age > r["hours"]:
         add("stale_data", "account", "warn", "Meta hasn't answered for a while",
             [f"The last pull from Meta was {age:.0f} hours ago. The token or the connection may need a look in Settings → Meta."],
-            None, "/settings.html#meta")
+            None, "/settings.html#meta", measure=round(age, 1))
     return found
 
 
@@ -282,13 +302,67 @@ def run(now=None):
     rules = saved_rules()
     rules["cpl_high"] = {**rules["cpl_high"], "target_cents": targets.lead()}  # Settings → Targets
     found = evaluate(snap, rules, today)
-    raised = raise_found(found)
+    raised = raise_found(found, now)
     opened = db.query("SELECT id, rule, entity_id FROM alerts WHERE resolved_at IS NULL AND kind = 'condition'")
     for alert_id in to_resolve(opened, found, snap):
         db.execute("UPDATE alerts SET resolved_at = now() WHERE id = %s", (alert_id,))
     db.execute("UPDATE alerts SET resolved_at = now() WHERE rule = 'outside_edit' AND kind = 'event' AND resolved_at IS NULL "
                "AND created_at < %s", (now - OUTSIDE_EDIT_OPEN,))
+    # Snoozes of problems that are gone end (a return alerts as usual), unless Meta's data is stale.
+    age = snap.get("last_pull_age_h")
+    stale = age is not None and age > rules["stale_data"]["hours"]
+    live = db.query("SELECT id, rule, entity_id, mode, until FROM alert_snoozes WHERE ended_at IS NULL")
+    for sid, reason in snooze.sweep(live, {(a["rule"], a["entity_id"]) for a in found}, now, stale, unjudged(snap)):
+        end_snooze(sid, reason)
     return [a["key"] for _, a in raised]
+
+
+def unjudged(snap):
+    """Rules that couldn't be judged this time: their open alerts and snoozes stay as they are."""
+    return {"fatigue"} if snap.get("reach_7d") is None else set()
+
+
+def end_snooze(snooze_id, reason, by=None):
+    return db.execute("UPDATE alert_snoozes SET ended_at = now(), end_reason = %s, ended_by = %s WHERE id = %s AND ended_at IS NULL "
+                      "RETURNING id, rule, entity_id", (reason, by, snooze_id), returning=True)
+
+
+def live_snoozes(rules=None):
+    """{(rule, entity_id): snooze} for the snoozes in force (one per problem), with who set them."""
+    rows = db.query("""SELECT s.id, s.rule, s.entity_id, s.campaign_id, s.mode, s.until, s.baseline::float8 AS baseline,
+                                s.baseline_level, s.alert_id, s.created_at, u.name AS by
+                         FROM alert_snoozes s LEFT JOIN users u ON u.id = s.created_by
+                         WHERE s.ended_at IS NULL AND (%s::text[] IS NULL OR s.rule = ANY(%s))""", (rules, rules))
+    return {(r["rule"], r["entity_id"]): r for r in rows}
+
+
+def snooze_view(s, tz):
+    """What the Inbox, Today and Settings show of a snooze."""
+    return {"id": s["id"], "mode": s["mode"], "until": s["until"].isoformat() if s.get("until") else None,
+            "by": s.get("by"), "words": snooze.snooze_words(s, tz)}
+
+
+def with_snoozes(found, now):
+    """The alerts as they are stored: a snoozed problem quietly, or as a wake-up when it got worse or its day
+    came (the snooze ends then)."""
+    rules = sorted({a["rule"] for a in found if a.get("kind", "condition") == "condition"})
+    live = live_snoozes(rules) if rules else {}
+    if not live:
+        return found
+    tz = account_info.tz()
+    currency = account_info.currency()
+    money = lambda c: account_info.money(round(c), currency, whole=not round(c) % 100)  # noqa: E731
+    out = []
+    for a in found:
+        s = live.get((a["rule"], a["entity_id"])) if a.get("kind", "condition") == "condition" and not a.get("resolved") else None
+        if not s:
+            out.append(a)
+            continue
+        verdict = snooze.decide(s, a, now)
+        if verdict != "quiet":
+            end_snooze(s["id"], "worse" if verdict == "wake_worse" else "expired")
+        out.append(snooze.apply(a, s, verdict, tz, money))
+    return out
 
 
 def mark_done(alert_id):
@@ -302,21 +376,28 @@ def to_resolve(opened, found, snap):
     unique reach (reach_7d None, e.g. a rate-limit cooldown): those alerts stay open, or one hiccup would
     close them for the rest of the day (the dedupe key is per day)."""
     live = {(a["rule"], a["entity_id"]) for a in found}
-    unjudged = {"fatigue"} if snap.get("reach_7d") is None else set()
-    return [r["id"] for r in opened if (r["rule"], r["entity_id"]) not in live and r["rule"] not in unjudged]
+    skip = unjudged(snap)
+    return [r["id"] for r in opened if (r["rule"], r["entity_id"]) not in live and r["rule"] not in skip]
 
 
-def raise_found(found):
-    """Store new alerts (once per dedupe key) and tell the admins; info alerts stay in the console."""
+def _insert(a, key):
+    return db.execute(
+        "INSERT INTO alerts (rule, dedupe_key, level, title, lines, entity_id, campaign_id, href, kind, resolved_at, measure, quiet) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s, %s) "
+        "ON CONFLICT (account_id, dedupe_key) DO NOTHING RETURNING id",
+        (a["rule"], key, a["level"], a["title"], json.dumps(a["lines"]), a["entity_id"], a["campaign_id"], a["href"],
+         a.get("kind", "condition"), bool(a.get("resolved")), a.get("measure"), bool(a.get("quiet"))),
+        returning=True)
+
+
+def raise_found(found, now=None):
+    """Store new alerts (once per dedupe key) and tell the admins; info alerts and snoozed (quiet) ones stay in
+    the console. A wake-up takes the day's key, or a key of its own when a quiet row already holds it."""
     raised = []
-    for a in found:
-        row = db.execute(
-            "INSERT INTO alerts (rule, dedupe_key, level, title, lines, entity_id, campaign_id, href, kind, resolved_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END) "
-            "ON CONFLICT (account_id, dedupe_key) DO NOTHING RETURNING id",
-            (a["rule"], a["key"], a["level"], a["title"], json.dumps(a["lines"]), a["entity_id"], a["campaign_id"], a["href"],
-             a.get("kind", "condition"), bool(a.get("resolved"))),
-            returning=True)
+    for a in with_snoozes(found, now or datetime.now(timezone.utc)):
+        row = _insert(a, a["key"])
+        if not row and a.get("wake_key"):
+            row = _insert(a, a["wake_key"])
         if row:
             raised.append((row["id"], a))
     if raised:
@@ -340,3 +421,15 @@ def open_alerts(scope_ids=None):
 
 def recent(limit=20):
     return db.query("SELECT id, rule, level, title, lines, href, created_at, resolved_at FROM alerts ORDER BY id DESC LIMIT %s", (limit,))
+
+
+def snoozed_now():
+    """Settings → Alerts → Snoozed now: each snooze in force with its problem's newest alert."""
+    tz = account_info.tz()
+    out = []
+    for s in sorted(live_snoozes().values(), key=lambda x: x["created_at"], reverse=True):
+        a = db.query("SELECT id, title, href FROM alerts WHERE rule = %s AND entity_id = %s ORDER BY id DESC LIMIT 1",
+                     (s["rule"], s["entity_id"]), one=True)
+        if a:
+            out.append({**snooze_view(s, tz), "alert_id": a["id"], "title": a["title"], "href": a["href"], "rule": s["rule"]})
+    return out

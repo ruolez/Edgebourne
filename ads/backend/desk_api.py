@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 bp = Blueprint("desk", __name__, url_prefix="/api/desk")
 agent_bp = Blueprint("agent", __name__, url_prefix="/api/agent")
 
-KINDS = ("question", "review", "research", "creative")
+KINDS = ("question", "review", "research", "creative")  # typed on the Claude page; diagnose runs start from an alert
 PROPOSAL_KINDS = ("budget", "status", "creative", "targeting", "experiment", "tags", "other")
 ACTIVE = ("queued", "claimed", "running")
 ONLINE_SECONDS = 90
@@ -464,6 +464,25 @@ def now():
     n = desk_view.now(open_runs())
     bridge = bridge_status()
     return jsonify({**n, "online": bridge["online"], "mac": desk_view.mac_status(bridge, n["working"], n["queued"])})
+
+
+def runs_by_key(rows):
+    """{key: {id, status, waiting}}: the newest run per key (rows come newest first)."""
+    out = {}
+    for r in rows:
+        if r.get("k") is not None:
+            out.setdefault(r["k"], {"id": r["id"], "status": r["status"], "waiting": int(r.get("waiting") or 0)})
+    return out
+
+
+def latest_runs(kind, option_key, keys=None):
+    """The latest run of `kind` per `options.<option_key>` (Fix with Claude per piece of advice, Diagnose per
+    problem), with how many of its suggestions are still waiting."""
+    rows = db.query("""SELECT t.id, t.status, t.options->>%s AS k,
+                              (SELECT COUNT(*) FROM desk_proposals p WHERE p.task_id = t.id AND p.status = 'pending') AS waiting
+                       FROM desk_tasks t WHERE t.kind = %s AND (%s::text[] IS NULL OR t.options->>%s = ANY(%s))
+                       ORDER BY t.id DESC LIMIT 200""", (option_key, kind, keys, option_key, keys))
+    return runs_by_key(rows)
 
 
 def open_runs():

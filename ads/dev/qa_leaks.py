@@ -56,6 +56,9 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
     db.execute("UPDATE campaign_builds SET spec = %s WHERE id = %s", (spec, build["id"]))  # keeps up with the spec's shape
     once("alerts", {"rule": "qa", "dedupe_key": f"{mark}alert", "level": "warn", "title": f"{mark} alert", "kind": "event",
                     "entity_id": ad, "campaign_id": campaign, "account_id": acct}, "dedupe_key")
+    # W1a: an open problem Claude can diagnose and an admin can snooze (its draft names the alert and the ad).
+    problem = once("alerts", {"rule": "no_leads", "dedupe_key": f"{mark}problem", "level": "bad", "title": f"{mark} no leads", "kind": "condition",
+                              "entity_id": campaign, "campaign_id": campaign, "account_id": acct}, "dedupe_key")
     once("lead_notes", {"lead_id": lead, "user_id": admin_id, "body": f"{mark} note", "account_id": acct}, "body")
     once("lead_replies", {"lead_id": lead, "user_id": admin_id, "to_email": "qa@example.com", "subject": f"{mark} reply", "body": f"{mark} reply",
                           "status": "sent", "account_id": acct}, "subject")
@@ -63,7 +66,7 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
     db.execute("UPDATE activity SET at = now() WHERE id = %s", (activity["id"],))  # History lists the latest 200 only
     once("inbox_reads", {"user_id": admin_id, "item_key": f"{mark}read", "account_id": acct}, "item_key")
     swipe = once("swipes", {"page_name": f"{mark} rival", "body": f"{mark} rival words", "source": "manual", "account_id": acct}, "page_name")
-    return {"proposal": proposal["id"], "view": view["id"], "build": build["id"], "swipe": swipe["id"]}
+    return {"proposal": proposal["id"], "view": view["id"], "build": build["id"], "swipe": swipe["id"], "alert": problem["id"]}
 
 with account_ctx.all_accounts():
     acct = db.query("SELECT id FROM accounts WHERE name = 'Burdanova QA'", one=True)
@@ -154,7 +157,8 @@ def fill(rule, other):
 
 
 # GET routes that read their ids from the query: asked with the other account's.
-QUERY = {"/api/swipes/brief": lambda other: f"?ids={other['swipe']}&as=brief"}
+QUERY = {"/api/swipes/brief": lambda other: f"?ids={other['swipe']}&as=brief",
+         "/api/diagnose/draft": lambda other: f"?alert_id={other['alert']}"}
 
 SKIP = re.compile(r"^/api/(agent/|auth/logout)|/wait$|/stream$|^/webhooks/")
 
@@ -268,6 +272,8 @@ def account1_state():
             "lead": q("SELECT status, (SELECT COUNT(*) FROM lead_notes WHERE lead_id = l.id) AS notes, "
                       "(SELECT COUNT(*) FROM lead_replies WHERE lead_id = l.id) AS replies FROM leads l WHERE id = %s", one["lead"]),
             "experiment": q("SELECT name, metric, arms FROM experiments WHERE id = %s", one["exp"]),
+            "alert": q("SELECT resolved_at, quiet FROM alerts WHERE id = %s", one["alert"]),
+            "snoozes": q("SELECT id, ended_at FROM alert_snoozes ORDER BY id"),
             "ads": q("SELECT COUNT(*) AS n FROM ads"),
             "meta_ad": meta_client.get(one["ad"], fields="status,name"),
             "meta_campaign": meta_client.get(one["campaign"], fields="status,daily_budget"),
@@ -320,7 +326,12 @@ for method, url, body in (("POST", f"/api/ads/ad/{one['ad']}/status", {"status":
                           ("POST", f"/api/builds/{one['build']}/resume", {}),
                           ("POST", f"/api/builds/{one['build']}/publish", {}),
                           ("PATCH", f"/api/views/{one['view']}", {"name": "x"}),
-                          ("DELETE", f"/api/views/{one['view']}", None)):
+                          ("DELETE", f"/api/views/{one['view']}", None),
+                          ("POST", f"/api/alerts/{one['alert']}/snooze", {"mode": "worse"}),
+                          ("DELETE", f"/api/alerts/{one['alert']}/snooze", None),
+                          ("POST", f"/api/alerts/{one['alert']}/done", {}),
+                          ("POST", "/api/diagnose", {"alert_id": one["alert"], "prompt": "x"}),
+                          ("POST", "/api/diagnose", {"ad_id": one["ad"], "prompt": "x"})):
     r = c.open(url, method=method, json=body)
     applied = [x for x in ((r.get_json(silent=True) or {}).get("results") or []) if x.get("ok")] if url.endswith("/bulk/apply") else []
     # Refused means a 4xx. A 5xx got past the account check and only failed further on (account 2 has no Page

@@ -50,13 +50,8 @@ def budgets():
 
 def fix_runs():
     """The latest "Fix with Claude" run per piece of advice, with its proposals still waiting."""
-    rows = db.query("""SELECT t.id, t.status, t.options->>'advice_key' AS k,
-                              (SELECT COUNT(*) FROM desk_proposals p WHERE p.task_id = t.id AND p.status = 'pending') AS waiting
-                       FROM desk_tasks t WHERE t.kind = 'advice' ORDER BY t.id DESC LIMIT 100""")
-    out = {}
-    for r in rows:
-        out.setdefault(r["k"], {"id": r["id"], "status": r["status"], "waiting": r["waiting"]})
-    return out
+    from desk_api import latest_runs
+    return latest_runs("advice", "advice_key")
 
 
 def with_recent(items, now=None):

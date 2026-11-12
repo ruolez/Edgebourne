@@ -2,23 +2,10 @@
 from flask import Blueprint, jsonify, request
 
 import inbox
-from auth import admin_required, current_user, login_required
-from util import api_error, log_activity
+from auth import current_user, login_required
+from util import api_error
 
 bp = Blueprint("inbox", __name__, url_prefix="/api/inbox")
-alerts_bp = Blueprint("alert_actions", __name__, url_prefix="/api/alerts")
-
-
-@alerts_bp.post("/<int:alert_id>/done")
-@admin_required
-def done(alert_id):
-    """Done on an event that waits for a person (an outside budget change that broke a money rule)."""
-    import alerts
-    row = alerts.mark_done(alert_id)
-    if not row:
-        return api_error("This one is already closed, or it closes by itself", 409)
-    log_activity("alert.done", subject=str(alert_id), details={"rule": row["rule"], "title": row["title"]})
-    return jsonify({"ok": True})
 
 
 @bp.get("")

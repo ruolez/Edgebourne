@@ -27,6 +27,9 @@ export function agoWords(iso, now = Date.now()) {
   const days = Math.floor(hours / 24);
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
+// A Claude run started from an alert or Meta's advice, in the console's words (W1a).
+export const RUN_STATE = { queued: "Waiting for your Mac", claimed: "Claude is on it", running: "Claude is on it" };
+export const suggestions = (n) => plural(n, "suggestion");
 // Change marks on the charts: the four kinds, in the console's words.
 export const CHANGE_CATS = { money: "Budget", switch: "On/off", edit: "Edits", meta: "Meta" };
 

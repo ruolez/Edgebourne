@@ -34,6 +34,13 @@ def local(dt, tz=None):
     return dt.astimezone(tz or timezone.utc) if dt.tzinfo else dt
 
 
+def days_since(first, now):
+    """Whole days from `first` to `now`, by the calendar of `now`'s time zone (pass now in the account's zone):
+    one count for the Inbox's "Open since" and the Diagnose request."""
+    first = first.astimezone(now.tzinfo) if first.tzinfo and now.tzinfo else first
+    return (now.date() - first.date()).days
+
+
 def day_time(dt, tz=None):
     """'Thu, Nov 13, 2:00 PM' in the account's time zone."""
     dt = local(dt, tz)

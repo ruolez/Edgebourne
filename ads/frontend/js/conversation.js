@@ -11,7 +11,9 @@ const pendingIn = (t) => t.proposals.filter((p) => p.status === "pending");
 const byType = (a, b) => suggestionType(a).rank - suggestionType(b).rank || a.id - b.id;
 const isLive = (t) => t.status === "claimed" || t.status === "running";
 
-export const turnTitle = (t) => (t.options && t.options.schedule) || firstLine(t.prompt);
+// A diagnosis is named after the alert it looks into (its prompt starts with the same line every time).
+export const turnTitle = (t) => (t.options && t.options.schedule)
+  || (t.kind === "diagnose" && t.options && t.options.alert ? `Diagnosis: ${t.options.alert.title}` : firstLine(t.prompt));
 const kindWord = (t) => (t.options && t.options.schedule ? "Scheduled" : RUN_WORDS[t.kind] || t.kind);
 export const threadTitle = (th, ix) => turnTitle(ix.tasks.get(th.turns[0]));
 export const liveTurn = (th, ix) => th.turns.map((id) => ix.tasks.get(id)).find(isLive);
@@ -162,7 +164,10 @@ function asked(t) {
   const body = long
     ? `<details class="cv-more"><summary>${esc(turnTitle(t))}</summary><p>${esc(t.prompt)}</p></details>`
     : esc(t.prompt);
-  return `<div class="cv-you ${auto ? "auto" : ""}">${about ? `<span class="cv-about">About: ${esc(about.title)}</span>` : ""}${body}</div>`;
+  // A diagnosis shows the request as Eugene sent it, with the alert it came from (W1a).
+  const alert = t.kind === "diagnose" && t.options && t.options.alert;
+  const from = alert ? `<span class="cv-about">From an alert: ${alert.alert_id ? `<a href="/inbox.html#item=${encodeURIComponent(`alert:${alert.alert_id}`)}">${esc(alert.title)}</a>` : esc(alert.title)}</span>` : "";
+  return `<div class="cv-you ${auto ? "auto" : ""}">${about ? `<span class="cv-about">About: ${esc(about.title)}</span>` : ""}${from}${body}</div>`;
 }
 
 function adsIn(t, ix) {

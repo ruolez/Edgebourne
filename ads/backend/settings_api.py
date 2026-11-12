@@ -89,7 +89,7 @@ def get_settings():
                     "auto": replies.auto_enabled(), "auto_template_id": int(settings_store.get("reply_auto_template_id") or 0) or None,
                     "auto_sender": (replies.auto_sender() or {}).get("name"), "placeholders": list(replies.PLACEHOLDERS),
                     **replies.summary()},
-        "alerts": {"rules": alerts.saved_rules(), "recent": alerts.recent(15)},
+        "alerts": {"rules": alerts.saved_rules(), "recent": alerts.recent(15), "snoozed": alerts.snoozed_now()},
         "auto_refresh_minutes": refresh_api.auto_minutes(settings_store.get("auto_refresh_minutes")),
         "auto_refresh_choices": list(refresh_api.AUTO_CHOICES),
         "meta_ab_tests": settings_store.get("meta_ab_tests") == "on",

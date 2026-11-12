@@ -4,7 +4,7 @@ a query per row."""
 import threading
 import time
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest import mock
 
 import account_ctx
@@ -285,9 +285,10 @@ class ArmSumsTests(unittest.TestCase):
 
 class InboxKeysTests(unittest.TestCase):
     def test_the_read_lookup_asks_for_exactly_the_items_in_the_feed(self):
-        alerts = [{"id": 3, "rule": "fatigue", "level": "warn", "title": "t", "created_at": 2, "resolved_at": None}]
-        leads = [{"id": 8, "full_name": "A", "created_time": 1, "status": "new"}]
-        proposals = [{"id": 5, "created_at": 3}]
+        at = lambda h: datetime(2026, 11, 10, h, tzinfo=timezone.utc)  # noqa: E731
+        alerts = [{"id": 3, "rule": "fatigue", "level": "warn", "title": "t", "created_at": at(2), "resolved_at": None}]
+        leads = [{"id": 8, "full_name": "A", "created_time": at(1), "status": "new"}]
+        proposals = [{"id": 5, "created_at": at(3)}]
         self.assertEqual(sorted(inbox.item_keys(alerts, leads, proposals)),
                          sorted(i["key"] for i in inbox.build(alerts, leads, proposals, set())))
 

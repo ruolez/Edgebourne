@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { acceptSheet } from "./decide.js";
 import { boot, confirmDialog, entityLink, esc, icon, leadClock, onRefresh, toast, when, editing, showLoadError, withFrom } from "./ui.js";
 import { money, per, plural } from "./format.js";
+import { alertButtons, moreButton, runChip, wireAlerts } from "./alertmenu.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
@@ -53,6 +54,9 @@ function itemRow(r) {
       + (me.role === "admin" ? `<a class="btn btn-quiet" href="${esc(r.href)}">Conversation</a>` : "");
   } else {
     acts = r.href ? `<a class="btn" href="${esc(r.href)}">${esc(actionLabel(r))}</a>` : "";
+    // Admins: Diagnose with Claude and Got it… beside it on a computer, in one ⋯ on a phone (rows keep one button).
+    const more = alertButtons(r);
+    if (more) acts += `<span class="al-inline">${more}</span>${moreButton(r)}`;
   }
   return `<li class="tq-row" data-key="${esc(r.key)}"><span class="tq-ic k-${TONE[r.level] || "info"}">${icon(ICON[r.category] || "alarm")}</span>
     <div class="tq-b"><b>${esc(r.title)}</b>${line}</div><div class="tq-acts">${acts}</div></li>`;
@@ -89,6 +93,7 @@ function render(d) {
   $("today-lede").textContent = lede(d);
   const fyi = d.fyi_unread ? `${plural(d.fyi_unread, "new note")} for your information, like approvals and changes made in Ads Manager.` : "Approvals, changes made in Ads Manager and other notes for your information stay in the Inbox.";
   const queueCard = `<section class="panel tq" aria-label="What needs you, most urgent first">${queueHtml(d)}
+    ${d.snoozed ? `<p class="tq-foot al-snoozed-line">${plural(d.snoozed, "snoozed alert")}. <a href="/inbox.html?box=fyi">See them</a></p>` : ""}
     <p class="tq-foot">${fyi} <a href="/inbox.html?box=fyi">Open the Inbox</a></p></section>`;
 
   const budget = d.daily_budget_cents;
@@ -193,9 +198,10 @@ function changeWords(c, LEVEL) {
 }
 
 let loadedAt = 0;
+let shown = null;
 async function load() {
   loadedAt = Date.now();
-  try { render(await api("/api/home")); } catch (err) { showLoadError($("home"), err, load); }
+  try { shown = await api("/api/home"); render(shown); } catch (err) { showLoadError($("home"), err, load); }
 }
 
 me = await boot({ page: "home" });
@@ -209,6 +215,7 @@ if (me) {
   // whichever reloads second skips: the catch-up when Today loaded in the last 15 s (that load
   // already read what the server pulled), the timer when the catch-up reloaded in the last 50 s.
   onRefresh(load, { auto: () => (Date.now() - loadedAt < 15000 ? null : load()) });
+  wireAlerts($("home"), (id) => (shown ? shown.queue.find((r) => r.alert_id === id) : null), load);
   load();
   setInterval(() => { if (!document.hidden && !editing() && Date.now() - loadedAt > 50000) load(); }, 60000);
 }
@@ -248,12 +255,8 @@ function adviceHtml(a) {
 // Advice the console can't apply goes to Claude on the Mac; its conversation and suggestions show here.
 function fixButton(r) {
   const run = r.fix_run;
-  if (run && ["queued", "claimed", "running"].includes(run.status)) {
-    return `<a class="btn btn-quiet btn-small" href="/desk.html#r/${run.id}">${icon("spark")}${run.status === "queued" ? "Waiting for your Mac" : "Claude is on it"}</a>`;
-  }
-  if (run && run.waiting) {
-    return `<a class="btn btn-claude btn-small" href="/desk.html#waiting">${icon("spark")}${run.waiting} to accept</a>`;
-  }
+  // The run's state in the same words as Diagnose with Claude (alertmenu.runChip): waiting, working, N suggestions.
+  if (run && (["queued", "claimed", "running"].includes(run.status) || run.waiting)) return runChip(run, { small: true, label: r.label });
   return `<button type="button" class="btn btn-claude-outline btn-small" data-fix="${esc(r.key)}" data-label="${esc(r.label)}" data-plan="${esc(r.fix)}">${icon("spark")}${run ? "Fix again with Claude" : "Fix with Claude"}</button>`;
 }
 

@@ -69,7 +69,9 @@ def queue(user, scope_ids):
             continue
         rows.append({"key": i["key"], "category": i["category"], "rule": i["rule"], "level": i["level"],
                      "title": i["title"], "line": (i["lines"] or [""])[0], "href": i["href"], "at": i["at"],
-                     "subject": i.get("subject"), "proposal_id": i.get("proposal_id")})
+                     "subject": i.get("subject"), "proposal_id": i.get("proposal_id"), "alert_id": i.get("alert_id"),
+                     # W1: Got it / Diagnose with Claude on the row (admins); a snoozed problem is FYI, so never here.
+                     **{k: i[k] for k in ("actions", "choices", "diagnose") if k in i}})
     rows += [] if user["role"] == "client" else _extras(user)
     lw = "TRUE" if scope_ids is None else "campaign_id = ANY(%s)"
     lp = [] if scope_ids is None else [scope_ids]
@@ -88,7 +90,7 @@ def queue(user, scope_ids):
     ranked = today.rank(rows)
     calls = [r for r in ranked if r["group"] == "call"]
     shown = {r["key"] for r in calls[:CALL_ROWS]}
-    return [r for r in ranked if r["group"] != "call" or r["key"] in shown], int(total), inbox.counts(items)
+    return [r for r in ranked if r["group"] != "call" or r["key"] in shown], int(total), {**inbox.counts(items), "snoozed": inbox.snoozed_count(items)}
 
 
 @bp.get("")
@@ -122,6 +124,7 @@ def home():
         "queue": rows,
         "waiting_calls": waiting_calls,
         "fyi_unread": counts["fyi_unread"],
+        "snoozed": counts["snoozed"],
         "today": {"spend_cents": sum(r["spend_cents"] for r in today_rows), "leads": sum(r["leads"] for r in today_rows),
                   "as_of": so_far.get("at")},
         "yesterday": perf["yesterday"],

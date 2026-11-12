@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { money, currencySymbol } from "./format.js";
+import { wake } from "./alertmenu.js";
 import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when, errorState, guardLeaving, markSaved, safePath, setCrumbs } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
@@ -276,9 +277,20 @@ function renderAlerts() {
       : id === "outside_edit" ? '<small class="muted">A note when someone changes these in Ads Manager. It\'s marked as needing action when the change breaks a money rule. Turning it off stops the note only: changes are still recorded and the 3-day rule still holds.</small>' : "";
     return `<li><label class="check"><input type="checkbox" data-rule="${id}" data-key="on" ${r.on ? "checked" : ""}> ${esc(label)}</label>${inputs ? `<div class="al-fields">${inputs}</div>` : ""}${hint}</li>`;
   }).join("");
+  renderSnoozed();
   const recent = s.alerts.recent;
   $("al-recent").innerHTML = recent.length ? `<h3 class="section-title">Recent alerts</h3><ul class="history">${recent.map((a) =>
     `<li>${when(a.created_at)}: ${safePath(a.href) ? `<a class="ent-link" href="${esc(a.href)}">${esc(a.title)}</a>` : esc(a.title)}${a.resolved_at ? ` <span class="muted">(cleared ${when(a.resolved_at)})</span>` : ""}</li>`).join("")}</ul>` : '<p class="muted small">No alerts yet.</p>';
+}
+
+// Snoozed now (W1a): what Got it has quieted, who did it and until when; Wake it now brings it back.
+function renderSnoozed() {
+  const snoozed = s.alerts.snoozed || [];
+  $("snoozed").innerHTML = `<h3 class="section-title">Snoozed now</h3>${snoozed.length
+    ? `<ul class="history al-snoozed-rows">${snoozed.map((x) => `<li><span>${safePath(x.href) ? `<a class="ent-link" href="${esc(x.href)}">${esc(x.title)}</a>` : esc(x.title)}
+        <small class="muted">${esc(x.words)}${x.by ? ` · ${esc(x.by)}` : ""}</small></span>
+        <button type="button" class="btn btn-small" data-al-wake="${esc(x.alert_id)}">Wake it now</button></li>`).join("")}</ul>`
+    : '<p class="muted small">Nothing is snoozed. Use Got it on an alert to stop the daily messages for a while.</p>'}`;
 }
 
 const every = (m) => (m === 60 ? "Every hour" : `Every ${m} minutes`);
@@ -489,6 +501,12 @@ if (me) {
   }); });
   $("rp-auto").addEventListener("change", (e) => { $("rp-auto-pick").hidden = !e.target.checked; });
   $("tpl-list").addEventListener("click", (e) => { const b = e.target.closest("[data-edit]"); if (b) editTemplate(Number(b.dataset.edit)); });
+  $("snoozed").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-al-wake]");
+    if (!b) return;
+    b.disabled = true;
+    wake(b.dataset.alWake, () => api("/api/settings").then((fresh) => { s.alerts.snoozed = fresh.alerts.snoozed; renderSnoozed(); }));
+  });
   $("tpl-add").addEventListener("click", () => editTemplate("new"));
   $("tpl-cancel").addEventListener("click", () => { closeTemplate(); saved($("tpl-form")); });
   ["tpl-subject", "tpl-body"].forEach((id) => $(id).addEventListener("input", previewTemplate));

@@ -339,3 +339,25 @@ exact step for Ads Manager when the console can't do it).
 
 `desk done` summary: what you made and what's waiting for Eugene ("9:16 versions of 5 ads ready
 to approve on the Claude page; N3 skipped: it's an image ad").
+
+## Kind `diagnose`: look into an alert
+
+Started by **Diagnose with Claude** on an alert (Inbox, Today) or on a rejected ad's page. The prompt is
+Eugene's request (he may have edited it); `options.alert` is the alert as the console holds it, and stays
+there whatever he typed: `rule`, `level`, `title`, `lines`, `measure` (the figure the rule judged), `entity_id`
+and `ad_id` / `adset_id` / `campaign_id` with their `names`, `first_seen`, `open` (false: it cleared on
+`cleared_at`) and `snooze` (who snoozed it, until when). `options.playbook` is the skill to load and
+`options.focus` what to look at. This run is read-only: no web, no shell but `desk`, no Meta writes.
+
+1. Load `options.playbook` (`~/.claude/skills/<name>/SKILL.md`) and the `meta-ads` router for anything it
+   doesn't cover. `desk snapshot 14` for the numbers the console keeps (lead stages, budget changes).
+2. First check, with fresh read-only Meta calls on complete days, whether the alert still holds. If it
+   doesn't, say so in the first line of the report. A cleared alert (`open` false): explain what happened
+   and whether it can come back.
+3. Report in three parts: **What's wrong** / **Why: the evidence** (numbers and days) / **What to do**.
+   "Not enough data yet" is a valid answer (2× target cost per lead in spend, or 3 leads).
+4. At most 3 proposals, with the existing kinds and the money rules: budget changes at most +20% and at
+   least 3 days apart (read `budget_changes` in the snapshot), new things off, never delete. Raising the
+   account spending limit is `other`: it's a billing setting Eugene changes himself in Ads Manager.
+5. `desk done` summary: the one-line answer ("N3 was rejected for the before/after claim; one fixed
+   version is waiting for you").

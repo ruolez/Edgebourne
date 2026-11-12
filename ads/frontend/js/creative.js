@@ -5,6 +5,7 @@ import { barList, columnChart, marksPanel } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
 import { track } from "./manager.js";
 import { ACTIVE, proposalCard, taskCard, wireTaskActions } from "./tasks.js";
+import { diagnoseHtml, wireAlerts } from "./alertmenu.js";
 
 const $ = (id) => document.getElementById(id);
 const adId = new URLSearchParams(location.search).get("id");
@@ -165,6 +166,7 @@ function statusHtml(ad, s) {
       ${s.reasons.length ? `<ul class="cs-reasons">${s.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}
       ${learn ? `<p class="muted small flush">${esc(EXPLAIN[s.learning])}</p>` : ""}
       ${next}
+      ${me.role === "admin" && ["DISAPPROVED", "WITH_ISSUES"].includes(ad.effective_status) ? '<div class="row al-acts" id="cs-diag"></div>' : ""}
       <p class="cs-budget small flush"><span class="muted">Budget</span> ${budgetCents ? `${money(budgetCents, { exact: true })} a day, shared by the ${budgetLevel === "campaign" ? "whole campaign" : "ad set"}${can ? ' · <button class="link-btn" type="button" id="edit-budget">Change</button>' : ""}` : "set on Meta"}</p>
     </div></section>`;
 }
@@ -279,12 +281,24 @@ function renderOverview() {
   if (asked) { asked.open = true; asked.scrollIntoView({ block: "start" }); foldAsked = null; }
   loadEnhancements();
   loadIdea();
+  loadDiagnose();
   const budgetLevel = ad.adset_budget_cents ? "adset" : "campaign";
   const eb = $("edit-budget");
   if (eb) eb.addEventListener("click", () => editBudget({ level: budgetLevel, id: budgetLevel === "adset" ? ad.adset_id : ad.campaign_id, name: budgetLevel === "adset" ? ad.adset_name : ad.campaign_name, current: ad.adset_budget_cents || ad.campaign_budget_cents }, load));
   if (ad.adset_id) api(`/api/insights/adset/${encodeURIComponent(ad.adset_id)}/estimate`).then((e) => {
     if (e.lower && e.upper && $("estimate")) $("estimate").innerHTML = `<br><span class="muted small">Meta estimates ${count(e.lower)}–${count(e.upper)} people could see ads from this ad set.</span>`;
   }).catch(() => {});
+}
+
+// A rejected ad or one with issues (admins): Diagnose with Claude, or where that diagnosis is. It shares its run with
+// the ad's rejection alert in the Inbox (one run per problem).
+function loadDiagnose() {
+  const box = $("cs-diag");
+  if (!box) return;
+  const id = data.ad.id;
+  api(`/api/diagnose/draft?ad_id=${encodeURIComponent(id)}`)
+    .then((d) => { if ($("cs-diag") === box) box.innerHTML = diagnoseHtml({ adId: id }, d.run); })
+    .catch(() => { if ($("cs-diag") === box) box.innerHTML = diagnoseHtml({ adId: id }, null); });
 }
 
 function drawDaily(series, marks = [], marksSummary = "", marksList = null) {
@@ -736,6 +750,7 @@ async function load() {
 
 me = await boot({ page: "ad" });
 if (me) {
+  wireAlerts(document.body, () => null, () => loadDiagnose());
   document.addEventListener("click", async (e) => {
     const t = e.target.closest("#cr-tabs [data-tab]");
     if (t) { showTab(t.dataset.tab); return; }

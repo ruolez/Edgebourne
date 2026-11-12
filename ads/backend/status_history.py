@@ -744,9 +744,9 @@ def transitions(level, entity, events, rules, now, today, money=None, context=No
     money = money or _usd
     out = []
 
-    def add(rule, key, alert_level, title, lines, kind="event", resolved=True, href=None):
+    def add(rule, key, alert_level, title, lines, kind="event", resolved=True, href=None, measure=None):
         out.append({"rule": rule, "key": key, "level": alert_level, "title": title, "lines": lines, "entity_id": eid,
-                    "campaign_id": camp, "href": href or _href(level, entity), "kind": kind, "resolved": resolved})
+                    "campaign_id": camp, "href": href or _href(level, entity), "kind": kind, "resolved": resolved, "measure": measure})
 
     setup = [e for e in events if e["field"] in SETUP.get(level, ()) and e.get("source") in ("poll", "webhook")
              and not e.get("backfill")]
@@ -775,12 +775,12 @@ def transitions(level, entity, events, rules, now, today, money=None, context=No
                 ["It's delivering now." if new == "ACTIVE" else "It starts on its schedule."])
         elif level == "ad" and field in ("effective_status", "created") and new == "DISAPPROVED" and on("ad_rejected"):
             add("ad_rejected", f"ad_rejected:{eid}:{today.isoformat()}", "bad", f"Meta rejected “{name}”",
-                _reason_lines(entity, events), kind="condition", resolved=False)
+                _reason_lines(entity, events), kind="condition", resolved=False, measure=2)
         elif field == "effective_status" and new == "WITH_ISSUES" and on("ad_rejected"):
             issue = issues_summary(entity.get("issues_info")) or "Meta reports a problem."
             if level == "ad":
                 add("ad_rejected", f"ad_rejected:{eid}:{today.isoformat()}", "bad", f"“{name}” has a problem on Meta",
-                    [issue, "It doesn't deliver until this is fixed."], kind="condition", resolved=False)
+                    [issue, "It doesn't deliver until this is fixed."], kind="condition", resolved=False, measure=1)
             else:
                 add("ad_rejected", f"issues:{eid}:{today.isoformat()}", "bad",
                     f"{LEVEL_WORDS[level]} “{name}” has a problem on Meta", [issue, "Its ads don't deliver until this is fixed."])

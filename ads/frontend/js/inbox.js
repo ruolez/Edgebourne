@@ -7,6 +7,7 @@ import { acceptSheet } from "./decide.js";
 import { boot, editing, entityLink, esc, icon, onRefresh, setInboxCount, toast, when, errorState } from "./ui.js";
 import { closeLayer, leaveLayer, openLayer } from "./urlstate.js";
 import { plural } from "./format.js";
+import { alertButtons, snoozeChip, wireAlerts } from "./alertmenu.js";
 
 // The FYI tab gets a short label on the narrowest phones, so all three tabs fit without scrolling.
 const BOXES = [["need", "Needs action"], ["fyi", '<span class="ib-long">For your information</span><span class="ib-short">FYI</span>'], ["all", "All"]];
@@ -34,6 +35,13 @@ let linked = current;
 let kept = null;
 let listScroll = 0;
 let newList = false;  // the person picked another filter: nothing from the old list stays open
+// A link to an older row of a problem open for days (a diagnosis's "From an alert") names the item that now
+// stands for it: every alert item lists the rows it covers (`ids`).
+function alias(key) {
+  const m = /^alert:(\d+)$/.exec(key || "");
+  if (!m || data.items.some((i) => i.key === key)) return key;
+  return data.items.find((i) => (i.ids || []).includes(Number(m[1])))?.key || key;
+}
 const shownItem = () => data.items.find((x) => x.key === current) || (kept && kept.key === current ? kept : null);
 function writeUrl({ clearItem = false } = {}) {
   const u = new URL(location.href);
@@ -66,7 +74,7 @@ function renderFilters() {
 function itemHtml(i) {
   return `<li class="ib-item ${i.unread ? "unread" : ""} k-${TONE[i.level] || "info"}" data-key="${esc(i.key)}" ${current === i.key ? 'aria-current="true"' : ""} tabindex="0">
     <span class="ib-ic">${icon(ICON[i.category] || "alarm")}</span>
-    <span class="ib-b"><b>${esc(i.title)}</b><small>${esc((i.lines || [])[0] || "")}</small></span>
+    <span class="ib-b"><b>${esc(i.title)}</b><small>${i.snooze ? `<span class="al-tag">Snoozed</span> ` : ""}${esc((i.lines || [])[0] || "")}</small></span>
     <span class="ib-t tnum">${esc(when(i.at))}</span></li>`;
 }
 
@@ -93,12 +101,11 @@ function action(i) {
     const talk = i.href && me.role === "admin" ? `<a class="btn" href="${esc(i.href)}">Open the conversation</a>` : "";
     return `<button type="button" class="btn btn-claude" data-accept="${i.proposal_id}">Review and accept</button>${talk}`;
   }
-  if (!i.href) return "";
+  if (!i.href) return alertButtons(i);
   const label = i.category === "leads" ? "Open the lead" : /[?&#]tab=history/.test(i.href) ? "Open the history" : i.href.startsWith("/ad.html") ? "Open the ad"
     : i.href.startsWith("/settings") ? "Open Settings" : "Open";
-  // An event that waits for a person (an outside budget change that broke a money rule) closes with Done.
-  const done = (i.actions || []).includes("done") ? `<button type="button" class="btn" data-done="${i.alert_id}">Done</button>` : "";
-  return `<a class="btn btn-primary" href="${esc(i.href)}">${label}</a>${done}`;
+  // Diagnose with Claude, Got it… (snooze) and Done (an event that waits for a person) sit beside Open (admins).
+  return `<a class="btn btn-primary" href="${esc(i.href)}">${label}</a>${alertButtons(i)}`;
 }
 
 function renderDetail() {
@@ -110,7 +117,9 @@ function renderDetail() {
       <div><p class="ib-kicker">${esc(when(i.at))} · ${i.need ? "Needs action" : i.resolved ? "Fixed since" : "For your information"}</p><h2>${esc(i.title)}</h2></div></div>
     ${(i.lines || []).map((l) => `<p>${esc(l)}</p>`).join("")}
     ${s ? `<p class="ib-about"><span class="muted">${esc({ campaign: "Campaign", adset: "Ad set", ad: "Ad" }[s.level] || "About")}:</span> ${entityLink(s.level, s.id, s.name)}</p>` : ""}
-    <div class="row">${action(i)}${i.unread ? '<button class="btn" type="button" data-read>Mark read</button>' : ""}</div>
+    ${i.days_open >= 1 && i.open ? `<p class="muted small ib-since">Open since ${esc(i.since_day)} (${plural(i.days_open, "day")}).</p>` : ""}
+    ${snoozeChip(i.snooze, { canWake: (i.actions || []).includes("wake"), alertId: i.alert_id })}
+    <div class="row ib-acts${(i.actions || []).length ? " al-acts" : ""}">${action(i)}${i.unread ? '<button class="btn" type="button" data-read>Mark read</button>' : ""}</div>
     <p class="ib-keys">Keys: J and K move, E marks read. Anything that spends money still opens its confirmation.</p>`;
 }
 
@@ -136,6 +145,10 @@ async function load() {
   const before = newList ? null : shownItem();
   newList = false;
   data = d;
+  if (linked && alias(linked) !== linked) {
+    linked = current = alias(linked);
+    history.replaceState(history.state, "", `${listUrl()}#item=${encodeURIComponent(current)}`);
+  }
   if (linked && !data.items.some((i) => i.key === linked) && (box !== "all" || kind !== "all" || unreadOnly)) {  // a read or FYI item named by a link
     box = "all"; kind = "all"; unreadOnly = false; writeUrl(); return load();
   }
@@ -145,6 +158,17 @@ async function load() {
   else { kept = null; current = covers() ? null : data.items[0]?.key || null; }
   renderFilters(); renderList(); renderDetail();
   $("ib-panel").classList.toggle("showing-detail", Boolean(covers() && current && itemInUrl() === current));
+}
+
+// After Got it, Wake it now or Diagnose: the list again, and the open item as it is now even when it has moved to
+// the other box (a snoozed problem is for your information), so its chip shows.
+async function afterAlert() {
+  await load();
+  if (current && !data.items.some((i) => i.key === current)) {
+    const fresh = (await api("/api/inbox?box=all")).items.find((i) => i.key === current);
+    if (fresh) { kept = fresh; renderDetail(); }
+  }
+  setInboxCount(data.counts.need_unread);
 }
 
 // A new box or filter starts a new list: the open item and its #item= go, and the list shows its first item.
@@ -194,7 +218,7 @@ function showList() {
 }
 // Back (or ← Inbox) shows the list again; Forward or a link opens the item it names.
 function followUrl() {
-  const key = itemInUrl();
+  const key = alias(itemInUrl());
   if (key && (data.items.some((i) => i.key === key) || kept?.key === key)) { current = key; renderList(); renderDetail(); }
   if (covers() && key && key === current) $("ib-panel").classList.add("showing-detail");
   else showList();
@@ -214,14 +238,6 @@ $("ib-detail").addEventListener("click", (e) => {
   const acc = e.target.closest("[data-accept]");
   if (acc) { acceptSheet([Number(acc.dataset.accept)], () => load().catch((err) => toast(err.message, "bad"))); return; }
   if (e.target.closest("[data-read]")) markRead([current]).then(() => { renderFilters(); renderList(); renderDetail(); });
-  const done = e.target.closest("[data-done]");
-  if (done) {
-    done.disabled = true;
-    api(`/api/alerts/${encodeURIComponent(done.dataset.done)}/done`, { method: "POST", body: {} })
-      .then(() => markRead([current])).then(() => { toast("Done: it moves to For your information"); return load(); })
-      .then(() => setInboxCount(data.counts.need_unread))
-      .catch((err) => { toast(err.message, "bad"); done.disabled = false; });
-  }
 });
 $("ib-all").addEventListener("click", async () => {
   try {
@@ -244,6 +260,9 @@ document.addEventListener("keydown", (e) => {
 
 me = await boot({ page: "inbox" });
 if (me) {
+  // Got it / Wake it now / Diagnose redraw the list: a snoozed problem moves to For your information.
+  wireAlerts($("ib-detail"), (id) => [...data.items, kept].find((x) => x && x.alert_id === id),
+    () => afterAlert().catch((err) => toast(err.message, "bad")));
   onRefresh(load);
   load().catch((err) => errorState($("ib-list"), err, load));
 }

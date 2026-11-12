@@ -38,6 +38,7 @@ const ICONS = {
   logout: '<path d="M14 4.5h4.5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H14M10 16l4-4-4-4M14 12H4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
   inbox: '<path d="M3.5 13.5h5l1.5 2.5h4l1.5-2.5h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M6.2 5.5h11.6l2.7 8V18a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 18v-4.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   compare: '<rect x="3.5" y="4.5" width="7" height="15" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13.5" y="4.5" width="7" height="15" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+  dots: '<circle cx="5.5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="18.5" cy="12" r="1.6" fill="currentColor"/>',
   user: '<circle cx="12" cy="8.5" r="3.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 20c1-3.6 4-5.5 7.5-5.5s6.5 1.9 7.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
 };
 // The service worker makes the console installable and shows push notifications.
@@ -72,7 +73,7 @@ const topLayer = (el, on) => {
     if (on) el.showPopover();
   } catch (e) { /* not connected yet */ }
 };
-export function toast(message, kind = "", { undo = null, ms = 0 } = {}) {
+export function toast(message, kind = "", { undo = null, open = null, ms = 0 } = {}) {
   let el = document.querySelector(".toast");
   if (!el) {
     el = document.createElement("div");
@@ -112,11 +113,19 @@ export function toast(message, kind = "", { undo = null, ms = 0 } = {}) {
     b.addEventListener("click", () => { clearTimeout(toastTimer); hideToast(el); undo(); }, { once: true });
     el.append(" ", b);
   }
+  // An Open link instead (`open`: an address), for "it's already there, see it".
+  if (open && !undo) {
+    const a = document.createElement("a");
+    a.className = "toast-act";
+    a.href = open;
+    a.textContent = "Open";
+    el.append(" ", a);
+  }
   el.className = "toast " + kind;
   el.setAttribute("role", kind === "bad" ? "alert" : "status");
   el.hidden = false;
   topLayer(el, true);
-  toastMs = ms || (undo ? 8000 : kind === "bad" ? 6000 : 3000);
+  toastMs = ms || (undo || open ? 8000 : kind === "bad" ? 6000 : 3000);
   armToast(el);
 }
 
@@ -883,16 +892,21 @@ export function fieldErrors(form, errors, { focus = true } = {}) {
 // ---------- confirm dialog ----------
 // confirmDialog({ title, body (HTML), confirm, danger, field }) → Promise<false | true | field value>.
 // `field` = { label, value, prefix, suffix, inputmode, validate(v) → error|null, hint(v) → html } adds one input;
-// `field.rows` makes it a text box of that many lines (a draft to edit: opens with the caret at the start, nothing selected).
+// `field.rows` makes it a text box of that many lines (a draft to edit: opens with the caret at the start, nothing selected);
+// `field.multiline` is the same with 4 lines.
 // `cancel: false` makes it a notice with one button (nothing to decide, e.g. a password shown once). `wide` for a long text.
 // `confirmLabel(value)`: the confirm button's words, re-read as the field changes ("Raise anyway");
 // `confirmDanger(value)`: whether that button is the danger one, re-read the same way (a knowing yes looks like one).
-export function confirmDialog({ title, body = "", confirm = "Confirm", danger = false, claude = false, field = null, cancel = "Cancel", wide = false, confirmLabel = null, confirmDanger = null }) {
+// `choices` (W1a): {options: [{value, label, hint}], required, submitOnPick}. With submitOnPick a tap on an option
+// is the answer (no confirm button needed: pass confirm: null); otherwise it is picked and the confirm button sends
+// it, `required` being the message when nothing is picked. `extra` adds a class to the dialog.
+export function confirmDialog({ title, body = "", confirm = "Confirm", danger = false, claude = false, field = null, cancel = "Cancel", wide = false, confirmLabel = null, confirmDanger = null, choices = null, extra = "" }) {
   return new Promise((resolve) => {
     const dlg = document.createElement("dialog");
-    dlg.className = wide ? "confirm wide" : "confirm";
-    const box = field && field.rows
-      ? `<textarea class="input" id="cd-input" rows="${Number(field.rows) || 8}" autocomplete="off" aria-describedby="cd-hint">${esc(field.value ?? "")}</textarea>`
+    dlg.className = ["confirm", wide ? "wide" : "", extra].filter(Boolean).join(" ");
+    const lines = field && (field.rows || (field.multiline ? 4 : 0));
+    const box = lines
+      ? `<textarea class="input" id="cd-input" rows="${Number(lines) || 8}" autocomplete="off" aria-describedby="cd-hint">${esc(field.value ?? "")}</textarea>`
       : field ? `<div class="affix">${field.prefix ? `<span>${esc(field.prefix)}</span>` : ""}<input class="input" id="cd-input" inputmode="${field.inputmode || "text"}" value="${esc(field.value ?? "")}" autocomplete="off" aria-describedby="cd-hint">${field.suffix ? `<span>${esc(field.suffix)}</span>` : ""}</div>` : "";
     dlg.innerHTML = `<form method="dialog" novalidate>
       <h2>${esc(title)}</h2>
@@ -900,8 +914,10 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
       ${field ? `<div class="field"><label for="cd-input">${esc(field.label)}</label>
         ${box}
         <span class="hint" id="cd-hint" aria-live="polite"></span><span class="err" id="cd-err" role="alert" hidden></span></div>` : ""}
+      ${choices ? `<div class="cd-choices" role="group" aria-label="${esc(title)}">${choices.options.map((o) => `<button type="button" class="cd-choice" data-value="${esc(o.value)}"${choices.submitOnPick ? "" : ' aria-pressed="false"'}><b>${esc(o.label)}</b>${o.hint ? `<small>${esc(o.hint)}</small>` : ""}</button>`).join("")}</div>
+        <span class="err" id="cd-perr" role="alert" hidden></span>` : ""}
       <div class="row end">${cancel ? `<button class="btn" type="button" value="cancel" id="cd-cancel">${esc(cancel)}</button>` : ""}
-        <button class="btn ${danger ? "btn-danger" : claude ? "btn-claude" : "btn-primary"}" type="submit" id="cd-ok">${esc(confirm)}</button></div>
+        ${confirm ? `<button class="btn ${danger ? "btn-danger" : claude ? "btn-claude" : "btn-primary"}" type="submit" id="cd-ok">${esc(confirm)}</button>` : ""}</div>
     </form>`;
     document.body.appendChild(dlg);
     const input = dlg.querySelector("#cd-input");
@@ -924,20 +940,36 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
     if (input) { input.addEventListener("input", () => { err.hidden = true; invalid(false); refresh(); }); refresh(); }
     else if (confirmLabel || confirmDanger) refresh();
     let result = false;
+    let picked = null;
     dlg.querySelector("#cd-cancel")?.addEventListener("click", () => dlg.close());
+    dlg.querySelector(".cd-choices")?.addEventListener("click", (e) => {
+      const b = e.target.closest(".cd-choice");
+      if (!b) return;
+      if (choices.submitOnPick) { result = b.dataset.value; dlg.close(); return; }
+      picked = b.dataset.value;
+      dlg.querySelectorAll(".cd-choice").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      dlg.querySelector("#cd-perr").hidden = true;
+    });
     dlg.querySelector("form").addEventListener("submit", (e) => {
+      if (choices && choices.required && picked === null) {
+        e.preventDefault();
+        const perr = dlg.querySelector("#cd-perr");
+        perr.textContent = typeof choices.required === "string" ? choices.required : "Pick one";
+        perr.hidden = false;
+        return;
+      }
       if (field) {
         const problem = field.validate ? field.validate(input.value) : null;
         if (problem) { e.preventDefault(); err.textContent = problem; err.hidden = false; invalid(true); input.focus(); return; }
-        result = input.value;
-      } else result = true;
+        result = choices ? { value: input.value, choice: picked } : input.value;
+      } else result = choices ? picked ?? true : true;
     });
     dlg.addEventListener("close", () => { dlg.remove(); resolve(result); });
     dlg.showModal();
     // Safe default: a stray Enter or Space never confirms. With a field, focus is on it (typing is deliberate);
     // otherwise on Cancel, never on the button that acts.
     (input || dlg.querySelector("#cd-cancel") || dlg.querySelector("#cd-ok")).focus();
-    if (input && field.rows) { input.setSelectionRange(0, 0); input.scrollTop = 0; } else if (input) input.select();
+    if (input && lines) { input.setSelectionRange(0, 0); input.scrollTop = 0; } else if (input) input.select();
   });
 }
 

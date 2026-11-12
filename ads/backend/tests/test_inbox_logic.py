@@ -1,6 +1,8 @@
 import unittest
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
+import diagnose
 import inbox
 
 NOW = datetime(2026, 11, 10, 18, 0, tzinfo=timezone.utc)
@@ -73,7 +75,7 @@ class TriageTests(unittest.TestCase):
     def test_the_same_problem_open_on_two_days_needs_action_once(self):
         items = self.build(alerts=[dict(alert(1, "spend_cap", 60 * 24, "warn", None), kind="condition", entity_id="account"),
                                    dict(alert(2, "spend_cap", 5, "warn", None), kind="condition", entity_id="account")])
-        self.assertEqual([(i["key"], i["need"]) for i in items], [("alert:2", True), ("alert:1", False)])
+        self.assertEqual([(i["key"], i["need"]) for i in items], [("alert:2", True)])
 
     def test_boxes_and_counts(self):
         items = self.build(alerts=[dict(alert(1, "ad_rejected", 5), kind="condition"),
@@ -117,10 +119,102 @@ class OutsideEditTests(unittest.TestCase):
         return {**alert(30, "outside_edit", 5, level), "kind": "event", "resolved_at": resolved}
 
     def test_a_warning_needs_action_and_admins_can_close_it(self):
-        admin = inbox.build([self.ev("warn")], [], [], set(), can_close=True)[0]
-        member = inbox.build([self.ev("warn")], [], [], set())[0]
-        self.assertEqual((admin["category"], admin["need"], admin["actions"], member["actions"]), ("money", True, ["done"], []))
+        admin = inbox.build([self.ev("warn")], [], [], set(), can_close=True, now=NOW)[0]
+        member = inbox.build([self.ev("warn")], [], [], set(), now=NOW)[0]
+        self.assertEqual((admin["category"], admin["need"], admin["actions"], member["actions"]), ("money", True, ["diagnose", "done"], []))
 
     def test_a_note_and_a_closed_warning_are_for_information(self):
-        got = inbox.build([self.ev("info", NOW), {**self.ev("warn", NOW), "id": 31}], [], [], set(), can_close=True)
-        self.assertEqual([(i["need"], i["actions"]) for i in got], [(False, []), (False, [])])
+        # Nothing to close; Claude can still look into them for 3 days (W1).
+        got = inbox.build([self.ev("info", NOW), {**self.ev("warn", NOW), "id": 31}], [], [], set(), can_close=True, now=NOW)
+        self.assertEqual([(i["need"], i["actions"]) for i in got], [(False, ["diagnose"]), (False, ["diagnose"])])
+
+
+DAY = timedelta(days=1)
+
+
+def cond(i, rule, created, level="warn", entity="c1", **kw):
+    return {"id": i, "rule": rule, "level": level, "title": f"t{i}", "lines": ["l"], "href": "/performance.html", "entity_id": entity,
+            "campaign_id": "c1", "created_at": created, "resolved_at": None, "kind": "condition", "measure": None, "quiet": False, **kw}
+
+
+class SnoozeAndDiagnoseTests(unittest.TestCase):
+    """W1: one item per problem, quiet rows, snoozes in FYI, and what each person may do with an alert."""
+    NOV9 = datetime(2026, 11, 9, 15, 0, tzinfo=timezone.utc)
+    NOV10 = datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc)
+    SNOOZED = {"id": 3, "mode": "worse", "until": None, "by": "Eugene", "words": "Snoozed until it gets worse"}
+
+    def build(self, alerts, proposals=(), read=(), **kw):
+        return inbox.build(list(alerts), [], list(proposals), set(read), now=NOW, **kw)
+
+    def test_a_problem_open_for_days_is_one_item_keyed_by_its_newest_row(self):
+        # Whole days since the first row, the way the Diagnose request counts them: Nov 9 → Nov 10 is 1 day.
+        got = self.build([cond(10, "cpl_high", self.NOV9), cond(14, "cpl_high", self.NOV10)])
+        self.assertEqual([(i["key"], i["since"], i["days_open"], i["since_day"], i["need"]) for i in got],
+                         [("alert:14", self.NOV9, 1, "Nov 9", True)])
+
+    def test_the_item_lists_every_row_it_stands_for(self):
+        """A link to an older row of the episode (a diagnosis's 'From an alert') still finds the item."""
+        got = self.build([cond(8, "cpl_high", self.NOV9 - 3 * DAY, resolved_at=self.NOV9), cond(9, "cpl_high", self.NOV9 - 2 * DAY, resolved_at=self.NOV9),
+                          cond(10, "cpl_high", self.NOV9), cond(14, "cpl_high", self.NOV10)])
+        self.assertEqual([(i["key"], i["ids"]) for i in got], [("alert:14", [14, 10]), ("alert:9", [9, 8])])
+
+    def test_days_open_count_in_the_accounts_time_zone_against_today(self):
+        """03:00 UTC on Nov 10 is the evening of Nov 9 in Los Angeles; on Nov 12 the problem is 3 days old,
+        not counted up to its newest row and not by UTC dates."""
+        la = ZoneInfo("America/Los_Angeles")
+        first = datetime(2026, 11, 10, 3, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 11, 12, 18, 0, tzinfo=timezone.utc)
+        got = inbox.build([cond(10, "cpl_high", first), cond(14, "cpl_high", self.NOV10)], [], [], set(), now=now, now_local=now.astimezone(la))
+        self.assertEqual((got[0]["days_open"], got[0]["since_day"]), (3, "Nov 9"))
+
+    def test_the_inbox_and_the_diagnose_request_say_the_same_number_of_days(self):
+        la = ZoneInfo("America/Los_Angeles")
+        now = datetime(2026, 11, 12, 18, 0, tzinfo=timezone.utc)
+        rows = [cond(10, "no_leads", self.NOV9, "bad"), cond(14, "no_leads", self.NOV10, "bad")]
+        item = inbox.build(rows, [], [], set(), now=now, now_local=now.astimezone(la))[0]
+        ctx = diagnose.context(rows[1], {}, item["since"])
+        text = diagnose.prompt(ctx, diagnose.playbook("no_leads"), la, now)
+        self.assertEqual((item["days_open"], f"Open since {item['since_day']} ({item['days_open']} days)." in text), (3, True))
+
+    def test_an_earlier_episode_that_cleared_keeps_its_newest_row(self):
+        got = self.build([cond(8, "cpl_high", self.NOV9 - 3 * DAY, resolved_at=self.NOV9), cond(9, "cpl_high", self.NOV9 - 2 * DAY, resolved_at=self.NOV9),
+                          cond(14, "cpl_high", self.NOV10)])
+        self.assertEqual([(i["key"], i["need"]) for i in got], [("alert:14", True), ("alert:9", False)])
+
+    def test_a_quiet_row_is_never_new(self):
+        got = self.build([cond(14, "cpl_high", self.NOV10, quiet=True)])
+        self.assertEqual((got[0]["unread"], inbox.counts(got)["unread"]), (False, 0))
+
+    def test_a_snoozed_problem_is_for_information_with_its_chip(self):
+        got = self.build([cond(14, "cpl_high", self.NOV10)], snoozes={("cpl_high", "c1"): self.SNOOZED})
+        self.assertEqual((got[0]["need"], got[0]["snooze"]["words"], inbox.counts(got)["need"]), (False, "Snoozed until it gets worse", 0))
+
+    def test_what_an_admin_may_do(self):
+        run = {"id": 5, "status": "queued", "waiting": 0}
+        open_, snoozed, red_money = (self.build([cond(14, "cpl_high", self.NOV10)], can_close=True, runs={"cpl_high:c1": run}),
+                                     self.build([cond(14, "cpl_high", self.NOV10)], can_close=True, snoozes={("cpl_high", "c1"): self.SNOOZED}),
+                                     self.build([cond(15, "no_leads", self.NOV10, "bad")], can_close=True))
+        self.assertEqual([(i[0]["actions"], [c["label"] for c in i[0].get("choices", [])], i[0].get("diagnose")) for i in (open_, snoozed, red_money)],
+                         [(["snooze", "diagnose"], ["In 3 days", "Only if it gets worse"], run), (["wake", "diagnose"], [], None),
+                          (["snooze", "diagnose"], ["Remind me tomorrow"], None)])
+
+    def test_a_teammate_sees_the_chip_and_no_buttons(self):
+        got = self.build([cond(14, "cpl_high", self.NOV10)], snoozes={("cpl_high", "c1"): self.SNOOZED}, runs={"cpl_high:c1": {"id": 5}})
+        self.assertEqual((got[0]["actions"], got[0]["snooze"]["by"], "diagnose" in got[0], "choices" in got[0]), ([], "Eugene", False, False))
+
+    def test_a_client_sees_none_of_it(self):
+        got = self.build([cond(14, "ad_rejected", self.NOV10, "bad")], snoozes={("ad_rejected", "c1"): self.SNOOZED}, client=True)
+        self.assertEqual([k for k in ("snooze", "diagnose", "actions", "choices") if k in got[0]], [])
+
+    def test_claude_looks_into_a_cleared_alert_for_three_days(self):
+        got = [self.build([cond(14, "cpl_high", NOW - 5 * DAY, resolved_at=NOW - d * DAY)], can_close=True)[0]["actions"] for d in (2, 4)]
+        self.assertEqual(got, [["diagnose"], []])
+
+    def test_alerts_claude_cannot_look_into_offer_no_diagnosis(self):
+        got = self.build([cond(14, "tracking", self.NOV10, "bad", "account"), cond(15, "stale_data", self.NOV10, "warn", "account")], can_close=True)
+        self.assertEqual([("diagnose" in i["actions"]) for i in got], [False, False])
+
+    def test_a_suggestion_from_a_diagnosis_says_which_alert_it_answers(self):
+        got = self.build([], proposals=[{"id": 4, "summary": "Pause N3", "created_at": NOW, "entity_name": "N3",
+                                         "alert_title": "No leads for 5 days in “Leads”"}])
+        self.assertEqual(got[0]["lines"], ["From: No leads for 5 days in “Leads”"])

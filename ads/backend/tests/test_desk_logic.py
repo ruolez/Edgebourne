@@ -143,3 +143,15 @@ class ClaimSkipTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RunsByKeyTests(unittest.TestCase):
+    """desk_api.latest_runs: the newest run per problem (or per piece of advice) wins, with its waiting count."""
+
+    def test_the_newest_run_per_key_wins_and_rows_without_a_key_are_skipped(self):
+        rows = [{"id": 9, "status": "queued", "k": "no_leads:c1", "waiting": 0},
+                {"id": 7, "status": "done", "k": "no_leads:c1", "waiting": 2},
+                {"id": 6, "status": "done", "k": "fatigue:a3", "waiting": 1},
+                {"id": 5, "status": "done", "k": None, "waiting": 0}]
+        self.assertEqual(desk_api.runs_by_key(rows), {"no_leads:c1": {"id": 9, "status": "queued", "waiting": 0},
+                                                      "fatigue:a3": {"id": 6, "status": "done", "waiting": 1}})

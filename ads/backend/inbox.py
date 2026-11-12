@@ -5,6 +5,8 @@ Claude's pending proposals. Each is either Needs action (`need`) or for your inf
 Needs action = open problems (conditions), open warn/bad events (closed by their owner), waiting
 suggestions and leads nobody has tried yet (the Today rule, `today.waiting`). A problem fixed since
 moves to FYI and leaves the count. `build`, `pick`, `counts` and `category` are pure."""
+from datetime import datetime, timedelta, timezone
+
 import db
 import today
 
@@ -31,26 +33,70 @@ def _alert_needs(a):
 
 
 DONE_OK = {"outside_edit"}  # alerts.DONE_OK: open events a person closes with Done
+DIAGNOSE_DAYS = 3  # Claude can still look into an alert this long after it cleared ("why did it happen")
 
 
-def build(alerts, leads, proposals, read_keys, can_close=False):
-    """`can_close`: the person may close owner-closed events (admins): those items get the action "done"."""
+def _alert_actions(a, item, snoozed, now, now_local, runs, money=None):
+    """What an admin may do with this alert: Got it (snooze), Wake it now, Diagnose with Claude, Done."""
+    import diagnose
+    import snooze
+    acts = []
+    open_ = a.get("resolved_at") is None
+    if open_ and not snoozed and snooze.choices(a):
+        acts.append("snooze")
+        item["choices"] = snooze.offer(a, now_local or now, **({"money": money} if money else {}))
+    if snoozed:
+        acts.append("wake")
+    if diagnose.can_diagnose(a["rule"]) and (open_ or a["resolved_at"] > now - timedelta(days=DIAGNOSE_DAYS)):
+        acts.append("diagnose")
+        item["diagnose"] = (runs or {}).get(diagnose.episode_key(a["rule"], a.get("entity_id")))
+    if a["rule"] in DONE_OK and open_ and a.get("kind") == "event":
+        acts.append("done")
+    return acts
+
+
+def _since(item, first, here):
+    import words
+    item.update(since=first, since_day=words.day(words.local(first, here.tzinfo)), days_open=words.days_since(first, here))
+
+
+def build(alerts, leads, proposals, read_keys, can_close=False, snoozes=None, runs=None, now=None, now_local=None, client=False,
+          money=None):
+    """`can_close`: the person is an admin, who may snooze, wake, diagnose and close owner-closed events.
+    `snoozes`: {(rule, entity_id): snooze view} in force; `runs`: {episode key: latest diagnose run}.
+    A problem open for days is one item (its newest row, `since` its first); an earlier episode that cleared
+    keeps its newest row. A snoozed problem is FYI and quiet rows are never new. Clients get none of it."""
+    now = now or datetime.now(timezone.utc)
+    here = now_local or now  # days are counted by the account's calendar (diagnose.prompt counts the same way)
+    snoozes = snoozes or {}
     items = []
-    episodes = set()  # a condition still open from an earlier day needs action once, as its newest row
+    episodes = {}  # (rule, entity) -> {"open": item, "closed": item}
     for a in sorted(alerts, key=lambda x: (x["created_at"], x["id"]), reverse=True):
         key = f"alert:{a['id']}"
-        need = _alert_needs(a)
-        if need and a.get("kind", "condition") == "condition":
-            episode = (a["rule"], a.get("entity_id"))
-            need = episode not in episodes
-            episodes.add(episode)
-        items.append({"key": key, "category": category(a["rule"]), "rule": a["rule"], "level": a["level"],
-                      "title": a["title"], "lines": a.get("lines") or [], "href": a.get("href"), "at": a["created_at"],
-                      "entity_id": a.get("entity_id"), "open": a.get("resolved_at") is None, "need": need,
-                      "resolved": a.get("kind", "condition") == "condition" and a.get("resolved_at") is not None,
-                      "unread": key not in read_keys, "alert_id": a["id"],
-                      "actions": ["done"] if can_close and a["rule"] in DONE_OK and a.get("resolved_at") is None
-                      and a.get("kind") == "event" else []})
+        condition = a.get("kind", "condition") == "condition"
+        if condition:
+            kept = episodes.setdefault((a["rule"], a.get("entity_id")), {})
+            slot = "open" if a.get("resolved_at") is None else "closed"
+            if slot in kept:
+                # The item stands for every row of its episode, so a link to an older row still finds it.
+                kept[slot]["ids"].append(a["id"])
+                if slot == "open":
+                    _since(kept["open"], a["created_at"], here)
+                continue
+        snoozed = snoozes.get((a["rule"], a.get("entity_id"))) if condition and a.get("resolved_at") is None else None
+        item = {"key": key, "category": category(a["rule"]), "rule": a["rule"], "level": a["level"],
+                "title": a["title"], "lines": a.get("lines") or [], "href": a.get("href"), "at": a["created_at"],
+                "entity_id": a.get("entity_id"), "open": a.get("resolved_at") is None, "need": _alert_needs(a) and not snoozed,
+                "resolved": condition and a.get("resolved_at") is not None,
+                "unread": key not in read_keys and not a.get("quiet"), "alert_id": a["id"]}
+        if condition:
+            item["ids"] = [a["id"]]
+            _since(item, a["created_at"], here)
+            kept[slot] = item
+        if not client:
+            item["snooze"] = snoozed
+            item["actions"] = _alert_actions(a, item, snoozed, now, now_local, runs, money) if can_close else []
+        items.append(item)
     for l in leads:
         key = f"lead:{l['id']}"
         items.append({"key": key, "category": "leads", "rule": "new_lead", "level": "lead",
@@ -60,9 +106,11 @@ def build(alerts, leads, proposals, read_keys, can_close=False):
                       "need": today.waiting(l), "unread": l["status"] == "new" and key not in read_keys})
     for p in proposals:
         key = f"proposal:{p['id']}"
+        # A suggestion from Diagnose with Claude says which alert it answers.
+        lines = [f"From: {p['alert_title']}"] if p.get("alert_title") else [p["entity_name"]] if p.get("entity_name") else []
         items.append({"key": key, "category": "claude", "rule": "proposal", "level": "claude",
                       "title": f"Claude suggests: {p.get('summary') or 'a change'}",
-                      "lines": [p["entity_name"]] if p.get("entity_name") else [], "href": f"/desk.html#p/{p['id']}",
+                      "lines": lines, "href": f"/desk.html#p/{p['id']}",
                       "at": p["created_at"], "entity_id": p.get("entity_id"), "open": True, "need": True,
                       "proposal_id": p["id"], "unread": key not in read_keys})
     items.sort(key=lambda i: i["at"], reverse=True)
@@ -112,17 +160,23 @@ def kinds(items):
 
 # ---------------------------------------------------------------- database
 
+ALERT_COLS = ("id, rule, level, title, lines, href, entity_id, campaign_id, created_at, resolved_at, kind, "
+              "measure::float8 AS measure, quiet")
+
+
 def items_for(user):
+    import account_info
+    import alerts as alert_rules
     from auth import visible_campaign_ids
+    from desk_api import latest_runs
     ids = visible_campaign_ids(user)
     if ids is None:
-        alerts = db.query("SELECT id, rule, level, title, lines, href, entity_id, campaign_id, created_at, resolved_at, kind "
-                          "FROM alerts WHERE created_at > now() - make_interval(days => %s) ORDER BY id DESC LIMIT 300", (DAYS,))
+        alerts = db.query(f"SELECT {ALERT_COLS} FROM alerts WHERE created_at > now() - make_interval(days => %s) "
+                          "ORDER BY id DESC LIMIT 300", (DAYS,))
         leads = db.query("SELECT id, full_name, ad_name, created_time, status, first_contacted_at, is_test FROM leads WHERE NOT is_test "
                          "AND created_time > now() - interval '7 days' ORDER BY created_time DESC LIMIT 100")
     else:
-        alerts = db.query("SELECT id, rule, level, title, lines, href, entity_id, campaign_id, created_at, resolved_at, kind "
-                          "FROM alerts WHERE created_at > now() - make_interval(days => %s) AND campaign_id = ANY(%s) "
+        alerts = db.query(f"SELECT {ALERT_COLS} FROM alerts WHERE created_at > now() - make_interval(days => %s) AND campaign_id = ANY(%s) "
                           "ORDER BY id DESC LIMIT 300", (DAYS, ids))
         leads = db.query("SELECT id, full_name, ad_name, created_time, status, first_contacted_at, is_test FROM leads WHERE NOT is_test "
                          "AND created_time > now() - interval '7 days' AND campaign_id = ANY(%s) ORDER BY created_time DESC LIMIT 100", (ids,))
@@ -132,14 +186,25 @@ def items_for(user):
         mine = "" if ids is None else """AND COALESCE((SELECT a.campaign_id FROM ads a WHERE a.id = p.entity_id),
                                                   (SELECT s.campaign_id FROM adsets s WHERE s.id = p.entity_id),
                                                   (SELECT c.id FROM campaigns c WHERE c.id = p.entity_id)) = ANY(%s)"""
-        proposals = db.query(f"""SELECT p.id, p.title AS summary, p.created_at, p.entity_id, p.entity_name FROM desk_proposals p
+        proposals = db.query(f"""SELECT p.id, p.title AS summary, p.created_at, p.entity_id, p.entity_name,
+                                        CASE WHEN t.kind = 'diagnose' THEN t.options->'alert'->>'title' END AS alert_title
+                                 FROM desk_proposals p LEFT JOIN desk_tasks t ON t.id = p.task_id
                                  WHERE p.status = 'pending' {mine} ORDER BY p.id DESC LIMIT 50""", None if ids is None else (ids,))
-    if user["role"] == "client":
+    client = user["role"] == "client"
+    if client:
         alerts = [a for a in alerts if category(a["rule"]) == "status"]
     keys = item_keys(alerts, leads, proposals)
     reads = {r["item_key"] for r in db.query("SELECT item_key FROM inbox_reads WHERE user_id = %s AND item_key = ANY(%s)",
                                              (user["id"], keys))} if keys else set()
-    items = build(alerts, leads, proposals, reads, can_close=user["role"] == "admin")
+    admin = user["role"] == "admin"
+    tz = account_info.tz()
+    snoozes = {} if client else {pair: alert_rules.snooze_view(s, tz) for pair, s in alert_rules.live_snoozes().items()}
+    runs = latest_runs("diagnose", "alert_key") if admin else None
+    now = datetime.now(timezone.utc)
+    currency = account_info.currency()
+    items = build(alerts, leads, proposals, reads, can_close=admin, snoozes=snoozes, runs=runs, now=now,
+                  now_local=now.astimezone(tz), client=client,
+                  money=lambda c: account_info.money(round(c), currency, whole=not round(c) % 100))
     ids = list({i["entity_id"] for i in items if i.get("entity_id")})
     known = {}
     if ids:
@@ -147,6 +212,11 @@ def items_for(user):
             for r in db.query(f"SELECT id, name FROM {table} WHERE id = ANY(%s)", (ids,)):
                 known[r["id"]] = {"level": level, "name": r["name"]}
     return with_subjects(items, known)
+
+
+def snoozed_count(items):
+    """Snoozed problems in this person's feed (Today's quiet line)."""
+    return sum(1 for i in items if i.get("snooze"))
 
 
 def mark_read(user, keys):

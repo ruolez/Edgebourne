@@ -744,3 +744,46 @@ dialog { max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .chg-open { min-width: var(--target); text-align: right; }
   .chg-show { min-height: var(--target); }
 }
+
+/* ---------- Alerts: Got it, Wake it now, Diagnose with Claude (W1a) ---------- */
+.al-acts { flex-wrap: wrap; gap: 8px; }
+.al-chip svg, .al-acts .btn svg { width: 15px; height: 15px; }
+.al-snoozed { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 0; padding: 8px 12px; border-radius: var(--radius-s);
+  background: var(--surface-2); color: var(--ink-2); font-size: var(--t-s); }
+.al-snoozed svg { width: 15px; height: 15px; flex: none; color: var(--ink-3); }
+.al-snoozed .link-btn { margin-left: auto; }
+.al-tag { display: inline-block; padding: 0 6px; border-radius: var(--radius-pill); background: var(--surface-2); color: var(--ink-2);
+  font-size: var(--t-xs); font-weight: 600; }
+.al-inline { display: contents; }
+.al-more { display: none; }
+.al-more svg { width: 18px; height: 18px; }
+.al-snoozed-line { color: var(--ink-2); }
+.al-snoozed-rows li { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.al-snoozed-rows li > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* confirmDialog choices: each option a full-width button with its line underneath. */
+.cd-choices { display: grid; gap: 8px; }
+.cd-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; min-height: var(--target); padding: 10px 14px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-s); background: var(--surface); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.cd-choice b { font-weight: 600; }
+.cd-choice small { color: var(--ink-2); font-size: var(--t-s); line-height: 1.4; }
+.cd-choice:hover { border-color: var(--ink-3); background: var(--surface-2); }
+.cd-choice[aria-pressed="true"] { border-color: var(--focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 35%, transparent); }
+dialog.dg-form .dg-count { font-variant-numeric: tabular-nums; }
+@media (max-width: 960px) {
+  .tq-row .al-inline { display: none; }
+  .tq-row .al-more { display: inline-flex; flex: none; width: var(--target); padding: 0; justify-content: center; }
+  .ib-acts .btn { flex: 1 1 100%; justify-content: center; }
+  .al-snoozed .link-btn { margin-left: 0; }
+  .al-snoozed-rows li { flex-wrap: wrap; }
+  /* Got it on a phone: a sheet at the bottom with two big choices. */
+  dialog.al-choice { margin: auto auto 0; width: 100%; max-width: 100%; border-radius: var(--radius-m) var(--radius-m) 0 0;
+    padding-bottom: env(safe-area-inset-bottom); }
+  /* Diagnose on a phone: the whole height, and Send to Claude stays above the keyboard. */
+  dialog.confirm.dg-form { width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; }
+  dialog.dg-form form { min-height: 100%; }
+  dialog.dg-form .field { flex: 1; display: flex; flex-direction: column; }
+  dialog.dg-form textarea#cd-input { min-height: 200px; max-height: none; flex: 1; }
+  dialog.dg-form form > .row.end { position: sticky; bottom: 0; margin: auto -22px -22px; padding: 12px 22px calc(12px + env(safe-area-inset-bottom));
+    background: var(--surface); border-top: 1px solid var(--line); }
+  dialog.dg-form form > .row.end .btn { flex: 1; }
+}

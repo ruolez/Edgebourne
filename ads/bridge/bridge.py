@@ -54,6 +54,10 @@ READ_TOOLS = [
 
 
 WEB_KINDS = ("question", "review", "research", "creative")  # runs that read the web; render runs don't need it
+# Read-only runs: Meta's read tools, the workspace, the skills and `desk`, nothing else. Listed one by one
+# (a kind this helper doesn't know also gets only these, but a new kind is never left to that default).
+READ_ONLY_KINDS = ("question", "review", "research", "creative", "polish", "diagnose")
+RENDER_KINDS = ("render", "advice")  # these also render video on this Mac (node, ffmpeg, files under creatives/)
 
 
 def allowed_tools(skill_dir, workdir, kind="question", web=False):
@@ -75,7 +79,9 @@ def allowed_tools(skill_dir, workdir, kind="question", web=False):
         tools += [f"mcp__meta-ads__{name}", f"mcp__claude_ai_Meta_Ads__{name}"]
     # Polish looks at video frames through `desk frames` / `desk probe`, which open only videos in the
     # workspace: ffmpeg, ffprobe and ls themselves open any path on the Mac.
-    if kind in ("render", "advice"):
+    # A kind on READ_ONLY_KINDS (Diagnose with Claude among them) never renders, whatever else lists it;
+    # an unknown kind (a newer server) is read only too.
+    if kind in RENDER_KINDS and kind not in READ_ONLY_KINDS:
         tools += ["Bash(ffmpeg:*)", "Bash(ffprobe:*)", "Bash(mkdir:*)", "Bash(ls:*)"]
         # "Make a new version" (and Meta's advice, e.g. a 9:16 cut for Reels): the ad-creative-render pipeline (Node + headless Chrome +
         # ffmpeg) inside the workspace's creatives folder. Still no Meta write tools: the

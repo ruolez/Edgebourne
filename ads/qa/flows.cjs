@@ -1963,7 +1963,7 @@ db.execute(\\"UPDATE desk_tasks SET status = 'cancelled' WHERE kind = 'creative'
     && /^Meta's advice: Add a vertical 9:16 video for Reels \(\+4 points\)/.test(mac.task.prompt) && mac.added.added === 2, JSON.stringify(mac).slice(0, 200));
   await page.reload();
   await page.waitForSelector('.advice-list');
-  check('Today shows the fixes waiting for a yes', /2 to accept/.test(await page.locator('.advice-list li', { hasText: 'vertical 9:16' }).textContent()));
+  check('Today shows the fixes waiting for a yes, in the console\'s word', /2 suggestions/.test(await page.locator('.advice-list li', { hasText: 'vertical 9:16' }).textContent()));
   await page.goto(BASE + '/desk.html#waiting');
   const vcard = page.locator('#cv-col .sg', { hasText: `9:16 for Reels: N3` });
   await vcard.waitFor();
@@ -3128,7 +3128,7 @@ print('{}')`);
     await page.click('#ib-detail [data-done]');
     await page.waitForFunction((k) => !document.querySelector(`#ib-list [data-key="${k}"]`), money1.key);
     const done1 = (await getJson('/api/inbox?box=all&kind=money')).items.find((i) => i.key === money1.key);
-    check('Done moves it to For your information', done1 && !done1.need && done1.actions.length === 0, JSON.stringify(done1));
+    check('Done moves it to For your information', done1 && !done1.need && !done1.actions.includes('done'), JSON.stringify(done1));
     // 3. The 3-day rule on the server: a raise right after that change needs the knowing yes; it is stored with the change.
     const r409 = await expected(() => call('POST', `/api/ads/campaign/${DC}/budget`, { daily_budget_cents: b1 + 200, from_cents: b1 }));
     check('a raise under 3 days after the last change is refused without the knowing yes', r409.status === 409 && r409.body.code === 'recent_change'
@@ -4253,6 +4253,273 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   await page.waitForSelector('dialog.accept-sheet', { state: 'detached' });
   check('cancelling it decides nothing', (await getJson('/api/home')).queue.some((r) => String(r.proposal_id) === decideId), decideId);
   check('Today ends with a way to the Inbox for the rest', /\/inbox\.html\?box=fyi/.test(await page.getAttribute('.tq-foot a', 'href')));
+  // W1a: Got it (snooze) and Diagnose with Claude on alerts: Inbox, Today, the ad page, Settings, teammates, clients, phones.
+  {
+    const C = '120252638288040312';
+    const CAMP = 'Edge Bourne - Free intro call - Leads';
+    const reset = () => py(`import db;db.execute(\\"UPDATE alert_snoozes SET ended_at = now(), end_reason = 'by_hand' WHERE ended_at IS NULL\\");db.execute(\\"UPDATE desk_tasks SET status = 'cancelled' WHERE kind = 'diagnose' AND status IN ('queued', 'claimed', 'running')\\")`);
+    // Raised the way the hourly check raises them (alerts.raise_found), each with a key of its own.
+    const raise = (rule, level, measure, entity, title, kind = 'condition') => Number(py(`import alerts, uuid
+r = alerts.raise_found([{'rule': '${rule}', 'key': '${rule}:${entity}:qa-w1-' + uuid.uuid4().hex, 'level': '${level}', 'title': '${title}', 'lines': ['QA line.'],
+  'entity_id': '${entity}', 'campaign_id': ${entity === 'account' ? 'None' : `'${C}'`}, 'href': '/performance.html', 'measure': ${measure === null ? 'None' : measure},
+  'kind': '${kind}', 'resolved': ${kind === 'event' ? 'True' : 'False'}}])
+print(r[0][0] if r else 0)`));
+    const sent = (id) => Number(py(`import db;print(db.query('SELECT COUNT(*) AS n FROM notifications WHERE kind = %s AND ref = %s', ('alert', '${id}'), one=True)['n'])`));
+    const live = () => JSON.parse(py(`import db, json;print(json.dumps(db.query('SELECT id, rule, mode, end_reason, baseline::float8 AS b FROM alert_snoozes ORDER BY id DESC LIMIT 1', one=True)))`));
+    const openItem = async (id, box = 'all') => {
+      await page.goto(`${BASE}/inbox.html?box=${box}#item=${encodeURIComponent(`alert:${id}`)}`);
+      await page.reload();
+      await page.waitForFunction((k) => document.querySelector('#ib-detail h2') && document.querySelector(`#ib-list [data-key="${k}"][aria-current="true"]`), `alert:${id}`);
+    };
+    reset();
+    const cap = raise('spend_cap', 'warn', 82, 'account', '82% of the account spending limit is used');
+    await openItem(cap, 'need');
+    check('an open alert offers Got it and Diagnose with Claude beside Open (admins)', await page.isVisible('#ib-detail [data-al-snooze]') && await page.isVisible('#ib-detail [data-al-diag]')
+      && /Got it…/.test(await page.textContent('#ib-detail [data-al-snooze]')), String(cap));
+    await page.click('#ib-detail [data-al-snooze]');
+    await page.waitForSelector('dialog.al-choice .cd-choice');
+    const gotIt = (await page.textContent('dialog.al-choice')).replace(/\s+/g, ' ');
+    check('Got it asks when it should come back: in 3 days, or only if it gets worse, and says what that means',
+      (await page.locator('dialog.al-choice .cd-choice').count()) === 2 && /Got it\. When should this come back\?/.test(gotIt) && /In 3 days/.test(gotIt)
+      && /Only if it gets worse/.test(gotIt) && /You'll hear again at 95% of the limit\./.test(gotIt) && /Stays in the Inbox without messages until \w{3}, \w{3} \d+\./.test(gotIt)
+      && (await page.evaluate(() => document.activeElement.id)) === 'cd-cancel', gotIt.slice(0, 260));
+    await page.click('dialog.al-choice .cd-choice[data-value="worse"]');
+    await page.waitForFunction(() => /Snoozed until it gets worse · Eugene/.test(document.querySelector('#ib-detail .al-snoozed')?.textContent || ''));
+    const needNow = await getJson('/api/inbox?box=need');
+    check('snoozed: the chip says until it gets worse and who, and it leaves Needs action', !needNow.items.some((i) => i.key === `alert:${cap}`)
+      && (await getJson('/api/inbox?box=fyi')).items.some((i) => i.key === `alert:${cap}` && i.snooze && i.snooze.mode === 'worse') && (await page.locator('#ib-detail [data-al-wake]').count()) === 1);
+    await page.click('.toast .toast-act');
+    await page.waitForFunction((k) => (document.querySelector('#ib-detail .al-snoozed') === null), `alert:${cap}`);
+    check('Undo in the toast wakes it: back in Needs action', (await getJson('/api/inbox?box=need')).items.some((i) => i.key === `alert:${cap}` && !i.snooze)
+      && live().end_reason === 'by_hand');
+    await openItem(cap, 'need');
+    await page.click('#ib-detail [data-al-snooze]');
+    await page.click('dialog.al-choice .cd-choice[data-value="worse"]');
+    await page.waitForSelector('#ib-detail .al-snoozed');
+    await page.goto(BASE + '/home.html');
+    await page.waitForSelector('.tq-group, .tq-clear');
+    const homeW1 = await getJson('/api/home');
+    check('Today leaves a snoozed alert out and says so in one quiet line', !homeW1.queue.some((r) => r.key === `alert:${cap}`) && homeW1.snoozed === 1
+      && /1 snoozed alert\. See them/.test(await page.textContent('.al-snoozed-line')) && /box=fyi/.test(await page.getAttribute('.al-snoozed-line a', 'href')), String(homeW1.snoozed));
+    // The hourly check while snoozed: the same figure (85%) is stored quietly; 96% is clearly worse and goes out once.
+    const quiet = raise('spend_cap', 'warn', 85, 'account', '85% of the account spending limit is used');
+    const quietRow = JSON.parse(py(`import db, json;print(json.dumps(db.query('SELECT quiet FROM alerts WHERE id = %s', (${quiet},), one=True)))`));
+    check('still snoozed at 85%: stored quietly, no message', quiet > 0 && quietRow.quiet === true && sent(quiet) === 0 && !live().end_reason, `${quiet} ${JSON.stringify(quietRow)}`);
+    const worse = raise('spend_cap', 'warn', 96, 'account', '96% of the account spending limit is used');
+    const worseRow = JSON.parse(py(`import db, json;print(json.dumps(db.query('SELECT title, lines, quiet FROM alerts WHERE id = %s', (${worse},), one=True)))`));
+    check('at 96% it is clearly worse: one message titled "Worse:", saying where it was snoozed, and the snooze ends', worse > 0 && sent(worse) >= 1
+      && /^Worse: 96%/.test(worseRow.title) && /^You snoozed this at 82% on \w{3} \d+\.$/.test(worseRow.lines[0]) && !worseRow.quiet && live().end_reason === 'worse', JSON.stringify(worseRow));
+    // A link to an older row of the same problem (a diagnosis's "From an alert" names the row it was asked from)
+    // opens the item that stands for the problem now, and the address follows it.
+    await page.goto(`${BASE}/inbox.html?box=need#item=${encodeURIComponent(`alert:${cap}`)}`);
+    await page.reload();
+    await page.waitForFunction((k) => document.querySelector(`#ib-list [data-key="${k}"][aria-current="true"]`), `alert:${worse}`);
+    const epi = (await getJson('/api/inbox?box=need')).items.find((i) => i.key === `alert:${worse}`);
+    check('a link to an older row of a problem opens the item that stands for it now', /^Worse: 96%/.test(await page.textContent('#ib-detail h2'))
+      && decodeURIComponent(new URL(page.url()).hash) === `#item=alert:${worse}` && epi && [cap, quiet].every((id) => epi.ids.includes(id))
+      && !(await getJson('/api/inbox?box=all')).items.some((i) => i.key === `alert:${cap}`), `${page.url()} ${epi && epi.ids}`);
+    // In 3 days, from the newest row; Settings lists it and wakes it.
+    await openItem(worse, 'need');
+    await page.click('#ib-detail [data-al-snooze]');
+    await page.click('dialog.al-choice .cd-choice[data-value="days:3"]');
+    await page.waitForFunction(() => /Snoozed until \w{3}, \w{3} \d+ · Eugene/.test(document.querySelector('#ib-detail .al-snoozed')?.textContent || ''));
+    check('In 3 days: the chip names the day, and the snooze keeps 96% as where it started', live().mode === 'days' && live().b === 96);
+    // Its own address (#snoozed) opens Settings → Alerts on the list.
+    await page.goto(BASE + '/settings.html#snoozed');
+    await page.reload();
+    await page.waitForSelector('#alerts[data-section]:not([hidden]) #snoozed [data-al-wake]');
+    check('Settings → Alerts lists what is snoozed, who did it and until when', /96% of the account spending limit is used/.test(await page.textContent('#snoozed'))
+      && /Snoozed until \w{3}, \w{3} \d+ · Eugene/.test(await page.textContent('#snoozed')));
+    await page.click('#snoozed [data-al-wake]');
+    await page.waitForFunction(() => /Nothing is snoozed/.test(document.querySelector('#snoozed')?.textContent || ''));
+    check('Wake it now in Settings ends it by hand', live().end_reason === 'by_hand');
+    // What can't be snoozed for long, or at all.
+    const track = raise('tracking', 'bad', 4, 'account', 'Leads are not reaching the inbox');
+    await openItem(track, 'need');
+    await page.click('#ib-detail [data-al-snooze]');
+    await page.waitForSelector('dialog.al-choice .cd-choice');
+    check('lost leads (tracking) wait a day at most: only Remind me tomorrow', (await page.$$eval('dialog.al-choice .cd-choice b', (b) => b.map((x) => x.textContent))).join() === 'Remind me tomorrow'
+      && /can only wait a day/.test(await page.textContent('dialog.al-choice')));
+    await page.click('dialog.al-choice #cd-cancel');
+    const ev = raise('learning_limited', 'warn', null, '120252672227950312', 'Ad set “QA” is learning limited', 'event');
+    const info = raise('day_overspend', 'info', 4000, C, 'QA spent a lot today');
+    const fyi = (await getJson('/api/inbox?box=all')).items;
+    check('an event and an info note offer no Got it', [ev, info].every((id) => { const i = fyi.find((x) => x.key === `alert:${id}`); return i && !i.actions.includes('snooze'); }), `${ev} ${info}`);
+    await openItem(info);
+    check('…and none shows on the screen', (await page.locator('#ib-detail [data-al-snooze]').count()) === 0);
+    // Diagnose with Claude on "no leads": the request names the alert, the ids and the playbook; one run per problem.
+    const dry = raise('no_leads', 'bad', 5, C, `No leads for 5 days in “${CAMP}”`);
+    await openItem(dry, 'need');
+    await page.click('#ib-detail [data-al-diag]');
+    await page.waitForSelector('dialog.dg-form #cd-input');
+    const draft = await page.inputValue('dialog.dg-form #cd-input');
+    const dgText = (await page.textContent('dialog.dg-form')).replace(/\s+/g, ' ');
+    check('the Diagnose request names the alert, the campaign id and the checklist, read only', draft.includes(C) && /Read only: change nothing on Meta\./.test(draft)
+      && /Uses the “spending without leads” checklist\./.test(dgText) && /It changes nothing on Meta/.test(dgText) && /\d[\d,]* \/ 4,000/.test(dgText), draft.slice(0, 160));
+    await page.fill('dialog.dg-form #cd-input', draft + '\nQA: look at the form first.');
+    await page.click('dialog.dg-form #cd-ok');
+    await page.waitForFunction(() => /Waiting for your Mac/.test(document.querySelector('#ib-detail .al-chip')?.textContent || ''));
+    const dTask = JSON.parse(py(`import db, json;print(json.dumps(db.query(\\"SELECT id, kind, prompt, options->>'alert_key' AS k, options->>'playbook' AS pb FROM desk_tasks WHERE kind = 'diagnose' ORDER BY id DESC LIMIT 1\\", one=True)))`));
+    check('Send to Claude files one diagnose run with the edited request and the problem as its key', dTask.kind === 'diagnose' && dTask.k === `no_leads:${C}`
+      && /QA: look at the form first\./.test(dTask.prompt) && dTask.pb === 'meta-ads-doctor', JSON.stringify(dTask).slice(0, 200));
+    const twice = await page.evaluate(async ([id]) => (await fetch('/api/diagnose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ alert_id: id, prompt: 'again' }) })).json(), [dry]);
+    check('asking again while it waits reuses the run', twice.already === true && twice.task_id === dTask.id, JSON.stringify(twice));
+    check('the chip says Waiting for your Mac and opens the conversation', (await page.getAttribute('#ib-detail .al-chip', 'href')) === `/desk.html#r/${dTask.id}`);
+    // The Mac's side: read-only tools only, then one suggestion; the chip and the Inbox follow, and accepting still asks first.
+    sh(`docker exec edgebourne-ads-backend mkdir -p /tmp/qa_bridge && docker cp bridge/bridge.py edgebourne-ads-backend:/tmp/qa_bridge/bridge.py && docker cp bridge/desk edgebourne-ads-backend:/tmp/qa_bridge/desk && docker cp dev/qa_agent_diagnose.py edgebourne-ads-backend:/app/qa_agent_diagnose.py`);
+    const macD = JSON.parse(sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_agent_diagnose.py ${dTask.id} /tmp/qa_bridge; docker exec edgebourne-ads-backend rm -rf /app/qa_agent_diagnose.py /tmp/qa_bridge`).trim().split('\n').pop());
+    check('the Mac runs a diagnosis as a read-only kind: no web, no shell but desk, no write tools', macD.read_only_kind === true && macD.writes.length === 0
+      && macD.rule === 'no_leads' && macD.playbook === 'meta-ads-doctor' && macD.alert_key === `no_leads:${C}` && macD.added.added === 1 && macD.done === 200, JSON.stringify(macD).slice(0, 240));
+    await openItem(dry);
+    await page.waitForSelector('#ib-detail .al-chip.btn-claude');
+    check('after the run the chip reads 1 suggestion and leads to the Accept sheet on the Claude page, with Diagnose again beside it',
+      (await page.textContent('#ib-detail .al-chip')).trim() === '1 suggestion' && (await page.getAttribute('#ib-detail .al-chip', 'href')) === '/desk.html#waiting'
+      && /Diagnose again/.test(await page.textContent('#ib-detail [data-al-diag]')));
+    const dProp = (await getJson('/api/inbox?box=need&kind=claude')).items.find((i) => i.lines[0] === `From: No leads for 5 days in “${CAMP}”`);
+    check('the suggestion in the Inbox says which alert it answers', Boolean(dProp), JSON.stringify((await getJson('/api/inbox?box=need&kind=claude')).items.map((i) => i.lines)).slice(0, 200));
+    const adBefore = metaObj(macD.ad).status;
+    await page.goto(`${BASE}/inbox.html?box=need&kind=claude#item=${encodeURIComponent(dProp.key)}`);
+    await page.waitForSelector('#ib-detail [data-accept]');
+    await page.click('#ib-detail [data-accept]');
+    await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
+    await page.click('dialog.accept-sheet #cd-cancel');
+    await page.waitForSelector('dialog.accept-sheet', { state: 'detached' });
+    check("accepting Claude's suggestion still goes through the Accept sheet; cancelled, nothing changes on Meta", metaObj(macD.ad).status === adBefore, adBefore);
+    py(`import db;db.execute(\\"UPDATE desk_proposals SET status = 'declined' WHERE id = ${dProp.proposal_id}\\")`);
+    // The ad page: a rejected ad offers Diagnose, and its run is the same problem as the alert's.
+    const N4 = '120252672232030312';
+    sh(`docker exec edgebourne-ads-backend python -c "import requests;requests.get('http://fake-meta:5001/fake/_review?ad=${N4}&to=WITH_ISSUES')"`);
+    pull();
+    await page.goto(`${BASE}/ad.html?id=${N4}`);
+    await page.waitForSelector('#cs-diag [data-al-diag-ad]');
+    await page.click('#cs-diag [data-al-diag-ad]');
+    await page.waitForSelector('dialog.dg-form #cd-input');
+    check("the ad page's request names the ad and uses Meta's ad rules", (await page.inputValue('dialog.dg-form #cd-input')).includes(N4) && /“Meta's ad rules” checklist/.test(await page.textContent('dialog.dg-form')));
+    await page.click('dialog.dg-form #cd-ok');
+    await page.waitForSelector('#cs-diag .al-chip');
+    const adTask = JSON.parse(py(`import db, json;print(json.dumps(db.query(\\"SELECT id, options->>'alert_key' AS k FROM desk_tasks WHERE kind = 'diagnose' ORDER BY id DESC LIMIT 1\\", one=True)))`));
+    const n4Alert = (await getJson('/api/inbox?box=all')).items.find((i) => i.rule === 'ad_rejected' && i.entity_id === N4);
+    check("the ad's run and its Inbox alert share one problem key, so they show the same run", adTask.k === `ad_rejected:${N4}` && n4Alert && n4Alert.diagnose && n4Alert.diagnose.id === adTask.id,
+      JSON.stringify([adTask, n4Alert && n4Alert.diagnose]));
+    sh(`docker exec edgebourne-ads-backend python -c "import requests;requests.get('http://fake-meta:5001/fake/_review?ad=${N4}&to=ACTIVE')"`);
+    pull();
+    reset();
+    // Teammates see the chip and no buttons, and are refused; clients see none of it.
+    const cpl = raise('cpl_high', 'warn', 8000, C, 'QA leads cost too much');
+    await page.evaluate(async ([id]) => fetch(`/api/alerts/${id}/snooze`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'worse' }) }), [cpl]);
+    const rej = raise('ad_rejected', 'bad', 2, N4, 'QA Meta rejected N4');
+    py(`import db
+from werkzeug.security import generate_password_hash as h
+for email, role in (('qa-w1-client@example.com', 'client'), ('qa-w1-mate@example.com', 'member')):
+    db.execute(\\"INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, %s, 1) ON CONFLICT (email) DO UPDATE SET is_active = TRUE, password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, account_id = 1, must_change_password = FALSE\\", (email, 'QA W1 ' + role, h('w1-pass-12345'), role))
+db.execute(\\"INSERT INTO campaign_members (campaign_id, user_id, account_id) SELECT '${C}', id, 1 FROM users WHERE email = 'qa-w1-mate@example.com' ON CONFLICT DO NOTHING\\")`);
+    for (const [email, who] of [['qa-w1-mate@example.com', 'mate'], ['qa-w1-client@example.com', 'client']]) {
+      const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+      const p = await ctx.newPage();
+      p.on('pageerror', (e) => errors.push(`${who} page: ${e.message}`));
+      await p.goto(BASE + '/login.html');
+      await p.fill('#email', email); await p.fill('#password', 'w1-pass-12345');
+      await Promise.all([p.waitForURL('**/home.html**'), p.click('button[type=submit]')]);
+      const res = await p.evaluate(async ([a, d]) => {
+        const post = (u, b) => fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.status);
+        const items = (await (await fetch('/api/inbox?box=all')).json()).items;
+        return { snooze: await post(`/api/alerts/${a}/snooze`, { mode: 'worse' }), diagnose: await post('/api/diagnose', { alert_id: d, prompt: 'x' }),
+          draft: (await fetch(`/api/diagnose/draft?alert_id=${d}`)).status, items: items.filter((i) => /^alert:/.test(i.key)).map((i) => ({ key: i.key, snooze: i.snooze, diagnose: i.diagnose, actions: i.actions, has: ['snooze', 'diagnose', 'actions', 'choices'].filter((k) => k in i) })) };
+      }, [cpl, dry]);
+      check(`a ${who === 'mate' ? 'teammate' : 'client'} can't snooze or diagnose`, res.snooze === 403 && res.diagnose === 403 && res.draft === 403, JSON.stringify([res.snooze, res.diagnose, res.draft]));
+      if (who === 'mate') {
+        const mine = res.items.find((i) => i.key === `alert:${cpl}`);
+        await p.goto(`${BASE}/inbox.html?box=all#item=${encodeURIComponent(`alert:${cpl}`)}`);
+        await p.waitForSelector('#ib-detail .al-snoozed');
+        check('a teammate sees the snooze chip with who set it, and no buttons', mine && mine.snooze && mine.actions.length === 0 && !mine.diagnose
+          && (await p.locator('#ib-detail [data-al-snooze], #ib-detail [data-al-wake], #ib-detail [data-al-diag], #ib-detail .al-acts').count()) === 0
+          && /Snoozed until it gets worse · Eugene/.test(await p.textContent('#ib-detail .al-snoozed')), JSON.stringify(mine));
+      } else {
+        await p.goto(`${BASE}/inbox.html?box=all#item=${encodeURIComponent(`alert:${rej}`)}`);
+        await p.waitForSelector('#ib-detail h2');
+        check('a client sees no snooze, diagnosis or buttons on an alert', res.items.length > 0 && res.items.every((i) => i.has.length === 0)
+          && (await p.locator('#ib-detail .al-acts, #ib-detail .al-snoozed').count()) === 0, JSON.stringify(res.items.slice(0, 2)));
+      }
+      await ctx.close();
+    }
+    py(`import db
+db.execute(\\"UPDATE users SET is_active = FALSE WHERE email IN ('qa-w1-client@example.com', 'qa-w1-mate@example.com')\\")
+db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users WHERE email = 'qa-w1-mate@example.com')\\")`);
+    reset();
+    // Phones: a tap opens the item and Back closes it; Today rows keep one button plus ⋯; 44px buttons; a 16px request
+    // field with Send to Claude in view; nothing past the edge at 320px.
+    {
+      // A fresh problem Claude hasn't looked into yet, on the ad set (signed in with the desktop session: no extra sign-ins).
+      const dry = raise('no_leads', 'bad', 4, '120252672227950312', 'No leads for 4 days in “QA phone”');
+      const signedIn = await page.context().storageState();
+      const pctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: signedIn });
+      const pp = await pctx.newPage();
+      pp.on('pageerror', (e) => errors.push('phone page: ' + e.message));
+      await pp.goto(BASE + '/inbox.html?box=need');
+      await pp.waitForSelector(`#ib-list [data-key="alert:${dry}"]`);
+      await pp.tap(`#ib-list [data-key="alert:${dry}"]`);
+      await pp.waitForSelector('#ib-detail [data-al-diag]', { state: 'visible' });
+      const sizes = await pp.$$eval('#ib-detail .ib-acts .btn', (b) => b.map((x) => Math.round(x.getBoundingClientRect().height)));
+      check('on a phone a tap opens the alert with its buttons, each at least 44px tall', sizes.length >= 3 && sizes.every((h) => h >= 44), sizes.join());
+      await pp.goBack();
+      await pp.waitForFunction(() => !document.querySelector('#ib-panel').classList.contains('showing-detail'));
+      check("the phone's Back closes it", await pp.isVisible(`#ib-list [data-key="alert:${dry}"]`));
+      await pp.tap(`#ib-list [data-key="alert:${dry}"]`);
+      await pp.waitForSelector('#ib-detail [data-al-diag]', { state: 'visible' });
+      await pp.tap('#ib-detail [data-al-diag]');
+      await pp.waitForSelector('dialog.dg-form #cd-input');
+      await pp.tap('dialog.dg-form #cd-input');
+      const dgFit = await pp.evaluate(() => { const ok = document.querySelector('dialog.dg-form #cd-ok').getBoundingClientRect();
+        return { font: getComputedStyle(document.querySelector('dialog.dg-form #cd-input')).fontSize, okBottom: Math.round(ok.bottom), okH: Math.round(ok.height), vh: innerHeight }; });
+      check('on a phone the request field is 16px and Send to Claude stays in view', dgFit.font === '16px' && dgFit.okBottom <= dgFit.vh && dgFit.okH >= 44, JSON.stringify(dgFit));
+      await pp.tap('dialog.dg-form #cd-cancel');
+      await pp.goto(BASE + '/home.html');
+      await pp.waitForSelector(`.tq-row[data-key="alert:${dry}"] .al-more`);
+      const rowW1 = await pp.evaluate((k) => { const r = document.querySelector(`.tq-row[data-key="${k}"]`); const more = r.querySelector('.al-more').getBoundingClientRect();
+        return { inline: getComputedStyle(r.querySelector('.al-inline')).display, more: [Math.round(more.width), Math.round(more.height)] }; }, `alert:${dry}`);
+      check('Today on a phone: Open plus one 44px ⋯ that holds Diagnose and Got it', rowW1.inline === 'none' && rowW1.more.every((n) => n >= 44), JSON.stringify(rowW1));
+      await pp.tap(`.tq-row[data-key="alert:${dry}"] .al-more`);
+      await pp.waitForSelector('dialog.al-choice .cd-choice');
+      const menu = await pp.$$eval('dialog.al-choice .cd-choice', (b) => b.map((x) => [x.querySelector('b').textContent, Math.round(x.getBoundingClientRect().height)]));
+      check('the ⋯ menu offers Diagnose with Claude and Got it… as 44px choices', menu.map((m) => m[0]).join() === 'Diagnose with Claude,Got it…' && menu.every((m) => m[1] >= 44), JSON.stringify(menu));
+      await pp.tap('dialog.al-choice .cd-choice[data-value="snooze"]');
+      await pp.waitForSelector('dialog.al-choice .cd-choice[data-value="days:1"]');
+      const sheet = await pp.evaluate(() => { const r = document.querySelector('dialog.al-choice').getBoundingClientRect(); return { bottom: Math.round(r.bottom), vh: innerHeight, w: Math.round(r.width), vw: innerWidth }; });
+      check('Got it on a phone is a sheet at the bottom; a red money alert can only wait a day', sheet.bottom === sheet.vh && sheet.w === sheet.vw
+        && (await pp.$$eval('dialog.al-choice .cd-choice b', (b) => b.map((x) => x.textContent))).join() === 'Remind me tomorrow', JSON.stringify(sheet));
+      await pp.tap('dialog.al-choice #cd-cancel');
+      // An Ads Manager edit that broke a money rule waits for Done: on a phone Done is in the ⋯ too.
+      const oe = Number(py(`import db;print(db.execute(\\"INSERT INTO alerts (rule, dedupe_key, level, title, lines, kind, entity_id, campaign_id, href) VALUES ('outside_edit', 'qa-w1-oe-' || md5(random()::text), 'warn', 'QA phone outside edit', '[]', 'event', '${C}', '${C}', '/campaign.html?id=${C}&tab=history') RETURNING id\\", returning=True)['id'])`));
+      await pp.goto(BASE + '/home.html');
+      await pp.waitForSelector(`.tq-row[data-key="alert:${oe}"] .al-more`);
+      await pp.tap(`.tq-row[data-key="alert:${oe}"] .al-more`);
+      await pp.waitForSelector('dialog.al-choice .cd-choice[data-value="done"]');
+      const oeMenu = await pp.$$eval('dialog.al-choice .cd-choice b', (b) => b.map((x) => x.textContent));
+      await pp.tap('dialog.al-choice .cd-choice[data-value="done"]');
+      await pp.waitForSelector(`.tq-row[data-key="alert:${oe}"]`, { state: 'detached' });
+      const oeShut = py(`import db;print(db.query('SELECT resolved_at IS NOT NULL AS d FROM alerts WHERE id = %s', (${oe},), one=True)['d'])`);
+      check('on a phone the ⋯ also holds Done for an Ads Manager edit that waits for a person, and Done closes it',
+        oeMenu.join() === 'Diagnose with Claude,Done' && oeShut === 'True', `${oeMenu.join()} ${oeShut}`);
+      await pctx.close();
+      const nctx = await browser.newContext({ viewport: { width: 320, height: 700 }, isMobile: true, hasTouch: true, storageState: signedIn });
+      const np = await nctx.newPage();
+      await np.goto(BASE + '/home.html');
+      await np.waitForSelector(`.tq-row[data-key="alert:${dry}"]`);
+      const over = async () => np.evaluate(() => [...document.querySelectorAll('.tq-row *, #ib-detail *, dialog *')].filter((e) => e.getBoundingClientRect().right > innerWidth + 1 && e.getBoundingClientRect().width > 0).map((e) => e.className || e.tagName).slice(0, 4));
+      const homeOver = await over();
+      await np.goto(`${BASE}/inbox.html?box=need#item=${encodeURIComponent(`alert:${dry}`)}`);
+      await np.waitForSelector('#ib-detail [data-al-diag]', { state: 'visible' });
+      const inboxOver = await over();
+      await np.tap('#ib-detail [data-al-snooze]');
+      await np.waitForSelector('dialog.al-choice .cd-choice');
+      const dlgOver = await over();
+      check('at 320px nothing of Today, the alert or Got it runs past the edge', !homeOver.length && !inboxOver.length && !dlgOver.length, JSON.stringify([homeOver, inboxOver, dlgOver]));
+      await nctx.close();
+    }
+    // The QA alerts close, so later checks see the usual Inbox.
+    py(`import db;db.execute(\\"UPDATE alerts SET resolved_at = now() WHERE (dedupe_key LIKE '%qa-w1-%' OR (rule = 'ad_rejected' AND entity_id = '${N4}')) AND resolved_at IS NULL\\")`);
+    reset();
+  }
   // Phase 9.1: what used to break.
   const seen91 = errors.length;
   await page.goto(BASE + '/ads.html');

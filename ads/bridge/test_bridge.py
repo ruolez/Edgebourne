@@ -32,6 +32,25 @@ class AllowedToolsTests(unittest.TestCase):
         kinds = ["question", "research", "polish", "render", "advice"]
         self.assertEqual(["Bash(node:*)" in tools(k) for k in kinds], [False, False, False, True, True])
 
+    def test_a_diagnosis_is_listed_as_read_only_and_gets_only_the_read_tools(self):
+        """Diagnose with Claude (W1): Meta's read tools, the workspace and `desk`; no web, no shell, no edits but
+        its own JSON files, never a write tool."""
+        got = tools("diagnose")
+        self.assertEqual(("diagnose" in bridge.READ_ONLY_KINDS, [t for t in got if t.startswith(("Bash(", "Edit(", "Web"))],
+                          [t for t in got if t.startswith("mcp__") and not any(t.endswith("__" + r) for r in bridge.READ_TOOLS)]),
+                         (True, [f"Bash({SKILL}/desk:*)", "Bash(~/.claude/skills/ads-desk/desk:*)", "Edit(reports/desk/**)",
+                                 f"Edit(/{WORKDIR}/reports/desk/**)"], []))
+
+    def test_a_read_only_kind_never_gets_render_tools_even_if_listed_as_rendering(self):
+        """READ_ONLY_KINDS decides: a kind put on both lists by mistake stays read only, and the lists don't overlap."""
+        saved = bridge.RENDER_KINDS
+        try:
+            bridge.RENDER_KINDS = saved + ("diagnose",)
+            leaked = [t for t in tools("diagnose") if t.startswith(("Bash(node", "Bash(ffmpeg", "Edit(creatives"))]
+        finally:
+            bridge.RENDER_KINDS = saved
+        self.assertEqual((leaked, set(bridge.READ_ONLY_KINDS) & set(bridge.RENDER_KINDS)), ([], set()))
+
     def test_polish_runs_get_no_shell_but_desk(self):
         """ffmpeg, ffprobe and ls open any path on the Mac (ffmpeg also sends over http): a polish run
         cuts frames with `desk frames`, which checks the file first (review of audit A3-4)."""

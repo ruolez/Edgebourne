@@ -138,6 +138,53 @@ class ResultRuleTests(unittest.TestCase):
                           ("tracking", "/settings.html#meta")])
 
 
+class MeasureTests(unittest.TestCase):
+    """Each alert keeps the figure its rule judged, so a snooze can tell "clearly worse" (W1)."""
+
+    def test_spending_limit_percent_used(self):
+        found = alerts.evaluate(snap(cap={"limit_cents": 15000, "spent_cents": 12300}), RULES, TODAY)
+        self.assertEqual([(a["rule"], a["measure"]) for a in found], [("spend_cap", 82.0)])
+
+    def test_cost_per_lead_in_cents_and_spend_when_there_are_none(self):
+        target = alerts.rules_with({"cpl_high": {"target_cents": 1500}})
+        # 7 days at $20 a day: one lead a day is $20 each (over 1.3 × $15), none at all is the $140 spent.
+        found = [alerts.evaluate(snap(camp_days={"c1": days(7, spend_cents=2000, leads=n)}), target, TODAY) for n in (1, 0)]
+        self.assertEqual([[(a["rule"], a["measure"]) for a in f if a["rule"] == "cpl_high"] for f in found],
+                         [[("cpl_high", 2000)], [("cpl_high", 14000)]])
+
+    def test_rejected_is_two_and_issues_one(self):
+        ads = [{"id": "a1", "name": "N1", "campaign_id": "c1", "effective_status": "DISAPPROVED", "age_hours": 50},
+               {"id": "a2", "name": "N2", "campaign_id": "c1", "effective_status": "WITH_ISSUES", "age_hours": 50}]
+        self.assertEqual([(a["entity_id"], a["measure"]) for a in alerts.evaluate(snap(ads=ads), RULES, TODAY)], [("a1", 2), ("a2", 1)])
+
+    def test_rules_without_a_figure_carry_none(self):
+        found = alerts.evaluate(snap(tracking={"state": "quiet", "headline": "Nothing for two days."}), RULES, TODAY)
+        self.assertEqual([(a["rule"], a["measure"]) for a in found], [("events_quiet", None)])
+
+
+class DryStreakTests(unittest.TestCase):
+    def test_days_in_a_row_ending_yesterday_with_spend_and_no_lead(self):
+        rows = days(7, spend_cents=2000, leads=1)[:2] + days(5, spend_cents=2000, leads=0)
+        self.assertEqual(alerts._dry_streak(rows, TODAY), 5)
+
+    def test_a_day_without_spend_or_a_missing_day_ends_the_streak(self):
+        no_spend = days(4, spend_cents=2000, leads=0)
+        no_spend[1] = {**no_spend[1], "spend_cents": 0}
+        gap = days(4, spend_cents=2000, leads=0)
+        del gap[2]
+        self.assertEqual([alerts._dry_streak(no_spend, TODAY), alerts._dry_streak(gap, TODAY), alerts._dry_streak([], TODAY)], [2, 1, 0])
+
+    def test_no_leads_names_the_streak_and_judges_it(self):
+        rows = days(7, spend_cents=2000, leads=1)[:2] + days(5, spend_cents=2000, leads=0)
+        found = [a for a in alerts.evaluate(snap(camp_days={"c1": rows}), RULES, TODAY) if a["rule"] == "no_leads"]
+        self.assertEqual([(a["title"], a["measure"], a["lines"]) for a in found],
+                         [("No leads for 5 days in “Leads”", 5, ["$100 spent since Nov 4 and not one lead. Check the form and the ads."])])
+
+    def test_a_streak_shorter_than_the_rule_raises_nothing(self):
+        rows = days(7, spend_cents=2000, leads=1)[:5] + days(2, spend_cents=2000, leads=0)
+        self.assertEqual(rules_of(alerts.evaluate(snap(camp_days={"c1": rows}), RULES, TODAY)), [])
+
+
 class RulesWithTests(unittest.TestCase):
     def test_saved_values_override_defaults_and_unknown_keys_are_dropped(self):
         r = alerts.rules_with({"no_leads": {"days": 5}, "bogus": {"on": True}, "spend_cap": {"percent": "90"}})

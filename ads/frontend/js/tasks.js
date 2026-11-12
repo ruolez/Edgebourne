@@ -6,7 +6,7 @@ import { money } from "./format.js";
 import { lastChangeWords, spendBody, spendWords } from "./controls.js";
 import { suggestionCard } from "./suggest.js";
 
-export const KIND_LABELS = { question: "Question", review: "Review results", research: "Research competitors", creative: "New ad ideas", polish: "Polish", render: "New version", advice: "Meta's advice" };
+export const KIND_LABELS = { question: "Question", review: "Review results", research: "Research competitors", creative: "New ad ideas", polish: "Polish", render: "New version", advice: "Meta's advice", diagnose: "Diagnosis" };
 const STATUS = {
   queued: ["warn", "Waiting for your Mac"], claimed: ["claude", "Claude picked it up"], running: ["claude", "Claude is working"],
   done: ["ok", "Done"], failed: ["bad", "Didn't finish"], cancelled: ["", "Cancelled"],
@@ -43,7 +43,7 @@ export const proposalCard = (p, task = null, ix = null) => suggestionCard(p, { i
 
 export function taskCard(t, openReports = new Set(), ix = null) {
   const [cls, label] = STATUS[t.status] || ["", t.status];
-  const meta = [(t.options && t.options.schedule) || KIND_LABELS[t.kind] || t.kind, t.campaign_name, when(t.created_at), t.created_by_name || (t.options && t.options.schedule ? "on schedule" : "")].filter(Boolean).map(esc).join(" · ");
+  const meta = [(t.options && t.options.schedule) || KIND_LABELS[t.kind] || t.kind, t.kind === "diagnose" && t.options && t.options.alert ? t.options.alert.title : "", t.campaign_name, when(t.created_at), t.created_by_name || (t.options && t.options.schedule ? "on schedule" : "")].filter(Boolean).map(esc).join(" · ");
   const working = ACTIVE.has(t.status) && t.status !== "queued" && t.progress ? `<p class="progress"><span class="dot" aria-hidden="true"></span>${esc(t.progress)}</p>` : "";
   const reports = t.reports.map((r) => `
     <details class="report" data-report="${r.id}" ${openReports.has(r.id) ? "open" : ""}>
