@@ -315,12 +315,13 @@ async function renderPolish() {
     <div class="stack" id="runs">${runs.length ? runs.map((t) => taskCard(t, openReports)).join("") : '<section class="panel empty"><h3>No polish runs yet</h3><p>Pick the passes above and run them. Results show here with a score per pass, the fixes, and new versions of the copy you can put on this ad.</p></section>'}</div>`;
 
   const form = $("polish-form");
+  let polishSending = false, renderSending = false;  // a double click or a tick during the POST queues one run
   const sync = () => {
     const chosen = [...form.querySelectorAll("input[name=pass]:checked")].map((i) => i.value);
     form.querySelectorAll(".pass").forEach((l) => l.classList.toggle("on", l.querySelector("input").checked));
     sessionStorage.setItem("ebads-passes", JSON.stringify(chosen));
     $("run-polish").querySelector("span").textContent = chosen.length === passes.passes.length ? "Run full audit" : `Run ${chosen.length} pass${chosen.length === 1 ? "" : "es"}`;
-    $("run-polish").disabled = !chosen.length;
+    $("run-polish").disabled = polishSending || !chosen.length;
   };
   form.addEventListener("change", (e) => {
     if (e.target.id === "show-checks") { form.querySelector(".pass-grid").classList.toggle("show-checks", e.target.checked); return; }
@@ -337,26 +338,33 @@ async function renderPolish() {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const chosen = [...form.querySelectorAll("input[name=pass]:checked")].map((i) => i.value);
+    if (polishSending || !chosen.length) return;
+    polishSending = true;
+    $("run-polish").disabled = true;
     try {
       await api(`/api/ads/ad/${encodeURIComponent(adId)}/polish`, { method: "POST", body: { passes: chosen, direction: $("direction").value, variants: $("variants").checked } });
       toast("Sent to Claude");
       renderPolish();
-    } catch (err) { toast(err.message, "bad"); }
+    } catch (err) { toast(err.message, "bad"); polishSending = false; sync(); }
   });
   $("render-form").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const renderBtn = $("render-form").querySelector("button[type=submit]");
+    if (renderSending) return;
+    renderSending = true;
     const useFixes = $("use-fixes") && $("use-fixes").checked;
     const ok = await confirmDialog({
       title: "Make a new version?",
       body: "<p>Claude rebuilds the creative on your Mac and uploads it to your Meta media library. You get it back as a proposal; nothing changes on this ad until you approve it.</p>",
       confirm: "Make it", claude: true,
     });
-    if (!ok) return;
+    if (!ok) { renderSending = false; return; }
+    renderBtn.disabled = true;
     try {
       await api(`/api/ads/ad/${encodeURIComponent(adId)}/render`, { method: "POST", body: { direction: $("render-direction").value, from_task: useFixes ? last.id : null } });
       toast("Sent to Claude");
       renderPolish();
-    } catch (err) { toast(err.message, "bad"); }
+    } catch (err) { toast(err.message, "bad"); renderSending = false; renderBtn.disabled = false; }
   });
   if (runs.some((r) => ACTIVE.has(r.status))) pollTimer = setTimeout(() => { if (tab === "polish" && !document.activeElement.closest("form")) renderPolish(); else pollTimer = setTimeout(renderPolish, 6000); }, 6000);
 }

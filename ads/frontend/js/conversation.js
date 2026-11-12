@@ -110,7 +110,7 @@ export function listHtml(data, ix, ctx) {
   const onMac = `<section class="cl-group cl-now">
       <header class="cl-head"><h2>On your Mac</h2>${b.queue.length ? '<button type="button" data-clear="queue">Clear the line</button>' : ""}</header>
       ${!data.bridge.online && b.queue.length ? '<p class="cl-note">Your Mac is offline. These start when it’s back.</p>' : ""}
-      ${working.length || b.queue.length ? `<ul>${working.map((th) => row(th, data, ix, ctx)).join("")}${lineRows}</ul>` : '<p class="cl-idle">Claude is idle. Anything you send starts right away.</p>'}
+      ${working.length || b.queue.length ? `<ul>${working.map((th) => row(th, data, ix, ctx)).join("")}${lineRows}</ul>` : data.bridge.online ? '<p class="cl-idle">Claude is idle. Anything you send starts right away.</p>' : '<p class="cl-idle">Your Mac is offline. Anything you send waits until it’s back.</p>'}
     </section>`;
   const recent = shown(b.recent);
   const days = ["Today", "Yesterday", "Earlier"].map((day) => {

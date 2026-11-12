@@ -539,8 +539,8 @@ function startClaudeNow(top) {
     const w = n.working;
     since = w ? new Date(w.since).getTime() : null;
     const state = w ? "working" : n.queued ? "waiting" : "idle";
-    const title = w ? 'Claude working <time data-now-clock></time>' : n.queued ? (n.online ? "Claude is starting the next job" : "Your Mac is offline") : "Claude is idle";
-    const detail = w ? esc(w.progress || w.title) : n.queued ? esc(n.next[0]?.title || "") : "Nothing in line";
+    const title = w ? 'Claude working <time data-now-clock></time>' : n.queued || !n.online ? (n.online ? "Claude is starting the next job" : "Your Mac is offline") : "Claude is idle";
+    const detail = w ? esc(w.progress || w.title) : n.queued ? esc(n.next[0]?.title || "") : n.online ? "Nothing in line" : "Requests wait until it’s back";
     const line = n.queued ? `<em>${n.queued} in line</em>` : "";
     const href = w ? `/desk.html#r/${w.thread}` : "/desk.html#list";
     [card, bar].forEach((el) => {

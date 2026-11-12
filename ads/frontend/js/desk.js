@@ -73,6 +73,7 @@ function renderMac(bridge) {
       <div><dt>Last check</dt><dd>${esc(ago(bridge.last_seen))}</dd></div>
       <div><dt>Key</dt><dd>${bridge.has_key ? `ends in ${esc(bridge.key_hint || "")}` : "none yet"}</dd></div>
     </dl>
+    ${bridge.needs_update ? `<div class="note warn" id="mac-update"><b>Update the helper on your Mac</b> (version ${esc(bridge.version || "?")}). Until it's on 2.0, requests from teammates and clients wait in line, and Claude runs without the per-request limits. Run the command below on the Mac.</div>` : ""}
     ${keyBox}
     <div class="stack tight">
       <b>Set up or reinstall on your Mac</b>
@@ -204,7 +205,19 @@ function renderDock(sel) {
 
 const stopButton = (th) => `<button class="btn btn-small cv-stop" type="button" data-stop="${th.id}"><span class="sq" aria-hidden="true"></span>Stop</button>`;
 
+// One send at a time: Enter again (or a key repeat) while it's on its way must not queue a second run.
+let sending = false;
+
 function renderDockFoot(sel, th) {
+  dockFoot(sel, th);
+  if (sending) $("cv-btns").querySelectorAll("button").forEach((b) => { b.disabled = true; });
+}
+
+function refreshDockFoot() {
+  if (data) renderDockFoot(current(), typeof current() === "number" ? data.board.threads[current()] : null);
+}
+
+function dockFoot(sel, th) {
   const has = $("prompt").value.trim();
   const live = th && th.state === "working";
   const hint = $("cv-hint");
@@ -414,11 +427,12 @@ function previewProposal(id, compare) {
 }
 
 async function send({ stopFirst = false, stay = false } = {}) {
+  if (sending) return;
   const prompt = $("prompt").value.trim();
   if (!prompt) { $("prompt").focus(); return; }
   const sel = current();
-  const btns = $("cv-btns").querySelectorAll("button");
-  btns.forEach((b) => { b.disabled = true; });
+  sending = true;
+  $("cv-btns").querySelectorAll("button").forEach((b) => { b.disabled = true; });
   try {
     if (sel === "new") {
       const t = await api("/api/desk/tasks", { method: "POST", body: { kind, prompt, campaign_id: $("campaign").value } });
@@ -451,7 +465,8 @@ async function send({ stopFirst = false, stay = false } = {}) {
     refreshClaudeNow();
     const you = [...$("cv-col").querySelectorAll(".cv-you")].pop();
     if (you) scrollToEl(you);
-  } catch (err) { toast(err.message, "bad"); renderDock(sel); }
+  } catch (err) { sending = false; toast(err.message, "bad"); renderDock(sel); }
+  finally { sending = false; refreshDockFoot(); }
 }
 
 async function onClick(e) {
@@ -538,7 +553,7 @@ function tick() {
 
 async function load(force) {
   try {
-    data = await api("/api/desk");
+    data = await api("/api/desk", { reuse: true });
     renderMac(data.bridge);
     const sel = $("campaign");
     const keep = sel.value;
@@ -571,7 +586,7 @@ if (me) {
     if (d) openSecs.set(d.dataset.sec, d.open);
   }, true);
   $("ask-form").addEventListener("submit", (e) => { e.preventDefault(); send(); });
-  $("prompt").addEventListener("input", () => { fitPrompt(); if (data) renderDockFoot(current(), typeof current() === "number" ? data.board.threads[current()] : null); });
+  $("prompt").addEventListener("input", () => { fitPrompt(); refreshDockFoot(); });
   $("prompt").addEventListener("keydown", (e) => {
     if (e.key !== "Enter" || e.isComposing) return;
     const coarse = window.matchMedia("(pointer: coarse)").matches;

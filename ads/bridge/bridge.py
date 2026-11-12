@@ -6,10 +6,13 @@ It long-polls the dashboard (costs nothing while idle: no AI runs), and when a
 request arrives it starts one headless Claude Code run in the meta-ads workspace:
 
     claude -p "/ads-desk run <id>" --permission-mode dontAsk --allowedTools <read-only list>
+              --disallowedTools <secrets>
 
-dontAsk + the allow list mean the run can read ads, insights and the skill
-library and talk to the Desk, and nothing else: no budget, status, publish or
-delete tools. Anything that should change comes back as a proposal.
+dontAsk + the allow list mean the run can read ads, insights, the workspace and the
+skill library and talk to the Desk about its own request, and nothing else: no budget,
+status, publish or delete tools, no files outside the workspace and ~/.claude/skills, and
+for another business's or a teammate's request not the other businesses' files either.
+Anything that should change comes back as a proposal.
 """
 import datetime
 import importlib.machinery
@@ -50,22 +53,30 @@ READ_TOOLS = [
 ]
 
 
-def allowed_tools(skill_dir, workdir, kind="question"):
+WEB_KINDS = ("question", "review", "research", "creative")  # runs that read the web; render runs don't need it
+
+
+def allowed_tools(skill_dir, workdir, kind="question", web=False):
     """Read-only by default. Permission paths: `//abs/path` is absolute, a bare path is
-    relative to the working directory (`/path` would mean relative to a settings file)."""
+    relative to the working directory (`/path` would mean relative to a settings file).
+    Files are read only in the workspace and ~/.claude/skills (Read rules also cover Glob and
+    Grep there), never elsewhere on the Mac (audit A3-4). The web only for a reading run an
+    owner asked for (`web`): text from teammates or clients never meets WebFetch (A3-7)."""
     def files(rel):
         return [f"Edit({rel}/**)", f"Edit(/{workdir}/{rel}/**)"]
-    tools = ["Read", "Glob", "Grep", "ToolSearch", "Skill", "WebSearch", "WebFetch",
+    tools = [f"Read(/{workdir}/**)", f"Read(/{os.path.dirname(skill_dir)}/**)", "ToolSearch", "Skill",
              f"Bash({skill_dir}/desk:*)", "Bash(~/.claude/skills/ads-desk/desk:*)"]
+    if web and kind in WEB_KINDS:
+        tools += ["WebSearch", "WebFetch"]
     # JSON for scorecards and proposals is written to files here and passed with --file
     # (heredocs with JSON get refused by the permission checker).
     tools += files("reports/desk")
     for name in READ_TOOLS:
         tools += [f"mcp__meta-ads__{name}", f"mcp__claude_ai_Meta_Ads__{name}"]
-    if kind in ("polish", "render", "advice"):
-        # Polish looks at video frames and contact sheets; render rebuilds the creative.
-        tools += ["Bash(ffmpeg:*)", "Bash(ffprobe:*)", "Bash(mkdir:*)", "Bash(ls:*)"]
+    # Polish looks at video frames through `desk frames` / `desk probe`, which open only videos in the
+    # workspace: ffmpeg, ffprobe and ls themselves open any path on the Mac.
     if kind in ("render", "advice"):
+        tools += ["Bash(ffmpeg:*)", "Bash(ffprobe:*)", "Bash(mkdir:*)", "Bash(ls:*)"]
         # "Make a new version" (and Meta's advice, e.g. a 9:16 cut for Reels): the ad-creative-render pipeline (Node + headless Chrome +
         # ffmpeg) inside the workspace's creatives folder. Still no Meta write tools: the
         # result goes back through `desk upload` and a proposal Eugene approves.
@@ -73,6 +84,45 @@ def allowed_tools(skill_dir, workdir, kind="question"):
         # Every upload is a write to the ad account, and every write is logged.
         tools += ["Edit(reports/log.md)", f"Edit(/{workdir}/reports/log.md)"]
     return tools
+
+
+def denied_tools(workdir, home, private=()):
+    """Secrets stay unreadable even inside the allowed folders (the workspace keeps the Meta CLI
+    token in .env), and so do `private` workspace paths (see private_paths). Deny rules win over
+    allow rules and also apply to Glob and Grep."""
+    return (["Read(**/.env)", "Read(**/.env.*)", f"Read(/{workdir}/.env)", f"Read(/{workdir}/.env.*)",
+             f"Read(/{home}/.config/**)", f"Read(/{home}/.ssh/**)", f"Read(/{home}/.aws/**)",
+             f"Read(/{home}/.gnupg/**)", f"Read(/{home}/Library/Keychains/**)"]
+            + [f"Read(/{workdir}/{p})" for p in private])
+
+
+def squash(name):
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def private_paths(task, briefs):
+    """Workspace paths a run can't read when its answer goes to someone other than the owner: a request
+    for another business (its admins and clients read the answer) or one a teammate wrote. The workspace
+    is shared, so those runs see only their own business's brief (`briefs/<name>.md`), never the
+    owner's state, workspace reports or the local copies of every account's Desk answers (review of
+    audit A3-7). Render and advice runs keep `reports/log.md`, where they log uploads; node reaches past
+    every file rule anyway, see README "Claude on the Mac"."""
+    if task.get("account_id") in (None, 1) and task.get("from_owner") is True:
+        return []
+    own = squash(task.get("account_name"))
+    paths = [f"briefs/{b}" for b in briefs
+             if not (own and squash(os.path.splitext(b)[0]) and own.startswith(squash(os.path.splitext(b)[0])))]
+    paths += ["state/**", "reports/*.html", "reports/desk/*.md"]
+    if task.get("kind") not in ("render", "advice"):
+        paths.append("reports/*.md")
+    return paths
+
+
+def workspace_briefs(workdir):
+    try:
+        return sorted(os.listdir(os.path.join(workdir, "briefs")))
+    except OSError:
+        return []
 
 
 def claude_oauth_token():
@@ -90,9 +140,9 @@ def log(msg):
     print(f"{datetime.datetime.now().isoformat(timespec='seconds')} {msg}", flush=True)
 
 
-def post_status(cfg, token, task_id, **body):
+def post_status(cfg, token, task_id, claim, **body):
     try:
-        desk.call("POST", f"/api/agent/tasks/{task_id}/status", body, cfg=cfg, token=token)
+        desk.call("POST", f"/api/agent/tasks/{task_id}/status", body, cfg=cfg, token=token, claim=claim)
         return True
     except (desk.DeskError, urllib.error.URLError, OSError) as exc:
         log(f"task {task_id}: status update refused: {exc}")
@@ -110,13 +160,23 @@ def end_process(proc):
         pass
 
 
-def was_stopped(cfg, token, task_id):
-    """True when the person pressed Stop on the Claude page."""
+def task_state(cfg, token, task_id, claim):
+    """The request's status on the dashboard; "gone" when it is no longer this run's (requeued after a
+    lost answer, or deleted); None when the dashboard can't be reached."""
     try:
-        _, current = desk.call("GET", f"/api/agent/tasks/{task_id}", cfg=cfg, token=token)
-    except (desk.DeskError, urllib.error.URLError, OSError):
-        return False
-    return bool(current) and current["status"] == "cancelled"
+        _, current = desk.call("GET", f"/api/agent/tasks/{task_id}", cfg=cfg, token=token, claim=claim)
+    except desk.DeskError as exc:
+        return "gone" if exc.status in (403, 404, 409) else None
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    return current["status"] if current else "gone"
+
+
+def ends_run(state):
+    """After the dashboard refused a keep-alive: end Claude unless it finished the request itself
+    (it is just exiting) or the dashboard can't be reached (try again). Stopped from the page,
+    expired while the Mac slept, failed or picked up again: Claude stops now (audit A3-29)."""
+    return state is not None and state != "done"
 
 
 def session_id(cfg, task_id):
@@ -141,19 +201,25 @@ def session_args(cfg, task):
 
 def run_task(cfg, token, task):
     task_id = task["id"]
+    claim = task.get("claim_token")  # this run's pass: only it can use the task from now on
     log(f"task {task_id} ({task['kind']}): starting Claude")
-    post_status(cfg, token, task_id, status="running", progress="Claude is starting on your Mac")
-    os.makedirs(LOG_DIR, exist_ok=True)
+    post_status(cfg, token, task_id, claim, status="running", progress="Claude is starting on your Mac")
     out_path = os.path.join(LOG_DIR, f"task-{task_id}.log")
     skill_dir = os.path.expanduser("~/.claude/skills/ads-desk")
     render = task.get("kind") in ("render", "advice")  # long runs: they render video on this Mac
+    tools = allowed_tools(skill_dir, cfg["workdir"], task.get("kind"), web=task.get("from_owner") is True)
     cmd = [cfg["claude"], "-p", f"/ads-desk run {task_id}",
            "--permission-mode", "dontAsk",
-           "--allowedTools", ",".join(allowed_tools(skill_dir, cfg["workdir"], task.get("kind"))),
+           "--allowedTools", ",".join(tools),
+           "--disallowedTools", ",".join(denied_tools(cfg["workdir"], os.path.expanduser("~"),
+                                                     private_paths(task, workspace_briefs(cfg["workdir"])))),
            "--max-turns", "300" if task.get("kind") == "advice" else "200" if render else "80"]
     session = session_args(cfg, task)
     env = dict(os.environ)
     env["DESK_ACCOUNT"] = str(task.get("account_id") or 1)  # the task's ad account (agency mode)
+    env.pop("DESK_CLAIM", None)
+    if claim:
+        env["DESK_CLAIM"] = claim  # every `desk` call of the run sends it
     claude_token = claude_oauth_token()
     if claude_token:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = claude_token
@@ -164,21 +230,33 @@ def run_task(cfg, token, task):
             return subprocess.Popen(cmd + extra, cwd=cfg["workdir"], stdout=out, stderr=subprocess.STDOUT,
                                     stdin=subprocess.DEVNULL, env=env, start_new_session=True)
 
-    open(out_path, "w").close()
-    started = time.monotonic()
-    proc = launch(session)
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        open(out_path, "w").close()
+        started = time.monotonic()
+        proc = launch(session)
+    except OSError as exc:
+        # A moved Claude Code (reinstall, Homebrew path change) or an unwritable log (audit A3-81).
+        log(f"task {task_id}: Claude Code could not start: {exc}")
+        post_status(cfg, token, task_id, claim, status="failed",
+                    error=f"Claude Code could not start on the Mac ({exc}). Re-run ads/bridge/install.sh on the Mac.")
+        return
     live = {"proc": proc}
     stop = threading.Event()
 
     def keepalive():
         while not stop.wait(KEEPALIVE_SECONDS):
             try:
-                desk.call("POST", f"/api/agent/tasks/{task_id}/status", {"status": "running"}, cfg=cfg, token=token)
+                desk.call("POST", f"/api/agent/tasks/{task_id}/status", {"status": "running"}, cfg=cfg, token=token, claim=claim)
             except desk.DeskError as exc:
                 if exc.status == 409:
-                    # The skill finished the task (Claude is just exiting), or it was stopped from the page.
-                    if was_stopped(cfg, token, task_id):
-                        log(f"task {task_id}: stopped from the Claude page")
+                    # Finished by the skill (Claude is just exiting), stopped from the page, or
+                    # expired while the Mac slept: only the first lets Claude carry on.
+                    state = task_state(cfg, token, task_id, claim)
+                    if state is None:
+                        continue
+                    if ends_run(state):
+                        log(f"task {task_id}: the dashboard closed it ({state}); ending Claude")
                         end_process(live["proc"])
                     return
                 log(f"task {task_id}: keepalive refused: {exc}")
@@ -189,7 +267,8 @@ def run_task(cfg, token, task):
     limit = ADVICE_LIMIT_SECONDS if task.get("kind") == "advice" else RENDER_LIMIT_SECONDS if render else RUN_LIMIT_SECONDS
     try:
         proc.wait(timeout=limit)
-        if "--resume" in session and proc.returncode != 0 and time.monotonic() - started < RESUME_FAIL_SECONDS and not stop.is_set() and not was_stopped(cfg, token, task_id):
+        if ("--resume" in session and proc.returncode != 0 and time.monotonic() - started < RESUME_FAIL_SECONDS
+                and not stop.is_set() and task_state(cfg, token, task_id, claim) in ("claimed", "running")):
             log(f"task {task_id}: could not continue the earlier session; starting fresh")
             proc = live["proc"] = launch(["--session-id", str(uuid.uuid4())])
             proc.wait(timeout=limit)
@@ -199,11 +278,7 @@ def run_task(cfg, token, task):
     finally:
         stop.set()
 
-    try:
-        _, current = desk.call("GET", f"/api/agent/tasks/{task_id}", cfg=cfg, token=token)
-    except (desk.DeskError, urllib.error.URLError, OSError):
-        current = None
-    if current and current["status"] in ("claimed", "running"):
+    if task_state(cfg, token, task_id, claim) in ("claimed", "running"):
         try:
             with open(out_path) as fh:
                 tail = fh.read()[-600:].strip()
@@ -211,13 +286,15 @@ def run_task(cfg, token, task):
             tail = ""
         reason = (f"Claude stopped without finishing (exit code {proc.returncode})."
                   + (f" Last output: {tail}" if tail else "") + f" Full log on the Mac: {out_path}")
-        post_status(cfg, token, task_id, status="failed", error=reason[:1900])
+        post_status(cfg, token, task_id, claim, status="failed", error=reason[:1900])
     log(f"task {task_id}: finished, exit code {proc.returncode}")
 
 
 def main():
     cfg = desk.config()
     log(f"ads-desk bridge {desk.VERSION} watching {cfg['base_url']}")
+    if not os.access(cfg.get("claude") or "", os.X_OK):
+        log(f"Claude Code isn't at {cfg.get('claude')} any more: requests will fail until ads/bridge/install.sh runs again")
     backoff = 5
     while True:
         try:

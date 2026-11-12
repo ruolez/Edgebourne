@@ -117,14 +117,33 @@ review, competitor research or new ad ideas. Claude runs on Eugene's Mac, not on
   `bridge.py` as a LaunchAgent (`com.edgebourne.ads-desk`, logs in `~/Library/Logs/ads-desk`).
 - The bridge long-polls `GET /api/agent/wait` (no AI cost while idle) and, per request, runs
   `claude -p "/ads-desk run <id>" --permission-mode dontAsk --allowedTools <read-only list>` in
-  the meta-ads workspace. The run can read Meta (MCP read tools), the skill library and the
-  web, and talk to the Desk through `desk`; budget, status, publish and delete tools are not
-  allowed. Changes come back as proposals (`desk_proposals`), applied in phase 4 only after
-  approval.
+  the meta-ads workspace. The run can read Meta (MCP read tools), files in the workspace and
+  `~/.claude/skills` only (`.env`, `~/.config`, `~/.ssh` denied), the web only in reading runs an
+  owner asked for, and talk to the Desk through `desk`; budget, status, publish and delete tools
+  are not allowed. Changes come back as proposals (`desk_proposals`), applied in phase 4 only
+  after approval.
+- Each claim gives the Mac a pass for that request (desk 2.0+, stored hashed in
+  `desk_tasks.claim_hash`); the run's `desk` calls carry it (`X-Desk-Claim`), so they reach only
+  that request, in its account, and never the line (`wait`, `queue`) or another request. A
+  helper older than 2.0 claims only requests the owners wrote (teammates' wait), and the Claude
+  page asks for the update (`bridge.needs_update`).
+- A request for another business, or one a teammate wrote, can't read the other businesses'
+  briefs, `state/`, the workspace reports or the local copies of Desk answers (`bridge.private_paths`,
+  deny rules on `--disallowedTools`; the run's own brief is `briefs/<account name>.md`).
+- Polish runs have no shell besides `desk`: frames and probes go through `desk frames` /
+  `desk probe`, which open only a video inside the workspace with ffmpeg limited to local files.
+- Open risk: render and advice runs keep `node`, `ffmpeg`, `ffprobe`, `cp` and `ls` for the
+  render pipeline. Those open any path on the Mac (and `node` / `ffmpeg` reach the network), so a
+  prompt injected through a render direction or an ad's text can read files the deny rules cover
+  and send them out. Closing it needs an OS sandbox (`sandbox-exec`) around the pipeline. The Meta
+  MCP read tools also reach every ad account the Mac's Meta login sees, and the workspace
+  `CLAUDE.md` and Claude's memory load into every run: keeping one business's numbers out of
+  another's answer there rests on the skill's instructions only.
 - `/ads-desk` in Claude Code works the queue by hand (when the Mac bridge is off).
 - Agent API (`desk_api.agent_bp`, bearer key, stored hashed): `wait`, `tasks/<id>`, `queue`,
   `tasks/<id>/status|report|proposals`, `snapshot` (performance + inbox lead quality, no
-  contact details), `history`. A task the Mac stops reporting on for 30 minutes is marked failed.
+  contact details), `history`. A task the Mac stops reporting on for 30 minutes is marked failed;
+  one claimed but never started for 3 minutes (the answer to the long poll got lost) goes back in line.
 
 ## Backups and restore
 

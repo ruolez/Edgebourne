@@ -556,6 +556,21 @@ bridge 1.3); `cp` in a chain was refused (playbook now says one command at a tim
   - a single leading `/` is relative to the settings file
   - use `Edit(...)`, not `Write(...)`: Edit rules cover all file-editing tools
 - The Claude sign-in on the Mac expires (2026-11-11..14). Unattended runs need `claude setup-token`.
+- Runs read files only in the workspace and `~/.claude/skills` (`Read(//abs/**)` rules, which also cover
+  Glob and Grep; never a bare `Read`/`Glob`/`Grep`, those allow every path), with `.env` and `~/.config`
+  denied. desk 2.0+ gets a pass per claimed request (`X-Desk-Claim`, env `DESK_CLAIM`): a run's calls
+  reach only that request and its account. A new agent route needs nothing extra (`agent_required`
+  binds it); one that takes a task id from the body must check `desk_api.claimed_task()`.
+- Never give a run a shell tool that takes a path (`ffmpeg`, `ffprobe`, `ls`, `cp`, `node`): the
+  permission checker doesn't look at the paths those commands open, so they read past every `Read`
+  deny rule, and `ffmpeg` / `node` send over http. Add a `desk` subcommand that checks the path
+  (`desk.media_input`: realpath inside the workspace) instead. Render and advice runs still have them
+  (open risk, needs `sandbox-exec`).
+- The meta-ads workspace is shared by every business: a run for another account or from a teammate
+  gets deny rules for the other briefs, `state/`, `reports/*.md|html` and `reports/desk/*.md`
+  (`bridge.private_paths`). Other clients' `creatives/` folders stay readable, and the Meta MCP
+  read tools, `CLAUDE.md` and Claude's memory reach every account: per-client isolation there is the
+  skill's instructions only. A cleaner fix is per-client folders (`clients/<account_id>/`).
 
 **Server and nginx**
 - nginx can cache a stale backend IP after a container is recreated. The installer recreates nginx last on Update; the ads location resolves per request (`resolver 127.0.0.11`).

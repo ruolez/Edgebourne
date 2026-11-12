@@ -123,8 +123,11 @@ if (me) {
   });
   $("ask-form").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const btn = $("ask-form").querySelector("button[type=submit]");
+    if (btn.disabled) return;  // a second Enter while the first is on its way
     const prompt = $("prompt").value.trim();
     if (!prompt) { $("prompt").focus(); return; }
+    btn.disabled = true;
     try {
       await api("/api/desk/tasks", { method: "POST", body: { kind: "research", prompt } });
       $("prompt").value = "";
@@ -132,6 +135,7 @@ if (me) {
       lastJson = "";
       load();
     } catch (err) { toast(err.message, "bad"); }
+    finally { btn.disabled = false; }
   });
   wireTaskActions($("tasks"), () => { lastJson = ""; load(); }, openReports);
   wireSwipes();

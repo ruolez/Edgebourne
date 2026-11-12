@@ -94,14 +94,25 @@ def get_db():
 
 
 def close_db(_exc=None):
-    conn = g.pop("db", None)
-    if conn is not None:
-        conn.close()
+    for name in ("db", "db_owner"):
+        conn = g.pop(name, None)
+        if conn is not None:
+            conn.close()
+
+
+def _owner_conn():
+    """For all_accounts() work: one owner connection per request (the Mac's long poll looks for work
+    every second, audit A3-128); outside a request a fresh one per call. Returns (conn, close_after)."""
+    if has_app_context():
+        if "db_owner" not in g:
+            g.db_owner = connect()
+        return g.db_owner, False
+    return connect(), True
 
 
 def _run(sql, params, fetch):
     if account_ctx.seeing_all():
-        conn, owned = connect(), True
+        conn, owned = _owner_conn()
     else:
         conn = get_db()
         owned = conn is None
@@ -128,7 +139,7 @@ def run_in_transaction(steps):
     """Run several statements on one connection in one transaction (e.g. SELECT … FOR UPDATE, then an
     upsert). steps = [(sql, params)]; returns each step's rows (None when it returns nothing)."""
     if account_ctx.seeing_all():
-        conn, owned = connect(), True
+        conn, owned = _owner_conn()
     else:
         conn = get_db()
         owned = conn is None

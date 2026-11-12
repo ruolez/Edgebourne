@@ -103,5 +103,43 @@ class KeyHashTests(unittest.TestCase):
                          (True, False))
 
 
+class ClaimRefusalTests(unittest.TestCase):
+    """A Claude run carries the pass of the request it was started for (audit A3-7)."""
+    RUN = {"id": 5, "status": "running", "account_id": 2}
+
+    def test_a_run_may_use_its_own_request_even_after_it_finished(self):
+        bound = [self.RUN, {**self.RUN, "status": "done"}, {**self.RUN, "status": "cancelled"}]
+        self.assertEqual([desk_api.claim_refusal("task", 5, b, True) for b in bound], [None, None, None])
+
+    def test_a_run_cannot_touch_another_request_or_pick_up_work(self):
+        cases = [("task", 6, False), ("task", 6, True), ("pick", None, False)]
+        self.assertEqual([desk_api.claim_refusal(r, p, self.RUN, locked) is not None for r, p, locked in cases], [True, True, True])
+
+    def test_account_wide_calls_only_while_the_run_is_open(self):
+        statuses = ["claimed", "running", "done", "failed", "cancelled", "queued"]
+        self.assertEqual([desk_api.claim_refusal("account", None, {**self.RUN, "status": s}, False) is None for s in statuses],
+                         [True, True, False, False, False, False])
+
+    def test_without_a_pass_a_request_a_run_holds_is_closed(self):
+        cases = [("task", 7, False), ("task", 7, True), ("account", None, False), ("pick", None, False)]
+        self.assertEqual([desk_api.claim_refusal(r, p, None, locked) is None for r, p, locked in cases], [True, False, True, True])
+
+
+class ClaimSkipTests(unittest.TestCase):
+    VERSIONS = [(0, 0), (1, 6), (1, 7), (1, 9), (2, 0)]
+
+    def test_an_older_mac_helper_leaves_advice_runs_and_follow_ups_in_line(self):
+        skips = [desk_api.claim_skip(v) for v in self.VERSIONS]
+        self.assertEqual([("kind <> 'advice'" in s, "options->>'reply' IS NULL" in s) for s in skips],
+                         [(True, True), (True, True), (False, True), (False, False), (False, False)])
+
+    def test_a_helper_without_passes_runs_only_what_the_owners_wrote(self):
+        """Before 2.0 a run has no pass and the Mac's full file and web access, so a teammate's or a
+        client admin's words wait for the update (review of audit A3-7)."""
+        skips = [desk_api.claim_skip(v) for v in self.VERSIONS]
+        self.assertEqual(["NOT EXISTS" in s and "COALESCE(q.thread_id, q.id)" in s and "u.role = 'admin'" in s for s in skips],
+                         [True, True, True, True, False])
+
+
 if __name__ == "__main__":
     unittest.main()

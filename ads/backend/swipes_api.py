@@ -7,7 +7,7 @@ from flask import Blueprint, jsonify, request
 import db
 import swipes as sw
 from auth import admin_required, current_user
-from desk_api import agent_required
+from desk_api import agent_required, claimed_task
 from experiments import account_today
 from util import api_error, log_activity
 
@@ -131,6 +131,9 @@ def agent_swipes():
     items = body.get("swipes")
     if not isinstance(items, list) or not items:
         return api_error("Send {\"swipes\": [...]}", 400)
+    run = claimed_task()
+    if run and body.get("task_id") not in (None, run["id"]):
+        return api_error("A Claude run can only work on the request it was started for", 403)
     added, refreshed, skipped, saved = 0, 0, [], []
     for raw in items[:100]:
         fields, err = sw.clean(raw if isinstance(raw, dict) else {})

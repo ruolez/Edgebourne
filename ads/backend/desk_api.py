@@ -17,7 +17,7 @@ import secrets
 import time
 from functools import wraps
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 
 import account_info
 import config
@@ -39,6 +39,8 @@ PROPOSAL_KINDS = ("budget", "status", "creative", "targeting", "experiment", "ta
 ACTIVE = ("queued", "claimed", "running")
 ONLINE_SECONDS = 90
 STALE_MINUTES = 30
+REQUEUE_MINUTES = 3  # claimed but never reported running: the Mac never got it (audit A3-88)
+EXPIRE_EVERY = 30  # seconds between stale-task sweeps per process (audit A3-128)
 MAX_PROMPT = 4000
 MAX_REPORT = 200_000
 WAIT_MAX = 25
@@ -46,7 +48,7 @@ WAIT_MAX = 25
 TASK_COLS = """t.id, t.kind, t.prompt, t.campaign_id, c.name AS campaign_name, t.status, t.progress,
                t.summary, t.error, t.created_at, t.claimed_at, t.finished_at, t.updated_at,
                u.name AS created_by_name, t.options, t.scorecard, t.archived_at, t.seen_at, t.queue_rank,
-               t.thread_id, t.steps, t.swipe_ids"""
+               t.thread_id, t.steps, t.swipe_ids, t.mentions"""
 TASK_FROM = "desk_tasks t LEFT JOIN campaigns c ON c.id = t.campaign_id LEFT JOIN users u ON u.id = t.created_by"
 
 
@@ -67,6 +69,8 @@ def bridge_status():
         "host": settings_store.get("bridge_host"),
         "version": settings_store.get("bridge_version"),
         "outdated": bridge_outdated(),
+        # Before 2.0 runs get no pass and no sandbox: teammates' requests wait for the update.
+        "needs_update": online and version_tuple(settings_store.get("bridge_version") or "0") < CLAIM_BRIDGE,
         "claude_sign_in_failed": bool(settings_store.get("bridge_claude_error")),
     }
 
@@ -108,15 +112,28 @@ def note_claude_sign_in(status, error):
         settings_store.set("bridge_claude_error", str(int(time.time())))
 
 
+_swept_at = [0.0]
+
+
 def expire_stale():
     """A task the Mac stopped reporting on (sleep, shutdown, crash) is marked failed
-    instead of showing "working" forever (every account's)."""
+    instead of showing "working" forever (every account's). Polled pages call this often, so it
+    runs at most every EXPIRE_EVERY seconds per process."""
     import account_ctx
+    if time.monotonic() - _swept_at[0] < EXPIRE_EVERY:
+        return
+    _swept_at[0] = time.monotonic()
     with account_ctx.all_accounts():
         _expire_stale()
 
 
 def _expire_stale():
+    # Claimed, but the Mac never said it started: the answer to its long poll was lost on the way.
+    # Back in line (at its old place), with a new pass when it is claimed again.
+    db.execute(
+        f"""UPDATE desk_tasks SET status = 'queued', claimed_at = NULL, claim_hash = NULL, progress = NULL, updated_at = now()
+            WHERE status = 'claimed' AND claimed_at < now() - interval '{REQUEUE_MINUTES} minutes'"""
+    )
     db.execute(
         f"""UPDATE desk_tasks SET status = 'failed', finished_at = now(), updated_at = now(),
                    error = 'The Mac stopped reporting while working on this (asleep or offline). Ask again.'
@@ -198,20 +215,33 @@ def desk_story(tasks):
     return ads, desk_view.families(tasks, results)
 
 
+def known_ads():
+    return db.query("""SELECT id, name, status, effective_status, thumbnail_url, image_url, object_type, title, body
+                       FROM ads WHERE effective_status <> 'DELETED' ORDER BY id DESC LIMIT 500""")
+
+
+def answer_text(t):
+    return "\n".join([t.get("summary") or ""] + [r["body"] for r in t["reports"]])
+
+
 def attach_previews(tasks, ads):
-    """What each answer can show pictures of: the ads it talks about and the competitor ads it found."""
-    known = db.query("""SELECT id, name, status, effective_status, thumbnail_url, image_url, object_type, title, body
-                        FROM ads WHERE effective_status <> 'DELETED' ORDER BY id DESC LIMIT 500""")
+    """What each answer can show pictures of: the ads it talks about and the competitor ads it found.
+    The ads an answer names are stored when it finishes; older answers are read here."""
+    known = known_ads()
     swipe_ids = list({s for t in tasks for s in t.get("swipe_ids") or []})
     swipes = {}
     if swipe_ids:
         import swipes_api
         swipes = {s["id"]: s for s in swipes_api.listing_of(swipe_ids)}
-    for t in tasks:
-        text = "\n".join([t.get("summary") or ""] + [r["body"] for r in t["reports"]])
-        t["mentions"] = desk_view.mentioned_ads(text, known) if t["status"] == "done" else []
-        t["swipes"] = [swipes[s] for s in t.get("swipe_ids") or [] if s in swipes][:12]
     by_id = {a["id"]: a for a in known}
+    for t in tasks:
+        if t["status"] != "done":
+            t["mentions"] = []
+        elif t.get("mentions") is not None:
+            t["mentions"] = [a for a in t["mentions"] if a in by_id]
+        else:
+            t["mentions"] = desk_view.mentioned_ads(answer_text(t), known)
+        t["swipes"] = [swipes[s] for s in t.get("swipe_ids") or [] if s in swipes][:12]
     for t in tasks:
         for ad in t["mentions"]:
             ads.setdefault(ad, by_id[ad])
@@ -226,7 +256,7 @@ def overview():
                                   OR t.status IN ('queued', 'claimed', 'running')
                                   OR EXISTS (SELECT 1 FROM desk_proposals p WHERE p.task_id = t.id AND p.status = 'pending')""", [], 400)
     ads, families = desk_story(tasks)
-    return jsonify({
+    resp = jsonify({
         "bridge": bridge_status(),
         "tasks": tasks,
         "board": desk_view.board(tasks),
@@ -234,6 +264,9 @@ def overview():
         "families": families,
         "campaigns": db.query("SELECT id, name FROM campaigns ORDER BY name"),
     })
+    # The page polls every few seconds while Claude works: unchanged means 304, no body (audit A3-127).
+    resp.add_etag()
+    return resp.make_conditional(request)
 
 
 @bp.post("/tasks")
@@ -377,15 +410,22 @@ def reply(task_id):
     return jsonify(tasks_with_results("t.id = %s", [task["id"]], 1)[0]), 201
 
 
+def front_rank():
+    """A queue_rank ahead of everything waiting. The Mac takes the next task across every account,
+    so the front is counted across every account too (audit A3-119); only this number is read."""
+    import account_ctx
+    with account_ctx.all_accounts():
+        return db.query("SELECT COALESCE(MIN(queue_rank), 0) - 1 AS r FROM desk_tasks WHERE status = 'queued'", one=True)["r"]
+
+
 def queue_reply(root, kind, campaign_id, prompt, options, user_id):
     """Adds a run to a conversation. It goes to the front of the line, behind anything else
     already waiting in the same conversation, so its messages stay in the order they were sent."""
     task = db.execute(
         f"""INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options, thread_id, queue_rank)
             VALUES (%s, %s, %s, %s, %s, %s,
-                    COALESCE((SELECT MAX(queue_rank) FROM desk_tasks WHERE status = 'queued' AND {THREAD_SQL} = %s),
-                             (SELECT COALESCE(MIN(queue_rank), 0) - 1 FROM desk_tasks WHERE status = 'queued'))) RETURNING id""",
-        (kind, prompt, campaign_id, user_id, json.dumps(options), root, root), returning=True)
+                    COALESCE((SELECT MAX(queue_rank) FROM desk_tasks WHERE status = 'queued' AND {THREAD_SQL} = %s), %s)) RETURNING id""",
+        (kind, prompt, campaign_id, user_id, json.dumps(options), root, root, front_rank()), returning=True)
     db.execute(f"""UPDATE desk_tasks SET archived_at = NULL WHERE {THREAD_SQL} = %s
                    AND NOT EXISTS (SELECT 1 FROM desk_tasks o WHERE COALESCE(o.thread_id, o.id) = %s AND o.archived_at IS NULL AND o.id <> %s)""",
                (root, root, task["id"]))
@@ -428,9 +468,8 @@ def now():
 @admin_required
 def run_next(task_id):
     """Moves a queued request to the front of the line."""
-    row = db.execute(
-        """UPDATE desk_tasks SET queue_rank = (SELECT COALESCE(MIN(queue_rank), 0) - 1 FROM desk_tasks WHERE status = 'queued')
-           WHERE id = %s AND status = 'queued' RETURNING id""", (task_id,), returning=True)
+    row = db.execute("UPDATE desk_tasks SET queue_rank = %s WHERE id = %s AND status = 'queued' RETURNING id",
+                     (front_rank(), task_id), returning=True)
     if not row:
         return api_error("This request has already started", 409)
     return jsonify({"ok": True})
@@ -583,28 +622,102 @@ def agent_required(f):
         if bridge_outdated():
             return api_error(f"This Mac helper is too old for several ad accounts (needs "
                              f"{'.'.join(map(str, MIN_BRIDGE))}). Re-run ads/bridge/install.sh on the Mac.", 426)
-        return f(*args, **kwargs)
+        refused = bind_claim(f.__name__, kwargs.get("task_id"))
+        return refused or f(*args, **kwargs)
     return wrapper
 
 
+CLAIM_HEADER = "X-Desk-Claim"
+PICK_ROUTES = ("wait", "queue")  # choosing work: the Mac itself, never a run
+
+
+def claim_refusal(route, path_task, bound, task_locked):
+    """Why an agent call is refused, or None (audit A3-7). A run's calls carry the pass of the request
+    it was started for: they may use that request's own routes (also after it ended, so the Mac can see
+    how it ended) and the account's routes while it is open, never another request or the line.
+    route: 'pick' (wait, queue), 'task' (one request's routes) or 'account'; path_task: the request in
+    the URL; bound: the request the pass belongs to ({id, status}), None without a pass; task_locked:
+    the request in the URL was claimed with a pass, so only that pass may use it."""
+    other = "A Claude run can only work on the request it was started for"
+    if bound is None:
+        return other if path_task is not None and task_locked else None
+    if route == "pick":
+        return other
+    if path_task is not None:
+        return None if path_task == bound["id"] else other
+    return None if bound["status"] in ("claimed", "running") else "This run's request isn't open any more"
+
+
+def bind_claim(view_name, path_task):
+    """Checks the run's pass and points the call at its request's account. Returns a refusal or None."""
+    import account_ctx
+    claim = request.headers.get(CLAIM_HEADER)
+    bound, locked = None, False
+    with account_ctx.all_accounts():
+        if claim:
+            bound = db.query("SELECT id, status, account_id FROM desk_tasks WHERE claim_hash = %s", (key_hash(claim),), one=True)
+            if not bound:
+                return api_error("This run isn't open any more (stopped, finished or picked up again)", 409)
+        elif path_task is not None:
+            locked = bool(db.query("SELECT 1 FROM desk_tasks WHERE id = %s AND claim_hash IS NOT NULL", (path_task,), one=True))
+    route = "pick" if view_name in PICK_ROUTES else "task" if path_task is not None else "account"
+    why = claim_refusal(route, path_task, bound, locked)
+    if why:
+        return api_error(why, 403)
+    if bound:
+        account_ctx.set_current(bound["account_id"])
+        g.desk_claim = bound
+    return None
+
+
+def claimed_task():
+    """The request the calling run was started for, or None (the Mac itself, or /ads-desk by hand)."""
+    return g.get("desk_claim")
+
+
 ADVICE_BRIDGE = (1, 7)  # desk 1.7 lets advice runs render (9:16 for Reels); older ones would only read
+CLAIM_BRIDGE = (2, 0)  # desk 2.0 sends the pass it got at claim with every call of the run
+
+
+# A turn in conversation {root} written by someone other than the console's owners (or a schedule).
+NOT_OWNER_TURN = """SELECT 1 FROM desk_tasks o LEFT JOIN users u ON u.id = o.created_by
+   WHERE COALESCE(o.thread_id, o.id) = {root} AND o.created_by IS NOT NULL
+     AND NOT COALESCE(u.role = 'admin' AND u.account_id IS NULL, FALSE)"""
+
+
+def claim_skip(version):
+    """SQL (on the queued task `q`) that leaves in line what this Mac helper can't run: an older one
+    leaves advice runs and follow-ups waiting rather than run them without their tools, and one without
+    passes (before 2.0) runs only what the owners wrote: its runs read every file and the web."""
+    return (("" if version >= ADVICE_BRIDGE else " AND kind <> 'advice'")
+            + ("" if version >= REPLY_BRIDGE else " AND options->>'reply' IS NULL")
+            + ("" if version >= CLAIM_BRIDGE else f" AND NOT EXISTS ({NOT_OWNER_TURN.format(root='COALESCE(q.thread_id, q.id)')})"))
 
 
 def claim_next():
     """The oldest queued task of any account (the Mac works for every account, one task at a time).
-    An older Mac helper leaves advice runs waiting rather than run them without their tools."""
+    A helper that sends passes gets one for the task: only it can use that task from now on."""
     import account_ctx
     version = version_tuple(settings_store.get("bridge_version") or "0")
-    skip = ("" if version >= ADVICE_BRIDGE else " AND kind <> 'advice'") + ("" if version >= REPLY_BRIDGE else " AND options->>'reply' IS NULL")
+    token = secrets.token_urlsafe(32) if version >= CLAIM_BRIDGE else None
     with account_ctx.all_accounts():
-        return db.execute(
+        row = db.execute(
             f"""UPDATE desk_tasks SET status = 'claimed', claimed_at = now(), updated_at = now(),
-                      progress = 'Picked up by the Mac'
-               WHERE id = (SELECT id FROM desk_tasks WHERE status = 'queued'{skip}
-                           ORDER BY queue_rank, id LIMIT 1 FOR UPDATE SKIP LOCKED)
+                      progress = 'Picked up by the Mac', claim_hash = %s
+               WHERE id = (SELECT id FROM desk_tasks q WHERE status = 'queued'{claim_skip(version)}
+                           ORDER BY queue_rank, id LIMIT 1 FOR UPDATE OF q SKIP LOCKED)
                RETURNING id, account_id""",
-            returning=True,
+            (token and key_hash(token),), returning=True,
         )
+    if row:
+        row["claim_token"] = token
+    return row
+
+
+def from_owner(root):
+    """True when only the console's owners (or a schedule) wrote this conversation's directions. A run
+    an account admin or teammate started gets no web tools on the Mac (audit A3-7)."""
+    return not db.query(NOT_OWNER_TURN.format(root="%s") + " LIMIT 1", (root,), one=True)
 
 
 def task_payload(task_id):
@@ -612,6 +725,7 @@ def task_payload(task_id):
     if not rows:
         return None
     t = rows[0]
+    t["from_owner"] = from_owner(t["thread_id"] or t["id"])
     if (t.get("options") or {}).get("reply"):
         # Newest first from the query; the conversation reads oldest first.
         earlier = tasks_with_results("COALESCE(t.thread_id, t.id) = %s AND t.id < %s", [t["thread_id"], t["id"]], 12)[::-1]
@@ -636,7 +750,10 @@ def wait():
         if row:
             import account_ctx
             with account_ctx.use(row["account_id"]):
-                return jsonify({**task_payload(row["id"]), "account_id": row["account_id"]})
+                account = db.query("SELECT name FROM accounts WHERE id = %s", (row["account_id"],), one=True)
+                # account_name: the bridge keeps the other businesses' briefs out of this run's reach.
+                return jsonify({**task_payload(row["id"]), "account_id": row["account_id"],
+                                "account_name": account and account["name"], "claim_token": row["claim_token"]})
         if time.monotonic() >= deadline:
             return ("", 204)
         time.sleep(1)
@@ -685,6 +802,11 @@ def set_status(task_id):
                WHERE id = %s AND status IN ('claimed', 'running') RETURNING id""",
             (status, summary, error if status == "failed" else None, task_id), returning=True)
         if row:
+            if status == "done":
+                try:
+                    store_mentions(task_id)
+                except Exception:
+                    log.exception("desk task %s: couldn't store the ads it names", task_id)
             log_activity(f"desk.task_{status}", subject=str(task_id), actor="claude")
             note_claude_sign_in(status, error)
             try:
@@ -694,6 +816,12 @@ def set_status(task_id):
     if not row:
         return api_error("This task isn't open any more (finished, cancelled or timed out)", 409)
     return jsonify({"ok": True})
+
+
+def store_mentions(task_id):
+    """The ads a finished answer names, found once (the Claude page shows their pictures)."""
+    t = tasks_with_results("t.id = %s", [task_id], 1)[0]
+    db.execute("UPDATE desk_tasks SET mentions = %s WHERE id = %s", (desk_view.mentioned_ads(answer_text(t), known_ads()), task_id))
 
 
 def tell_finished(task_id):

@@ -30,6 +30,7 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   // What the fake Meta holds for an object now (checks read Meta's side, not only the screen).
   const metaObj = (id) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/v24.0/?ids=${id}').read().decode())"`))[id];
   const getJson = (url) => page.evaluate(async (u) => (await fetch(u)).json(), url);
+  const macSeen = (secondsAgo) => sh(`docker exec -w /app edgebourne-ads-backend python -c "import time, settings_store; settings_store.set('bridge_last_seen', str(time.time() - ${secondsAgo})); settings_store.set('bridge_version', '2.0')"`);
   await page.goto(BASE + '/login.html');
   await page.fill('#email', 'eugene@edgebourne.com');
   await page.fill('#password', 'localdev-pass-123');
@@ -115,8 +116,19 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   await page.waitForSelector('#polish-form');
   await page.click('[data-preset="quick"]');
   check('quick preset picks 4 passes', (await page.textContent('#run-polish')).includes('Run 4 passes'));
-  await page.click('#run-polish');
-  await page.waitForSelector('#runs .task.queued');
+  const polishCount = async () => (await getJson('/api/ads/ad/120252672230740312/polish-runs')).tasks.filter((t) => t.kind === 'polish').length;
+  const polishBefore = await polishCount();
+  // A slow answer (a phone) and a double click: one run, not two (audit A3-90). Ticking a preset while
+  // it sends must not unlock the button, and a submit then is ignored.
+  await page.route('**/api/ads/ad/*/polish', async (route) => { await new Promise((r) => setTimeout(r, 900)); await route.continue(); });
+  await page.dblclick('#run-polish');
+  await page.click('[data-preset="quick"]');
+  const lockedWhileSending = await page.evaluate(() => { const b = document.getElementById('run-polish'); document.getElementById('polish-form').requestSubmit(); return b.disabled; });
+  for (let i = 0; i < 20 && (await polishCount()) === polishBefore; i++) await page.waitForTimeout(500);
+  await page.waitForTimeout(1200);  // a second POST, if one went out, lands by now
+  await page.unroute('**/api/ads/ad/*/polish', { behavior: 'wait' });
+  check('a double click on Run queues one polish run', (await polishCount()) === polishBefore + 1, `${polishBefore} → ${await polishCount()}`);
+  check('picking passes while it sends keeps Run locked', lockedWhileSending === true);
   const polishRun = () => getJson('/api/ads/ad/120252672230740312/polish-runs').then((r) => r.tasks.filter((t) => t.kind === 'polish').sort((a, b) => b.id - a.id)[0]);
   const queuedRun = await polishRun();
   check('polish run is queued for the Mac', queuedRun?.status === 'queued' && queuedRun.options?.passes?.length === 4, `${queuedRun?.status} ${queuedRun?.options?.passes?.length} passes`);
@@ -127,6 +139,24 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   await page.waitForSelector(`#runs [data-cancel="${queuedRun.id}"]`, { state: 'detached' });
   const cancelledRun = await polishRun();
   check('a queued polish run can be cancelled', cancelledRun?.id === queuedRun?.id && cancelledRun.status === 'cancelled', cancelledRun?.status);
+  // Make a new version: two quick submits ask once and queue one render run (audit A3-90).
+  const renderRuns = async () => (await getJson('/api/ads/ad/120252672230740312/polish-runs')).tasks.filter((t) => t.kind === 'render');
+  const rendersBefore = (await renderRuns()).length;
+  await page.fill('#render-direction', 'QA: bigger Tap below note');
+  await page.route('**/api/ads/ad/*/render', async (route) => { await new Promise((r) => setTimeout(r, 900)); await route.continue(); });
+  await page.evaluate(() => { const f = document.getElementById('render-form'); f.requestSubmit(); f.requestSubmit(); });
+  await page.waitForSelector('dialog.confirm');
+  const renderDialogs = await page.locator('dialog.confirm').count();
+  await page.click('dialog.confirm #cd-ok');
+  await page.evaluate(() => document.getElementById('render-form').requestSubmit());
+  for (let i = 0; i < 20 && (await renderRuns()).length === rendersBefore; i++) await page.waitForTimeout(500);
+  await page.waitForTimeout(1200);  // a second POST, if one went out, lands by now
+  await page.unroute('**/api/ads/ad/*/render', { behavior: 'wait' });
+  const rendersAfter = await renderRuns();
+  check('two quick submits on Make a new version ask once and queue one render run',
+    renderDialogs === 1 && rendersAfter.length === rendersBefore + 1 && !(await page.locator('dialog.confirm[open]').count()), `${renderDialogs} dialogs, ${rendersBefore} → ${rendersAfter.length}`);
+  const newRender = rendersAfter.sort((a, b) => b.id - a.id)[0];
+  if (newRender) sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE desk_tasks SET status = 'cancelled' WHERE id = %s\\", (${newRender.id},))"`);
   const create = page.locator('.proposal.variant [data-approve]').first();
   if (await create.count()) {
     await create.click();
@@ -847,14 +877,17 @@ with account_ctx.use(1):
   d = await desk();
   check('the Mac is told: the run is cancelled on the server', d.tasks.filter((t) => t.status === 'running' || t.status === 'claimed').length === 0);
 
+  macSeen(3600);  // the Mac went quiet an hour ago
   await page.click('[data-clear="queue"]');
   await page.click('dialog.confirm #cd-ok');
-  await page.waitForFunction(() => /Claude is idle/.test(document.querySelector('#cl-list .cl-now')?.textContent || ''));
+  await page.waitForFunction(() => /Anything you send waits/.test(document.querySelector('#cl-list .cl-now')?.textContent || ''));
   d = await desk();
   check('Clear the line cancels everything not started, and the panel stays', d.tasks.filter((t) => t.status === 'queued').length === 0 && await page.isVisible('#cl-list .cl-now'),
     d.tasks.filter((t) => t.status === 'queued').map((t) => t.prompt.slice(0, 30)).join(' | '));
-  await page.waitForFunction(() => /Claude is idle/.test(document.querySelector('.rail .claude-now')?.textContent || ''), null, { timeout: 15000 });
-  check('the status line says when Claude is idle', /Claude is idle/.test(await page.textContent('.rail .claude-now')) && (await desk()).tasks.every((t) => !['queued', 'claimed', 'running'].includes(t.status)));
+  check('with the Mac offline the panel says requests wait, not that they start right away (A3-108)',
+    /waits until it.s back/.test(await page.textContent('#cl-list .cl-now')) && !/starts right away/.test(await page.textContent('#cl-list .cl-now')));
+  await page.waitForFunction(() => /Your Mac is offline/.test(document.querySelector('.rail .claude-now')?.textContent || ''), null, { timeout: 15000 });
+  check('the status line says the Mac is offline, not that Claude is idle', !/Claude is idle/.test(await page.textContent('.rail .claude-now')) && (await desk()).tasks.every((t) => !['queued', 'claimed', 'running'].includes(t.status)));
 
   const dayCount = await page.locator('#cl-list .cl-item').count();
   await page.locator('[data-clear-day]').first().click();
@@ -871,11 +904,19 @@ with account_ctx.use(1):
   await page.click('.cl-new');
   await page.waitForSelector('#cv-seeds:not([hidden])');
   await page.click('[data-seed="review"]');
-  await page.locator('#cv-btns button[type=submit]').click();
+  const reviewsBefore = (await desk()).tasks.filter((t) => /^Review the last 7 days/.test(t.prompt)).length;
+  // Enter, and Enter again while the first send is still on its way (a phone): one conversation (A3-32).
+  await page.route('**/api/desk/tasks', async (route) => { await new Promise((r) => setTimeout(r, 700)); await route.continue(); });
+  await page.focus('#prompt');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
   await page.waitForFunction(() => /Review the last 7 days/.test(document.querySelector('#cv-head h1')?.textContent || ''));
+  await page.unroute('**/api/desk/tasks');
   d = await desk();
   const started = d.tasks.find((t) => /^Review the last 7 days/.test(t.prompt));
   check('a starter sets what kind of help it is and opens the conversation', started.kind === 'review' && !started.thread_id, started.kind);
+  const reviewsAfter = d.tasks.filter((t) => /^Review the last 7 days/.test(t.prompt)).length;
+  check('pressing Enter twice while it sends starts one conversation, not two', reviewsAfter === reviewsBefore + 1, `${reviewsBefore} → ${reviewsAfter}`);
 
   // Queue up a bunch: several new jobs, several follow-ups, in order, visible from any page.
   await sendReply('First follow-up.');
@@ -897,11 +938,30 @@ with account_ctx.use(1):
   await page.goto(BASE + '/leads.html');
   await page.waitForFunction(() => /5 in line/.test(document.querySelector('.rail .claude-now')?.textContent || ''), null, { timeout: 15000 });
   check('every page shows what Claude has going on', /5 in line/.test(await page.textContent('.rail .claude-now')));
+  macSeen(0);  // the Mac is back
   await page.goto(BASE + '/desk.html#list', { waitUntil: 'networkidle' });
   await page.click('[data-clear="queue"]');
   await page.click('dialog.confirm #cd-ok');
   await page.waitForFunction(() => /Claude is idle/.test(document.querySelector('#cl-list .cl-now')?.textContent || ''));
+  check('with the Mac online an empty line says anything sent starts right away', /starts right away/.test(await page.textContent('#cl-list .cl-now')));
+  await page.waitForFunction(() => /Claude is idle/.test(document.querySelector('.rail .claude-now')?.textContent || ''), null, { timeout: 15000 });
+  check('the status line says when Claude is idle', /Nothing in line/.test(await page.textContent('.rail .claude-now')));
   await page.screenshot({ path: `${OUT}/flow-5-board-cleared.png` });
+  // A helper without passes (before 2.0): the Mac panel asks for the update; 2.0 doesn't.
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import settings_store; settings_store.set('bridge_version', '1.9')"`);
+  await page.reload({ waitUntil: 'networkidle' });  // same URL: goto would only move to the hash
+  await page.waitForSelector('#mac-update', { state: 'attached', timeout: 10000 });
+  const updateNote = await page.textContent('#mac-update');
+  macSeen(0);
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('#mac-body dl', { state: 'attached' });
+  check('the Mac panel asks to update a helper older than 2.0, and only then',
+    /Update the helper on your Mac.*1\.9.*teammates and clients wait/.test(updateNote) && !(await page.locator('#mac-update').count()), updateNote);
+  macSeen(3600);
+  // The Mac's side against the database: passes, lost and silent runs, the line across accounts.
+  const states = JSON.parse(sh('docker cp dev/qa_desk_states.py edgebourne-ads-backend:/app/qa_desk_states.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_desk_states.py; docker exec edgebourne-ads-backend rm -f /app/qa_desk_states.py').trim().split('\n').pop());
+  check('a Claude run reaches only its own request and account; lost, silent and stopped runs end right; Run next is first across accounts; mentions stored; 304 when unchanged; a helper before 2.0 takes only the owners\' requests',
+    states.failed.length === 0 && states.passed === 23, JSON.stringify(states));
   }
 
   // Tests (experiments): set one up, read the verdict, finish it; Claude's suggested test becomes one on approval.
@@ -1331,6 +1391,17 @@ print(r['id'])"`).trim();
   await page.click('#swipe-filter [data-sf="long"]');
   check('Running 30+ days shows only the long runs', (await page.locator('.swipe').count()) === 2);
   check('the note was kept', await page.evaluate(() => [...document.querySelectorAll('.swipe-note')].some((i) => i.value === 'Same promise as N1')));
+  // Ask Claude to research: a double click while it sends starts one research run (audit A3-32).
+  const researchCount = () => Number(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query(\\"SELECT COUNT(*) AS n FROM desk_tasks WHERE kind = 'research'\\", one=True)['n'])"`));
+  const researchBefore = researchCount();
+  await page.fill('#prompt', 'QA: which offers repeat nearby?');
+  await page.route('**/api/desk/tasks', async (route) => { await new Promise((r) => setTimeout(r, 900)); await route.continue(); });
+  await page.dblclick('#ask-form button[type=submit]');
+  await page.evaluate(() => document.getElementById('ask-form').requestSubmit());
+  await page.waitForFunction(() => document.getElementById('prompt').value === '', null, { timeout: 10000 });
+  await page.unroute('**/api/desk/tasks');
+  check('a double click on Send to Claude starts one research run', researchCount() === researchBefore + 1, `${researchBefore} → ${researchCount()}`);
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE desk_tasks SET status = 'cancelled' WHERE kind = 'research' AND status = 'queued' AND prompt = 'QA: which offers repeat nearby?'\\")"`);
   await page.goto(BASE + '/desk.html#schedules');
   await page.waitForSelector('#view');
   await page.waitForTimeout(600);
@@ -1993,7 +2064,8 @@ with account_ctx.use(a2):
   await page.keyboard.press('ArrowDown');
   const target = await page.evaluate(() => document.querySelector('dialog.palette .pal-item[aria-selected="true"] .pal-t')?.textContent);
   await page.keyboard.press('ArrowUp');
-  await Promise.all([page.waitForURL('**/ad.html?id=**'), page.keyboard.press('Enter')]);
+  const fromAd = page.url();  // already an ad page: wait for the palette's own navigation, not this URL
+  await Promise.all([page.waitForURL((u) => /ad\.html\?id=/.test(u.href) && u.href.split('#')[0] !== fromAd.split('#')[0]), page.keyboard.press('Enter')]);
   check('⌘K finds an ad by name and Enter opens it', /ad\.html\?id=/.test(page.url()), `${target} → ${page.url()}`);
   await page.goto(BASE + '/inbox.html');
   await page.waitForSelector('.ib-item, .ib-empty');
