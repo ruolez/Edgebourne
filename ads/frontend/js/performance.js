@@ -310,7 +310,11 @@ async function loadIdeas() {
         <td class="num">${ratePct(g.hook_rate)}</td><td class="num">${ratePct(g.hold_rate)}</td><td class="num">${ratePct(g.qualified_rate)}</td></tr>`).join("")}</tbody></table></div>
       ${ideaTag && !d.groups.some((g) => g.value.toLowerCase() === ideaTag.toLowerCase()) ? `<p class="muted small flush">No ad tagged “${esc(ideaTag)}” spent money in the last 30 days.</p>` : ""}
       ${d.untagged_ads ? `<p class="muted small flush">${d.untagged_ads} ad${d.untagged_ads === 1 ? " has" : "s have"} no ${esc(d.dimensions[d.by][0].toLowerCase())} yet: tag them under "The idea" on each ad's page, or ask Claude to.</p>` : ""}`;
-    if (ideaTag && !ideaShown) { ideaShown = true; (box.querySelector("tr.flash") || $("ideas-panel")).scrollIntoView({ block: "center" }); }
+    // Opened for a tag (the row is marked) or as "Results: By idea" (#ideas-panel): the panel is drawn after the data, so the browser's own jump missed it.
+    if ((ideaTag || location.hash === "#ideas-panel") && !ideaShown) {
+      ideaShown = true;
+      (box.querySelector("tr.flash") || $("ideas-panel")).scrollIntoView({ block: ideaTag ? "center" : "start" });
+    }
   } catch (err) { if (!superseded()) box.innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 

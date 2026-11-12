@@ -237,10 +237,15 @@ const me = await boot({ page: "forms", admin: true });
 if (me) {
   guardLeaving();
   $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
+  // #form=<id> (a lead's form, the command menu): that form, in view and marked; again when the link changes.
+  const showLinked = () => {
+    const linked = linkedForm() && document.querySelector(`[data-form-row="${CSS.escape(linkedForm())}"]`);
+    if (linked) linked.scrollIntoView({ block: "center" });
+    else if (linkedForm()) toast("That form isn't on the Page any more.");
+  };
   await loadList();
-  const linked = linkedForm() && document.querySelector(`[data-form-row="${CSS.escape(linkedForm())}"]`);
-  if (linked) linked.scrollIntoView({ block: "center" });
-  else if (linkedForm()) toast("That form isn't on the Page any more.");
+  showLinked();
+  addEventListener("hashchange", async () => { await loadList(); showLinked(); });
   $("new-form").addEventListener("click", () => openBuilder(blank()));
   $("list").addEventListener("click", async (e) => {
     const c = e.target.closest("[data-copy]");

@@ -1843,6 +1843,19 @@ with account_ctx.all_accounts():
   });
   check("a client sees a lead's form by name with no link, and tests and forms never link for them", clientPlain.formLinks === 0
     && clientPlain.test === 'QA test' && clientPlain.form === 'QA form' && /^<a class="ent-link" href="\/ad\.html\?id=42">/.test(clientPlain.ad), JSON.stringify(clientPlain));
+  // The command menu offers a client nothing that changes things: no Create, no Settings, no Refresh from Meta.
+  await cp.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
+  await cp.waitForSelector('dialog.palette[open]');
+  const clientMenu = {};
+  for (const q of ['refresh', 'new', 'settings', 'claude', 'team']) {
+    await cp.fill('dialog.palette input', q);
+    await cp.waitForTimeout(450);
+    clientMenu[q] = await cp.evaluate(() => [...document.querySelectorAll('dialog.palette .pal-item')].filter((li) => li.dataset.type !== 'lead' && li.dataset.type !== 'ad' && li.dataset.type !== 'adset' && li.dataset.type !== 'campaign')
+      .map((li) => li.querySelector('.pal-t').textContent));
+  }
+  await cp.keyboard.press('Escape');
+  const clientBad = Object.values(clientMenu).flat().filter((t) => /^(New |Refresh|Settings|Ask Claude|Claude|Team|Lead forms|Tests|Research)/.test(t));
+  check('a client\'s command menu has no actions that change things, no Settings and no admin pages', clientBad.length === 0 && clientMenu.refresh.length === 0, JSON.stringify(clientMenu));
   await cp.goto(BASE + '/report.html');
   await cp.waitForSelector('.r-head');
   check("a client opens their own account's report, without the share button", /Burdanova QA/.test(await cp.textContent('.r-head')) && await cp.isHidden('#share'));
@@ -2267,6 +2280,98 @@ print(','.join(left))
   const fromAd = page.url();  // already an ad page: wait for the palette's own navigation, not this URL
   await Promise.all([page.waitForURL((u) => /ad\.html\?id=/.test(u.href) && u.href.split('#')[0] !== fromAd.split('#')[0]), page.keyboard.press('Enter')]);
   check('⌘K finds an ad by name and Enter opens it', /ad\.html\?id=/.test(page.url()), `${target} → ${page.url()}`);
+  // 9.3b: the command menu reaches every page, tab, Settings section, saved view and action, by the words people use.
+  const palette = async (q) => {
+    if (!(await page.isVisible('dialog.palette[open]'))) {
+      await page.waitForSelector('.crumbs *');  // the frame is up, so the shortcut is listening
+      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
+      await page.waitForSelector('dialog.palette[open]');
+    }
+    await page.fill('dialog.palette input', q);
+    await page.waitForTimeout(450);  // the server's matches arrive after a short pause
+    return page.evaluate(() => [...document.querySelectorAll('dialog.palette .pal-item')].map((li) => ({ t: li.querySelector('.pal-t').textContent, type: li.dataset.type, sub: li.querySelector('small').textContent })));
+  };
+  const firstFor = {};
+  for (const [q, want] of [['results', 'Results'], ['home', 'Today'], ['performance', 'Results'], ['targets', 'Settings: Targets'], ['schedules', 'Claude: Schedules'],
+    ['swipe file', 'Research'], ['experiments', 'Tests'], ['dark mode', 'Switch theme'], ['needs attention', 'Ads that need attention'], ['ads review', 'Ads in review']]) {
+    const got = await palette(q);
+    firstFor[q] = got[0]?.t;
+    if (got[0]?.t !== want) firstFor[q] = `${got[0]?.t} (wanted ${want})`;
+  }
+  check('⌘K finds pages, tabs, Settings sections and actions by their own name and by the words people use (Home, Results, Performance…)',
+    Object.entries(firstFor).every(([, t]) => !/wanted/.test(t)), JSON.stringify(firstFor));
+  await palette('targets');
+  await Promise.all([page.waitForURL('**/settings.html#targets'), page.keyboard.press('Enter')]);
+  await page.waitForTimeout(300);
+  const targetsTop = await page.evaluate(() => Math.round(document.getElementById('targets').getBoundingClientRect().top));
+  check('⌘K → "Settings: Targets" opens Settings on that section', targetsTop >= 0 && targetsTop < 200, String(targetsTop));
+  // A saved view is one Enter away.
+  const qaView = await page.evaluate(async () => (await (await fetch('/api/views', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page: 'ads', name: 'QA menu view', query: 'view=off&level=adset' }) })).json()).id);
+  await page.goto(BASE + '/home.html');
+  await page.waitForSelector('.crumbs *');
+  const viewHit = (await palette('QA menu view'))[0];
+  await Promise.all([page.waitForURL('**/ads.html?**'), page.keyboard.press('Enter')]);
+  const viewUrl = new URL(page.url());
+  check('⌘K lists saved views and opens one as it was saved', viewHit?.type === 'view' && /Saved view/.test(viewHit.sub) && viewUrl.searchParams.get('view') === 'off' && viewUrl.searchParams.get('level') === 'adset',
+    `${JSON.stringify(viewHit)} → ${page.url()}`);
+  await page.evaluate((id) => fetch(`/api/views/${id}`, { method: 'DELETE' }), qaView);
+  // Results of every kind keep a place: many campaigns, ad sets and ads never push the leads out.
+  const leadsWithE = Number(py(`import db;print(db.query(\\"SELECT COUNT(*) AS n FROM leads WHERE NOT is_test AND (full_name ILIKE '%in%' OR email ILIKE '%in%' OR phone ILIKE '%in%')\\", one=True)['n'])`));
+  const wide = await getJson('/api/search?q=in');
+  const kinds = wide.items.reduce((o, i) => ({ ...o, [i.type]: (o[i.type] || 0) + 1 }), {});
+  check('a wide search keeps leads in the results however many ads match too', leadsWithE > 0 && kinds.ad >= 3 && kinds.lead === Math.min(leadsWithE, 8) && wide.items.length <= 24, `${leadsWithE} leads match · ${JSON.stringify(kinds)}`);
+  const pctSearch = await getJson('/api/search?q=' + encodeURIComponent('%%'));
+  check('a % typed in search means a %, not "anything"', pctSearch.items.length === 0, String(pctSearch.items.length));
+  // A saved competitor ad and a test are found by their words, and open where they live.
+  const qaSwipe = await page.evaluate(async () => (await (await fetch('/api/swipes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page_name: 'QA Menu Rivals', body: 'Quotes to invoices without retyping a thing' }) })).json()).id);
+  const swipeHit = (await palette('without retyping'))[0];
+  await Promise.all([page.waitForURL('**/research.html#swipe=**'), page.keyboard.press('Enter')]);
+  await page.waitForSelector(`#swipes [data-swipe="${qaSwipe}"].flash`);
+  check('⌘K finds a saved competitor ad by its words and Research shows it marked', swipeHit?.type === 'swipe' && /^QA Menu Rivals: Quotes to invoices/.test(swipeHit.t), JSON.stringify(swipeHit));
+  await page.evaluate((id) => fetch(`/api/swipes/${id}`, { method: 'DELETE' }), qaSwipe);
+  const qaTest = await getJson('/api/experiments').then((r) => r.items[0]);
+  if (qaTest) {
+    const testHit = (await palette(qaTest.name.slice(0, 12))).find((i) => i.type === 'test');
+    check('⌘K finds a test by name', testHit && testHit.t === qaTest.name, JSON.stringify(testHit));
+  }
+  await page.keyboard.press('Escape');
+  // This page's own tabs: an ad's Polish tab from the menu.
+  await page.goto(BASE + '/ad.html?id=120252672230740312');
+  await page.waitForSelector('#cr-tabs [role="tab"]');
+  const tabHit = (await palette('polish')).find((i) => i.sub === 'This page');
+  await page.locator('dialog.palette .pal-item', { hasText: 'This page' }).filter({ hasText: 'Polish' }).click();
+  await page.waitForSelector('#cr-tabs [data-tab="polish"][aria-selected="true"]');
+  check('⌘K offers this page\'s own tabs (an ad\'s Polish) and opens them', /: Polish$/.test(tabHit?.t || '') && /tab=polish/.test(page.url()), `${JSON.stringify(tabHit)} ${page.url()}`);
+  // "?" shows every shortcut; an action runs from the menu.
+  await page.locator('body').click({ position: { x: 5, y: 300 } });
+  await page.keyboard.press('Shift+Slash');
+  await page.waitForSelector('dialog.confirm .keys-list');
+  const keysText = await page.textContent('dialog.confirm');
+  check('"?" opens the keyboard shortcuts', /Keyboard shortcuts/.test(keysText) && /Search or jump to anything/.test(keysText) && /Settings/.test(keysText), keysText.slice(0, 120));
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('dialog.confirm', { state: 'detached' });
+  const themeBefore = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+  await palette('switch theme');
+  await page.keyboard.press('Enter');
+  const themeAfter = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+  check('⌘K runs an action (Switch theme) right where you are', themeAfter !== themeBefore && !(await page.isVisible('dialog.palette[open]')), `${themeBefore} → ${themeAfter}`);
+  await page.evaluate(() => { localStorage.removeItem('ebads-theme'); document.documentElement.removeAttribute('data-theme'); });
+  // Tabs from the menu land on what they name: Results by idea (drawn after its data), a Claude view, an Inbox filter.
+  await page.goto(BASE + '/home.html');
+  await palette('Results: By idea');
+  await Promise.all([page.waitForURL('**/performance.html#ideas-panel'), page.keyboard.press('Enter')]);
+  await page.waitForSelector('#ideas .ideas-table, #ideas .note');
+  await page.waitForTimeout(800);
+  const ideasTop = await page.evaluate(() => Math.round(document.getElementById('ideas-panel').getBoundingClientRect().top));
+  check('⌘K → "Results: By idea" opens Results scrolled to the By idea panel', ideasTop >= 0 && ideasTop < 200, String(ideasTop));
+  await palette('Claude: Schedules');
+  await Promise.all([page.waitForURL('**/desk.html#schedules'), page.keyboard.press('Enter')]);
+  await page.waitForSelector('[data-sub="schedules"][aria-current="page"]');
+  check('⌘K → "Claude: Schedules" opens Claude on its Schedules view', /#schedules$/.test(page.url()));
+  await palette('Inbox: Money');
+  await Promise.all([page.waitForURL('**/inbox.html?show=money'), page.keyboard.press('Enter')]);
+  await page.waitForSelector('#ib-filters [data-f="money"][aria-selected="true"]');
+  check('⌘K → "Inbox: Money" opens the Inbox on the Money filter', /show=money/.test(page.url()));
   await page.goto(BASE + '/inbox.html');
   await page.waitForSelector('.ib-item, .ib-none');
   check('the Inbox page lists items with read state and filters', (await page.locator('#ib-filters [data-f]').count()) === 7 && (await page.locator('.ib-item').count()) > 0);
@@ -2914,6 +3019,83 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
     const back = await phonePage.evaluate(() => ({ y: window.scrollY, focus: document.activeElement?.dataset?.key || '' }));
     check('on a phone an Inbox item takes focus to ← Inbox, and the list comes back where it was with that item focused',
       backFocused && Math.abs(back.y - y0) <= 2 && back.focus === farKey, JSON.stringify({ n, y0, backFocused, ...back, farKey }));
+  }
+  // 9.3b phone: Ads sorts and filters by campaign without column headers, the bulk bar fits, More says Claude has work for you.
+  await phonePage.goto(BASE + '/ads.html?sort=ctr&dir=desc');
+  await phonePage.waitForSelector('#sort-pick');
+  const otherSort = await phonePage.evaluate(() => { const s = document.getElementById('sort-pick'); return s.options[s.selectedIndex].textContent; });
+  check('on a phone a sort chosen on a computer says what it sorts by', otherSort === 'Sorted by click rate', otherSort);
+  await phonePage.goto(BASE + '/ads.html');
+  await phonePage.waitForSelector('.pl li');
+  await phonePage.selectOption('#sort-pick', 'cpl:asc');
+  await phonePage.waitForFunction(() => /sort=cpl/.test(location.search));
+  const phoneCpl = await phonePage.evaluate(() => [...document.querySelectorAll('.pl li small')].map((s) => { const m = s.textContent.match(/·\s*(\$[\d,.]+|–|—)(?:\s|$)/g); const last = m ? m[m.length - 1] : ''; const v = last.match(/\$([\d,.]+)/); return v ? Number(v[1].replace(/,/g, '')) : null; }));
+  const priced = phoneCpl.filter((v) => v !== null);
+  const firstBlank = phoneCpl.indexOf(null);
+  const sortedOk = priced.length > 1 && priced.every((v, i) => i === 0 || v >= priced[i - 1]) && (firstBlank === -1 || phoneCpl.slice(firstBlank).every((v) => v === null));
+  check('on a phone Ads sorts by "Lowest cost per lead" (ads without leads last)', new URL(phonePage.url()).searchParams.get('dir') === 'asc' && sortedOk, JSON.stringify(phoneCpl));
+  const adsTree = await phonePage.evaluate(async () => (await fetch('/api/ads?range=7')).json());
+  const pickCamp = adsTree.campaigns.find((c) => c.adsets.some((s) => s.ads.length)) || adsTree.campaigns[0];
+  await phonePage.selectOption('#camp-pick', pickCamp.id);
+  await phonePage.waitForFunction((id) => new URLSearchParams(location.search).get('campaign') === id, pickCamp.id);
+  const campRows = await phonePage.locator('.pl li').count();
+  const campAds = pickCamp.adsets.reduce((n, s) => n + s.ads.length, 0);
+  check('on a phone Ads filters by campaign', await phonePage.isVisible('#camp-pick') && campRows === campAds, `${campRows} rows, ${campAds} ads in ${pickCamp.name}`);
+  await phonePage.goto(BASE + '/ads.html');
+  await phonePage.waitForSelector('.pl li');
+  for (const w of [390, 320]) {
+    await phonePage.setViewportSize({ width: w, height: 760 });
+    await phonePage.waitForTimeout(200);
+    if (!(await phonePage.isVisible('.bk'))) { await phonePage.locator('.pl li .pick').nth(0).click(); await phonePage.locator('.pl li .pick').nth(4).click(); }
+    await phonePage.waitForSelector('.bk [data-bulk="off"]');
+    const fit = await phonePage.evaluate(() => {
+      const bar = document.querySelector('.bk'), r = bar.getBoundingClientRect();
+      const btns = [...bar.querySelectorAll('[data-bulk]')].map((b) => b.getBoundingClientRect());
+      return { scroll: bar.scrollWidth - bar.clientWidth, left: r.left, right: r.right, vw: innerWidth, small: btns.filter((b) => b.height < 44 || b.width < 44).length,
+        clipped: btns.filter((b) => b.right > r.right + 0.5 || b.left < r.left - 0.5).length, labels: [...bar.querySelectorAll('.bk-acts .btn span')].map((s) => s.scrollWidth <= s.clientWidth + 1) };
+    });
+    check(`on a ${w}px phone the bulk bar fits: every action in view, 44px or more, no sideways scroll`, fit.scroll <= 1 && fit.left >= 0 && fit.right <= fit.vw && !fit.small && !fit.clipped && fit.labels.every(Boolean), JSON.stringify(fit));
+  }
+  await phonePage.click('.bk [data-bulk="clear"]');
+  await phonePage.setViewportSize({ width: 390, height: 844 });
+  const proposalsWaiting = (await phonePage.evaluate(async () => (await fetch('/api/refresh')).json())).proposals || 0;
+  await phonePage.goto(BASE + '/home.html');
+  await phonePage.waitForTimeout(1200);
+  const more = await phonePage.evaluate(() => { const c = document.querySelector('.tabbar [data-more] [data-claude-count]'); return { shown: c && !c.hidden, n: c?.querySelector('[aria-hidden="true"]')?.textContent ?? null, label: c?.querySelector('.sr-only')?.textContent || '' }; });
+  check('on a phone More carries a badge with Claude\'s waiting suggestions', proposalsWaiting > 0 ? more.shown && more.n === String(proposalsWaiting) && /waiting/.test(more.label) : !more.shown, `${proposalsWaiting} ${JSON.stringify(more)}`);
+  await phonePage.click('.tabbar [data-more]');
+  await phonePage.waitForSelector('dialog.sheet[open]');
+  const sheetOrder = await phonePage.evaluate(() => ({ links: [...document.querySelectorAll('dialog.sheet nav a')].map((a) => a.querySelector('span')?.textContent || a.textContent.trim()), focus: document.activeElement?.textContent.trim() }));
+  check('More lists Claude first and opens on it, not on the account switcher', sheetOrder.links[0] === 'Claude' && sheetOrder.links.indexOf('Insights') > 0 && /^Claude/.test(sheetOrder.focus || ''), JSON.stringify(sheetOrder));
+  await phonePage.keyboard.press('Escape');
+  // A page that doesn't exist gets the console's own page, and the API keeps its own answer.
+  const missing = await phonePage.goto(BASE + '/no-such-page.html?x=1');
+  const nf = await phonePage.evaluate(() => ({ h1: document.querySelector('h1')?.textContent, path: document.getElementById('nf-path')?.textContent, home: !!document.querySelector('a[href="/home.html"]'),
+    wide: document.documentElement.scrollWidth }));
+  check('a missing page shows "Page not found" with the address and a way to Today, at phone width', missing.status() === 404 && nf.h1 === 'Page not found' && nf.path === '/no-such-page.html?x=1' && nf.home && nf.wide <= 390, JSON.stringify({ status: missing.status(), ...nf }));
+  const apiMissing = await phonePage.evaluate(async () => { const r = await fetch('/api/no-such-thing'); return { status: r.status, page: /Page not found/.test(await r.text()) }; });
+  check('a missing API address still answers 404 from the server, not the page', apiMissing.status === 404 && !apiMissing.page, JSON.stringify(apiMissing));
+  // Offline: the page that couldn't load says so, and opens by itself once the connection is back.
+  {
+    const offCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const off = await offCtx.newPage();
+    await off.goto(BASE + '/login.html');
+    await off.fill('#email', 'eugene@edgebourne.com'); await off.fill('#password', 'localdev-pass-123');
+    await Promise.all([off.waitForURL('**/home.html**'), off.click('button[type=submit]')]);
+    await off.evaluate(() => navigator.serviceWorker.ready);
+    if (!(await off.evaluate(() => !!navigator.serviceWorker.controller))) await off.reload();
+    await off.waitForFunction(() => !!navigator.serviceWorker.controller);
+    await offCtx.setOffline(true);
+    await off.goto(BASE + '/leads.html').catch(() => {});
+    await off.waitForSelector('#off-retry');
+    const offText = await off.evaluate(() => ({ h1: document.querySelector('h1').textContent, url: location.pathname, styled: getComputedStyle(document.querySelector('.btn-primary')).backgroundColor !== 'rgba(0, 0, 0, 0)' }));
+    await off.click('#off-retry');
+    await off.waitForFunction(() => /Still no connection/.test(document.getElementById('off-state').textContent));
+    check('offline, a page shows "No connection" with its styles, and Try again says it is still offline', offText.h1 === 'No connection' && offText.url === '/leads.html' && offText.styled, JSON.stringify(offText));
+    await offCtx.setOffline(false);
+    await off.waitForSelector('.lead-row, .lead-list', { timeout: 20000 }).catch(() => {});
+    check('the offline page opens the page that was asked for by itself once the connection is back', await off.evaluate(() => location.pathname === '/leads.html' && !document.getElementById('off-retry')), off.url());
+    await offCtx.close();
   }
   // Phones keep their size: iOS zooms into any field under 16px; anything past the edge makes the browser shrink the page.
   const narrow = await (await browser.newContext({ viewport: { width: 320, height: 700 }, isMobile: true, hasTouch: true })).newPage();

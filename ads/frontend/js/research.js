@@ -69,8 +69,21 @@ function renderSwipes() {
 }
 
 async function loadSwipes() {
-  try { swipeData = await api("/api/swipes"); renderSwipes(); } catch (err) { $("swipes").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
+  try { swipeData = await api("/api/swipes"); renderSwipes(); showLinkedSwipe(); } catch (err) { $("swipes").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
+
+// #swipe=<id> (a link from the command menu): that saved ad, in view and marked.
+function showLinkedSwipe() {
+  const m = location.hash.match(/swipe=(\d+)/);
+  if (!m || !swipeData.items.some((s) => String(s.id) === m[1])) return;
+  if (swipeFilter !== "all") { swipeFilter = "all"; renderSwipes(); }
+  const card = document.querySelector(`#swipes [data-swipe="${m[1]}"]`);
+  card.classList.remove("flash");
+  void card.offsetWidth;
+  card.classList.add("flash");
+  card.scrollIntoView({ block: "center" });
+}
+addEventListener("hashchange", showLinkedSwipe);
 
 function wireSwipes() {
   $("swipe-add").addEventListener("click", () => { $("swipe-form").hidden = false; $("sw-link").focus(); });

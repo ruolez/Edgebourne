@@ -16,7 +16,8 @@ const BASE = process.env.BASE || 'http://ads.localhost:8090';
     for (const [vw, vh, tag] of [[1440, 900, 'desk'], [390, 844, 'phone']]) {
       const ctx = await browser.newContext({ viewport: { width: vw, height: vh }, colorScheme: scheme, deviceScaleFactor: 2 });
       const page = await ctx.newPage();
-      page.on('console', (m) => { if (m.type() === 'error') errors.push(`${tag} ${m.text()}`); });
+      // The missing page's own 404 is the point of that shot, not an error.
+      page.on('console', (m) => { if (m.type() === 'error' && !(/status of 404/.test(m.text()) && /missing-page/.test(page.url()))) errors.push(`${tag} ${m.text()}`); });
       page.on('pageerror', (e) => errors.push(`${tag} ${e.message}`));
       await page.goto(BASE + '/login.html');
       await page.screenshot({ path: `${OUT}/login-${tag}-${scheme}.png` });
@@ -32,13 +33,38 @@ const BASE = process.env.BASE || 'http://ads.localhost:8090';
         await page.waitForSelector('#stages');
         await page.screenshot({ path: `${OUT}/lead-detail-${tag}-${scheme}.png`, fullPage: true });
       }
-      for (const p of ['home', 'inbox', 'ads', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312', 'compare.html?ids=120252672232030312,120252672233160312,120252672230740312', 'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=polish', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video', 'ad.html?id=120252672230740312#tab=comments', 'ad.html?id=120252672230740312#tab=history', 'ads.html?level=adset', 'new-ad', 'new-adset.html?campaign=120252638288040312', 'research', 'desk', 'desk.html#ads', 'desk.html#schedules', 'performance', 'experiments', 'report', 'forms', 'new-campaign', 'team', 'settings', 'account']) {
+      for (const p of ['home', 'inbox', 'ads', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312', 'compare.html?ids=120252672232030312,120252672233160312,120252672230740312', 'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=polish', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video', 'ad.html?id=120252672230740312#tab=comments', 'ad.html?id=120252672230740312#tab=history', 'ads.html?level=adset', 'new-ad', 'new-adset.html?campaign=120252638288040312', 'research', 'desk', 'desk.html#ads', 'desk.html#schedules', 'performance', 'experiments', 'report', 'forms', 'new-campaign', 'team', 'settings', 'account', 'offline', 'missing-page.html']) {
         await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
         if (p.includes('#')) await page.reload();
         await page.waitForTimeout(600);
         await page.waitForTimeout(p.includes('#') ? 900 : 0);
         const variant = (p.match(/(?:#tab=|#|level=)(\w+)/) || ['', ''])[1];
         await page.screenshot({ path: `${OUT}/${p.split('.')[0]}${variant ? '-' + variant : ''}-${tag}-${scheme}.png`, fullPage: true });
+      }
+      // The command menu, the shortcuts and (phones) the More sheet and the bulk bar.
+      await page.goto(`${BASE}/home.html`);
+      await page.waitForTimeout(600);
+      await page.click(tag === 'phone' ? '.topbar [data-palette]' : '.rail [data-palette]');
+      await page.fill('dialog.palette input', 'set');
+      await page.waitForTimeout(600);
+      await page.screenshot({ path: `${OUT}/palette-${tag}-${scheme}.png` });
+      await page.keyboard.press('Escape');
+      if (tag === 'desk') {
+        await page.keyboard.press('Shift+Slash');
+        await page.waitForSelector('dialog.confirm .keys-list');
+        await page.screenshot({ path: `${OUT}/shortcuts-${tag}-${scheme}.png` });
+        await page.keyboard.press('Escape');
+      } else {
+        await page.click('.tabbar [data-more]');
+        await page.waitForTimeout(300);
+        await page.screenshot({ path: `${OUT}/more-${tag}-${scheme}.png` });
+        await page.keyboard.press('Escape');
+        await page.goto(`${BASE}/ads.html`);
+        await page.waitForSelector('.pl li');
+        await page.locator('.pl li .pick').nth(0).click();
+        await page.locator('.pl li .pick').nth(4).click();
+        await page.waitForTimeout(300);
+        await page.screenshot({ path: `${OUT}/bulk-${tag}-${scheme}.png` });
       }
       await ctx.close();
     }

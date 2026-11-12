@@ -4,11 +4,19 @@ import { api, startLoad } from "./api.js";
 import { boot, confirmDialog, esc, icon, onRefresh, toast, showLoadError, rememberList, withFrom } from "./ui.js";
 import { count, dayLabel, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
-import { COLUMN_SETS, LEVEL_WORDS, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, tableHtml, unlistedNote, wire } from "./manager.js";
+import { COLUMN_SETS, LEVEL_WORDS, columnLabel, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, tableHtml, unlistedNote, wire } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = { level: "ad", view: "all", range: "7", vs: true, cols: "results", sort: "spend", dir: "desc", q: "", campaign: "", archived: false, display: "table", peek: "" };
 const MONTHS = ["mtd", "lastmonth"];
+// Phones have no column headers to click: the same sorts as a list (key:direction, as the table sorts them).
+const SORTS = [["spend:desc", "Most spent"], ["leads:desc", "Most leads"], ["cpl:asc", "Lowest cost per lead"],
+  ["impressions:desc", "Most views"], ["status:asc", "Delivering first"], ["name:desc", "Name, A to Z"]];
+function sortPick() {
+  const now = `${state.sort}:${state.dir}`;
+  const list = SORTS.some(([k]) => k === now) ? SORTS : [[now, `Sorted by ${columnLabel(state.sort).toLowerCase()}`], ...SORTS];
+  return rangeSelect("sort-pick", now, list, "Sort");
+}
 // The URL and saved views always carry the dates, so a link opens on the same days in any browser.
 const KEEP = { ...DEFAULTS, range: "" };
 let state = UrlState.read(DEFAULTS);
@@ -78,6 +86,7 @@ function toolbar() {
     ${camps.length > 1 ? `<select class="input tool" id="camp-pick" aria-label="Campaign"><option value="">All campaigns</option>${camps.map((c) => `<option value="${esc(c.id)}" ${c.id === state.campaign ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>` : ""}
     <label class="tool-search">${icon("search")}<input class="input" id="cr-search" type="search" placeholder="Filter by name" value="${esc(state.q)}" aria-label="Filter by name"></label>
     ${rangeSelect("range-pick", state.range)}
+    ${narrow() && !(state.level === "ad" && state.display === "cards") ? sortPick() : ""}
     <button type="button" class="view-chip" id="vs" aria-pressed="${state.vs}" title="${MONTHS.includes(state.range) ? "Compare with the same days of the month before" : "Compare with the same number of days just before"}">vs before</button>
     ${state.display === "table" ? `<select class="input tool" id="cols-pick" aria-label="Columns">${Object.entries(COLUMN_SETS).map(([k, [l]]) => `<option value="${k}" ${k === state.cols ? "selected" : ""}>Columns: ${l}</option>`).join("")}</select>` : ""}
     ${data.archived ? `<button type="button" class="view-chip" id="archived" aria-pressed="${state.archived}">${state.archived ? "Hide" : "Show"} archived <span class="n">${data.archived}</span></button>` : ""}
@@ -231,6 +240,7 @@ if (me) {
     if (e.target.id === "range-pick") { rememberRange(e.target.value); set({ range: e.target.value }, true); }
     if (e.target.id === "cols-pick") set({ cols: e.target.value });
     if (e.target.id === "camp-pick") { selected.clear(); set({ campaign: e.target.value }); }
+    if (e.target.id === "sort-pick") { const [sort, dir] = e.target.value.split(":"); set({ sort, dir }); }
   });
   let typing;
   root.addEventListener("input", (e) => {

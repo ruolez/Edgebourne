@@ -10,6 +10,7 @@
   <meta name="theme-color" content="#F6F6F4" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0E0F11" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-title" content="EB Ads">
+  <script src="/js/theme.js"></script>
   <link rel="stylesheet" href="/css/tokens.css?v=1794449562">
   <link rel="stylesheet" href="/css/app.css?v=1794449562">
   <link rel="stylesheet" href="/css/shell.css?v=1794449562">
@@ -18,8 +19,10 @@
   <main class="offline-page">
     <img src="/img/favicon.svg" alt="" width="64" height="64">
     <h1>No connection</h1>
-    <p>Edge Bourne Ads needs the internet to show live leads and results. It comes back by itself once you're online; or try again now.</p>
-    <a class="btn btn-primary" href="/home.html">Try again</a>
+    <p>This page can't reach Edge Bourne Ads right now, so it can't show live leads and results. Check the internet on this device. The page opens by itself as soon as the connection is back.</p>
+    <div class="row"><button class="btn btn-primary" type="button" id="off-retry">Try again now</button></div>
+    <small id="off-state" role="status" aria-live="polite"></small>
   </main>
+  <script src="/js/offline.js"></script>
 </body>
 </html>

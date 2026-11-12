@@ -268,7 +268,10 @@ async function frameStatus() {
     autoMinutes = st.auto_minutes || null;
     clockSkew = st.server_now ? st.server_now - Date.now() / 1000 : 0;
     setNewCount(st.new_leads || 0);
-    document.querySelectorAll("[data-claude-count]").forEach((el) => { el.hidden = !st.proposals; el.textContent = st.proposals || ""; });
+    document.querySelectorAll("[data-claude-count]").forEach((el) => {
+      el.hidden = !st.proposals;
+      el.innerHTML = st.proposals ? `<span aria-hidden="true">${st.proposals}</span><span class="sr-only">, ${st.proposals} ${st.proposals === 1 ? "suggestion" : "suggestions"} from Claude waiting</span>` : "";
+    });
     document.querySelectorAll("[data-inbox-count]").forEach((el) => { el.hidden = !st.inbox_unread; el.textContent = st.inbox_unread > 99 ? "99+" : st.inbox_unread || ""; });
     const cap = st.cap;
     const card = document.getElementById("cap-card");
@@ -376,9 +379,10 @@ const ENTITY_HREF = {
   lead: (id) => `/leads.html#lead=${encodeURIComponent(id)}`,
   form: (id) => `/forms.html#form=${encodeURIComponent(id)}`,
   test: (id) => `/experiments.html#${encodeURIComponent(id)}`,
+  swipe: (id) => `/research.html#swipe=${encodeURIComponent(id)}`,
   tag: (value, dim) => `/performance.html?idea=${encodeURIComponent(dim || "hook")}&tag=${encodeURIComponent(value)}#ideas-panel`,
 };
-const ADMIN_ONLY = new Set(["form", "test"]);
+const ADMIN_ONLY = new Set(["form", "test", "swipe"]);
 export function entityHref(level, id, dim) {
   if (!id || !ENTITY_HREF[level]) return null;
   if (ADMIN_ONLY.has(level) && (!window.ebadsMe || window.ebadsMe.role !== "admin")) return null;
@@ -599,39 +603,40 @@ export async function boot({ page, admin = false }) {
   setCrumbs(sectionCrumb && own && own !== sectionCrumb.label ? [sectionCrumb, { label: own, href: location.pathname }] : [sectionCrumb || { label: own || "", href: location.pathname }]);
 
   const tabKeys = ["today", "leads", "ads", "inbox"];
-  const moreKeys = ["insights", "claude", "settings"].filter(allowed);
   const inMore = !tabKeys.includes(section);
   const tabs = document.createElement("nav");
   tabs.className = "tabbar";
   tabs.setAttribute("aria-label", "Main");
+  // More carries Claude's count: decisions waiting are the one thing behind it that needs Eugene.
   tabs.innerHTML = `${tabKeys.map((k) => { const l = SECTIONS[k]; return `<a href="${l.href}" ${cur(k)}>${icon(l.icon)}<span>${l.label}</span>${badge(l.badge)}</a>`; }).join("")}
-    <button type="button" data-more ${inMore ? 'aria-current="page"' : ""}>${icon("menu")}<span>More</span></button>`;
+    <button type="button" data-more ${inMore ? 'aria-current="page"' : ""}>${icon("menu")}<span>More</span>${isAdmin ? badge("claude") : ""}</button>`;
   app.append(tabs);
 
+  // Claude first (and Creative, once it exists), then Insights with its pages, then Settings.
+  const sheetLink = (href, label, ic, current, extra = "") => `<a href="${href}" ${current ? 'aria-current="page"' : ""}>${icon(ic)}<span>${label}</span>${extra}</a>`;
   const sheet = document.createElement("dialog");
   sheet.className = "sheet";
   sheet.setAttribute("aria-label", "More");
   sheet.innerHTML = `<div class="grab"></div>${accountSwitch(me, "sheet")}<nav>
-      ${moreKeys.map((k) => { const l = SECTIONS[k]; return `<a href="${l.href}" ${cur(k)}>${icon(l.icon)}${l.label}${badge(l.badge)}</a>`; }).join("")}
-      ${(SUBNAV.insights).filter(([p, , who]) => p !== "performance" && canSee(who)).map(([p, label]) => `<a href="${PAGE_HREF[p]}" ${p === page ? 'aria-current="page"' : ""}>${icon(p === "compare" ? "compare" : p === "experiments" ? "tests" : "table")}${label}</a>`).join("")}
-      <a href="/account.html" ${cur("account")}>${icon("user")}Your account</a>
+      ${allowed("claude") ? sheetLink(SECTIONS.claude.href, "Claude", "spark", page === "desk", badge("claude")) : ""}
+      ${allowed("claude") ? sheetLink(PAGE_HREF.research, "Research", "research", page === "research") : ""}
+      ${sheetLink(SECTIONS.insights.href, "Insights", "chart", page === "performance")}
+      ${SUBNAV.insights.filter(([p, , who]) => p !== "performance" && canSee(who)).map(([p, label]) => sheetLink(PAGE_HREF[p], label, p === "compare" ? "compare" : p === "experiments" ? "tests" : "table", p === page)).join("")}
+      ${allowed("settings") ? sheetLink(SECTIONS.settings.href, "Settings", "settings", section === "settings") : ""}
+      <a href="/account.html" ${cur("account")}>${icon("user")}<span>Your account</span></a>
       <div class="sep"></div>
       <button type="button" class="item" data-theme-btn>${icon("moon")}<span>${themeLabel(currentTheme())}</span></button>
       <button type="button" class="item" data-signout>${icon("logout")}Sign out</button>
     </nav>`;
   document.body.append(sheet);
-  tabs.querySelector("[data-more]").addEventListener("click", () => sheet.showModal());
+  // The sheet opens on its first link, not on the account switcher (a stray tap there would change the account).
+  tabs.querySelector("[data-more]").addEventListener("click", () => { sheet.showModal(); sheet.querySelector("nav a")?.focus(); });
   sheet.addEventListener("click", (e) => { if (e.target === sheet) sheet.close(); });
 
   document.querySelectorAll("[data-refresh]").forEach((b) => b.addEventListener("click", doRefresh));
   document.querySelectorAll("[data-palette]").forEach((b) => b.addEventListener("click", () => openPalette()));
-  document.querySelectorAll("[data-theme-btn]").forEach((b) => b.addEventListener("click", () => {
-    applyTheme(THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length]);
-  }));
-  document.querySelectorAll("[data-signout]").forEach((b) => b.addEventListener("click", async () => {
-    await api("/api/auth/logout", { method: "POST" });
-    location.href = "/login.html";
-  }));
+  document.querySelectorAll("[data-theme-btn]").forEach((b) => b.addEventListener("click", nextTheme));
+  document.querySelectorAll("[data-signout]").forEach((b) => b.addEventListener("click", signOut));
   shortcuts(isAdmin);
 
   banners(me);
@@ -651,6 +656,7 @@ function shortcuts(isAdmin) {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
     if (typing(e.target) || e.metaKey || e.ctrlKey || e.altKey || document.querySelector("dialog[open]")) return;
     if (e.key === "/") { e.preventDefault(); openPalette(); return; }
+    if (e.key === "?") { e.preventDefault(); openShortcuts(); return; }
     if (e.key === "g") { g = Date.now(); return; }
     if (g && Date.now() - g < 1200 && JUMPS[e.key]) {
       if (!isAdmin && (e.key === "c" || e.key === "s")) return;
@@ -661,9 +667,28 @@ function shortcuts(isAdmin) {
 }
 
 let paletteMod = null;
+const signOut = async () => { await api("/api/auth/logout", { method: "POST" }); location.href = "/login.html"; };
+const nextTheme = () => applyTheme(THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length]);
 export async function openPalette(query = "") {
   paletteMod = paletteMod || await import("./palette.js");
-  paletteMod.open({ query, me: window.ebadsMe, pages: { SECTIONS, PAGE_HREF, PAGE_TITLE } });
+  paletteMod.open({ query, me: window.ebadsMe,
+    actions: { refresh: doRefresh, theme: () => { nextTheme(); toast(themeLabel(currentTheme())); }, shortcuts: openShortcuts, signout: () => signOut().catch((err) => toast(err.message, "bad")) } });
+}
+
+// "?" anywhere: every keyboard shortcut on one card.
+export function openShortcuts() {
+  const admin = window.ebadsMe && window.ebadsMe.role === "admin";
+  const mod = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl";
+  const k = (...keys) => keys.map((x) => (x === "then" || x === "or" ? ` ${x} ` : `<kbd>${esc(x)}</kbd>`)).join("");
+  const rows = [
+    ["Anywhere", [[k(mod, "K") + " or " + k("/"), "Search or jump to anything"], [k("?"), "This list"],
+      ...[["t", "Today"], ["i", "Inbox"], ["l", "Leads"], ["a", "Ads"], ["n", "Results"], ...(admin ? [["c", "Claude"], ["s", "Settings"]] : [])].map(([key, label]) => [k("g", "then", key), label])]],
+    ["Lists and tables", [[k("↑", "or", "↓"), "Move between rows"], [k("Enter"), "Open the quick look or the item"], ["Shift + click a box", "Select every row in between"], [k("Esc"), "Close the quick look, or clear the selection"]]],
+    ["Inbox", [[k("j", "or", "k"), "Next or previous item"]]],
+    ["Tabs", [[k("←", "or", "→"), "Switch between tabs"]]],
+  ];
+  return confirmDialog({ title: "Keyboard shortcuts", confirm: "Close", cancel: false,
+    body: rows.map(([group, list]) => `<h3 class="keys-group">${esc(group)}</h3><dl class="keys-list">${list.map(([keys, what]) => `<div><dt>${keys}</dt><dd>${esc(what)}</dd></div>`).join("")}</dl>`).join("") });
 }
 
 // Things an admin must know on every page: the background worker stopped, or Meta refused the token.

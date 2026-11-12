@@ -54,7 +54,10 @@ Navigation (Nov 2026, "Signal"): sidebar groups **Work** (Today, Inbox, Leads) a
 Claude) plus Settings; ⌘K / Ctrl+K or `/` opens a search-and-jump palette (`js/palette.js`); `g` then
 t / i / l / a / n / c / s jumps to a section. Every page has breadcrumbs; sections with sub-pages show
 tabs under them (Ads · Lead forms; Results · Compare · Tests · Reports; Claude · Research; Settings ·
-Team). Phones: five tabs (Today, Leads, Ads, Inbox, More). The frame lives in `js/ui.js` (`boot`,
+Team). The palette also finds tabs, Settings sections, saved views, actions, lead forms, tests and saved competitor ads,
+and the words people use for a page ("Home", "Results"); `?` lists every shortcut. Phones: five tabs (Today, Leads, Ads,
+Inbox, More; More carries Claude's waiting count). A missing page gets `404.html` (`error_page` in `nginx/ads.conf`); a page
+that can't load offline gets `offline.html`, which opens it again by itself once the connection is back. The frame lives in `js/ui.js` (`boot`,
 `setCrumbs`, one map `PAGE_SECTION` / `SECTIONS` / `SUBNAV`).
 
 Getting around (9.3a): every campaign, ad set, ad, lead, form, test or tag named on a page links to it through

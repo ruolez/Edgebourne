@@ -108,6 +108,8 @@ const C = {
   on: { key: "on", label: "On", cell: (r) => (r.can_control && LIVE.includes(r.status) ? switchHtml(isOn(r.status), `data-toggle="${r.level}:${r.id}" data-name="${esc(r.name)}"`, `${r.name} on or off`) : ""), cls: "c-on" },
   spark: { key: "spark", label: "Leads / day", cell: (r) => sparkline(r.spark), cls: "c-sp" },
 };
+// A column's name in plain words, for saying what a list is sorted by.
+export const columnLabel = (key) => C[key]?.label || key;
 export const COLUMN_SETS = {
   results: ["Results", { ad: ["name", "status", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified", "ctr", "hook", "on", "spark"],
     adset: ["name", "status", "budget", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified", "on"],
@@ -238,7 +240,7 @@ export function bulkBarHtml(level, picked, canControl) {
     const disabled = k === "compare" && (picked.length < 2 || picked.length > 6);
     return `<button type="button" class="btn ${k === "compare" ? "btn-primary" : "btn-quiet"} btn-small" data-bulk="${k}" ${disabled ? `disabled title="Pick 2 to 6 ads to compare"` : ""}>${icon(ic)}<span>${label}</span></button>`;
   }).join("");
-  return `<div class="bk" role="toolbar" aria-label="${picked.length} selected"><span class="bk-n"><b>${picked.length}</b> selected</span>${thumbs}${actions}
+  return `<div class="bk" role="toolbar" aria-label="${picked.length} selected"><span class="bk-n"><b>${picked.length}</b> selected</span>${thumbs}<span class="bk-acts">${actions}</span>
     <button type="button" class="icon-btn bk-x" data-bulk="clear" aria-label="Clear the selection">×</button></div>`;
 }
 

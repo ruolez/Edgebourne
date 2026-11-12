@@ -495,6 +495,13 @@ dialog.confirm .affix span { display: flex; align-items: center; padding: 0 10px
 dialog.confirm .affix .input { border: 0; flex: 1; min-width: 0; font-size: var(--t-l); font-weight: 600; }
 dialog.confirm .affix:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 25%, transparent); }
 dialog.confirm .affix .input:focus { box-shadow: none; }
+/* Keyboard shortcuts ("?"), in the shared dialog */
+.keys-group { margin: 14px 0 6px; font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); }
+.keys-group:first-child { margin-top: 0; }
+.keys-list { margin: 0; display: grid; gap: 0; }
+.keys-list div { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 6px 0; border-top: 1px solid var(--line); font-size: var(--t-s); }
+.keys-list dt { color: var(--ink-2); white-space: nowrap; }
+.keys-list dd { margin: 0; text-align: right; }
 
 .mini-figs { display: grid; grid-template-columns: repeat(4, minmax(64px, auto)); gap: 4px 22px; margin: 0; }
 .mini-figs.wide { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 14px; }
@@ -1236,6 +1243,9 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .offline-page { max-width: 420px; margin: 18vh auto 0; padding: 0 24px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; }
 .offline-page h1 { margin: 8px 0 0; font: 600 var(--t-2xl)/1.2 var(--font-display); }
 .offline-page p { color: var(--ink-2); margin: 0 0 8px; }
+.offline-page .row { justify-content: center; flex-wrap: wrap; }
+.offline-page code { font-size: var(--t-s); overflow-wrap: anywhere; }
+.offline-page small { color: var(--ink-3); font-size: var(--t-s); min-height: 1.4em; }
 .device-list { list-style: none; margin: 0; padding: 0; }
 .device-list li { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
 .device-list li span { display: flex; flex-direction: column; }
@@ -1348,3 +1358,6 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .ver-tbl td.ver-name { white-space: normal; min-width: 130px; padding-top: 8px; padding-bottom: 8px; }
 .ver-tbl .ver-name b { display: block; font-weight: 600; }
 .ver-tbl .ver-name small { display: block; color: var(--ink-3); font-size: var(--t-xs); margin-bottom: 6px; }
+/* Opened as "Results: By idea" from the command menu: the panel head clears the phone's top bar and section tabs. */
+#ideas-panel { scroll-margin-top: 16px; }
+@media (max-width: 960px) { #ideas-panel { scroll-margin-top: calc(112px + env(safe-area-inset-top)); } }

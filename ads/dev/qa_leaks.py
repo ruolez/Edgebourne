@@ -10,6 +10,7 @@ import atexit
 import json
 import re
 import secrets
+from urllib.parse import quote
 
 from werkzeug.security import generate_password_hash
 
@@ -83,6 +84,8 @@ with account_ctx.all_accounts():
         """INSERT INTO leads (meta_lead_id, created_time, full_name, email, phone, ad_id, ad_name, campaign_id, account_id)
            VALUES (%s, now(), %s, 'acct2@example.com', '+15550002222', %s, %s, %s, %s) RETURNING id""",
         (f"{MARK2}lead", f"{MARK2} Lead Person", ids["ad"], f"{MARK2} ad", ids["campaign"], A2), returning=True)
+    # Its form carries the mark too, so the lead-form search (names read from leads) is walked as well.
+    db.execute("UPDATE leads SET form_id = %s, form_name = %s WHERE id = %s", (f"{MARK2}form", f"{MARK2} form", lead["id"]))
     task = db.query("SELECT id FROM desk_tasks WHERE prompt = %s", (f"{MARK2} task",), one=True) or db.execute(
         "INSERT INTO desk_tasks (kind, prompt, status, summary, account_id) VALUES ('question', %s, 'done', %s, %s) RETURNING id",
         (f"{MARK2} task", f"{MARK2} summary", A2), returning=True)
@@ -166,6 +169,8 @@ def walk(client, forbidden, other, label, own=None):
         r = client.get(url)
         checked += 1
         body = r.get_data(as_text=True)
+        if rule.rule == "/api/search":  # the command menu's search, asked for each forbidden name (and its own)
+            body += "".join(client.get(f"{url}?q={quote(m)}").get_data(as_text=True) for m in [*forbidden, own or ""] if len(m) >= 2)
         for mark in forbidden:
             if mark in body:
                 leaks.append(f"{label}: {url} ({r.status_code}) shows {mark!r}")

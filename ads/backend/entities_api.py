@@ -8,6 +8,7 @@ import ads_api
 import compare
 import db
 import ranges
+import search as search_logic
 import status_history
 import targets
 import timeline
@@ -18,6 +19,8 @@ bp = Blueprint("entities", __name__, url_prefix="/api")
 
 LEVEL_TABLE = {"campaign": "campaigns", "adset": "adsets", "ad": "ads"}
 VIEW_PAGES = ("ads", "leads", "insights", "inbox")
+PER_KIND = 8  # read per kind of thing; the command menu shows SEARCH_LIMIT, shared out fairly
+SEARCH_LIMIT = 24
 
 
 def crumbs(level, row):
@@ -164,28 +167,42 @@ def search():
     if len(q) < 2:
         return jsonify({"items": []})
     user = current_user()
-    like = f"%{q}%"
+    like = search_logic.like_pattern(q)
     vis = visible_campaign_ids(user)
     cw, cp = ("TRUE", []) if vis is None else ("campaign_id = ANY(%s)", [vis])
-    out = []
-    for r in db.query(f"SELECT id, name, effective_status FROM campaigns WHERE name ILIKE %s AND {'TRUE' if vis is None else 'id = ANY(%s)'} "
-                      "AND COALESCE(effective_status,'') <> 'DELETED' ORDER BY effective_status = 'ACTIVE' DESC, name LIMIT 6",
-                      [like] + ([] if vis is None else [vis])):
-        out.append({"type": "campaign", "id": r["id"], "title": r["name"], "sub": "Campaign", "href": f"/campaign.html?id={r['id']}"})
-    for r in db.query(f"SELECT id, name FROM adsets WHERE name ILIKE %s AND {cw} AND COALESCE(effective_status,'') <> 'DELETED' "
-                      "ORDER BY name LIMIT 6", [like] + cp):
-        out.append({"type": "adset", "id": r["id"], "title": r["name"], "sub": "Ad set", "href": f"/adset.html?id={r['id']}"})
-    for r in db.query(f"""SELECT a.id, a.name, s.name AS adset_name FROM ads a LEFT JOIN adsets s ON s.id = a.adset_id
-                          WHERE a.name ILIKE %s AND {cw.replace('campaign_id', 'a.campaign_id')} AND COALESCE(a.effective_status,'') <> 'DELETED'
-                          ORDER BY a.effective_status = 'ACTIVE' DESC, a.name LIMIT 8""", [like] + cp):
-        out.append({"type": "ad", "id": r["id"], "title": r["name"], "sub": f"Ad · {r['adset_name'] or ''}".rstrip(" ·"),
-                    "href": f"/ad.html?id={r['id']}"})
-    for r in db.query(f"""SELECT id, full_name, email, ad_name FROM leads WHERE NOT is_test AND {cw}
-                          AND (full_name ILIKE %s OR email ILIKE %s OR phone ILIKE %s) ORDER BY created_time DESC LIMIT 6""",
-                      cp + [like, like, like]):
-        out.append({"type": "lead", "id": r["id"], "title": r["full_name"] or r["email"] or "Lead",
-                    "sub": f"Lead · {r['ad_name'] or r['email'] or ''}".rstrip(" ·"), "href": f"/leads.html#lead={r['id']}"})
-    return jsonify({"items": out[:20]})
+    camps = [{"type": "campaign", "id": r["id"], "title": r["name"], "sub": "Campaign", "href": f"/campaign.html?id={r['id']}"}
+             for r in db.query(f"SELECT id, name, effective_status FROM campaigns WHERE name ILIKE %s AND {'TRUE' if vis is None else 'id = ANY(%s)'} "
+                               f"AND COALESCE(effective_status,'') <> 'DELETED' ORDER BY effective_status = 'ACTIVE' DESC, name LIMIT {PER_KIND}",
+                               [like] + ([] if vis is None else [vis]))]
+    sets = [{"type": "adset", "id": r["id"], "title": r["name"], "sub": "Ad set", "href": f"/adset.html?id={r['id']}"}
+            for r in db.query(f"SELECT id, name FROM adsets WHERE name ILIKE %s AND {cw} AND COALESCE(effective_status,'') <> 'DELETED' "
+                              f"ORDER BY name LIMIT {PER_KIND}", [like] + cp)]
+    ads = [{"type": "ad", "id": r["id"], "title": r["name"], "sub": f"Ad · {r['adset_name'] or ''}".rstrip(" ·"), "href": f"/ad.html?id={r['id']}"}
+           for r in db.query(f"""SELECT a.id, a.name, s.name AS adset_name FROM ads a LEFT JOIN adsets s ON s.id = a.adset_id
+                                 WHERE a.name ILIKE %s AND {cw.replace('campaign_id', 'a.campaign_id')} AND COALESCE(a.effective_status,'') <> 'DELETED'
+                                 ORDER BY a.effective_status = 'ACTIVE' DESC, a.name LIMIT {PER_KIND}""", [like] + cp)]
+    leads = [{"type": "lead", "id": r["id"], "title": r["full_name"] or r["email"] or "Lead",
+              "sub": f"Lead · {r['ad_name'] or r['email'] or ''}".rstrip(" ·"), "href": f"/leads.html#lead={r['id']}"}
+             for r in db.query(f"""SELECT id, full_name, email, ad_name FROM leads WHERE NOT is_test AND {cw}
+                                   AND (full_name ILIKE %s OR email ILIKE %s OR phone ILIKE %s) ORDER BY created_time DESC LIMIT {PER_KIND}""",
+                               cp + [like, like, like])]
+    groups = [camps, sets, ads, leads]
+    if user["role"] == "admin":
+        # Lead forms live on Meta: the ones leads came in through are known here without asking Meta.
+        groups.append([{"type": "form", "id": r["form_id"], "title": r["form_name"], "sub": "Lead form",
+                        "href": f"/forms.html#form={r['form_id']}"}
+                       for r in db.query(f"""SELECT form_id, MAX(form_name) AS form_name FROM leads WHERE form_id IS NOT NULL
+                                             AND form_name ILIKE %s GROUP BY form_id ORDER BY MAX(created_time) DESC LIMIT {PER_KIND}""", [like])])
+        groups.append([{"type": "test", "id": r["id"], "title": r["name"], "sub": "Test" + (" · running" if r["status"] == "running" else ""),
+                        "href": f"/experiments.html#{r['id']}"}
+                       for r in db.query(f"""SELECT id, name, status FROM experiments WHERE name ILIKE %s OR hypothesis ILIKE %s
+                                             ORDER BY status = 'running' DESC, start_day DESC LIMIT {PER_KIND}""", [like, like])])
+        groups.append([{"type": "swipe", "id": r["id"], "title": search_logic.swipe_title(r), "sub": "Swipe file",
+                        "href": f"/research.html#swipe={r['id']}"}
+                       for r in db.query(f"""SELECT id, page_name, title, body FROM swipes
+                                             WHERE page_name ILIKE %s OR title ILIKE %s OR body ILIKE %s OR notes ILIKE %s
+                                             ORDER BY last_seen_at DESC LIMIT {PER_KIND}""", [like] * 4)])
+    return jsonify({"items": [i for g in search_logic.fair_share(groups, SEARCH_LIMIT) for i in g]})
 
 
 # ---------------------------------------------------------------- saved views

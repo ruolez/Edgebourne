@@ -313,6 +313,7 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .bk-dock { position: fixed; left: calc(var(--rail-w) + (100vw - var(--rail-w)) / 2); bottom: 22px; transform: translateX(-50%); z-index: 25; }
 .bk { display: flex; align-items: center; gap: 6px; padding: 7px 7px 7px 16px; border-radius: var(--radius-m); background: var(--ink); color: var(--canvas); box-shadow: var(--shadow-3); white-space: nowrap; }
 .bk-n { font-size: var(--t-s); margin-right: 4px; }
+.bk-acts { display: contents; }
 .bk-n b { font-family: var(--font-num); }
 .bk-film { display: flex; gap: 3px; margin-right: 6px; }
 .bk-film .tbl-th { width: 22px; height: 27px; box-shadow: none; }
@@ -372,8 +373,15 @@ body.has-bulk .content { padding-bottom: 96px; }
   .tool-search { flex: 1; }
   .tool-search .input { width: 100%; }
   .bk-dock { left: 12px; right: 12px; bottom: calc(70px + env(safe-area-inset-bottom)); transform: none; }
-  .bk { overflow-x: auto; scrollbar-width: none; }
+  /* The bulk bar fits the phone: the count and × on top, the actions below sharing the width, icon over word. */
+  .bk { flex-wrap: wrap; white-space: normal; padding: 6px 6px 8px 14px; row-gap: 4px; }
+  .bk-n { flex: 1; }
+  .bk-x { order: 1; }
+  .bk-acts { display: flex; order: 2; flex: 1 1 100%; gap: 4px; }
   .bk-film { display: none; }
+  .bk .btn { flex: 1 1 0; min-width: 0; flex-direction: column; gap: 3px; padding: 6px 2px; min-height: 52px; font-size: var(--t-xs); line-height: 1.2; text-align: center; }
+  .bk .btn svg { width: 18px; height: 18px; }
+  body.has-bulk .content { padding-bottom: 170px; }
   .pk { top: auto; left: 0; width: 100%; max-height: 82vh; border-radius: var(--radius-l) var(--radius-l) 0 0; transform: translateY(105%); padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
   .pk.open { transform: none; }
   .page-head .segmented#level { order: 5; }
@@ -399,10 +407,16 @@ body.has-bulk .content { padding-bottom: 96px; }
 .pl-b small { color: var(--ink-3); font-size: var(--t-s); font-family: var(--font-num); }
 .pl .tbl-cb { width: 20px; height: 20px; }
 @media (max-width: 960px) {
-  #cols-pick, .cr-toolbar .icon-seg, #camp-pick { display: none; }
+  #cols-pick, .cr-toolbar .icon-seg { display: none; }
   .cr-toolbar { gap: 8px; }
   .tool-search { flex: 1 1 100%; order: -1; }
   .cr-toolbar .views { order: -2; }
+  /* Phones: campaign, then dates with vs before, then the sort, each a full row. */
+  #camp-pick { flex: 1 1 100%; min-width: 0; order: 1; }
+  #range-pick { flex: 1 1 0; min-width: 0; order: 2; }
+  .cr-toolbar #vs { order: 2; }
+  #sort-pick { flex: 1 1 100%; min-width: 0; order: 3; }
+  .cr-toolbar #archived { order: 4; }
   .page-head #level { flex-basis: 100%; }
   .page-head #level button { flex: 1; }
 }
