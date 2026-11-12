@@ -427,12 +427,13 @@ export async function peek(r, { onClose } = {}) {
       format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
   }
   diagnostics(r);
+  const tlBox = drawer.querySelector(".pk-tl");  // this row's: another row's quick look builds its own
   try {
     const tl = await api(`/api/timeline/${r.level}/${encodeURIComponent(r.id)}`);
     const items = tl.items.slice(0, 8);
-    drawer.querySelector(".pk-tl").innerHTML = items.length ? items.map((i) => `<li class="tl-${i.tone || "n"}"><span class="tl-dot"></span><span class="tl-w">${esc(when(i.at))}</span><span class="tl-t"><b>${esc(i.title)}</b>${i.by ? `<small>${esc(i.by)}</small>` : ""}</span></li>`).join("")
+    tlBox.innerHTML = items.length ? items.map((i) => `<li class="tl-${i.tone || "n"}"><span class="tl-dot"></span><span class="tl-w">${esc(when(i.at))}</span><span class="tl-t"><b>${esc(i.title)}</b>${i.by ? `<small>${esc(i.by)}</small>` : ""}</span></li>`).join("")
       : '<li class="muted">Nothing recorded yet: status changes show here from the next refresh.</li>';
-  } catch (err) { drawer.querySelector(".pk-tl").innerHTML = `<li class="muted">${esc(err.message)}</li>`; }
+  } catch (err) { tlBox.innerHTML = `<li class="muted">${esc(err.message)}</li>`; }
 }
 
 export function closePeek() {

@@ -2,10 +2,11 @@
 // shows a small offline page when there is no connection. Pages and data always come from the
 // network (the console is live data), so nothing stale is ever shown as current.
 const OFFLINE = "/offline.html";
-const CACHE = "ebads-offline-v2";
+const CACHE = "ebads-offline-v3";
+const OFFLINE_FILES = [OFFLINE, "/img/favicon.svg", "/css/tokens.css", "/css/app.css", "/css/shell.css"];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll([OFFLINE, "/img/favicon.svg", "/css/tokens.css", "/css/app.css", "/css/shell.css"])).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(OFFLINE_FILES)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {
@@ -13,8 +14,13 @@ self.addEventListener("activate", (e) => {
 });
 
 self.addEventListener("fetch", (e) => {
-  if (e.request.mode !== "navigate") return; // everything else goes straight to the network
-  e.respondWith(fetch(e.request).catch(() => caches.match(OFFLINE)));
+  if (e.request.mode === "navigate") { e.respondWith(fetch(e.request).catch(() => caches.match(OFFLINE))); return; }
+  // The offline page's own styles and icon (asked for with ?v=…): from the network, the kept copy without it.
+  const url = new URL(e.request.url);
+  if (e.request.method === "GET" && url.origin === self.location.origin && OFFLINE_FILES.includes(url.pathname)) {
+    e.respondWith(fetch(e.request).catch(() => caches.match(url.pathname)));
+  }
+  // everything else goes straight to the network
 });
 
 self.addEventListener("push", (e) => {

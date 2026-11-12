@@ -3,6 +3,15 @@ export class ApiError extends Error {
   constructor(message, status, body) { super(message); this.status = status; this.body = body || {}; }
 }
 
+// One load per key at a time on screen: startLoad(key) returns superseded(), true once a newer load of
+// the same key has started, so a slow, older answer is dropped instead of drawn over the newer one.
+const loads = new Map();
+export function startLoad(key) {
+  const mine = (loads.get(key) || 0) + 1;
+  loads.set(key, mine);
+  return () => loads.get(key) !== mine;
+}
+
 // reuse: a polled GET sends the ETag of its last answer; an unchanged answer comes back as 304 with no
 // body and is read again from the copy kept here (a fresh object each time, callers may change it).
 const kept = new Map();

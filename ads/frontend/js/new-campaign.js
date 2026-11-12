@@ -189,15 +189,18 @@ function buildView(b) {
   if (pf) pf.addEventListener("submit", async (e) => {
     e.preventDefault();
     fieldError(pf, null);
+    const btn = pf.querySelector("button[type=submit]");
+    if (btn.disabled) return;
     const yes = await confirmDialog({ title: "Publish now?", body: `<p>Turns on everything in this campaign at up to ${esc(money(r.budget_cents, { exact: true }))} a day.</p>`, confirm: "Publish" });
     if (!yes) return;
-    try { buildView(await api(`/api/builds/${b.id}/publish`, { method: "POST", body: { typed: $("pub-typed").value } })); toast("Published"); }
-    catch (err) { if (err.body && err.body.field) fieldError(pf, "typed", err.message); else toast(err.message, "bad"); }
+    btn.disabled = true;
+    try { buildView(await api(`/api/builds/${b.id}/publish`, { method: "POST", body: { typed: $("pub-typed").value } })); markSaved(); toast("Published"); }
+    catch (err) { btn.disabled = false; if (err.body && err.body.field) fieldError(pf, "typed", err.message); else toast(err.message, "bad"); }
   });
   const rb = $("resume");
   if (rb) rb.addEventListener("click", async () => {
     rb.disabled = true;
-    try { buildView(await api(`/api/builds/${b.id}/resume`, { method: "POST" })); } catch (err) { toast(err.message, "bad"); rb.disabled = false; }
+    try { buildView(await api(`/api/builds/${b.id}/resume`, { method: "POST" })); markSaved(); } catch (err) { toast(err.message, "bad"); rb.disabled = false; }
   });
 }
 

@@ -1,4 +1,4 @@
-import { api } from "./api.js";
+import { api, startLoad } from "./api.js";
 import { boot, esc, icon, onRefresh, toast, when, showLoadError } from "./ui.js";
 import { barList, columnChart } from "./charts.js";
 import { STATUS as FORMAT_STATUS, count, dayLabel, money, pct, per, moneyWhole, currencySymbol } from "./format.js";
@@ -178,7 +178,7 @@ function renderAds() {
   const bar = `<div class="panel-head wrap results-bar"><h2>Ads</h2><a class="more" href="/ads.html?range=${encodeURIComponent(range)}&vs=1" title="Turn ads on or off, compare or change several at once">Manage in Ads</a>
       <div class="segmented" id="cr-filter" role="group" aria-label="Show ads">${Object.entries(FILTERS).map(([k, [l]]) =>
         `<button type="button" data-filter="${k}" aria-pressed="${k === table.filter}">${esc(l)} <span class="n">${counts[k]}</span></button>`).join("")}</div>
-      <div class="search">${icon("search")}<label class="sr-only" for="cr-q">Find an ad</label><input class="input" id="cr-q" type="search" placeholder="Find an ad" autocomplete="off"></div>
+      <div class="search">${icon("search")}<label class="sr-only" for="cr-q">Find an ad</label><input class="input" id="cr-q" type="search" placeholder="Find an ad" autocomplete="off" value="${esc(table.q)}"></div>
     </div>`;
   if (!head) box.innerHTML = bar + '<div class="panel-body" id="cr-results"></div>';
   else box.querySelectorAll("#cr-filter button").forEach((b) => {
@@ -287,8 +287,10 @@ const ratePct = (v) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 async function loadIdeas() {
   const box = document.getElementById("ideas");
   if (!box) return;
+  const superseded = startLoad("ideas");
   try {
     const d = await api(`/api/concepts?by=${ideaBy}&range=30`);
+    if (superseded()) return;
     if (!d.groups.length) { box.innerHTML = '<p class="muted flush">No ad spent money in the last 30 days.</p>'; return; }
     const best = d.groups.find((g) => g.best);
     const verdict = !best ? '<p class="note">Too early to say which idea works best: each group needs 3 or more leads and twice the target cost in spend.</p>'
@@ -303,18 +305,20 @@ async function loadIdeas() {
         <td class="num">${g.cpl_cents != null ? `<span class="${g.enough ? "" : "early"}">${money(g.cpl_cents, { exact: true })}</span>` : "—"}</td>
         <td class="num">${ratePct(g.hook_rate)}</td><td class="num">${ratePct(g.hold_rate)}</td><td class="num">${ratePct(g.qualified_rate)}</td></tr>`).join("")}</tbody></table></div>
       ${d.untagged_ads ? `<p class="muted small flush">${d.untagged_ads} ad${d.untagged_ads === 1 ? " has" : "s have"} no ${esc(d.dimensions[d.by][0].toLowerCase())} yet: tag them under "The idea" on each ad's page, or ask Claude to.</p>` : ""}`;
-  } catch (err) { box.innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
+  } catch (err) { if (!superseded()) box.innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
 async function loadAccountBreakdown() {
   if (me.role !== "admin") { const el = document.getElementById("acc-spend"); if (el) el.closest(".panel").remove(); return; }
+  const superseded = startLoad("who-where");
   try {
     const scope = campaign ? `level=campaign&id=${encodeURIComponent(campaign)}` : "level=account";
     const d = await api(`/api/insights/breakdown?${scope}&by=${accBy}&range=${range}`);
+    if (superseded() || !$("acc-spend")) return;
     const total = d.items.reduce((s, i) => s + i.spend_cents, 0);
     barList($("acc-spend"), d.items, { key: "spend_cents", format: (v) => (total ? `${Math.round((v / total) * 100)}%` : "—"), extra: (i) => money(i.spend_cents) });
     barList($("acc-leads"), d.items, { key: "leads", format: (v) => count(v), extra: (i) => (i.leads ? `${per(i.spend_cents, i.leads)} per lead` : "no leads") });
-  } catch (err) { $("acc-spend").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
+  } catch (err) { if (!superseded() && $("acc-spend")) $("acc-spend").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
 // Budget amounts come in cents marked `money` (never shown as a bare 2000).
@@ -323,7 +327,7 @@ const fmtVal = (v, isMoney) => (v == null ? "" : isMoney ? money(v, { exact: tru
 async function loadActivity() {
   try {
     const d = await api("/api/insights/activity?days=14");
-    $("activity").innerHTML = d.items.length ? `<ul class="changes">${d.items.map((a) => {
+    $("activity").innerHTML = d.items.length ? `<ul class="chg-list">${d.items.map((a) => {
       const change = a.old != null || a.new != null ? `: ${esc(String(fmtVal(a.old, a.money)))} → ${esc(String(fmtVal(a.new, a.money)))}` : "";
       return `<li><span><b>${esc(a.what || "")}</b>${a.object ? ` · ${esc(a.object)}` : ""}${change}</span><small>${esc(when(a.time))}${a.who ? ` · ${esc(a.who)}` : ""}</small></li>`;
     }).join("")}</ul>` : '<p class="muted flush">No changes in the last 14 days.</p>';
@@ -333,12 +337,17 @@ async function loadActivity() {
 async function load() {
   document.querySelectorAll("#range button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.range === range)));
   syncUrl();
+  const superseded = startLoad("performance");
+  let d;
   try {
-    data = await api(`/api/performance?range=${range}${campaign ? `&campaign=${encodeURIComponent(campaign)}` : ""}`);
+    d = await api(`/api/performance?range=${range}${campaign ? `&campaign=${encodeURIComponent(campaign)}` : ""}`);
   } catch (err) {
+    if (superseded()) return;
     if (campaign) { campaign = ""; return load(); }
     showLoadError($("perf"), err, load); return;
   }
+  if (superseded()) return;
+  data = d;
   if (campaign && !data.campaigns.some((c) => c.id === campaign)) { campaign = ""; return load(); }
   campaignPicker();
   render();

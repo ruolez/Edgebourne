@@ -1,6 +1,6 @@
 // Ads page: the manager table at three levels with views, saved views, range + "vs before",
 // columns, search, selection → bulk bar / compare, and a peek drawer. Everything is in the URL.
-import { api } from "./api.js";
+import { api, startLoad } from "./api.js";
 import { boot, confirmDialog, esc, icon, onRefresh, toast, showLoadError } from "./ui.js";
 import { count, dayLabel } from "./format.js";
 import * as UrlState from "./urlstate.js";
@@ -10,19 +10,22 @@ const $ = (id) => document.getElementById(id);
 const DEFAULTS = { level: "ad", view: "all", range: "7", vs: true, cols: "results", sort: "spend", dir: "desc", q: "", campaign: "", archived: false, display: "table", peek: "" };
 const RANGES = [["7", "7 days"], ["14", "14 days"], ["30", "30 days"], ["mtd", "This month"], ["lastmonth", "Last month"]];
 const MONTHS = ["mtd", "lastmonth"];
-// One-time move of the old saved preferences into the URL defaults.
+// The URL and saved views always carry the dates, so a link opens on the same days in any browser.
+const KEEP = { ...DEFAULTS, range: "" };
+let state = UrlState.read(DEFAULTS);
+// This browser's last dates (and the old saved card view) only fill in what the URL doesn't say.
 try {
   const old = JSON.parse(localStorage.getItem("ebads-adsview") || "null");
-  if (old && !location.search) { if (old.view === "cards") DEFAULTS.display = "cards"; localStorage.removeItem("ebads-adsview"); }
+  if (old && !location.search) { if (old.view === "cards") state.display = "cards"; localStorage.removeItem("ebads-adsview"); }
   const r = localStorage.getItem("ebads-range");
-  if (r && RANGES.some(([k]) => k === r)) DEFAULTS.range = r;
+  if (r && RANGES.some(([k]) => k === r) && !new URLSearchParams(location.search).has("range")) state.range = r;
 } catch (e) { /* storage off */ }
-let state = UrlState.read(DEFAULTS);
 let data = null, rows = null, me = null, saved = [];
 const selected = new Set();
 let lastPicked = null;
 
-const save = () => UrlState.write(state, DEFAULTS);
+const save = () => UrlState.write(state, KEEP);
+save();
 
 function visibleRows() {
   const all = rows[state.level] || [];
@@ -117,9 +120,13 @@ async function loadOpenBuilds() {
 const buildsNote = () => (openBuilds.length ? `<p class="note">Not finished: ${openBuilds.map((b) => `<a href="/new-campaign.html?build=${b.id}">${esc(b.name || "Untitled campaign")}</a>`).join(", ")}. Open to finish or publish.</p>` : "");
 
 async function load() {
+  const superseded = startLoad("ads");
+  let d;
   try {
-    data = await api(`/api/ads?range=${encodeURIComponent(state.range)}${state.vs ? "&vs=prev" : ""}${state.archived ? "&archived=1" : ""}`);
-  } catch (err) { showLoadError($("cr-all"), err, load); return; }
+    d = await api(`/api/ads?range=${encodeURIComponent(state.range)}${state.vs ? "&vs=prev" : ""}${state.archived ? "&archived=1" : ""}`);
+  } catch (err) { if (!superseded()) showLoadError($("cr-all"), err, load); return; }
+  if (superseded()) return;
+  data = d;
   rows = flatten(data);
   for (const id of [...selected]) if (!(rows[state.level] || []).some((r) => r.id === id)) selected.delete(id);
   render();
@@ -196,7 +203,7 @@ if (me) {
         body: "<p>Keeps the level, filter, dates and columns you see now, so you can come back in one click.</p>",
         field: { label: "Name", value: (VIEWS[state.view] || VIEWS.all)[0] + (state.q ? ` · ${state.q}` : ""), validate: (x) => (x.trim() ? null : "Give it a name") } });
       if (!name) return;
-      try { await api("/api/views", { method: "POST", body: { page: "ads", name: name.trim(), query: UrlState.query(state, DEFAULTS) } }); await loadSaved(); render(); toast("View saved"); }
+      try { await api("/api/views", { method: "POST", body: { page: "ads", name: name.trim(), query: UrlState.query(state, KEEP) } }); await loadSaved(); render(); toast("View saved"); }
       catch (err) { toast(err.message, "bad"); }
     }
   });

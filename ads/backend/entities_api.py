@@ -248,6 +248,8 @@ def update_view(view_id):
     fields, err = _view_fields(request.get_json(silent=True) or {}, partial=True)
     if err:
         return err
+    if user["role"] == "client":
+        fields.pop("shared", None)
     if not fields:
         return api_error("Nothing to change", 400)
     sets = ", ".join(f"{k} = %s" for k in fields)

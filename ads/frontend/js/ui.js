@@ -108,22 +108,25 @@ const THEMES = ["system", "light", "dark"];
 export function currentTheme() {
   try { return localStorage.getItem("ebads-theme") || "system"; } catch (e) { return "system"; }
 }
+const themeLabel = (t) => ({ system: "Theme: auto", light: "Theme: light", dark: "Theme: dark" }[t]);
 export function applyTheme(t) {
   if (t === "system") document.documentElement.removeAttribute("data-theme");
   else document.documentElement.setAttribute("data-theme", t);
   try { localStorage.setItem("ebads-theme", t); } catch (e) {}
+  document.querySelectorAll("[data-theme-btn]").forEach((b) => { (b.querySelector("span") || b).textContent = themeLabel(t); });
 }
-const themeLabel = (t) => ({ system: "Theme: auto", light: "Theme: light", dark: "Theme: dark" }[t]);
 
 // ---------- frame ----------
 // Desktop: light sidebar. Phone: top bar + bottom tab bar + "More" sheet.
 // Every page gets the Refresh control; a page hands its reload to onRefresh(fn).
+// opts.auto, when given, runs instead of fn for the frame's own catch-up with the server's pulls.
 let refreshHandler = null;
+let autoHandler = null;
 let updatedAt = null;
 let shownAt = null; // the updated_at the page's data was last loaded at
 let autoMinutes = null;
 let clockSkew = 0;
-export function onRefresh(fn) { refreshHandler = fn; }
+export function onRefresh(fn, opts = {}) { refreshHandler = fn; autoHandler = opts.auto || null; }
 
 export function ago(ts, now = Date.now() / 1000) {
   if (!ts) return "not yet";
@@ -159,8 +162,9 @@ async function catchUp() {
   if (!updatedAt || (shownAt && updatedAt <= shownAt) || editing()) return;
   const first = shownAt === null;
   shownAt = updatedAt;
-  if (first || !refreshHandler) return;
-  try { await refreshHandler(); } catch (e) { /* the next manual refresh shows the error */ }
+  const reload = autoHandler || refreshHandler;
+  if (first || !reload) return;
+  try { await reload(); } catch (e) { /* the next manual refresh shows the error */ }
 }
 
 async function doRefresh() {
@@ -319,14 +323,16 @@ export function showLoadError(el, err, retry) {
   else errorState(el, err, retry);
 }
 
-// Half-typed forms: warn before the page goes away. Pages call markSaved() once the work is safe.
-let unsaved = false;
-export const markSaved = () => { unsaved = false; };
+// Half-typed forms: warn before the page goes away. Tracked per form: a page calls markSaved(form) once
+// that form's work is safe (markSaved() for all of them); a form taken off the page no longer counts.
+const unsaved = new Set();
+export const markSaved = (form) => { if (form) unsaved.delete(form); else unsaved.clear(); };
 export function guardLeaving() {
   document.addEventListener("input", (e) => {
-    if (e.target.matches('input:not([type=checkbox]):not([type=radio]):not([type=search]), textarea') && e.target.closest("form") && !e.target.closest("dialog")) unsaved = true;
+    const form = e.target.closest("form");
+    if (e.target.matches('input:not([type=checkbox]):not([type=radio]):not([type=search]), textarea') && form && !e.target.closest("dialog")) unsaved.add(form);
   });
-  window.addEventListener("beforeunload", (e) => { if (unsaved) { e.preventDefault(); e.returnValue = ""; } });
+  window.addEventListener("beforeunload", (e) => { if ([...unsaved].some((f) => f.isConnected)) { e.preventDefault(); e.returnValue = ""; } });
 }
 
 export async function boot({ page, admin = false }) {
@@ -452,12 +458,7 @@ export async function boot({ page, admin = false }) {
   document.querySelectorAll("[data-refresh]").forEach((b) => b.addEventListener("click", doRefresh));
   document.querySelectorAll("[data-palette]").forEach((b) => b.addEventListener("click", () => openPalette()));
   document.querySelectorAll("[data-theme-btn]").forEach((b) => b.addEventListener("click", () => {
-    const next = THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length];
-    applyTheme(next);
-    document.querySelectorAll("[data-theme-btn]").forEach((x) => {
-      const span = x.querySelector("span");
-      (span || x).textContent = themeLabel(next);
-    });
+    applyTheme(THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length]);
   }));
   document.querySelectorAll("[data-signout]").forEach((b) => b.addEventListener("click", async () => {
     await api("/api/auth/logout", { method: "POST" });

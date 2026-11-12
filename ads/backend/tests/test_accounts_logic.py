@@ -21,10 +21,12 @@ class StoredKeyTests(unittest.TestCase):
 
 
 class ClientAllowTests(unittest.TestCase):
-    def test_a_client_may_only_manage_their_own_sign_in_and_notifications(self):
+    def test_a_client_may_only_manage_their_own_sign_in_notifications_read_marks_and_views(self):
         import accounts_api
-        ok = ["/api/auth/logout", "/api/auth/password", "/api/auth/me", "/api/me/push", "/api/me/push/3", "/api/me/push/test"]
-        no = ["/api/leads/1", "/api/ads/ad/1/tags", "/api/accounts", "/api/auth/password/reset", "/api/me/telegram", "/api/settings/meta"]
+        ok = ["/api/auth/logout", "/api/auth/password", "/api/auth/me", "/api/me/push", "/api/me/push/3", "/api/me/push/test",
+              "/api/me/telegram", "/api/me/telegram/link", "/api/me/telegram/test", "/api/inbox/read", "/api/views", "/api/views/12"]
+        no = ["/api/leads/1", "/api/ads/ad/1/tags", "/api/accounts", "/api/auth/password/reset", "/api/settings/meta",
+              "/api/inbox/read/all", "/api/views/12/share", "/api/views/x", "/api/settings/telegram", "/api/me/telegramx"]
         self.assertEqual([bool(accounts_api.CLIENT_MAY.match(p)) for p in ok], [True] * len(ok))
         self.assertEqual([bool(accounts_api.CLIENT_MAY.match(p)) for p in no], [False] * len(no))
 

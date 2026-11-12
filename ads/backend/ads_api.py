@@ -923,13 +923,18 @@ def video_status(video_id):
 @login_required
 def new_options():
     user = current_user()
+    # Only ad sets a new ad can go into (Meta refuses deleted and archived ones), delivering first.
     aw, ap = _scope(user, "s.campaign_id")
-    adsets = db.query(f"""SELECT s.id, s.name, c.name AS campaign_name FROM adsets s
-                          JOIN campaigns c ON c.id = s.campaign_id WHERE {aw} ORDER BY c.name, s.name""", ap)
+    adsets = db.query(f"""SELECT s.id, s.name, s.effective_status, c.name AS campaign_name FROM adsets s
+                          JOIN campaigns c ON c.id = s.campaign_id
+                          WHERE {aw} AND COALESCE(s.effective_status, '') NOT IN ('DELETED', 'ARCHIVED')
+                            AND COALESCE(c.effective_status, '') NOT IN ('DELETED', 'ARCHIVED')
+                          ORDER BY (s.effective_status IS NOT DISTINCT FROM 'ACTIVE') DESC, c.name, s.name""", ap)
     tw, tp = _scope(user, "campaign_id")
     templates = db.query(f"""SELECT id, name, adset_id, title, body, cta_type, image_url, object_type
                              FROM ads WHERE {tw} AND COALESCE(effective_status, '') <> 'DELETED'
-                             ORDER BY created_time DESC NULLS LAST""", tp)
+                             ORDER BY (effective_status IS NOT DISTINCT FROM 'ACTIVE') DESC, (effective_status IS NOT DISTINCT FROM 'ARCHIVED'),
+                                      created_time DESC NULLS LAST""", tp)
     return jsonify({"adsets": adsets, "templates": templates, "cta_types": CTA_TYPES})
 
 
@@ -954,11 +959,15 @@ def prepare_creative(user, data):
         return None, ("The ad it starts from isn't there any more. Pick another.", 400)
     if template and not adset_id:
         adset_id = template["adset_id"]
-    adset = db.query("SELECT id, name, campaign_id FROM adsets WHERE id = %s", (adset_id,), one=True)
+    adset = db.query("""SELECT s.id, s.name, s.campaign_id,
+                                 s.effective_status IN ('DELETED', 'ARCHIVED') OR c.effective_status IN ('DELETED', 'ARCHIVED') AS gone
+                          FROM adsets s JOIN campaigns c ON c.id = s.campaign_id WHERE s.id = %s""", (adset_id,), one=True)
     if not adset:
         return None, ("Pick the ad set", 400)
     if not can_touch(user, adset["campaign_id"]) or (template and not can_touch(user, template["campaign_id"])):
         return None, ("This campaign isn't assigned to you", 403)
+    if adset.pop("gone"):
+        return None, ("That ad set was deleted or archived on Meta. Pick another.", 400)
     name = (data.get("name") or "").strip()[:200]
     body = (data.get("body") or "").strip()
     title = (data.get("title") or "").strip()[:255]

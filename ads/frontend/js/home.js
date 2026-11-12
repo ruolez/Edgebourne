@@ -17,11 +17,11 @@ function leadClock(iso, now = Date.now()) {
   return `<span class="lclock ${tone}">${icon(tone === "late" ? "alarm" : "clock")}${text}${tone === "fresh" ? ", new" : " waiting"}</span>`;
 }
 
-const ATT_ICON = { bad: "alarm", warn: "missed", claude: "spark" };
+const ATT_ICON = { leads: "missed", claude: "spark", money: "chart", status: "ads", system: "alarm" };
 
 function render(d) {
   const attention = d.attention.length
-    ? `<ul class="attention" aria-label="Needs you">${d.attention.map((a) => `<li class="${a.level}">${icon(ATT_ICON[a.level] || "alarm")}<span>${esc(a.text)}</span>${a.href ? `<a class="btn" href="${esc(a.href)}">${esc(a.action || "Open")}</a>` : ""}</li>`).join("")}</ul>`
+    ? `<ul class="attention" aria-label="Needs you">${d.attention.map((a) => `<li class="${a.level}">${icon(ATT_ICON[a.kind] || "alarm")}<span>${esc(a.text)}</span>${a.href ? `<a class="btn" href="${esc(a.href)}">${esc(a.action || "Open")}</a>` : ""}</li>`).join("")}</ul>`
     : `<p class="all-clear">${icon("spark")}<span>Nothing needs you right now.</span></p>`;
 
   const call = d.call.length
@@ -146,7 +146,9 @@ function changeWords(c, LEVEL) {
   }
 }
 
+let loadedAt = 0;
 async function load() {
+  loadedAt = Date.now();
   try { render(await api("/api/home")); } catch (err) { showLoadError($("home"), err, load); }
 }
 
@@ -156,9 +158,12 @@ if (me) {
   $("today-date").textContent = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   if (me.role === "admin") { $("ask-claude").hidden = false; $("ask-claude").innerHTML = `${icon("spark")}<span>Ask Claude</span>`; }
   $("new-ad").innerHTML = `${icon("plus")}<span>New ad</span>`;
-  onRefresh(load);
+  // New leads every minute. Both this timer and the frame's catch-up fire on the same tick, so
+  // whichever reloads second skips: the catch-up when Today loaded in the last 15 s (that load
+  // already read what the server pulled), the timer when the catch-up reloaded in the last 50 s.
+  onRefresh(load, { auto: () => (Date.now() - loadedAt < 15000 ? null : load()) });
   load();
-  setInterval(() => { if (!document.hidden && !editing()) load(); }, 60000);
+  setInterval(() => { if (!document.hidden && !editing() && Date.now() - loadedAt > 50000) load(); }, 60000);
 }
 
 

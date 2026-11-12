@@ -231,6 +231,9 @@ async function openForm(t = null) {
       start_day: form.start_day.value, end_day: form.end_day.value || null,
       target_cents: COST.has(form.metric.value) && dollars ? Math.round(Number(dollars) * 100) : null };
     if (t) body.notes = form.notes.value;
+    const btn = form.querySelector("button[type=submit]");
+    if (btn.disabled) return;
+    btn.disabled = true;
     try {
       const saved = await api(t ? `/api/experiments/${t.id}` : "/api/experiments", { method: t ? "PATCH" : "POST", body });
       dlg.close();
@@ -239,7 +242,7 @@ async function openForm(t = null) {
       load();
     } catch (err) {
       if (err.body && err.body.field) fieldError(form, err.body.field, err.message); else toast(err.message, "bad");
-    }
+    } finally { btn.disabled = false; }
   });
   dlg.addEventListener("close", () => dlg.remove());
   dlg.showModal();

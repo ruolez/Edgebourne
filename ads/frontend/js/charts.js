@@ -13,6 +13,13 @@ export function niceMax(max, ticks = 4, integer = false) {
   return { top: step * Math.ceil(max / step), step };
 }
 
+// About six day labels: every k-th day and always the last, minus a regular one too close to the last to fit
+// (closer than half a step; 14 days → 0,3,6,9,13, 30 days → 0,5,…,25,29).
+function dayTick(i, n) {
+  const every = Math.ceil(n / 6);
+  return i === n - 1 || (i % every === 0 && n - 1 - i >= Math.ceil(every / 2));
+}
+
 export function columnChart({ el, series, key, color, format, axisFormat, title, integer = false, height = 220 }) {
   const W = 560, H = height, L = 52, R = 8, T = 10, B = 26;
   const values = series.map((d) => d[key]);
@@ -28,13 +35,12 @@ export function columnChart({ el, series, key, color, format, axisFormat, title,
     if (empty && v > 0) continue;
     ticks += `<text class="tick" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${axisFormat(v)}</text>`;
   }
-  const every = Math.ceil(series.length / 6);
   const cols = series.map((d, i) => {
     const x = L + i * band + (band - bw) / 2;
     const h = (d[key] / top) * plotH;
     const r = Math.min(4, h);
     const path = h <= 0 ? "" : `M${x},${T + plotH} V${T + plotH - h + r} Q${x},${T + plotH - h} ${x + r},${T + plotH - h} H${x + bw - r} Q${x + bw},${T + plotH - h} ${x + bw},${T + plotH - h + r} V${T + plotH} Z`;
-    const label = i % every === 0 || i === series.length - 1 ? `<text class="tick" x="${L + i * band + band / 2}" y="${H - 6}" text-anchor="middle">${dayLabel(d.day)}</text>` : "";
+    const label = dayTick(i, series.length) ? `<text class="tick" x="${L + i * band + band / 2}" y="${H - 6}" text-anchor="middle">${dayLabel(d.day)}</text>` : "";
     return `<rect class="hit" data-i="${i}" x="${L + i * band}" y="${T}" width="${band}" height="${plotH}"/><path class="col" d="${path}" fill="${color}"/>${label}`;
   }).join("");
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}"><g class="grid">${grid}</g>${ticks}${cols}</svg><div class="tip" hidden></div>`;
@@ -81,8 +87,7 @@ export function lineChart({ el, series, format, axisFormat, title, integer = fal
     grid += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`;
     ticks += `<text class="tick" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${esc(axisFormat(v))}</text>`;
   }
-  const every = Math.ceil(days.length / 6);
-  const labels = days.map((d, i) => (i % every === 0 || i === days.length - 1 ? `<text class="tick" x="${x(i)}" y="${H - 6}" text-anchor="middle">${dayLabel(d)}</text>` : "")).join("");
+  const labels = days.map((d, i) => (dayTick(i, days.length) ? `<text class="tick" x="${x(i)}" y="${H - 6}" text-anchor="middle">${dayLabel(d)}</text>` : "")).join("");
   const lines = series.map((s) => {
     const pts = s.points.map((p, i) => (p.value == null ? null : `${x(i).toFixed(1)},${y(p.value).toFixed(1)}`)).filter(Boolean).join(" ");
     return `<polyline class="ln ${s.cls}" points="${pts}"/>`;

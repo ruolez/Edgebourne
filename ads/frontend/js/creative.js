@@ -1,4 +1,4 @@
-import { api } from "./api.js";
+import { api, startLoad } from "./api.js";
 import { boot, confirmDialog, esc, icon, onRefresh, previewSkeleton, setCrumbs, shortWait, showPreviewFrame, switchHtml, toast, when, errorState } from "./ui.js";
 import { CTA_LABELS, count, money, pct, per, statusOf, moneyWhole } from "./format.js";
 import { barList, columnChart } from "./charts.js";
@@ -75,6 +75,7 @@ function showTab(next) {
   history.replaceState(null, "", `${location.pathname}${location.search}#tab=${tab}`);
   document.querySelectorAll("#cr-tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
   clearTimeout(pollTimer);
+  startLoad("tab");  // an answer still on its way for the tab left behind is dropped
   ({ overview: renderOverview, polish: renderPolish, audience: renderAudience, video: renderVideo, comments: renderComments, history: renderHistory }[tab] || renderOverview)();
 }
 
@@ -83,14 +84,17 @@ function showTab(next) {
 async function loadPreview() {
   const box = $("preview-frame");
   if (!box) return;
+  const superseded = startLoad("preview");
   document.querySelectorAll("#formats button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.format === format)));
   box.innerHTML = previewSkeleton();
   try {
     const p = await api(`/api/ads/ad/${encodeURIComponent(adId)}/preview?format=${format}`);
+    if (superseded() || !box.isConnected) return;
     showPreviewFrame(box, p, { title: "Ad preview from Meta", width: Math.min(p.width || 360, 400), height: p.height || 640 });
     $("preview-open").href = p.src;
     $("preview-open").hidden = false;
   } catch (err) {
+    if (superseded() || !box.isConnected) return;
     box.innerHTML = `<p class="note warn">${esc(err.message)}</p>`;
     $("preview-open").hidden = true;
   }
@@ -271,9 +275,13 @@ document.addEventListener("click", async (e) => {
 const PRESET_LABELS = { full: "Full audit", copy: "Words only", design: "Design only", quick: "Quick check" };
 
 async function renderPolish() {
+  const superseded = startLoad("tab");
   if (!passes) passes = await api("/api/polish/passes");
   let runs = [];
-  try { runs = (await api(`/api/ads/ad/${encodeURIComponent(adId)}/polish-runs`)).tasks; } catch (err) { toast(err.message, "bad"); }
+  try { runs = (await api(`/api/ads/ad/${encodeURIComponent(adId)}/polish-runs`)).tasks; } catch (err) { if (!superseded()) toast(err.message, "bad"); }
+  if (superseded()) return;
+  // A refresh while a run works must not throw away a direction being written.
+  const typed = { direction: $("direction")?.value || "", render: $("render-direction")?.value || "" };
   const last = runs.find((r) => r.kind === "polish" && r.scorecard);
   const selected = new Set(JSON.parse(sessionStorage.getItem("ebads-passes") || "null") || passes.presets.full);
   $("cr-main").innerHTML = `
@@ -313,6 +321,8 @@ async function renderPolish() {
     </div>
     <h2 class="section-h">Runs</h2>
     <div class="stack" id="runs">${runs.length ? runs.map((t) => taskCard(t, openReports)).join("") : '<section class="panel empty"><h3>No polish runs yet</h3><p>Pick the passes above and run them. Results show here with a score per pass, the fixes, and new versions of the copy you can put on this ad.</p></section>'}</div>`;
+  $("direction").value = typed.direction;
+  $("render-direction").value = typed.render;
 
   const form = $("polish-form");
   let polishSending = false, renderSending = false;  // a double click or a tick during the POST queues one run
@@ -344,6 +354,7 @@ async function renderPolish() {
     try {
       await api(`/api/ads/ad/${encodeURIComponent(adId)}/polish`, { method: "POST", body: { passes: chosen, direction: $("direction").value, variants: $("variants").checked } });
       toast("Sent to Claude");
+      $("direction").value = "";
       renderPolish();
     } catch (err) { toast(err.message, "bad"); polishSending = false; sync(); }
   });
@@ -363,10 +374,17 @@ async function renderPolish() {
     try {
       await api(`/api/ads/ad/${encodeURIComponent(adId)}/render`, { method: "POST", body: { direction: $("render-direction").value, from_task: useFixes ? last.id : null } });
       toast("Sent to Claude");
+      $("render-direction").value = "";
       renderPolish();
     } catch (err) { toast(err.message, "bad"); renderSending = false; renderBtn.disabled = false; }
   });
-  if (runs.some((r) => ACTIVE.has(r.status))) pollTimer = setTimeout(() => { if (tab === "polish" && !document.activeElement.closest("form")) renderPolish(); else pollTimer = setTimeout(renderPolish, 6000); }, 6000);
+  // While a run works: refresh every 6 s, never while the person is in one of the forms.
+  const poll = () => {
+    if (tab !== "polish") return;
+    if (document.activeElement?.closest("form")) pollTimer = setTimeout(poll, 6000);
+    else renderPolish();
+  };
+  if (runs.some((r) => ACTIVE.has(r.status))) pollTimer = setTimeout(poll, 6000);
 }
 
 // ---------------------------------------------------------------- audience
@@ -389,21 +407,25 @@ async function renderAudience() {
     </section>`;
   $("aud-by").addEventListener("click", (e) => { const b = e.target.closest("[data-by]"); if (b) { audienceBy = b.dataset.by; renderAudience(); } });
   $("aud-range").addEventListener("click", (e) => { const b = e.target.closest("[data-r]"); if (b) { audienceRange = b.dataset.r; renderAudience(); } });
+  const superseded = startLoad("tab");
   try {
     const d = await api(`/api/insights/breakdown?level=ad&id=${encodeURIComponent(adId)}&by=${audienceBy}&range=${audienceRange}`);
+    if (superseded()) return;
     const total = d.items.reduce((s, i) => s + i.spend_cents, 0);
     barList($("aud-spend"), d.items, { key: "spend_cents", format: (v) => (total ? `${Math.round((v / total) * 100)}%` : "—"), extra: (i) => money(i.spend_cents) });
     barList($("aud-leads"), d.items, { key: "leads", format: (v) => count(v), extra: (i) => (i.leads ? `${per(i.spend_cents, i.leads)} per lead` : "no leads") });
     $("aud-note").textContent = `Complete days only. Small groups swing a lot: judge a slice only after it has a few leads.${audienceBy === "region" ? " Region is where people are, not where they live." : ""}`;
-  } catch (err) { $("aud-spend").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
+  } catch (err) { if (!superseded()) $("aud-spend").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
 // ---------------------------------------------------------------- video
 
 async function renderVideo() {
   $("cr-main").innerHTML = '<section class="panel"><div class="panel-body"><p class="muted">Loading…</p></div></section>';
+  const superseded = startLoad("tab");
   try {
     const d = await api(`/api/insights/ad/${encodeURIComponent(adId)}/diagnostics`);
+    if (superseded()) return;
     const f = d.funnel;
     const steps = [
       { label: "Shown (impressions)", v: f.impressions }, { label: "Watched 3 seconds", v: f.video_3s }, { label: "Watched 25%", v: f.p25 },
@@ -444,7 +466,7 @@ async function renderVideo() {
         </div>
       </div>`;
     barList($("funnel"), steps, { key: "v", format: (v) => count(v), max: f.impressions || 1, extra: (i) => (f.impressions ? `${((i.v / f.impressions) * 100).toFixed(1)}%` : "") });
-  } catch (err) { $("cr-main").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
+  } catch (err) { if (!superseded()) $("cr-main").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
 // ---------------------------------------------------------------- comments
@@ -471,15 +493,17 @@ function commentHtml(c) {
 
 async function renderComments() {
   $("cr-main").innerHTML = '<section class="panel"><div class="panel-body"><p class="muted">Loading comments from Facebook…</p></div></section>';
+  const superseded = startLoad("tab");
   try {
     const d = await api(`/api/insights/ad/${encodeURIComponent(adId)}/comments`);
+    if (superseded()) return;
     const open = d.items.filter((c) => !c.answered && !c.hidden).length;
     $("cr-main").innerHTML = `<section class="panel comments-panel">
       <div class="panel-head"><h2>Comments</h2><p>${count(d.total)} on the ad's post${open ? ` · ${open} not answered` : ""}</p><span class="spacer"></span>${d.post_url ? `<a class="btn btn-quiet btn-small" href="${esc(d.post_url)}" target="_blank" rel="noopener noreferrer">Open on Facebook ${icon("external")}</a>` : ""}</div>
       <div class="panel-body">${d.items.length ? `<ul class="comments">${d.items.map(commentHtml).join("")}</ul>
         <p class="muted small flush">Hiding keeps a comment visible to its writer and their friends, and to no one else. Nothing is deleted from here.</p>`
         : `<p class="muted flush">${esc(d.note || "No comments yet. Questions here are warm leads: reply within a few hours.")}</p>`}</div></section>`;
-  } catch (err) { $("cr-main").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
+  } catch (err) { if (!superseded()) $("cr-main").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
 document.addEventListener("click", async (e) => {
@@ -521,7 +545,7 @@ function renderHistory() {
     <section class="panel"><div class="panel-head"><h2>Status from Meta</h2><p>Review, delivery and issues, as Meta reported them</p></div>
       <div class="panel-body">${tl.length ? `<ol class="st-tl">${tl.map((r) => `<li class="st-ev ${tone(r)}"><span class="st-dot"></span><span class="st-when">${esc(when(r.at))}</span><span class="st-what"><b>${esc(r.headline)}</b>${r.by_name ? `<small>by ${esc(r.by_name)}</small>` : ""}</span><span class="st-src">${src[r.source] || ""}</span></li>`).join("")}</ol>` : '<p class="muted flush">Nothing recorded yet. Changes appear here from the next refresh.</p>'}</div></section>
     <section class="panel"><div class="panel-head"><h2>Changes</h2><p>Made from this dashboard</p></div>
-      <div class="panel-body">${data.changes.length ? `<ul class="changes">${data.changes.map(changeLine).join("")}</ul>` : '<p class="muted flush">No changes yet.</p>'}</div></section>
+      <div class="panel-body">${data.changes.length ? `<ul class="chg-list">${data.changes.map(changeLine).join("")}</ul>` : '<p class="muted flush">No changes yet.</p>'}</div></section>
     ${decided.length ? `<section class="panel"><div class="panel-head"><h2>Claude's earlier proposals</h2></div><div class="panel-body stack tight">${decided.map(proposalCard).join("")}</div></section>` : ""}`;
 }
 

@@ -184,7 +184,7 @@ function openBuilder(start) {
   f.addEventListener("click", (e) => {
     const t = e.target.closest("[data-show-step]");
     if (t) { step = t.dataset.showStep; phone(); return; }
-    if (e.target.closest("[data-close]")) { box.hidden = true; box.innerHTML = ""; return; }
+    if (e.target.closest("[data-close]")) { box.hidden = true; box.innerHTML = ""; markSaved(f); return; }
     if (e.target.closest("#q-add")) {
       const n = f.querySelectorAll("[data-q]").length;
       $("q-list").insertAdjacentHTML("beforeend", customRow({ label: "", options: [] }, n));
@@ -208,13 +208,16 @@ function syncQ() { $("q-add").hidden = $("form-edit").querySelectorAll("[data-q]
 
 async function create(e) {
   e.preventDefault();
-  readSpec();
   const f = $("form-edit");
+  const btn = e.submitter || f.querySelector("button[type=submit]");
+  if (btn.disabled) return;
+  readSpec();
   fieldError(f, null);
   const yes = await confirmDialog({ title: `Create “${spec.name}” on Meta?`,
     body: "<p>It's saved on the Facebook Page. Meta doesn't allow changes afterwards, so to change it later you copy it into a new form.</p><p class=\"muted\">Nothing runs and nothing is spent until an ad uses it.</p>",
     confirm: "Create form" });
   if (!yes) return;
+  btn.disabled = true;  // a second create while Meta answers would make a second form on the Page
   try {
     const r = await api("/api/forms", { method: "POST", body: spec });
     markSaved();
@@ -223,6 +226,7 @@ async function create(e) {
     toast("Form created on the Page");
     await loadList();
   } catch (err) {
+    btn.disabled = false;
     if (err.body && err.body.field) fieldError(f, err.body.field, err.message); else toast(err.message, "bad");
   }
 }

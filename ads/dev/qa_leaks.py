@@ -14,6 +14,7 @@ import secrets
 from werkzeug.security import generate_password_hash
 
 import account_ctx
+import auth
 import db
 import builds_api
 from app import create_app
@@ -57,7 +58,8 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
     once("lead_notes", {"lead_id": lead, "user_id": admin_id, "body": f"{mark} note", "account_id": acct}, "body")
     once("lead_replies", {"lead_id": lead, "user_id": admin_id, "to_email": "qa@example.com", "subject": f"{mark} reply", "body": f"{mark} reply",
                           "status": "sent", "account_id": acct}, "subject")
-    once("activity", {"user_id": admin_id, "actor": "qa", "action": "qa.mark", "subject": f"{mark} activity", "account_id": acct}, "subject")
+    activity = once("activity", {"user_id": admin_id, "actor": "qa", "action": "qa.mark", "subject": f"{mark} activity", "account_id": acct}, "subject")
+    db.execute("UPDATE activity SET at = now() WHERE id = %s", (activity["id"],))  # History lists the latest 200 only
     once("inbox_reads", {"user_id": admin_id, "item_key": f"{mark}read", "account_id": acct}, "item_key")
     return {"proposal": proposal["id"], "view": view["id"], "build": build["id"]}
 
@@ -174,9 +176,15 @@ def walk(client, forbidden, other, label, own=None):
     return leaks, checked
 
 
+_keys = {}
+
+
 def session_for(client, user_id, account=None):
+    if user_id not in _keys:
+        _keys[user_id] = auth.new_session_key(user_id)
     with client.session_transaction() as s:
         s["user_id"] = user_id
+        s["sk"] = _keys[user_id]
     client.set_cookie("ebads_account", str(account or 1))
 
 
@@ -205,7 +213,7 @@ for rule in app.url_map.iter_rules():
     for m in methods:
         session_for(cc, client["id"])
         status = cc.open(fill(rule, two), method=m, json={}).status_code
-        if status != 403 and not re.match(r"^/api/(auth/(logout|password|me)|me/push(/.*)?)$", rule.rule):
+        if status != 403 and not re.match(r"^/api/(auth/(logout|password|me)|me/(push|telegram)(/.*)?|inbox/read|views(/<int:view_id>)?)$", rule.rule):
             writes.append(f"{m} {rule.rule} → {status}")
 
 # Audit 2: a member and an admin limited to account 2, writes aimed at account 1's ids, background

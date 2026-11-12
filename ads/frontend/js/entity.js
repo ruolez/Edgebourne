@@ -1,6 +1,6 @@
 // Campaign and ad set pages: their numbers with "vs before", a daily chart, (ad sets) learning progress
 // and who sees it, the ad sets / ads inside in the manager table, and one History timeline.
-import { api } from "./api.js";
+import { api, startLoad } from "./api.js";
 import { boot, esc, icon, onRefresh, setCrumbs, switchHtml, toast, when, errorState } from "./ui.js";
 import { columnChart } from "./charts.js";
 import { count, dayLabel, money, moneyWhole } from "./format.js";
@@ -77,12 +77,16 @@ function render() {
 }
 
 async function load() {
+  const superseded = startLoad("entity");
+  let d;
   try {
-    data = await api(`/api/${LEVEL === "campaign" ? "campaigns" : "adsets"}/${encodeURIComponent(id)}?range=${encodeURIComponent(state.range)}${state.vs ? "&vs=prev" : ""}`);
+    d = await api(`/api/${LEVEL === "campaign" ? "campaigns" : "adsets"}/${encodeURIComponent(id)}?range=${encodeURIComponent(state.range)}${state.vs ? "&vs=prev" : ""}`);
   } catch (err) {
-    errorState($("cr-all"), err, load, { href: "/ads.html", label: "Back to Ads" });
+    if (!superseded()) errorState($("cr-all"), err, load, { href: "/ads.html", label: "Back to Ads" });
     return;
   }
+  if (superseded()) return;
+  data = d;
   rows = flatten({ campaigns: data.campaigns });
   if (LEVEL === "adset") { rows.ad = rows.ad.filter((a) => a.adset.id === id); rows.adset = rows.adset.filter((s) => s.id === id); }
   data.entity = LEVEL === "campaign" ? rows.campaign[0] : rows.adset[0];

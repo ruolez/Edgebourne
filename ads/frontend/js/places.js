@@ -33,7 +33,7 @@ export function placesWidget(id, { cityRadius, pinRadius, onChange }) {
         <button type="button" class="btn btn-quiet btn-small" data-remove="${i}" aria-label="Remove ${esc(placeLabel(l))}">Remove</button>
       </li>`).join("") : '<li class="muted">No places yet. Add one below.</li>';
   };
-  const hide = () => { $("results").hidden = true; $("q").setAttribute("aria-expanded", "false"); };
+  const hide = () => { results = []; $("results").hidden = true; $("q").setAttribute("aria-expanded", "false"); };
   const show = (list) => {
     results = list;
     $("results").innerHTML = list.map((p, i) => `<li role="option" id="${id}-pr-${i}" data-pick="${i}" tabindex="-1"><span class="place-kind">${KIND[p.kind]}</span>${esc(p.name)}</li>`).join("")
@@ -58,6 +58,7 @@ export function placesWidget(id, { cityRadius, pinRadius, onChange }) {
   $("q").addEventListener("input", (e) => {
     e.stopPropagation();
     clearTimeout(timer);
+    results = []; seq++;  // Enter picks only a result of what is typed now, never an older search's
     const q = $("q").value.trim();
     if (q.length < 2) { hide(); return; }
     timer = setTimeout(async () => {

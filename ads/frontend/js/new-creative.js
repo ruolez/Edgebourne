@@ -22,7 +22,7 @@ function fillFromTemplate() {
   if (!$("body").value.trim() || $("body").dataset.fromTemplate === "1") { $("body").value = t.body || ""; $("body").dataset.fromTemplate = "1"; }
   if (!$("title").value.trim() || $("title").dataset.fromTemplate === "1") { $("title").value = t.title || ""; $("title").dataset.fromTemplate = "1"; }
   if (t.cta_type) $("cta").value = t.cta_type;
-  if (!$("aset-pick").dataset.touched && t.adset_id) $("aset-pick").value = t.adset_id;
+  if (!$("aset-pick").dataset.touched && options.adsets.some((s) => s.id === t.adset_id)) $("aset-pick").value = t.adset_id;
   ["body", "title"].forEach((id) => $(id).dispatchEvent(new Event("input")));
 }
 
@@ -145,13 +145,16 @@ else if (me) {
   if (!options.adsets.length || (!options.templates.length && me.role !== "admin")) {
     document.querySelector(".new-ad-layout").innerHTML = `<section class="panel empty"><h3>No ad set to put it in yet</h3><p>An ad goes inside an ad set.${me.role === "admin" ? " Start with a new campaign: it makes the ad set and its first ads." : " Ask an admin to set up the campaign first."}</p>${me.role === "admin" ? '<a class="btn btn-primary" href="/new-campaign.html">New campaign</a>' : '<a class="btn" href="/ads.html">Back to ads</a>'}</section>`;
   } else {
-    $("aset-pick").innerHTML = options.adsets.map((s) => `<option value="${esc(s.id)}">${esc(s.name)} · ${esc(s.campaign_name)}</option>`).join("");
+    $("aset-pick").innerHTML = options.adsets.map((s) => `<option value="${esc(s.id)}">${esc(s.name)} · ${esc(s.campaign_name)}${s.effective_status === "ACTIVE" ? "" : " (off)"}</option>`).join("");
     // Admins can also start from nothing: the account's Page, the lead form they pick, their own media.
     $("template").innerHTML = options.templates.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("")
       + (me.role === "admin" ? '<option value="">Nothing: a new ad with its own words and media</option>' : "");
     $("cta").innerHTML = options.cta_types.map((c) => `<option value="${c}">${esc(CTA_LABELS[c] || c)}</option>`).join("");
+    const offered = (id) => options.adsets.some((s) => s.id === id);
+    const goneSet = "That ad set was deleted or archived on Meta, so it isn't offered. Pick another.";
     const wantSet = new URLSearchParams(location.search).get("adset");
-    if (wantSet && options.adsets.some((s) => s.id === wantSet)) { $("aset-pick").value = wantSet; $("aset-pick").dataset.touched = "1"; }
+    if (wantSet && offered(wantSet)) { $("aset-pick").value = wantSet; $("aset-pick").dataset.touched = "1"; }
+    else if (wantSet) toast(goneSet, "bad");
     const from = new URLSearchParams(location.search).get("from");
     if (from && options.templates.some((t) => t.id === from)) $("template").value = from;
     counter($("body"), $("body-count"), 125);
@@ -174,7 +177,8 @@ else if (me) {
         const p = await api(`/api/proposals/${encodeURIComponent(q.get("proposal"))}`);
         const pl = p.payload || {};
         if (pl.template_ad_id && options.templates.some((t) => t.id === pl.template_ad_id)) $("template").value = pl.template_ad_id;
-        if (pl.adset_id) $("aset-pick").value = pl.adset_id;
+        if (pl.adset_id && offered(pl.adset_id)) { $("aset-pick").value = pl.adset_id; $("aset-pick").dataset.touched = "1"; }
+        else if (pl.adset_id) toast(goneSet, "bad");
         ["body", "title", "name"].forEach((k) => { if (pl[k]) { $(k).value = pl[k]; $(k).dataset.fromTemplate = "0"; $(k).dispatchEvent(new Event("input")); } });
         if (pl.cta_type) $("cta").value = pl.cta_type;
         if (!pl.media || pl.media.kind === "same") pickTab("same");

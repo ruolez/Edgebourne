@@ -4,6 +4,7 @@ puts the real key back. Prints JSON: each check's name → true/false, plus deta
 import json
 
 import account_ctx
+import auth
 import db
 import desk_api
 import settings_store
@@ -127,6 +128,7 @@ try:
     back2 = task("account 2's last", account=2, front=False)
     with c.session_transaction() as s:
         s["user_id"] = 1
+        s["sk"] = auth.new_session_key(1)
     c.set_cookie("ebads_account", "2")
     moved = c.post(f"/api/desk/tasks/{back2}/next", headers={"X-Requested-With": "ebads"}).status_code
     out["Run next in account 2 puts it ahead of account 1's line"] = moved == 200 and row(back2)["queue_rank"] < row(front1)["queue_rank"]

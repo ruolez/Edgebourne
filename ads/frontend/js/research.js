@@ -27,7 +27,11 @@ async function load() {
     }
     clearTimeout(timer);
     timer = setTimeout(load, tasks.some((t) => ACTIVE.has(t.status)) ? 4000 : 30000);
-  } catch (err) { toast(err.message, "bad"); }
+  } catch (err) {
+    toast(err.message, "bad");
+    clearTimeout(timer);
+    timer = setTimeout(load, 15000);  // a restart or a blip: try again by itself
+  }
 }
 
 // ---------------------------------------------------------------- swipe file + watched Pages

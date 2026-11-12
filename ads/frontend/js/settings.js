@@ -339,9 +339,8 @@ const describe = (r) => ACTIONS[r.action] || r.action;
 const me = await boot({ page: "settings", admin: true });
 if (me) {
   guardLeaving();
-  document.addEventListener("submit", markSaved);
-  $("meta-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); toast("Meta settings saved"); fill($("meta-form"), s.meta); renderMeta(); }); });
-  $("app-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); toast("Meta app saved"); fillApp(); renderMeta(); }); });
+  $("meta-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); markSaved(e.target); toast("Meta settings saved"); fill($("meta-form"), s.meta); renderMeta(); }); });
+  $("app-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/meta", { method: "PUT", body: values(e.target) }); markSaved(e.target); toast("Meta app saved"); fillApp(); renderMeta(); }); });
   $("tg-targets").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     fieldError(e.target);
     const raisedTo = Math.round(Number($("t-max").value) * 100);
@@ -349,7 +348,7 @@ if (me) {
       body: `<p>No budget in this account can go above this. It goes from <b>${money(s.targets.max_daily_cents, { exact: true })}</b> to <b>${money(raisedTo, { exact: true })}</b> a day.</p>`, confirm: `Raise to ${money(raisedTo, { exact: true })}` }))) return;
     try { s = await api("/api/settings/targets", { method: "PUT", body: values(e.target) }); }
     catch (err) { if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; } throw err; }
-    toast("Targets saved"); renderTargets(); renderAlerts();
+    markSaved(e.target); toast("Targets saved"); renderTargets(); renderAlerts();
   }); });
   $("acct-list").addEventListener("click", async (e) => {
     const ren = e.target.closest("[data-acct-rename]");
@@ -376,7 +375,7 @@ if (me) {
     if (!yes) return;
     try { await api("/api/reports/revoke", { method: "POST" }); toast("Old links stopped"); } catch (err) { toast(err.message, "bad"); }
   });
-  $("smtp-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/smtp", { method: "PUT", body: values(e.target) }); toast("Email settings saved"); fill($("smtp-form"), s.smtp); renderSmtp(); }); });
+  $("smtp-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => { s = await api("/api/settings/smtp", { method: "PUT", body: values(e.target) }); markSaved(e.target); toast("Email settings saved"); fill($("smtp-form"), s.smtp); renderSmtp(); }); });
   $("tg-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     fieldError(e.target);
     try {
@@ -385,7 +384,7 @@ if (me) {
       if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; }
       throw err;
     }
-    toast(`Telegram bot @${s.telegram.username} is ready`); renderTelegram();
+    markSaved(e.target); toast(`Telegram bot @${s.telegram.username} is ready`); renderTelegram();
   }); });
   $("tg-remove").addEventListener("click", (e) => run(e.currentTarget, async () => {
     if (!(await confirmDialog({ title: "Remove the Telegram bot?", body: "Nobody gets Telegram alerts until a bot is added again. People's links are kept.", confirm: "Remove", danger: true }))) return;
@@ -408,7 +407,7 @@ if (me) {
       if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; }
       throw err;
     }
-    toast(auto ? "Saved. New leads get a reply by themselves." : "Saved"); renderReplies();
+    markSaved(e.target); toast(auto ? "Saved. New leads get a reply by themselves." : "Saved"); renderReplies();
   }); });
   $("rp-auto").addEventListener("change", (e) => { $("rp-auto-pick").hidden = !e.target.checked; });
   $("tpl-list").addEventListener("click", (e) => { const b = e.target.closest("[data-edit]"); if (b) editTemplate(Number(b.dataset.edit)); });
@@ -434,7 +433,7 @@ if (me) {
       if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; }
       throw err;
     }
-    toast("Template saved"); closeTemplate(); renderReplies();
+    markSaved(e.target); toast("Template saved"); closeTemplate(); renderReplies();
   }); });
   $("tpl-delete").addEventListener("click", (e) => run(e.currentTarget, async () => {
     const t = s.replies.templates.find((x) => x.id === editing);
@@ -450,11 +449,11 @@ if (me) {
       else r[el.dataset.key] = el.dataset.key === "target_cents" ? (el.value === "" ? null : Math.round(Number(el.value) * 100)) : el.value;
     });
     s = await api("/api/settings/alerts", { method: "PUT", body: { rules } });
-    toast("Alerts saved"); renderAlerts();
+    markSaved(e.target); toast("Alerts saved"); renderAlerts();
   }); });
   $("auto-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     s = await api("/api/settings/refresh", { method: "PUT", body: { minutes: Number($("auto-minutes").value) } });
-    toast(`The latest now comes from Meta ${every(s.auto_refresh_minutes).toLowerCase()}`); renderAuto();
+    markSaved(e.target); toast(`The latest now comes from Meta ${every(s.auto_refresh_minutes).toLowerCase()}`); renderAuto();
   }); });
   $("tr-fresh").addEventListener("click", () => loadTracking(true));
   $("rep-form").addEventListener("submit", async (e) => {
@@ -463,7 +462,7 @@ if (me) {
     try {
       await api("/api/reports/settings", { method: "PUT", body: { email: $("rep-email").value } });
       s = await api("/api/settings/client-access", { method: "PUT", body: { update_leads: $("rep-leads").checked } });
-      toast("Report settings saved"); loadReports();
+      markSaved(e.target); toast("Report settings saved"); loadReports();
     } catch (err) { if (err.body && err.body.field) fieldError(e.target, err.body.field, err.message); else toast(err.message, "bad"); }
   });
   $("mt-form").addEventListener("submit", async (e) => {
@@ -474,12 +473,12 @@ if (me) {
       confirm: "Allow" }))) { $("mt-on").checked = false; return; }
     run(e.submitter, async () => {
       s = await api("/api/settings/meta-tests", { method: "PUT", body: { on } });
-      toast(on ? "Meta A/B tests are on" : "Meta A/B tests are off"); renderMetaTests();
+      markSaved(e.target); toast(on ? "Meta A/B tests are on" : "Meta A/B tests are off"); renderMetaTests();
     });
   });
   $("crm-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
     s = await api("/api/settings/meta", { method: "PUT", body: { meta_dataset_id: $("meta_dataset_id").value, crm_send_enabled: $("crm_send_enabled").checked ? "1" : "" } });
-    toast($("crm_send_enabled").checked ? "Lead stages now go to Meta" : "Lead stages are no longer sent"); renderCrm();
+    markSaved(e.target); toast($("crm_send_enabled").checked ? "Lead stages now go to Meta" : "Lead stages are no longer sent"); renderCrm();
   }); });
   $("crm-test").addEventListener("click", (e) => run(e.currentTarget, async () => {
     const r = await api("/api/settings/meta/crm-test", { method: "POST", body: { code: $("crm-code").value } });

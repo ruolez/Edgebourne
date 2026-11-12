@@ -1,4 +1,4 @@
-import { api } from "./api.js";
+import { api, startLoad } from "./api.js";
 import { boot, esc, fieldError, icon, onRefresh, phoneDisplay, setNewCount, shortWait, toast, waited, when, showLoadError } from "./ui.js";
 
 const STAGES = [
@@ -91,8 +91,10 @@ async function load({ quiet = false } = {}) {
   if (state.tests) params.set("tests", "1");
   const src = new URLSearchParams(location.search);
   for (const k of ["campaign", "ad"]) if (src.get(k)) params.set(k, src.get(k));
+  const superseded = startLoad("leads");
   try {
     const data = await api("/api/leads?" + params);
+    if (superseded()) return;
     renderSources(data.sources || [], src);
     state.leads = data.leads;
     state.counts = data.counts;
@@ -104,7 +106,7 @@ async function load({ quiet = false } = {}) {
       select(state.leads[0].id, { push: false });
     }
   } catch (err) {
-    if (!quiet) showLoadError($("list"), err, load);
+    if (!quiet && !superseded()) showLoadError($("list"), err, load);
   }
 }
 
@@ -281,7 +283,7 @@ function renderDetail(lead, { keep = false } = {}) {
   detail.innerHTML = detailHtml(lead);
   $("back")?.addEventListener("click", () => {
     $("layout").classList.remove("showing-detail");
-    history.replaceState(null, "", location.pathname);
+    history.replaceState(null, "", location.pathname + location.search);
   });
   wireReply(lead);
   detail.querySelectorAll("[data-stage]").forEach((b) => b.addEventListener("click", () => patch(lead.id, { status: b.dataset.stage })));
@@ -289,11 +291,13 @@ function renderDetail(lead, { keep = false } = {}) {
   $("note-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const body = e.target.body.value.trim();
-    if (!body) return;
+    const btn = e.target.querySelector("button[type=submit]");
+    if (!body || btn.disabled) return;
+    btn.disabled = true;
     try {
       renderDetail(await api(`/api/leads/${lead.id}/notes`, { method: "POST", body: { body } }));
       toast("Note added");
-    } catch (err) { toast(err.message, "bad"); }
+    } catch (err) { toast(err.message, "bad"); } finally { btn.disabled = false; }
   });
   if (typed.note) $("note").value = typed.note;
   if (typed.reply && $("reply-form")) {

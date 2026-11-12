@@ -1,7 +1,7 @@
 // Compare 2–6 ads side by side: the creative on top, one row per metric with the best marked and the
 // change against the period before, a verdict that waits for enough data, and one chart with a line
 // per ad. Reached from the Ads manager's selection bar (Compare) or Insights → Compare.
-import { api } from "./api.js";
+import { api, startLoad } from "./api.js";
 import { boot, esc, icon, onRefresh, toast, errorState } from "./ui.js";
 import { lineChart } from "./charts.js";
 import { count, money, statusOf, moneyWhole } from "./format.js";
@@ -110,17 +110,21 @@ async function pickerHtml() {
 }
 
 async function load() {
+  const superseded = startLoad("compare");
   if (!all) {
     try {
       const tree = await api("/api/ads?range=30");
       all = tree.campaigns.flatMap((c) => c.adsets.flatMap((s) => s.ads)).filter((a) => a.effective_status !== "DELETED");
     } catch (e) { all = []; }
   }
+  if (superseded()) return;
   if (ids().length < 2) { pickerHtml(); return; }
   try {
-    data = await api(`/api/compare?ids=${encodeURIComponent(state.ids)}&range=${encodeURIComponent(state.range)}${state.vs ? "&vs=prev" : ""}`);
+    const d = await api(`/api/compare?ids=${encodeURIComponent(state.ids)}&range=${encodeURIComponent(state.range)}${state.vs ? "&vs=prev" : ""}`);
+    if (superseded()) return;
+    data = d;
     render();
-  } catch (err) { errorState($("cmp"), err, load); }
+  } catch (err) { if (!superseded()) errorState($("cmp"), err, load); }
 }
 
 const me = await boot({ page: "compare" });

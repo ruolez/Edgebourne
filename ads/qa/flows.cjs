@@ -320,6 +320,11 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   const tgSet = (await getJson('/api/settings')).telegram;
   check('Settings connects the Telegram bot', tgSet.set && tgSet.username === 'EdgeBourneAdsBot', JSON.stringify(tgSet));
   await page.goto(BASE + '/account.html');
+  const themeWas = await page.evaluate(() => localStorage.getItem('ebads-theme') || 'system');
+  await page.click('#theme-choice [data-theme-choice="dark"]');
+  const themeLabels = await page.$$eval('[data-theme-btn]', (b) => b.map((x) => x.textContent.trim()));
+  check('picking a theme on Your account relabels the sidebar and More sheet buttons', themeLabels.length >= 2 && themeLabels.every((t) => t === 'Theme: dark'), themeLabels.join(' | '));
+  await page.click(`#theme-choice [data-theme-choice="${themeWas}"]`);
   await page.click('#tg-link');
   await page.waitForSelector('#tg-open');
   const tgLink = await page.getAttribute('#tg-open', 'href');
@@ -616,7 +621,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   const total = dollars((await page.textContent('.results-table tfoot td.num')).trim());
   check('the total row adds up the ads shown', Math.abs(total - spentRows.map(dollars).reduce((a, b) => a + b, 0)) < 0.01, String(total));
   check('each figure says how it compares with the days before', (await page.locator('.figures:not(.pace) .delta').count()) >= 4, (await page.textContent('.figures:not(.pace) .figure.hero .delta')) || '');
-  await page.waitForSelector('#activity .changes li');
+  await page.waitForSelector('#activity .chg-list li');
   check("Meta's history shows a budget change in money, not cents", /\$20\.00 → \$24\.00/.test(await page.textContent('#activity')) && !/2000 → 2400/.test(await page.textContent('#activity')),
     await page.textContent('#activity'));
   check('"Yesterday" under cost per lead is the real yesterday', await page.evaluate(async () => {
@@ -638,6 +643,15 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   await page.fill('#cr-q', 'order portal');
   const found = await cells(0);
   check('Find an ad narrows the table to matching names', found.length > 0 && found.every((t) => /order portal/i.test(t)), found.join(' | '));
+  const rangeBefore = await page.getAttribute('#range button[aria-pressed="true"]', 'data-range');
+  await page.$eval('#cr-q', (i) => { i.dataset.old = '1'; });
+  await page.click(`#range button[data-range="${rangeBefore === '30' ? '14' : '30'}"]`);
+  await page.waitForSelector('#cr-q:not([data-old])');
+  await page.waitForSelector('.results-table tbody tr');
+  const kept = await cells(0);
+  check('changing the dates keeps the search box showing what still filters the table', (await page.inputValue('#cr-q')) === 'order portal' && kept.every((t) => /order portal/i.test(t)), `${await page.inputValue('#cr-q')} / ${kept.join(' | ')}`);
+  await page.click(`#range button[data-range="${rangeBefore}"]`);
+  await page.waitForFunction((r) => document.querySelector(`#range button[data-range="${r}"]`).getAttribute('aria-pressed') === 'true' && document.querySelector('.results-table tbody tr'), rangeBefore);
   await page.fill('#cr-q', 'zzz no such ad');
   check('no match says so and offers every ad', /No ad called/.test(await page.textContent('#cr-panel')) && await page.isVisible('#cr-panel [data-clear]'));
   await page.click('#cr-panel [data-clear]');
@@ -1715,7 +1729,11 @@ print(a[0][1] if a else '-', b[0][1] if b else '-')"`).trim();
 from werkzeug.security import generate_password_hash
 import db
 db.execute(\\"UPDATE users SET password_hash = %s, must_change_password = FALSE WHERE email = 'client-qa@burdanova.test'\\", (generate_password_hash('client-pass-123'),))
-db.execute(\\"UPDATE accounts SET archived_at = now() WHERE name = 'QA Studio'\\")"`);
+db.execute(\\"UPDATE accounts SET archived_at = now() WHERE name = 'QA Studio'\\")
+import account_ctx
+with account_ctx.all_accounts():
+    db.execute(\\"UPDATE leads SET created_time = now(), status = 'new' WHERE meta_lead_id = 'ACCT2MARKlead'\\")
+    db.execute(\\"DELETE FROM inbox_reads WHERE user_id = (SELECT id FROM users WHERE email = 'client-qa@burdanova.test')\\")"`);
   const cctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
   const cp = await cctx.newPage();
   cp.on('pageerror', (e) => errors.push('client page: ' + e.message));
@@ -1729,6 +1747,20 @@ db.execute(\\"UPDATE accounts SET archived_at = now() WHERE name = 'QA Studio'\\
   const clientBulk = await cp.evaluate(async () => (await fetch('/api/ads/bulk/preview', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ebads' },
     body: JSON.stringify({ action: 'status', level: 'ad', ids: ['x'], value: 'PAUSED' }) })).status);
   check('a client can\'t make bulk changes', clientBulk === 403, String(clientBulk));
+  // Their own read marks and saved views are theirs to change (the screens offer them).
+  const clientOwn = await cp.evaluate(async () => {
+    const send = async (m, u, b) => (await fetch(u, { method: m, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ebads' }, body: b === undefined ? undefined : JSON.stringify(b) }));
+    const before = await (await fetch('/api/inbox?filter=unread')).json();
+    const read = before.items.length ? (await send('POST', '/api/inbox/read', { keys: [before.items[0].key] })).status : 0;
+    const after = await (await fetch('/api/inbox?filter=unread')).json();
+    const v = await send('POST', '/api/views', { page: 'ads', name: 'Client QA', query: 'view=all&range=30', shared: true });
+    const vb = await v.json();
+    const share = await (await send('PATCH', `/api/views/${vb.id}`, { name: 'Client QA 2', shared: true })).json();
+    const del = (await send('DELETE', `/api/views/${vb.id}`)).status;
+    return { unread: [before.counts.unread, after.counts.unread], read, view: v.status, shared: [vb.shared, share.shared], del };
+  });
+  check("a client marks Inbox items read and keeps their own saved views, never shared", clientOwn.read === 200 && clientOwn.unread[1] === clientOwn.unread[0] - 1
+    && clientOwn.view === 201 && clientOwn.shared.join() === 'false,false' && clientOwn.del === 200, JSON.stringify(clientOwn));
   await cp.goto(BASE + '/leads.html');
   await cp.waitForSelector('.lead-row');
   await cp.click('.lead-row');
@@ -2003,6 +2035,22 @@ with account_ctx.use(a2):
   await page.waitForSelector('.st-tl');
   const n2Timeline = await page.locator('.st-tl').innerText();
   check('an on/off made from the console is marked as made here, by whom', n2Timeline.includes('This console') && n2Timeline.includes('by Eugene'), n2Timeline.replace(/\n+/g, ' | ').slice(0, 300));
+  check("the ad's dashboard changes are a stacked list, the time on its own line", await page.locator('#cr-main ul.chg-list li').count() > 0
+    && await page.$eval('#cr-main ul.chg-list li small', (s) => getComputedStyle(s).display === 'block' && getComputedStyle(s.closest('ul')).listStyleType === 'none'));
+  // New ad: only ad sets an ad can go into (Meta refuses deleted and archived ones).
+  const newOpts = (await call('GET', '/api/ads/new/options')).body;
+  const goneSets = sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "SELECT string_agg(id, ',') FROM adsets WHERE effective_status IN ('DELETED', 'ARCHIVED')"`).trim().split(',').filter(Boolean);
+  check('New ad offers no deleted or archived ad set, delivering ones first', goneSets.length > 0 && newOpts.adsets.length > 0
+    && !newOpts.adsets.some((s) => goneSets.includes(s.id)) && newOpts.adsets[0].effective_status === 'ACTIVE', `${goneSets.length} gone, offered ${newOpts.adsets.map((s) => s.effective_status).join()}`);
+  // …and the server refuses one too, whatever the screen sent (a proposal or ?adset= naming a gone ad set).
+  const goneSet = sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "SELECT id FROM adsets WHERE account_id = 1 AND effective_status IN ('DELETED', 'ARCHIVED') LIMIT 1"`).trim();
+  const intoGone = await call('POST', '/api/ads/new', { adset_id: goneSet, template_ad_id: N1, name: 'QA into a gone ad set', body: 'QA', title: 'QA', media: { kind: 'same' } });
+  check('a new ad for a deleted or archived ad set is refused before anything reaches Meta', intoGone.status === 400 && /deleted or archived/.test((intoGone.body || {}).error), `${goneSet}: ${intoGone.status} ${JSON.stringify(intoGone.body)}`);
+  await page.goto(`${BASE}/new-ad.html?adset=${goneSet}`);
+  await page.waitForSelector('#aset-pick option', { state: 'attached' });
+  await page.waitForTimeout(300);
+  check('New ad says so when ?adset= names a deleted or archived ad set, and still picks a real one',
+    /deleted or archived/.test(await page.textContent('body')) && (await page.$eval('#aset-pick', (s) => s.selectedIndex)) >= 0);
   // 8.4 APIs for the new screens: ranges with the window before, campaign/ad set pages, compare, search, saved views, bulk.
   const C1 = '120252638288040312';
   const t14 = (await call('GET', '/api/ads?range=14&vs=prev')).body;
@@ -2267,6 +2315,30 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   await page.click('#home [data-retry]');
   await page.waitForSelector('#today-inbox li');
   check('Try again loads the page', !/didn't load/i.test(await page.textContent('#home')) && (await page.locator('#home [data-retry]').count()) === 0);
+  // Today's minute timer and the frame's catch-up with Meta fire on the same tick: one /api/home, not two.
+  const clockCtx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+  await clockCtx.addCookies(await page.context().cookies());
+  const clockPage = await clockCtx.newPage();
+  clockPage.on('pageerror', (e) => errors.push(e.message));
+  await clockPage.clock.install();
+  const pulledAt = Math.floor(Date.now() / 1000) - 600;
+  let pulledAgain = false;
+  const status = await getJson('/api/refresh');
+  // The newer pull answers 1.5 s late, as a real /api/refresh can: Today's own timer fires before it does.
+  await clockPage.route('**/api/refresh', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    if (pulledAgain) await new Promise((r) => setTimeout(r, 1500));
+    return route.fulfill({ json: { ...status, updated_at: pulledAgain ? pulledAt + 300 : pulledAt } });
+  });
+  await Promise.all([clockPage.waitForResponse((r) => /\/api\/refresh$/.test(r.url())), clockPage.goto(BASE + '/home.html')]);
+  await clockPage.waitForSelector('#today-inbox li');
+  let homeLoads = 0;
+  clockPage.on('request', (r) => { if (/\/api\/home$/.test(r.url())) homeLoads += 1; });
+  pulledAgain = true;
+  await clockPage.clock.runFor(61000);
+  await clockPage.waitForTimeout(4000);
+  check('Today loads once when its minute timer and a catch-up with Meta land together', homeLoads === 1, `${homeLoads} loads of /api/home`);
+  await clockCtx.close();
   errors.splice(seen91, errors.length - seen91, ...errors.slice(seen91).filter((e) => !/ERR_FAILED/.test(e)));
   // Phones: no page wider than the screen.
   const phonePage = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
@@ -2280,12 +2352,38 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
     if (sw > 391) tooWide.push(`${p} ${sw}px`);
   }
   check('on a 390px phone no page is wider than the screen', tooWide.length === 0, tooWide.join(' | '));
+  // ← All leads on a phone keeps the source filter in the URL, which the next poll reads.
+  await phonePage.goto(`${BASE}/leads.html?ad=${adOpt.slice(2)}`);
+  await phonePage.waitForSelector('.lead-row');
+  await phonePage.click('.lead-row');
+  await phonePage.waitForSelector('#layout.showing-detail #back');
+  await phonePage.click('#back');
+  await phonePage.waitForTimeout(200);
+  check('← All leads keeps the lead source filter (?ad=) in the URL', new URL(phonePage.url()).searchParams.get('ad') === adOpt.slice(2)
+    && !(await phonePage.getAttribute('#layout', 'class')).includes('showing-detail'), phonePage.url());
   // Phones keep their size: iOS zooms into any field under 16px; anything past the edge makes the browser shrink the page.
   const narrow = await (await browser.newContext({ viewport: { width: 320, height: 700 }, isMobile: true, hasTouch: true })).newPage();
   await narrow.goto(BASE + '/login.html?next=//example.com/x');
   await narrow.fill('#email', 'eugene@edgebourne.com'); await narrow.fill('#password', 'localdev-pass-123');
   await Promise.all([narrow.waitForURL('**/home.html**'), narrow.click('button[type=submit]')]);
   check('sign-in refuses to send people to another site', narrow.url().startsWith(BASE));
+  const tabCtx = await browser.newContext();
+  const tabPage = await tabCtx.newPage();
+  await tabPage.goto(BASE + '/login.html?next=%2F%09%2Fexample.com%2Fx');
+  await tabPage.fill('#email', 'eugene@edgebourne.com'); await tabPage.fill('#password', 'localdev-pass-123');
+  await Promise.all([tabPage.waitForURL('**/home.html**'), tabPage.click('button[type=submit]')]);
+  check('sign-in also refuses a next= address hidden behind a tab (/%09/example.com)', tabPage.url().startsWith(BASE), tabPage.url());
+  // Signing out ends the sign-in on the server: a copy of the cookie taken before stops working.
+  const copyCtx = await browser.newContext();
+  await copyCtx.addCookies(await tabCtx.cookies());
+  const copyPage = await copyCtx.newPage();
+  await copyPage.goto(BASE + '/offline.html');
+  const meStatus = () => copyPage.evaluate(async () => (await fetch('/api/auth/me')).status);
+  const copyBefore = await meStatus();
+  await tabPage.evaluate(() => fetch('/api/auth/logout', { method: 'POST', headers: { 'X-Requested-With': 'ebads' } }));
+  const copyAfter = await meStatus();
+  check('signing out stops a copied session cookie too', `${copyBefore} ${copyAfter}` === '200 401', `${copyBefore} ${copyAfter}`);
+  await copyCtx.close(); await tabCtx.close();
   const zoomers = [];
   const spilling = [];
   for (const p of ['/home.html', '/inbox.html', '/leads.html', '/ads.html', '/ad.html?id=120252672229400312', '/new-ad.html', '/new-campaign.html', '/performance.html', '/research.html', '/desk.html', '/settings.html', '/team.html', '/account.html']) {

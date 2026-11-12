@@ -1,6 +1,6 @@
 // Inbox: everything that changed or waits for someone: Meta's approvals and rejections, issues,
 // learning limited, new leads, Claude's proposals, money and tracking alerts. Read/unread per person.
-import { api } from "./api.js";
+import { api, startLoad } from "./api.js";
 import { boot, esc, icon, onRefresh, toast, when, errorState } from "./ui.js";
 
 const FILTERS = [["unread", "Unread"], ["all", "All"], ["status", "Ad status"], ["leads", "Leads"], ["claude", "Claude"], ["money", "Money"], ["system", "Tracking"]];
@@ -74,7 +74,10 @@ async function markRead(keys) {
 }
 
 async function load() {
-  data = await api(`/api/inbox?${query()}`);
+  const superseded = startLoad("inbox");
+  const d = await api(`/api/inbox?${query()}`);
+  if (superseded()) return;
+  data = d;
   if (!data.items.some((i) => i.key === current)) current = matchMedia("(max-width: 960px)").matches ? null : data.items[0]?.key || null;
   renderFilters(); renderList(); renderDetail();
 }

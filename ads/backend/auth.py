@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 from functools import wraps
 
 from flask import Blueprint, jsonify, request, session
@@ -13,21 +15,43 @@ MIN_PASSWORD = 10
 _DUMMY_HASH = generate_password_hash("not-a-real-password-0000")
 
 
+# A sign-in lives in user_sessions; the cookie carries its key. Unused for longer than the cookie lasts: gone.
+SESSION_IDLE = "31 days"
+
+
+def _key_hash(key):
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+def new_session_key(user_id):
+    """Start a sign-in: the key goes in the cookie, its hash in user_sessions (signing out deletes it)."""
+    key = secrets.token_urlsafe(32)
+    db.execute("INSERT INTO user_sessions (key_hash, user_id) VALUES (%s, %s)", (_key_hash(key), user_id))
+    return key
+
+
 def current_user():
     """The signed-in, still-active user, read fresh so deactivation and role
     changes take effect on the next request."""
     uid = session.get("user_id")
     if not uid:
         return None
+    key = session.get("sk")
     user = db.query(
-        "SELECT id, email, name, role, account_id, must_change_password, notify_new_leads, notify_reminders, notify_alerts, "
-        "session_version FROM users WHERE id = %s AND is_active",
-        (uid,), one=True,
-    )
+        "SELECT u.id, u.email, u.name, u.role, u.account_id, u.must_change_password, u.notify_new_leads, u.notify_reminders, "
+        "u.notify_alerts, u.session_version, s.seen_at < now() - interval '1 hour' AS seen_long_ago "
+        "FROM users u JOIN user_sessions s ON s.user_id = u.id AND s.key_hash = %s "
+        f"WHERE u.id = %s AND u.is_active AND s.seen_at > now() - interval '{SESSION_IDLE}'",
+        (_key_hash(key), uid), one=True,
+    ) if key else None
     if user and session.get("sv", 0) != user["session_version"]:
         user = None  # the password changed (or an admin reset it) after this session signed in
+        db.execute("DELETE FROM user_sessions WHERE key_hash = %s", (_key_hash(key),))
     if not user:
         session.clear()
+        return None
+    if user.pop("seen_long_ago"):
+        db.execute("UPDATE user_sessions SET seen_at = now() WHERE key_hash = %s", (_key_hash(key),))
     return user
 
 
@@ -101,10 +125,14 @@ def login():
         import accounts_api
         if accounts_api.closed(user.get("account_id")):
             return api_error("This account was closed. Ask Edge Bourne if you need access again.", 403)
+    db.execute(f"DELETE FROM user_sessions WHERE seen_at < now() - interval '{SESSION_IDLE}'")
+    if session.get("sk"):  # signing in over an earlier sign-in ends that one, so an old copy of the cookie stops too
+        db.execute("DELETE FROM user_sessions WHERE key_hash = %s", (_key_hash(session["sk"]),))
     session.clear()
     session.permanent = bool(data.get("remember", True))
     session["user_id"] = user["id"]
     session["sv"] = user["session_version"]
+    session["sk"] = new_session_key(user["id"])
     db.execute("UPDATE users SET last_login_at = now() WHERE id = %s", (user["id"],))
     log_activity("auth.sign_in", user_id=user["id"])
     return jsonify(_public(user))
@@ -112,6 +140,9 @@ def login():
 
 @bp.post("/logout")
 def logout():
+    """Ends this sign-in on the server too, so a copy of the cookie stops working."""
+    if session.get("sk"):
+        db.execute("DELETE FROM user_sessions WHERE key_hash = %s", (_key_hash(session["sk"]),))
     session.clear()
     return jsonify({"ok": True})
 

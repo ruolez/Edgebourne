@@ -27,6 +27,11 @@ class ProblemTests(unittest.TestCase):
     def test_ad_set_problems_come_through_under_its_step(self):
         self.assertEqual(cb.problems({**SPEC, "adset": {**ADSET, "locations": []}}, {"f1"}, {"t1"}), [("adset", "Add at least one place")])
 
+    def test_a_missing_campaign_budget_is_reported_once_under_budget_not_under_who_sees_it(self):
+        for missing in (None, 0):
+            self.assertEqual(cb.problems({**SPEC, "daily_budget_cents": missing}, {"f1"}, {"t1"}),
+                             [("budget", "Give it a daily budget of at least $1")])
+
     def test_duplicate_ad_names(self):
         self.assertEqual(cb.problems({**SPEC, "ads": [AD, {**AD}]}, {"f1"}, {"t1"}), [("ads", "Two ads have the same name")])
 

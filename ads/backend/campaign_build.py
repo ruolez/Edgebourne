@@ -36,7 +36,7 @@ def problems(spec, known_forms, known_templates, current_daily_cents=None, curre
     elif current_daily_cents and budget > 3 * current_daily_cents:
         out.append(("budget", f"{dollars(budget, currency)} a day is more than 3 times what runs now ({dollars(current_daily_cents, currency)}); start lower and raise it in steps"))
     adset = spec.get("adset") or {}
-    out += [("adset", m) for _, m in ab.problems(adset, budget)]
+    out += [("adset", m) for _, m in ab.problems(adset, budget or 0)]  # the budget is the campaign's: its step reports it
     if spec.get("form_id") not in known_forms:
         out.append(("form", "Pick the lead form people fill in"))
     ads = spec.get("ads") or []

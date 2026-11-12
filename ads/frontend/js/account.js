@@ -11,8 +11,6 @@ if (me) {
     if (!b) return;
     applyTheme(b.dataset.themeChoice);
     mark();
-    const btn = document.getElementById("theme-btn");
-    if (btn) btn.textContent = { system: "Theme: auto", light: "Theme: light", dark: "Theme: dark" }[currentTheme()];
   });
   document.getElementById("account-signout").addEventListener("click", async () => {
     await api("/api/auth/logout", { method: "POST" });
