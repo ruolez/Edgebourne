@@ -1024,8 +1024,8 @@ def snapshot():
                       FILTER (WHERE first_contacted_at IS NOT NULL) AS median_minutes_to_contact
            FROM leads WHERE {in_window}""", window, one=True)
     import experiments_api
-    tests = [experiments_api.summary(r) for r in db.query(
-        f"SELECT {experiments_api.COLS} FROM experiments WHERE status = 'running' OR closed_at > now() - interval '30 days' ORDER BY start_day DESC")]
+    tests = experiments_api.summaries(db.query(
+        f"SELECT {experiments_api.COLS} FROM experiments WHERE status = 'running' OR closed_at > now() - interval '30 days' ORDER BY start_day DESC"))
     import concepts_api
     perf_tags = concepts_api.tags_for([a["id"] for a in perf["ads"]])
     for a in perf["ads"]:

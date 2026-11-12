@@ -554,7 +554,6 @@ function renderHistory() {
 async function load() {
   try {
     data = await api(`/api/ads/ad/${encodeURIComponent(adId)}`);
-    try { data.funnel = (await api(`/api/insights/ad/${encodeURIComponent(adId)}/diagnostics`)).funnel; } catch (e) { data.funnel = null; }
     renderHead();
     if (tab === "video" && data.ad.object_type !== "VIDEO") tab = "overview";
     showTab(tab);

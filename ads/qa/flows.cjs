@@ -28,6 +28,7 @@ const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} 
   page.on('console', (m) => { if (m.type() === 'error' && !/facebook\.com|preview_iframe/.test(m.text())) errors.push(m.text()); });
   const sh = (cmd) => require('child_process').execSync(cmd).toString();
   // What the fake Meta holds for an object now (checks read Meta's side, not only the screen).
+  const metaHits = (clear) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/fake/_hits${clear ? '?clear=1' : ''}').read().decode())"`));
   const metaObj = (id) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/v24.0/?ids=${id}').read().decode())"`))[id];
   const getJson = (url) => page.evaluate(async (u) => (await fetch(u)).json(), url);
   const macSeen = (secondsAgo) => sh(`docker exec -w /app edgebourne-ads-backend python -c "import time, settings_store; settings_store.set('bridge_last_seen', str(time.time() - ${secondsAgo})); settings_store.set('bridge_version', '2.0')"`);
@@ -2076,7 +2077,15 @@ with account_ctx.use(a2):
   const offIds = ['120252672232030312', '120252672233160312'];
   const offPrev = await call('POST', '/api/ads/bulk/preview', { action: 'status', level: 'ad', ids: offIds, value: 'PAUSED' });
   const offDone = await call('POST', '/api/ads/bulk/apply', { plan_token: offPrev.body.plan_token });
+  metaHits(true);
   const onPrev = await call('POST', '/api/ads/bulk/preview', { action: 'status', level: 'ad', ids: offIds, value: 'ACTIVE' });
+  const onPrevHits = metaHits(true);
+  const budgetPaths = onPrevHits.filter((h) => /fields=daily_budget%2Clifetime_budget%2Cend_time/.test(h)).map((h) => h.split('?')[0]);
+  const oneByOne = onPrevHits.filter((h) => offIds.some((i) => h.startsWith(`/v24.0/${i}?`))).length;
+  const together = onPrevHits.filter((h) => new RegExp(`ids=${offIds[0]}%2C${offIds[1]}`).test(h)).length;
+  check('a bulk preview reads the selection in one call and each shared budget once (A3-126)',
+    budgetPaths.length > 0 && budgetPaths.length === new Set(budgetPaths).size && oneByOne === 0 && together === 1,
+    `budget reads ${budgetPaths.join(' ')}, one by one ${oneByOne}, together ${together}`);
   const onNo = await call('POST', '/api/ads/bulk/apply', { plan_token: onPrev.body.plan_token });
   // A raise on Meta between the preview and the apply is seen before anything goes on (audit 3).
   const bulkBudget = Number(metaObj('120252638288040312').daily_budget);
@@ -2085,11 +2094,73 @@ with account_ctx.use(a2):
   sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/120252638288040312?access_token=x', data=b'daily_budget=${bulkBudget}'))"`);
   check('bulk turn-on is refused when a budget changed on Meta since the preview', onMoved.status === 409 && /changed on Meta since the preview/.test(onMoved.body.error)
     && metaObj(offIds[0]).status === 'PAUSED', JSON.stringify(onMoved.body));
+  metaHits(true);
   const onDone = await call('POST', '/api/ads/bulk/apply', { plan_token: onPrev.body.plan_token, confirm_total_cents: onPrev.body.totals.daily_cents });
+  const onDoneHits = metaHits(true);
+  const refreshedEach = onDoneHits.filter((h) => /fields=id%2Cname%2Cstatus%2Cconfigured_status%2Ceffective_status/.test(h) && !/ids=/.test(h)).length;
+  const refreshedTogether = onDoneHits.filter((h) => /ids=.*fields=id%2Cname%2Cstatus%2Cconfigured_status%2Ceffective_status/.test(h)).length;
+  const stored = sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(sorted(r['status'] for r in db.query('SELECT status FROM ads WHERE id = ANY(%s)', (${JSON.stringify(offIds).replace(/"/g, "'")},))))"`).trim();
+  check('after a bulk turn-on the items are read back together and stored as on (A3-126)', refreshedEach === 0 && refreshedTogether === 1 && stored === "['ACTIVE', 'ACTIVE']",
+    `one by one ${refreshedEach}, together ${refreshedTogether}, stored ${stored}`);
   check('bulk off, then on only after the daily total is echoed (each budget counted once)', offDone.body.done === 2 && onPrev.body.totals.budgets.length === 1
     && onNo.status === 409 && onDone.body.done === 2);
   const tagged = sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query('SELECT COUNT(DISTINCT bulk_id) AS n, COUNT(*) AS c FROM meta_changes WHERE bulk_id IN (%s, %s)', ('${offDone.body.bulk_id}', '${onDone.body.bulk_id}'), one=True))"`);
   check('every bulk write is logged in meta_changes under its bulk id', /'n': 2, 'c': 4/.test(tagged), tagged.trim());
+  // Audit 3 performance (A3-46, A3-123): reach is read from Meta together and briefly, a Meta that didn't
+  // answer isn't waited on again at the next load, and the ad page paints without Meta's rankings.
+  const reachHits = (hits) => hits.filter((h) => /\/insights\?/.test(h) && /reach/.test(h) && !/spend/.test(h)).length;
+  await call('GET', '/api/ads?range=14&vs=prev');
+  metaHits(true);
+  const warm = await call('GET', '/api/ads?range=14&vs=prev');
+  const warmReads = reachHits(metaHits(true));
+  check('a second Ads load inside the cache window asks Meta for no reach', warm.status === 200 && warmReads === 0, `${warmReads} reads`);
+  const setSlow = (s) => sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen('http://localhost:5001/fake/_slow?reach=${s}')"`);
+  setSlow(12);
+  let slowT0 = Date.now();
+  const slow1 = await call('GET', '/api/ads?range=custom&from=2026-08-03&to=2026-08-05');
+  const slowMs = Date.now() - slowT0;
+  metaHits(true);
+  slowT0 = Date.now();
+  const slow2 = await call('GET', '/api/ads?range=custom&from=2026-08-03&to=2026-08-05');
+  const againMs = Date.now() - slowT0;
+  const againReads = reachHits(metaHits(true));
+  setSlow(0);
+  check('with Meta hanging, Ads answers after one short wait with the daily reach marked as such', slow1.status === 200 && slowMs < 11000
+    && slow1.body.campaigns.length > 0 && slow1.body.campaigns.every((c) => c.m.reach_summed), `${slowMs} ms`);
+  check('the next load doesn\'t wait on the Meta that just failed', slow2.status === 200 && againMs < 3000 && againReads === 0, `${againMs} ms, ${againReads} reads`);
+  const adBody = await call('GET', '/api/ads/ad/120252672230740312');
+  const asked = [];
+  const onAsk = (r) => { if (/\/diagnostics/.test(r.url())) asked.push(r.url()); };
+  page.on('request', onAsk);
+  metaHits(true);
+  await page.goto(BASE + '/ad.html?id=120252672230740312');
+  await page.waitForSelector('#cr-main .cr-layout');
+  await page.waitForFunction(() => !/Reading from Meta/.test(document.querySelector('#enh')?.textContent || 'Reading from Meta'));
+  await page.reload();
+  await page.waitForSelector('#cr-main .cr-layout');
+  await page.waitForFunction(() => !/Reading from Meta/.test(document.querySelector('#enh')?.textContent || 'Reading from Meta'));
+  page.off('request', onAsk);
+  const creativeReads = metaHits(true).filter((h) => /fields=name%2Cobject_story_spec%2Cdegrees_of_freedom_spec/.test(h)).length;
+  check('the ad page brings its watch funnel and paints without asking for Meta\'s rankings (A3-123)', typeof adBody.body.funnel?.impressions === 'number' && asked.length === 0,
+    asked.join(' '));
+  check('the creative behind "Meta\'s automatic changes" is read from Meta once, not on every visit (A3-123)', creativeReads <= 1, `${creativeReads} reads`);
+  // A3-131: the daily prune drops read marks whose alert or lead has left the Inbox, never a pending proposal's.
+  const pruneLeft = require('child_process').execSync('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', { input: `
+import account_ctx, db, jobs
+keys = ['alert:qa-prune-old', 'proposal:qa-prune-old', 'alert:qa-prune-new']
+with account_ctx.use(1):
+    uid = db.query('SELECT id FROM users ORDER BY id LIMIT 1', one=True)['id']
+    db.execute('DELETE FROM inbox_reads WHERE item_key = ANY(%s)', (keys,))
+    for k, days in zip(keys, (40, 400, 2)):
+        db.execute('INSERT INTO inbox_reads (user_id, item_key, read_at) VALUES (%s, %s, now() - make_interval(days => %s))', (uid, k, days))
+with account_ctx.all_accounts():
+    db.execute('DELETE FROM inbox_reads WHERE ' + dict(jobs.PRUNE)['inbox_reads'])
+with account_ctx.use(1):
+    left = sorted(r['item_key'] for r in db.query('SELECT item_key FROM inbox_reads WHERE item_key = ANY(%s)', (keys,)))
+    db.execute('DELETE FROM inbox_reads WHERE item_key = ANY(%s)', (keys,))
+print(','.join(left))
+` }).toString().trim();
+  check('the prune drops old read marks but keeps recent ones and a pending proposal\'s (A3-131)', pruneLeft === 'alert:qa-prune-new,proposal:qa-prune-old', pruneLeft);
   // 8.5 Signal shell: every page sits in the right section, has breadcrumbs, and ⌘K finds an ad.
   const sections = { 'home': 'Today', 'inbox': 'Inbox', 'leads': 'Leads', 'ads': 'Ads', 'ad.html?id=120252672230740312': 'Ads', 'new-ad': 'Ads',
     'forms': 'Ads', 'new-campaign': 'Ads', 'performance': 'Insights', 'report': 'Insights', 'experiments': 'Insights', 'desk': 'Claude', 'research': 'Claude' };

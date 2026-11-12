@@ -121,8 +121,21 @@ def names_for(arms):
 
 
 def summary(exp):
-    out = ex.with_results(exp)
-    ads, sets = names_for(exp["arms"])
+    return summaries([exp])[0]
+
+
+def summaries(rows):
+    """Each test with its results. What they share (the account's day, currency, target, the ad names) is
+    read once for the list, not once per test (audit A3-130)."""
+    if not rows:
+        return []
+    ctx = ex.shared()
+    ads, sets = names_for([a for exp in rows for a in exp["arms"]])
+    return [_summary(exp, ctx, ads, sets) for exp in rows]
+
+
+def _summary(exp, ctx, ads, sets):
+    out = ex.with_results(exp, ctx=ctx)
     for a in out["arms"]:
         a["names"] = [ads.get(i, "an ad that's gone") for i in a.get("ad_ids") or []] + \
                      [f"Ad set: {sets.get(i, 'gone')}" for i in a.get("adset_ids") or []]
@@ -150,7 +163,7 @@ def meta_view(exp):
 @admin_required
 def listing():
     rows = db.query(f"SELECT {COLS} FROM experiments ORDER BY (status = 'running') DESC, start_day DESC, id DESC")
-    return jsonify({"items": [summary(r) for r in rows], "metrics": {k: v["label"] for k, v in ex.METRICS.items()},
+    return jsonify({"items": summaries(rows), "metrics": {k: v["label"] for k, v in ex.METRICS.items()},
                     "meta_enabled": mt.enabled()})
 
 

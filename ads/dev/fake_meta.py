@@ -362,6 +362,30 @@ def fake_learning():
     return jsonify(aset["learning_stage_info"])
 
 
+SLOW = {"reach": 0.0}  # seconds the unique-reach reads hang (a slow Meta), set by QA
+HITS = []  # every Graph request (path + query), for QA to count reads
+
+
+@app.before_request
+def _count_hit():
+    if request.path.startswith("/v24.0"):
+        HITS.append(request.full_path)
+
+
+@app.route("/fake/_hits")
+def fake_hits():
+    out = list(HITS)
+    if request.args.get("clear"):
+        HITS.clear()
+    return jsonify(out)
+
+
+@app.route("/fake/_slow")
+def fake_slow():
+    SLOW["reach"] = float(request.args.get("reach", 0))
+    return jsonify(SLOW)
+
+
 @app.route("/fake/_refuse_next_ad")
 def fake_refuse_next_ad():
     REFUSE_NEXT_AD.append(1)
@@ -486,6 +510,7 @@ def graph(path):
                 return jsonify({"data": breakdown_rows(a["breakdowns"])})
             if parts[0] == act and "reach" in (a.get("fields") or "") and "spend" not in (a.get("fields") or ""):
                 # Unique reach for a whole window: fewer people than the daily rows added up.
+                __import__("time").sleep(SLOW["reach"])
                 level = a.get("level", "ad")
                 key = {"ad": "ad_id", "adset": "adset_id", "campaign": "campaign_id", "account": "account_id"}[level]
                 tr = json.loads(a.get("time_range") or "{}")

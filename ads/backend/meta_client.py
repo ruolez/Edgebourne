@@ -4,7 +4,9 @@ import contextvars
 import hashlib
 import hmac
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, wait
 
 import requests
 
@@ -14,6 +16,9 @@ import settings_store
 
 log = logging.getLogger(__name__)
 TIMEOUT = 20
+READ_TIMEOUT = 8  # a read a page is waiting on: the stored figure stands in sooner when Meta is slow
+FAIL_SECONDS = 120  # a read Meta left unanswered isn't asked again for this long (audit A3-46, A3-121)
+PARALLEL_READS = 16  # every window the Ads page asks for (4 levels x 4), so none waits in a queue past the deadline
 RATE_CODES = {4, 17, 32, 613} | set(range(80000, 80015))  # Meta's "slow down" family
 TOKEN_CODES = {190, 102}  # token revoked, expired or changed
 COOLDOWN_SECONDS = 300
@@ -160,7 +165,7 @@ def system_token():
     return token
 
 
-def _call(method, path, token, params=None, data=None, files=None, timeout=TIMEOUT, video=False):
+def _call(method, path, token, params=None, data=None, files=None, timeout=TIMEOUT, video=False, base=None):
     if path.startswith(("act_None", "None", "/act_None")) or "/None/" in path:
         # Agency mode: an account added but not connected yet has no ad account or Page id.
         raise MetaError("This account isn't connected to Meta yet: add its ad account in Settings → Meta")
@@ -168,15 +173,15 @@ def _call(method, path, token, params=None, data=None, files=None, timeout=TIMEO
     params["access_token"] = token
     if method != "GET" and not path.rstrip("/").endswith(_UPLOADS):
         _write_sent.set(True)
-    resp = _send(method, f"{_base(video)}/{path.lstrip('/')}", params=params, data=data, files=files,
+    resp = _send(method, f"{base or _base(video)}/{path.lstrip('/')}", params=params, data=data, files=files,
                  timeout=timeout)
     body = _raise_for(resp)
     _note_success()
     return body
 
 
-def get(path, token=None, **params):
-    return _call("GET", path, token or system_token(), params=params)
+def get(path, token=None, timeout=TIMEOUT, **params):
+    return _call("GET", path, token or system_token(), params=params, timeout=timeout)
 
 
 def post(path, token=None, data=None, files=None, timeout=TIMEOUT, video=False, **params):
@@ -198,15 +203,75 @@ def page_token(page_id=None):
     return token
 
 
-def paged(path, token=None, **params):
+def paged(path, token=None, timeout=TIMEOUT, base=None, **params):
     """Yield every item across Graph API pages."""
-    body = get(path, token=token, **params)
+    body = _call("GET", path, token or system_token(), params=params, timeout=timeout, base=base)
     while True:
         yield from body.get("data", [])
         nxt = body.get("paging", {}).get("next")
         if not nxt:
             return
-        body = _raise_for(_send("GET", nxt, timeout=TIMEOUT))
+        body = _raise_for(_send("GET", nxt, timeout=timeout))
+
+
+def read_many(reads, timeout=READ_TIMEOUT, workers=PARALLEL_READS):
+    """Several independent list reads [(path, params)] at once, for a page waiting on all of them: one
+    wait instead of one per read (audit A3-46), and never much more than `timeout` in all. Returns, per
+    read, its rows or the MetaError it ended with (never raised); a read still running at the deadline
+    counts as unanswered and its late answer is dropped; one that never started (more reads than workers)
+    comes back as `not_asked`, which isn't a failure of Meta and isn't remembered. The threads start with an empty context (no app
+    context or request connection, audit A3-48): the account, token and address are read here and handed over."""
+    if not reads:
+        return []
+    acct = account_ctx.current()
+    try:
+        token, base = system_token(), _base()
+    except MetaError as exc:
+        return [exc for _ in reads]
+
+    def one(read):
+        path, params = read
+        with account_ctx.use(acct):
+            try:
+                return list(paged(path, token=token, timeout=timeout, base=base, **params))
+            except MetaError as exc:
+                return exc
+    if len(reads) == 1:
+        return [one(reads[0])]
+    pool = ThreadPoolExecutor(max_workers=min(workers, len(reads)))
+    futures = [pool.submit(one, r) for r in reads]
+    done, _ = wait(futures, timeout=timeout + 1)
+    pool.shutdown(wait=False, cancel_futures=True)
+    return [f.result() if f in done else not_asked() if f.cancelled() else network_error("GET", True) for f in futures]
+
+
+def not_asked():
+    return MetaError("Meta wasn't asked in time. Try again in a minute.", code="not_asked")
+
+
+# Reads Meta left unanswered, per account and cache key: a slow Meta costs a page one wait every couple of
+# minutes, not one per load (audit A3-46, A3-121). Per process; rate limits have their own cooldown above.
+_read_failed = {}
+_read_failed_lock = threading.Lock()
+
+
+def remember_failure(key, exc, now=None):
+    if not transient(exc):
+        return  # Meta answered (a refusal): asking again gives the same answer, and a fix in Settings must show at once
+    now = now or time.time()
+    with _read_failed_lock:
+        for k in [k for k, (until, _) in _read_failed.items() if until <= now]:
+            del _read_failed[k]
+        _read_failed[(account_ctx.current(), key)] = (now + FAIL_SECONDS, exc)
+
+
+def recently_failed(key, now=None):
+    """A fresh MetaError like the one this read ended with in the last FAIL_SECONDS, or None."""
+    hit = _read_failed.get((account_ctx.current(), key))
+    if not hit or hit[0] <= (now or time.time()):
+        return None
+    exc = hit[1]
+    return MetaError(str(exc), code=exc.code, status=exc.status, raw=exc.raw, subcode=exc.subcode)
 
 
 def signature_valid(raw_body, header, app_secret):

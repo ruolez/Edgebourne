@@ -13,7 +13,7 @@ import db
 import insights
 import meta_client
 import settings_store
-from ads_api import can_touch, entity
+from ads_api import ad_funnel, can_touch, entity
 from auth import admin_required, current_user, login_required
 from util import api_error
 
@@ -44,15 +44,47 @@ RANKINGS = {"ABOVE_AVERAGE": "Above average", "AVERAGE": "Average", "BELOW_AVERA
             "UNKNOWN": "Not enough data yet"}
 
 
-def cached(key, ttl_seconds, fetch):
+# The oldest stored answer that may stand in for one Meta didn't give: older, a figure such as reach since it
+# started would sit next to current views and understate both without saying so.
+STALE_MAX = 86400
+
+
+def cached(key, ttl_seconds, fetch, stale_ok=False):
+    """meta_cache[key] while younger than the ttl, else fetch() and store it. A read Meta left unanswered
+    isn't tried again for a couple of minutes (meta_client.recently_failed); with stale_ok the last stored
+    answer (if under a day old) stands in meanwhile, otherwise the error is raised."""
     row = db.query("SELECT data, EXTRACT(EPOCH FROM now() - fetched_at) AS age FROM meta_cache WHERE key = %s",
                    (key,), one=True)
     if row and row["age"] < ttl_seconds:
         return row["data"]
-    data = fetch()
+    try:
+        failed = meta_client.recently_failed(key)
+        if failed:
+            raise failed
+        try:
+            data = fetch()
+        except meta_client.MetaError as exc:
+            meta_client.remember_failure(key, exc)
+            raise
+    except meta_client.MetaError:
+        if stale_ok and row and row["age"] < STALE_MAX:
+            return row["data"]
+        raise
+    store(key, data)
+    return data
+
+
+def cache_rows(keys):
+    """{key: (data, age in seconds)} for the stored ones of these keys, in one query."""
+    if not keys:
+        return {}
+    return {r["key"]: (r["data"], float(r["age"])) for r in db.query(
+        "SELECT key, data, EXTRACT(EPOCH FROM now() - fetched_at) AS age FROM meta_cache WHERE key = ANY(%s)", (list(keys),))}
+
+
+def store(key, data):
     db.execute("""INSERT INTO meta_cache (key, data, fetched_at) VALUES (%s, %s, now())
                   ON CONFLICT (account_id, key) DO UPDATE SET data = EXCLUDED.data, fetched_at = now()""", (key, json.dumps(data)))
-    return data
 
 
 def breakdown_label(by, row):
@@ -152,13 +184,7 @@ def diagnostics(ad_id):
         meta = cached(f"diag:{ad_id}", 3600, fetch)
     except meta_client.MetaError as exc:
         meta = {"error": str(exc)}
-    funnel = db.query("""SELECT COALESCE(SUM(impressions),0) AS impressions, COALESCE(SUM(video_3s),0) AS video_3s,
-                                COALESCE(SUM(thruplays),0) AS thruplays, COALESCE(SUM(video_p25),0) AS p25,
-                                COALESCE(SUM(video_p50),0) AS p50, COALESCE(SUM(video_p75),0) AS p75,
-                                COALESCE(SUM(video_p100),0) AS p100, COALESCE(SUM(clicks_all),0) AS clicks_all,
-                                COALESCE(SUM(link_clicks),0) AS link_clicks, COALESCE(SUM(reach),0) AS reach
-                         FROM ad_daily WHERE ad_id = %s""", (ad_id,), one=True)
-    funnel = {k: int(v) for k, v in funnel.items()}
+    funnel = ad_funnel(ad_id)
     avg = insights.action_value(meta.get("video_avg_time_watched_actions"))
     return jsonify({
         "rankings": {k: {"value": meta.get(k), "label": RANKINGS.get(meta.get(k) or "UNKNOWN", meta.get(k))}

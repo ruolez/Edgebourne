@@ -45,6 +45,11 @@ def build(alerts, leads, proposals, read_keys):
     return items
 
 
+def item_keys(alerts, leads, proposals):
+    """The keys build() gives these items: the only read marks worth loading (audit A3-131)."""
+    return [f"alert:{a['id']}" for a in alerts] + [f"lead:{l['id']}" for l in leads] + [f"proposal:{p['id']}" for p in proposals]
+
+
 def pick(items, filt, kind):
     return [i for i in items if (filt != "unread" or i["unread"]) and (kind in (None, "", "all") or i["category"] == kind)]
 
@@ -78,10 +83,13 @@ def items_for(user):
                                 WHERE p.status = 'pending' ORDER BY p.id DESC LIMIT 50""")
     if user["role"] == "client":
         alerts = [a for a in alerts if category(a["rule"]) == "status"]
-    reads = {r["item_key"] for r in db.query("SELECT item_key FROM inbox_reads WHERE user_id = %s", (user["id"],))}
+    keys = item_keys(alerts, leads, proposals)
+    reads = {r["item_key"] for r in db.query("SELECT item_key FROM inbox_reads WHERE user_id = %s AND item_key = ANY(%s)",
+                                             (user["id"], keys))} if keys else set()
     return build(alerts, leads, proposals, reads)
 
 
 def mark_read(user, keys):
-    for key in keys:
-        db.execute("INSERT INTO inbox_reads (user_id, item_key) VALUES (%s, %s) ON CONFLICT DO NOTHING", (user["id"], key))
+    if keys:
+        db.execute("INSERT INTO inbox_reads (user_id, item_key) SELECT %s, unnest(%s::text[]) ON CONFLICT DO NOTHING",
+                   (user["id"], list(keys)))

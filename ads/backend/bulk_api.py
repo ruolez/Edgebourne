@@ -33,6 +33,29 @@ def _rows(user, level, ids):
     return rows
 
 
+def live_nodes(ids, fields):
+    """{id: node} for every id, read from Meta 50 at a time (?ids=) instead of one call each (audit A3-126).
+    An id Meta leaves out fails the read, as a read of that one would: nothing falls back to stored values."""
+    out = {}
+    for chunk in (ids[i:i + 50] for i in range(0, len(ids), 50)):
+        got = meta_client.get("", ids=",".join(chunk), fields=fields)
+        missing = [i for i in chunk if not isinstance(got.get(i), dict)]
+        if missing:
+            raise meta_client.MetaError(f"Meta didn't return {', '.join(missing)}")
+        out.update({i: got[i] for i in chunk})
+    return out
+
+
+def _live_statuses(level, rows):
+    """Each row's status as Meta has it now, plus a memo for spend_context holding the parents read with it."""
+    fields = "status" + (f",{ads_api.PARENT_FIELDS[level]}" if level in ads_api.PARENT_FIELDS else "")
+    nodes = live_nodes([r["id"] for r in rows], fields)
+    memo = {}
+    if level in ads_api.PARENT_FIELDS:
+        memo = {(i, ads_api.PARENT_FIELDS[level]): n for i, n in nodes.items()}
+    return {i: n.get("status") for i, n in nodes.items()}, memo
+
+
 def _plan(user, data):
     action, level = data.get("action"), data.get("level")
     if action not in ACTIONS or level not in ACTIONS[action]:
@@ -49,17 +72,19 @@ def _plan(user, data):
             value = str(value or "").upper()
             if value not in ("ACTIVE", "PAUSED"):
                 return None, api_error("Choose on or off", 400)
+            live, memo = _live_statuses(level, rows)
             for r in rows:  # what Meta says now, not what the last pull stored
-                r["status"] = meta_client.get(r["id"], fields="status").get("status") or r["status"]
-            contexts = {r["id"]: ads_api.spend_context(level, r) for r in rows if value == "ACTIVE" and r["status"] == "PAUSED"}
+                r["status"] = live[r["id"]] or r["status"]
+            contexts = {r["id"]: ads_api.spend_context(level, r, memo) for r in rows if value == "ACTIVE" and r["status"] == "PAUSED"}
             lines, totals = bulk.status_lines(rows, value, contexts)
         elif action in ("budget_set", "budget_pct"):
             value = int(value) if action == "budget_set" else float(value)
-            live = {r["id"]: ads_api.fresh_budget(r["id"]) for r in rows}
+            live = {i: ads_api._cents_of(n.get("daily_budget")) for i, n in live_nodes([r["id"] for r in rows], "daily_budget").items()}
             lines, totals = bulk.budget_lines(rows, "set" if action == "budget_set" else "pct", value, live, ads_api.ceiling())
         else:
+            live = live_nodes([r["id"] for r in rows], "status")
             for r in rows:
-                r["status"] = meta_client.get(r["id"], fields="status").get("status") or r["status"]
+                r["status"] = live[r["id"]].get("status") or r["status"]
             lines, totals = bulk.archive_lines(rows)
     except (TypeError, ValueError):
         return None, api_error("Enter an amount", 400, field="value")
@@ -105,7 +130,11 @@ def apply():
         # The budgets behind the confirmed total, read again now: a raise in Ads Manager since the
         # preview must be seen before anything goes on (audit A3-44, A3-75).
         try:
-            now = bulk.spend_totals([ads_api.spend_context(level, row) for row in (ads_api.entity(level, l["id"]) for l in plan["lines"]) if row])
+            rows = [row for row in (ads_api.entity(level, l["id"]) for l in plan["lines"]) if row]
+            memo = {}
+            if level in ads_api.PARENT_FIELDS and rows:
+                memo = {(i, ads_api.PARENT_FIELDS[level]): n for i, n in live_nodes([r["id"] for r in rows], ads_api.PARENT_FIELDS[level]).items()}
+            now = bulk.spend_totals([ads_api.spend_context(level, row, memo) for row in rows])
         except meta_client.MetaError as exc:
             return api_error(f"Couldn't read the budgets from Meta, so nothing was turned on: {exc}", 400)
         if (now["daily_cents"], now["lifetime_cents"]) != (totals.get("daily_cents") or 0, totals.get("lifetime_cents") or 0):
@@ -149,6 +178,8 @@ def apply():
             else:
                 error = ads_api.apply_budget(user, level, row, line["to"])
             results.append({"id": line["id"], "name": row["name"], "ok": not error, "error": ads_api.error_words(error)})
+        if action == "status":
+            ads_api.refresh_entities(level, [r["id"] for r in results if r["ok"]])
     finally:
         ads_api.BULK_ID.reset(token)
     if any(r["ok"] for r in results):

@@ -261,12 +261,35 @@ def _resync_runner(acct):
                 _resync_due[acct] = time.time() + RESYNC_DELAY
 
 
+REFRESH_FIELDS = "id,name,status,configured_status,effective_status"
+
+
 def refresh_entity(level, entity_id):
     """Re-read the status right after a change from the console and record what moved."""
     try:
-        fresh = meta_client.get(entity_id, fields="id,name,status,configured_status,effective_status")
+        fresh = meta_client.get(entity_id, fields=REFRESH_FIELDS)
     except meta_client.MetaError:
         return
+    _store_fresh(level, entity_id, fresh)
+
+
+def refresh_entities(level, ids):
+    """refresh_entity for a bulk change's items, read 50 at a time instead of one by one (audit A3-126)."""
+    for chunk in (ids[i:i + 50] for i in range(0, len(ids), 50)):
+        try:
+            got = meta_client.get("", ids=",".join(chunk), fields=REFRESH_FIELDS)
+        except meta_client.MetaError as exc:
+            if meta_client.transient(exc):
+                return  # no answer: the resync after the change records it
+            got = {}  # one of them is gone (Meta refuses the whole read then): one by one
+        for entity_id in chunk:
+            if got.get(entity_id):
+                after_write("status refresh", _store_fresh, level, entity_id, got[entity_id])
+            else:
+                after_write("status refresh", refresh_entity, level, entity_id)
+
+
+def _store_fresh(level, entity_id, fresh):
     table = LEVELS[level]
     prev_rows, _ = db.run_in_transaction([
         (f"SELECT * FROM {table} WHERE id = %s FOR UPDATE", (entity_id,)),
@@ -307,31 +330,43 @@ def forget_budget(level, entity_id):
             "budget), so nothing was changed. Refresh the page, or change it in Ads Manager.")
 
 
-def spend_context(level, row):
+PARENT_FIELDS = {"ad": "adset_id,campaign_id", "adset": "campaign_id"}
+
+
+def spend_context(level, row, memo=None):
     """What turning this on can spend, read fresh from Meta: {daily_cents, lifetime_cents, end_time, where,
     holder}. The budget lives on the ad set or on the campaign (or on each ad set of a campaign without
     one); `holder` is the id that holds it, so two budgets with the same name are both counted. `idle`:
-    a campaign with no ad set on, which spends nothing until one is turned on."""
+    a campaign with no ad set on, which spends nothing until one is turned on.
+    `memo`: one dict shared by the items of one request, so ads in the same ad set read its budget once
+    (audit A3-126); a bulk change can put each item's parents in it from one read ({(id, fields): node})."""
+    memo = {} if memo is None else memo
+
+    def read(eid, fields):
+        if (eid, fields) not in memo:
+            memo[eid, fields] = meta_client.get(eid, fields=fields)
+        return memo[eid, fields]
     if level == "ad":
-        node = meta_client.get(row["id"], fields="adset_id,campaign_id")
+        node = read(row["id"], PARENT_FIELDS["ad"])
         chain = [("adset", node.get("adset_id")), ("campaign", node.get("campaign_id"))]
     elif level == "adset":
-        node = meta_client.get(row["id"], fields="campaign_id")
+        node = read(row["id"], PARENT_FIELDS["adset"])
         chain = [("adset", row["id"]), ("campaign", node.get("campaign_id"))]
     else:
         chain = [("campaign", row["id"])]
     for lvl, eid in chain:
         if not eid:
             continue
-        node = meta_client.get(eid, fields="daily_budget,lifetime_budget,end_time")
+        node = read(eid, "daily_budget,lifetime_budget,end_time")
         daily, lifetime = _cents_of(node.get("daily_budget")), _cents_of(node.get("lifetime_budget"))
         if daily or lifetime:
             name = (entity(lvl, eid) or {}).get("name") or eid
             return {"daily_cents": daily, "lifetime_cents": lifetime, "end_time": node.get("end_time") if lifetime else None,
                     "where": f"{'the ad set' if lvl == 'adset' else 'the campaign'} “{name}”", "holder": eid}
     if level == "campaign":
-        on = [a for a in meta_client.paged(f"{row['id']}/adsets", fields="daily_budget,lifetime_budget,status", limit=100)
-              if a.get("status") == "ACTIVE"]
+        if (row["id"], "adsets") not in memo:
+            memo[row["id"], "adsets"] = list(meta_client.paged(f"{row['id']}/adsets", fields="daily_budget,lifetime_budget,status", limit=100))
+        on = [a for a in memo[row["id"], "adsets"] if a.get("status") == "ACTIVE"]
         if not on:
             return {"daily_cents": None, "lifetime_cents": None, "end_time": None, "where": None, "holder": None, "idle": True}
         daily = sum(_cents_of(a.get("daily_budget")) or 0 for a in on)
@@ -369,7 +404,8 @@ def apply_status(user, level, row, status, proposal_id=None, live=None):
         record(user, level, row, "status", old, status, False, str(exc), proposal_id)
         return (UNKNOWN if exc.unknown else "") + str(exc)
     record(user, level, row, "status", old, status, True, proposal_id=proposal_id)
-    after_write("status refresh", refresh_entity, level, row["id"])
+    if not BULK_ID.get():  # a bulk change re-reads its items together at the end
+        after_write("status refresh", refresh_entity, level, row["id"])
     resync_later()
     return None
 
@@ -498,27 +534,37 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
             c["prev"] = _sum([{"m": a["p"]} for a in mine])
         c["pending_proposals"] = pending.get(c["id"], 0)
         c["can_control"] = can_touch(user, c["id"]) and user["role"] != "client"
-    # Unique people per window from Meta (daily reach can't be added up); the daily sum if Meta is quiet.
-    for level, rows_, in (("ad", ads), ("adset", adsets), ("campaign", campaigns)):
-        insights.apply_reach(rows_, insights.unique_reach(level, start, end), "m")
+    # The account's unique reach covers every campaign: only for people who see them all.
+    whole = not campaign_id and visible_campaign_ids(user) is None
+    # Unique people from Meta (daily reach can't be added up) for the window, the one before, today and since
+    # it started, all read together (audit A3-46). Today changes through the day, so it's kept 10 minutes.
+    wanted = {}
+    for level in ("ad", "adset", "campaign") + (("account",) if whole else ()):
+        wanted[level, "m"] = (level, start, end, None, 1800)
         if prev:
-            insights.apply_reach(rows_, insights.unique_reach(level, *prev), "prev")
+            wanted[level, "prev"] = (level, *prev, None, 1800)
+        wanted[level, "today"] = (level, today, today, None, 600)
+        wanted[level, "ever"] = (level, None, None, "maximum", 1800)
+    reach = insights.reach_many(wanted)
+    # The daily sum where Meta is quiet.
+    for level, rows_, in (("ad", ads), ("adset", adsets), ("campaign", campaigns)):
+        insights.apply_reach(rows_, reach[level, "m"], "m")
+        if prev:
+            insights.apply_reach(rows_, reach[level, "prev"], "prev")
     # Today and since it started, next to the window: views add up, people come from Meta.
     views = {r["ad_id"]: (int(r["today"]), int(r["ever"])) for r in db.query(
         f"""SELECT ad_id, COALESCE(SUM(impressions) FILTER (WHERE day = %s), 0) AS today, COALESCE(SUM(impressions), 0) AS ever
             FROM ad_daily WHERE {xw} GROUP BY ad_id""", [today] + xp)}
     for level, rows_ in (("ad", ads), ("adset", adsets), ("campaign", campaigns)):
-        r_today, r_ever = insights.reach_today_and_ever(level)
+        r_today, r_ever = reach[level, "today"], reach[level, "ever"]
         for row in rows_:
             ids = [row["id"]] if level == "ad" else [a["id"] for a in every if a[f"{level}_id"] == row["id"]]
             v_today = sum(views.get(i, (0, 0))[0] for i in ids)
             v_ever = sum(views.get(i, (0, 0))[1] for i in ids)
             row["today"] = {"impressions": v_today, "reach": (r_today or {}).get(row["id"], 0) if r_today is not None else None}
             row["ever"] = {"impressions": v_ever, "reach": (r_ever or {}).get(row["id"], 0) if r_ever is not None else None}
-    # The account's unique reach covers every campaign: only for people who see them all.
-    whole = not campaign_id and visible_campaign_ids(user) is None
-    acct_today, acct_ever = insights.reach_today_and_ever("account") if whole else (None, None)
-    reach_total = (insights.unique_reach("account", start, end) or {}).get("account") if whole else None
+    acct_today, acct_ever = (reach["account", "today"], reach["account", "ever"]) if whole else (None, None)
+    reach_total = (reach["account", "m"] or {}).get("account") if whole else None
     import targets
     all_views = [views.get(a["id"], (0, 0)) for a in every]
     out = {"reach_total": reach_total,
@@ -526,7 +572,7 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
            "totals": {"m": _sum(every_m), "prev": _sum([{"m": a["p"]} for a in every_m]) if prev else None},
            "today_total": {"impressions": sum(v[0] for v in all_views), "reach": (acct_today or {}).get("account")} if not campaign_id else None,
            "ever_total": {"impressions": sum(v[1] for v in all_views), "reach": (acct_ever or {}).get("account")} if not campaign_id else None,
-           "prev_reach_total": (insights.unique_reach("account", *prev) or {}).get("account") if prev and whole else None,
+           "prev_reach_total": (reach["account", "prev"] or {}).get("account") if prev and whole else None,
            "range": {"start": start.isoformat(), "end": end.isoformat(), "days": days, "label": ranges.label(start, end)},
            "target_qualified_cents": targets.qualified(), "campaigns": campaigns, "last_sync": settings_store.get("last_performance_sync"), "archived": archived_n}
     if prev:
@@ -542,6 +588,17 @@ def tree():
     out = tree_data(current_user(), start, end, prev=prev, archived=request.args.get("archived") == "1")
     out["range"]["key"] = key
     return jsonify(out)
+
+
+def ad_funnel(ad_id):
+    """The watch funnel since it started, from the stored days (no Meta call)."""
+    row = db.query("""SELECT COALESCE(SUM(impressions),0) AS impressions, COALESCE(SUM(video_3s),0) AS video_3s,
+                             COALESCE(SUM(thruplays),0) AS thruplays, COALESCE(SUM(video_p25),0) AS p25,
+                             COALESCE(SUM(video_p50),0) AS p50, COALESCE(SUM(video_p75),0) AS p75,
+                             COALESCE(SUM(video_p100),0) AS p100, COALESCE(SUM(clicks_all),0) AS clicks_all,
+                             COALESCE(SUM(link_clicks),0) AS link_clicks, COALESCE(SUM(reach),0) AS reach
+                      FROM ad_daily WHERE ad_id = %s""", (ad_id,), one=True)
+    return {k: int(v) for k, v in row.items()}
 
 
 @bp.get("/ads/ad/<ad_id>")
@@ -591,7 +648,8 @@ def ad_detail(ad_id):
                        (ad_id, ad["adset_id"], ad["campaign_id"]))
     ad["can_control"] = current_user()["role"] != "client"
     import versions_api
-    return jsonify({"ad": ad, "series": series, "lifetime": life, "versions": versions_api.for_ad(ad),
+    # The funnel comes with the page, so the first paint doesn't wait on Meta's rankings (audit A3-123).
+    return jsonify({"ad": ad, "series": series, "lifetime": life, "funnel": ad_funnel(ad_id), "versions": versions_api.for_ad(ad),
                     "leads": leads, "proposals": proposals, "changes": changes,
                     "timeline": status_history.timeline("ad", ad_id),
                     "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS]})
@@ -1492,13 +1550,23 @@ def put_creative(ad_id, creative_id):
 
 # ---------------------------------------------------------------- Meta's automatic changes (roadmap 4.4)
 
-def _creative_of(user, ad_id):
+CREATIVE_FIELDS = "name,object_story_spec,degrees_of_freedom_spec"
+
+
+def _creative_of(user, ad_id, cached=False):
+    """The ad and its creative from Meta. `cached`: for showing it, from meta_cache by creative id. Meta never
+    changes a creative's story or automatic changes (switching one makes a new creative), so the answer for
+    an id stays true (audit A3-123); a change reads it live."""
     ad = db.query("SELECT id, name, campaign_id, creative_id, effective_status, title, body FROM ads WHERE id = %s", (ad_id,), one=True)
     if not ad or not can_touch(user, ad["campaign_id"]):
         return None, None
     if not ad["creative_id"]:
         return ad, None
-    return ad, meta_client.get(ad["creative_id"], fields="name,object_story_spec,degrees_of_freedom_spec")
+    if not cached:
+        return ad, meta_client.get(ad["creative_id"], fields=CREATIVE_FIELDS)
+    import insights_api
+    return ad, insights_api.cached(f"creative:{ad['creative_id']}", 86400, lambda: meta_client.get(
+        ad["creative_id"], timeout=meta_client.READ_TIMEOUT, fields=CREATIVE_FIELDS))
 
 
 @bp.get("/ads/ad/<ad_id>/enhancements")
@@ -1506,7 +1574,7 @@ def _creative_of(user, ad_id):
 def enhancements(ad_id):
     import creative_features as cf
     try:
-        ad, cr = _creative_of(current_user(), ad_id)
+        ad, cr = _creative_of(current_user(), ad_id, cached=True)
     except meta_client.MetaError as exc:
         return api_error(f"Couldn't read the creative: {exc}", 400)
     if not ad:

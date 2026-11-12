@@ -16,14 +16,17 @@ TODAY_TTL = 300
 
 
 def today_by_campaign():
-    """Spend and leads so far today, per campaign, cached for five minutes."""
+    """Spend and leads so far today, per campaign, cached for five minutes. Today waits on this read, so a
+    short timeout, and a Meta that didn't answer isn't asked again for a couple of minutes (audit A3-121)."""
     snap = insights.stored_today()
     if snap and time.time() - snap["at"] < TODAY_TTL:
         return snap
-    try:
-        return insights.pull_today()
-    except meta_client.MetaError:
-        return snap or {"at": None, "campaigns": {}}
+    if not meta_client.recently_failed("today_snapshot"):
+        try:
+            return insights.pull_today(timeout=meta_client.READ_TIMEOUT)
+        except meta_client.MetaError as exc:
+            meta_client.remember_failure("today_snapshot", exc)
+    return snap or {"at": None, "campaigns": {}}
 
 
 def attention(user, scope_ids):

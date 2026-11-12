@@ -147,20 +147,38 @@ def window(exp, today):
     return exp["start_day"], end
 
 
-def arm_numbers(arm, start, end):
-    ads, sets = arm.get("ad_ids") or [], arm.get("adset_ids") or []
-    row = db.query(
-        """SELECT COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
+NUMBERS = ("spend_cents", "impressions", "link_clicks", "leads", "video_3s")
+
+
+def arm_sums(arms, daily, lead_rows):
+    """Each arm's totals from rows per ad (ad_id, adset_id, the NUMBERS / qualified): a row counts for an arm
+    when its ad or its ad set is in the arm, once even when both are, as `ad_id = ANY(..) OR adset_id = ANY(..)`."""
+    out = []
+    for arm in arms:
+        ads, sets = set(arm.get("ad_ids") or []), set(arm.get("adset_ids") or [])
+        mine = [r for r in daily if r["ad_id"] in ads or r["adset_id"] in sets]
+        sums = {k: sum(int(r[k]) for r in mine) for k in NUMBERS}
+        sums["qualified"] = sum(int(r["qualified"] or 0) for r in lead_rows if r["ad_id"] in ads or r["adset_id"] in sets)
+        out.append(sums)
+    return out
+
+
+def arms_numbers(arms, start, end, tz=None):
+    """Every arm's numbers for the window in two queries, not two per arm (audit A3-130)."""
+    ads = sorted({i for a in arms for i in a.get("ad_ids") or []})
+    sets = sorted({i for a in arms for i in a.get("adset_ids") or []})
+    daily = db.query(
+        """SELECT ad_id, adset_id, COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
                   COALESCE(SUM(link_clicks),0) AS link_clicks, COALESCE(SUM(leads),0) AS leads,
                   COALESCE(SUM(video_3s),0) AS video_3s
-           FROM ad_daily WHERE day BETWEEN %s AND %s AND (ad_id = ANY(%s) OR adset_id = ANY(%s))""",
-        (start, end, ads, sets), one=True)
-    q = db.query(
-        """SELECT COUNT(*) FILTER (WHERE status IN ('qualified','won')) AS qualified FROM leads
+           FROM ad_daily WHERE day BETWEEN %s AND %s AND (ad_id = ANY(%s) OR adset_id = ANY(%s)) GROUP BY ad_id, adset_id""",
+        (start, end, ads, sets))
+    lead_rows = db.query(
+        """SELECT ad_id, adset_id, COUNT(*) FILTER (WHERE status IN ('qualified','won')) AS qualified FROM leads
            WHERE NOT is_test AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s
-             AND (ad_id = ANY(%s) OR adset_id = ANY(%s))""",
-        (account_info.tz_name(), start, end, ads, sets), one=True)
-    return {**{k: int(v) for k, v in row.items()}, "qualified": int(q["qualified"] or 0)}
+             AND (ad_id = ANY(%s) OR adset_id = ANY(%s)) GROUP BY ad_id, adset_id""",
+        (tz or account_info.tz_name(), start, end, ads, sets))
+    return arm_sums(arms, daily, lead_rows)
 
 
 def default_target(metric):
@@ -175,18 +193,26 @@ def account_today():
     return account_info.today()
 
 
-def with_results(exp, today=None):
-    today = today or account_today()
+def shared():
+    """What every test's results read from the account, read once for a list of tests (audit A3-130)."""
+    snap = account_info.snapshot()
+    return {"today": account_today(), "tz": account_info.tz_name(snap), "currency": account_info.currency(snap),
+            "cpl_target": default_target("cpl")}
+
+
+def with_results(exp, today=None, ctx=None):
+    ctx = ctx or shared()
+    today = today or ctx["today"]
     start, end = window(exp, today)
     days_run = max(0, (end - start).days + 1)
-    arms = [{**a, **(arm_numbers(a, start, end) if days_run else
-                     {"spend_cents": 0, "impressions": 0, "link_clicks": 0, "leads": 0, "video_3s": 0, "qualified": 0})}
-            for a in exp["arms"]]
+    numbers = arms_numbers(exp["arms"], start, end, ctx["tz"]) if days_run else \
+        [{**{k: 0 for k in NUMBERS}, "qualified": 0} for _ in exp["arms"]]
+    arms = [{**a, **n} for a, n in zip(exp["arms"], numbers)]
     for a in arms:
         a["value"] = value(exp["metric"], a)
-    target = exp.get("target_cents") or default_target(exp["metric"])
+    target = exp.get("target_cents") or (ctx["cpl_target"] if exp["metric"] == "cpl" else None)
     out = {**exp, "arms": arms, "days_run": days_run, "window": {"start": start.isoformat(), "end": end.isoformat()},
-           "judgement": judge(exp["metric"], arms, target, days_run, account_info.currency())}
+           "judgement": judge(exp["metric"], arms, target, days_run, ctx["currency"])}
     for k in ("start_day", "end_day"):
         out[k] = exp[k].isoformat() if exp.get(k) else None
     return out

@@ -64,9 +64,9 @@ def build(kind, start=None, for_admin=False):
                           FROM meta_changes m WHERE m.ok AND (m.created_at AT TIME ZONE %s)::date BETWEEN %s AND %s
                           ORDER BY m.created_at""", (account_info.tz_name(), account_info.tz_name(), s, e))
     import experiments_api
-    tests = [experiments_api.summary(r) for r in db.query(
+    tests = experiments_api.summaries(db.query(
         f"SELECT {experiments_api.COLS} FROM experiments WHERE status = 'running' OR (closed_at AT TIME ZONE %s)::date BETWEEN %s AND %s",
-        (account_info.tz_name(), s, e))]
+        (account_info.tz_name(), s, e)))
     pending = db.query("""SELECT p.title FROM desk_proposals p WHERE p.status = 'pending' ORDER BY p.id DESC LIMIT 5""")
     ideas = None
     try:

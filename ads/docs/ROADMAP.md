@@ -593,6 +593,14 @@ bridge 1.3); `cp` in a chain was refused (playbook now says one command at a tim
   It is debounced per process (3 s after the last write) and takes the advisory lock `resync:<account>`, so two
   gunicorn workers never re-read one account at once; a held lock postpones the re-read, it never blocks a request.
 - Meta video uploads go to `graph-video.facebook.com` (`meta_client._base(video=True)`), chunked start/transfer/finish.
+- A page never waits on Meta reads one after another (audit A3-46). Several reads go through `meta_client.read_many`
+  (parallel, one thread per read up to `PARALLEL_READS` 16, `READ_TIMEOUT` 8 s, one deadline for all; a read that never
+  started is `not_asked` and not remembered); reach windows through `insights.reach_many` (one meta_cache query, the cold
+  ones read together, the last stored answer when Meta is quiet, only if under `insights_api.STALE_MAX`, a day). A read Meta left unanswered is remembered for
+  `FAIL_SECONDS` per account and key (`meta_client.remember_failure` / `recently_failed`, also inside `insights_api.cached`),
+  so a slow Meta costs one wait every two minutes, not one per load. Refusals aren't remembered. The worker keeps Meta's
+  full timeout (`unique_reach`). Several items of one kind: one `?ids=` read (`bulk_api.live_nodes`), budgets through one
+  `spend_context` memo per request. QA can hang the fake's reach reads (`/fake/_slow?reach=<s>`) and count Graph calls (`/fake/_hits`).
 - Budgets: `cents()` helper; the UI always shows dollars.
 
 **Dev and QA**

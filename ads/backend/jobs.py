@@ -191,6 +191,9 @@ PRUNE = (
     ("webhook_events", "processed_at IS NOT NULL AND received_at < now() - interval '90 days'"),
     ("meta_cache", "fetched_at < now() - interval '30 days'"),
     ("alerts", "resolved_at IS NOT NULL AND resolved_at < now() - interval '180 days'"),
+    # Read marks of alerts (30 days in the Inbox) and leads (7) whose item has left the feed. A pending proposal
+    # stays in it however old, so its mark stays (audit A3-131).
+    ("inbox_reads", "item_key NOT LIKE 'proposal:%' AND read_at < now() - interval '35 days'"),
 )
 
 

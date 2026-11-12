@@ -132,8 +132,8 @@ def compare_ads():
     if prev:
         cur_p, qual_p = ads_api._metrics(where, params, *prev), ads_api._quality(where, params, *prev)
     import insights
-    reach_now = insights.unique_reach("ad", start, end)
-    reach_before = insights.unique_reach("ad", *prev) if prev else None
+    reach = insights.reach_many({"now": ("ad", start, end, None, 1800), **({"before": ("ad", *prev, None, 1800)} if prev else {})})
+    reach_now, reach_before = reach["now"], reach.get("before")
     tags = {}
     for t in db.query("SELECT ad_id, dimension, value FROM ad_tags WHERE ad_id = ANY(%s)", (ids,)):
         tags.setdefault(t["ad_id"], {})[t["dimension"]] = t["value"]

@@ -254,12 +254,12 @@ def stored_today():
     return today_for(settings_store.get("today_snapshot"), account_info.today())
 
 
-def pull_today():
+def pull_today(timeout=meta_client.TIMEOUT):
     """Spend and leads so far today per campaign, read from Meta and stored with the day they belong to."""
     import time
     account = settings_store.get("meta_ad_account_id")
     day = account_info.today()
-    rows = list(meta_client.paged(f"act_{account}/insights", level="campaign", date_preset="today",
+    rows = list(meta_client.paged(f"act_{account}/insights", timeout=timeout, level="campaign", date_preset="today",
                                   fields="campaign_id,spend,actions", limit=100))
     snap = {"at": time.time(), "day": day.isoformat(),
             "campaigns": {r["campaign_id"]: {"spend_cents": to_cents(r.get("spend")), "leads": lead_count(r.get("actions"))}
@@ -330,36 +330,70 @@ def apply_reach(rows, reach, field):
             m["reach"] = reach.get(r["id"], 0)
 
 
-def unique_reach(level, start=None, end=None, preset=None, ttl=1800):
-    """{id: people} for one window (or a Meta date preset such as "maximum"), cached; None when Meta doesn't answer."""
+def reach_key(level, start=None, end=None, preset=None):
+    return f"reach:{level}:{preset or f'{start}:{end}'}"
+
+
+def _reach_read(account, level, start, end, preset):
+    window = {"date_preset": preset} if preset else {"time_range": json.dumps({"since": start.isoformat(), "until": end.isoformat()})}
+    return f"act_{account}/insights", {"level": level, "fields": f"{REACH_ID[level]},reach", "limit": 500, **window}
+
+
+def reach_many(wanted, stale_ok=True, timeout=None):
+    """{name: {id: people} or None} for several windows at once, `wanted` = {name: (level, start, end, preset, ttl)}
+    (preset is a Meta date preset such as "maximum"). What meta_cache holds younger than its ttl is used as
+    is; the rest is asked from Meta together, in parallel with a short timeout, so a page waits for one read,
+    not one after another (audit A3-46). A window Meta doesn't answer keeps its last stored answer when
+    stale_ok and that answer is under a day old (insights_api.STALE_MAX), else None (the caller then adds up daily reach and says so), and isn't asked again for a
+    couple of minutes."""
     import insights_api
     account = settings_store.get("meta_ad_account_id")
-    if not account:
-        return None
-    window = {"date_preset": preset} if preset else {"time_range": json.dumps({"since": start.isoformat(), "until": end.isoformat()})}
+    if not account or not wanted:
+        return {n: None for n in wanted}
+    keys = {n: reach_key(*spec[:4]) for n, spec in wanted.items()}
+    stored = insights_api.cache_rows(set(keys.values()))
+    out, todo = {}, {}
+    def stand_in(key):
+        data, age = stored.get(key, (None, None))
+        return data if stale_ok and data is not None and age < insights_api.STALE_MAX else None
+    for n, (level, start, end, preset, ttl) in wanted.items():
+        data, age = stored.get(keys[n], (None, None))
+        if data is not None and age < ttl:
+            out[n] = data
+        elif meta_client.recently_failed(keys[n]):
+            out[n] = stand_in(keys[n])
+        else:
+            todo.setdefault(keys[n], ((level, start, end, preset), []))[1].append(n)
+    reads = [_reach_read(account, *spec) for spec, _ in todo.values()]
+    answers = meta_client.read_many(reads, timeout=timeout or meta_client.READ_TIMEOUT)
+    for (key, ((level, *_), names)), rows in zip(todo.items(), answers):
+        if isinstance(rows, meta_client.MetaError):
+            meta_client.remember_failure(key, rows)
+            value = stand_in(key)
+        else:
+            value = reach_map(level, rows)
+            insights_api.store(key, value)
+        for n in names:
+            out[n] = value
+    return out
 
-    def fetch():
-        rows = list(meta_client.paged(f"act_{account}/insights", level=level, fields=f"{REACH_ID[level]},reach", limit=500, **window))
-        return reach_map(level, rows)
-    try:
-        return insights_api.cached(f"reach:{level}:{preset or f'{start}:{end}'}", ttl, fetch)
-    except meta_client.MetaError:
-        return None
 
-
-def reach_today_and_ever(level):
-    """(today, since it started): people per id. Today changes through the day, so it's kept 10 minutes."""
-    today = account_info.today()
-    return unique_reach(level, today, today, ttl=600), unique_reach(level, preset="maximum")
+def unique_reach(level, start=None, end=None, preset=None, ttl=1800):
+    """{id: people} for one window (or a Meta date preset such as "maximum"), cached; None when Meta doesn't answer.
+    For the worker: no stale answer, and Meta's full timeout."""
+    return reach_many({"r": (level, start, end, preset, ttl)}, stale_ok=False, timeout=meta_client.TIMEOUT)["r"]
 
 
 def lifetime_reach(ad_id):
+    """People who saw the ad since it started; the ad page waits on it, so a short timeout and, when Meta
+    doesn't answer, the last stored figure (audit A3-123)."""
     import insights_api
 
     def fetch():
-        rows = meta_client.get(f"{ad_id}/insights", date_preset="maximum", fields="reach").get("data", [])
+        rows = meta_client.get(f"{ad_id}/insights", timeout=meta_client.READ_TIMEOUT, date_preset="maximum",
+                               fields="reach").get("data", [])
         return {"reach": int(rows[0].get("reach") or 0) if rows else 0}
     try:
-        return insights_api.cached(f"reach:life:{ad_id}", 1800, fetch)["reach"]
+        return insights_api.cached(f"reach:life:{ad_id}", 1800, fetch, stale_ok=True)["reach"]
     except meta_client.MetaError:
         return None
