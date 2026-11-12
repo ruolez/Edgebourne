@@ -23,6 +23,18 @@ def period(kind, today, start=None):
     return monday, monday + timedelta(days=6)
 
 
+def recent_periods(kind, today, since=None, n=12):
+    """The complete weeks or months to pick from, newest first: the default report, then the ones before it,
+    back to the period holding `since` (the first day with data), at most n. Always at least the default."""
+    out = [period(kind, today)]
+    while len(out) < n:
+        s, e = previous(*out[-1], kind)
+        if since and e < since:
+            break
+        out.append((s, e))
+    return out
+
+
 def email_due(mode, local, last_sent):
     """(kind, start, end, key) of the report to email now, or None. Due from 8 AM the day after the
     week or month ends, and on any later day until it went out (a worker down on Monday catches up)."""

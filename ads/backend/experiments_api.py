@@ -87,9 +87,9 @@ def clean(data, partial=False):
             clean_arms.append({"label": label, "name": str(a.get("name") or "").strip()[:200] or None,
                                "ad_ids": ad_ids, "adset_ids": set_ids})
         if len(clean_arms) < 2:
-            return None, ("Pick an ad or ad set for at least two arms", "arms")
+            return None, ("Pick an ad or ad set for at least two sides", "arms")
         if len({a["label"].lower() for a in clean_arms}) != len(clean_arms):
-            return None, ("Give each arm its own name", "arms")
+            return None, ("Give each side its own name", "arms")
         out["arms"] = clean_arms
     if "status" in data:
         if data["status"] not in ex.STATUSES:
@@ -130,11 +130,27 @@ def summaries(rows):
     if not rows:
         return []
     ctx = ex.shared()
-    ads, sets = names_for([a for exp in rows for a in exp["arms"]])
-    return [_summary(exp, ctx, ads, sets) for exp in rows]
+    arms = [a for exp in rows for a in exp["arms"]]
+    ads, sets = names_for(arms)
+    live = live_for(arms)
+    return [_summary(exp, ctx, ads, sets, live) for exp in rows]
 
 
-def _summary(exp, ctx, ads, sets):
+def live_for(arms):
+    """On/off and budgets of what the tests compare, for their next step: the ads and ad sets in them, and the
+    ad sets and campaigns that pay for those."""
+    ad_ids = sorted({i for a in arms for i in a.get("ad_ids") or []})
+    set_ids = {i for a in arms for i in a.get("adset_ids") or []}
+    ads = {r["id"]: r for r in db.query("SELECT id, name, status, effective_status, adset_id, campaign_id FROM ads WHERE id = ANY(%s)", (ad_ids,))}
+    set_ids = sorted(set_ids | {a["adset_id"] for a in ads.values() if a["adset_id"]})
+    sets = {r["id"]: r for r in db.query("""SELECT id, name, status, effective_status, campaign_id, daily_budget_cents
+                                             FROM adsets WHERE id = ANY(%s)""", (set_ids,))}
+    camp_ids = sorted({r["campaign_id"] for r in list(ads.values()) + list(sets.values()) if r["campaign_id"]})
+    camps = {r["id"]: r for r in db.query("SELECT id, name, daily_budget_cents FROM campaigns WHERE id = ANY(%s)", (camp_ids,))}
+    return {"ads": ads, "adsets": sets, "campaigns": camps}
+
+
+def _summary(exp, ctx, ads, sets, live=None):
     out = ex.with_results(exp, ctx=ctx)
     for a in out["arms"]:
         a["members"] = ex.arm_members(a, ads, sets)
@@ -143,6 +159,7 @@ def _summary(exp, ctx, ads, sets):
         out[k] = exp[k].isoformat() if exp.get(k) else None
     out["metric_label"] = ex.METRICS[exp["metric"]]["label"]
     out["meta"] = meta_view(exp)
+    out["next"] = ex.next_step(out, live, out["meta"], ctx["today"]) if live else None
     out.pop("meta_study", None)
     return out
 
@@ -217,11 +234,11 @@ def edit(exp_id):
     if end and end < start:
         return api_error("The end comes before the start", 400, field="end_day")
     if "winner" in fields and fields["winner"] and fields["winner"] not in [a["label"] for a in fields.get("arms", exp["arms"])]:
-        return api_error("Pick one of the arms as the winner", 400, field="winner")
+        return api_error("Pick one of the sides as the winner", 400, field="winner")
     if not fields:
         return jsonify(summary(exp))
     if "arms" in fields and exp.get("meta_study") and fields["arms"] != exp["arms"]:
-        return api_error("This test runs on Meta, so its arms can't change", 409, field="arms")
+        return api_error("This test runs on Meta, so what it compares can't change", 409, field="arms")
     if "arms" in fields:
         fields["arms"] = json.dumps(fields["arms"])
     if fields.get("status") == "running":

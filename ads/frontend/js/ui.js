@@ -631,7 +631,9 @@ export async function boot({ page, admin = false }) {
     const sub = document.createElement("nav");
     sub.className = "subnav";
     sub.setAttribute("aria-label", SECTIONS[section].label);
-    sub.innerHTML = tabsFor.map(([p, label]) => `<a href="${PAGE_HREF[p]}" ${p === page ? 'aria-current="page"' : ""}>${label}</a>`).join("");
+    // Insights' tabs carry the campaign picked on Results (its page remembers itself without dates; the dates are shared).
+    const tabHref = (p) => (section === "insights" && p !== page ? listHref(PAGE_HREF[p]) : PAGE_HREF[p]);
+    sub.innerHTML = tabsFor.map(([p, label]) => `<a href="${esc(tabHref(p))}" ${p === page ? 'aria-current="page"' : ""}>${label}</a>`).join("");
     line.after(sub);
   }
 

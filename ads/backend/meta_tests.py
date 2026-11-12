@@ -37,10 +37,10 @@ def plan(exp, start, end, daily_budget_cents, today, tz, max_budget_cents=None):
     Raises PlanError with the reason when it can't be run on Meta."""
     arms = exp["arms"]
     if any(len(a.get("ad_ids") or []) + len(a.get("adset_ids") or []) != 1 for a in arms):
-        raise PlanError("On Meta, each arm has to be exactly one ad or exactly one ad set")
+        raise PlanError("On Meta, each side has to be exactly one ad or exactly one ad set")
     kinds = {"ad" if a.get("ad_ids") else "adset" for a in arms}
     if len(kinds) != 1:
-        raise PlanError("On Meta, the arms have to be all ads or all ad sets, not a mix")
+        raise PlanError("On Meta, the sides have to be all ads or all ad sets, not a mix")
     kind = kinds.pop()
     if kind == "ad" and len(arms) > CREATIVE_MAX_CELLS:
         raise PlanError(f"Meta compares at most {CREATIVE_MAX_CELLS} ads in one test")

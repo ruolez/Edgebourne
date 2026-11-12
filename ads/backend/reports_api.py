@@ -140,7 +140,10 @@ def get_report():
         return err
     if current_user()["role"] == "member":
         return api_error("Reports are for admins and clients", 403)
-    return jsonify(build(kind, start, for_admin=current_user()["role"] == "admin", links=True))
+    first = db.query("SELECT MIN(day) AS d FROM ad_daily", one=True)["d"]
+    # The earlier weeks or months to pick from (signed in only: a share link is one period).
+    periods = [{"start": s.isoformat(), "end": e.isoformat()} for s, e in rl.recent_periods(kind, today(), since=first)]
+    return jsonify({**build(kind, start, for_admin=current_user()["role"] == "admin", links=True), "periods": periods})
 
 
 @bp.post("/share")

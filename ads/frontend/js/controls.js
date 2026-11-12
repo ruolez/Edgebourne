@@ -27,8 +27,12 @@ export function spendBody(spend) {
 
 export async function toggleEntity(btn, after) {
   const [level, id] = btn.dataset.toggle.split(":");
-  const turnOn = btn.getAttribute("aria-checked") !== "true";
-  const name = btn.dataset.name;
+  return changeStatus({ level, id, name: btn.dataset.name, turnOn: btn.getAttribute("aria-checked") !== "true" }, after, btn);
+}
+
+// The one way anything is turned on or off: the same confirmation from a switch or a plain button (`btn`
+// is disabled while it runs).
+export async function changeStatus({ level, id, name, turnOn }, after, btn = document.createElement("button")) {
   let spend = null;
   if (turnOn) {
     // Turning on spends money: show the daily budget Meta has right now (the server checks it was seen).

@@ -1,7 +1,7 @@
 import { api, startLoad } from "./api.js";
 import { boot, entityLink, esc, icon, onRefresh, rememberList, skeleton, toast, when, showLoadError } from "./ui.js";
 import { barList, columnChart } from "./charts.js";
-import { EXPLAIN, RANGES, STATUS as FORMAT_STATUS, WORDS, count, dayLabel, money, pct, per, moneyWhole, currencySymbol, rangeSelect, rememberRange, sharedRange, statusPill } from "./format.js";
+import { EXPLAIN, RANGES, STATUS as FORMAT_STATUS, WORDS, count, dayLabel, money, pct, per, moneyWhole, currencySymbol, rangeSelect, rememberCampaign, rememberRange, sharedCampaign, sharedRange, statusPill } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
@@ -11,14 +11,20 @@ let range = sharedRange();
 const RANGE_KEYS = RANGES.map(([k]) => k);
 const qs = new URLSearchParams(location.search);
 if (RANGE_KEYS.includes(qs.get("range"))) range = qs.get("range");
-let campaign = qs.get("campaign") || "";
+// The campaign picked last in this tab (Results or Compare), unless the link names its own ("" = all).
+let campaign = qs.has("campaign") ? qs.get("campaign") : sharedCampaign();
 
 // The ads table: which ads, in what order. Kept per browser.
 const FILTERS = {
   spent: ["Spent money", (a) => a.spend_cents > 0],
   running: ["Delivering", (a) => a.effective_status === "ACTIVE"],
-  all: ["All", (a) => a.effective_status !== "DELETED" || a.spend_cents > 0],
+  all: ["All", () => true],
 };
+// Deleted ads stay out of the table unless asked for; what they spent still counts in the figures above.
+// Only deleted ads that spent in the period come back: the hundreds with nothing spent tell Eugene nothing.
+const deleted = (a) => a.effective_status === "DELETED";
+let showDeleted = qs.get("deleted") === "1";
+const listed = (a) => !deleted(a) || (showDeleted && a.spend_cents > 0);
 const COLUMNS = [
   { key: "name", label: "Ad", text: true, value: (a) => (a.name || "").toLowerCase() },
   { key: "status", label: "Status", text: true, value: (a) => (STATUS[a.effective_status] || ["", a.effective_status || ""])[1] },
@@ -120,7 +126,7 @@ function adsShown() {
   const q = table.q.trim().toLowerCase();
   const col = COLUMNS.find((c) => c.key === table.sort);
   const sign = table.dir === "asc" ? 1 : -1;
-  return data.ads.filter(FILTERS[table.filter][1]).filter((a) => !q || (a.name || "").toLowerCase().includes(q)).sort((a, b) => {
+  return data.ads.filter(listed).filter(FILTERS[table.filter][1]).filter((a) => !q || (a.name || "").toLowerCase().includes(q)).sort((a, b) => {
     const x = col.value(a), y = col.value(b);
     if (x == null || y == null) return x == null && y == null ? 0 : x == null ? 1 : -1; // no value: always last
     return (x < y ? -1 : x > y ? 1 : 0) * sign || b.spend_cents - a.spend_cents;
@@ -165,7 +171,10 @@ function renderAds() {
   const box = document.getElementById("cr-panel");
   if (!box) return;
   const list = adsShown();
-  const counts = Object.fromEntries(Object.entries(FILTERS).map(([k, [, fn]]) => [k, data.ads.filter(fn).length]));
+  const pool = data.ads.filter(listed);
+  const counts = Object.fromEntries(Object.entries(FILTERS).map(([k, [, fn]]) => [k, pool.filter(fn).length]));
+  const gone = data.ads.filter((a) => deleted(a) && a.spend_cents > 0);
+  const goneSpend = gone.reduce((s, a) => s + a.spend_cents, 0);
   const body = list.length
     ? `<div class="scroll-x"><table class="table middle results-table">
         <thead><tr>${COLUMNS.map(headCell).join("")}</tr></thead>
@@ -174,16 +183,31 @@ function renderAds() {
     : `<div class="empty-inline"><p class="muted">${table.q ? `No ad called “${esc(table.q)}”` : `No ads ${{ spent: "spent money", running: "are running", all: "" }[table.filter]} in this period`.replace("  ", " ")}.</p>
         <button type="button" class="btn btn-quiet btn-small" data-clear>Show all ads</button></div>`;
   const head = box.querySelector(".results-bar");
-  const bar = `<div class="panel-head wrap results-bar"><h2>Ads</h2><a class="more" href="/ads.html?range=${encodeURIComponent(range)}&vs=1${campaign ? `&campaign=${encodeURIComponent(campaign)}` : ""}" title="Turn ads on or off, compare or change several at once">Manage in Ads</a>
+  const bar = `<div class="panel-head wrap results-bar"><h2>Ads</h2>
       <div class="filters" id="cr-filter" role="group" aria-label="Show ads">${Object.entries(FILTERS).map(([k, [l]]) =>
-        `<button type="button" class="view-chip" data-filter="${k}" aria-pressed="${k === table.filter}">${esc(l)} <span class="n">${counts[k]}</span></button>`).join("")}</div>
+        `<button type="button" class="view-chip" data-filter="${k}" aria-pressed="${k === table.filter}">${esc(l)} <span class="n">${counts[k]}</span></button>`).join("")}
+        <button type="button" class="view-chip" id="cr-deleted" aria-pressed="${showDeleted}" title="Ads deleted on Meta: hidden unless you ask"${gone.length ? "" : " hidden"}>Deleted <span class="n">${gone.length}</span></button></div>
       <div class="search">${icon("search")}<label class="sr-only" for="cr-q">Find an ad</label><input class="input" id="cr-q" type="search" placeholder="Find an ad" autocomplete="off" value="${esc(table.q)}"></div>
-    </div>`;
+      <a class="btn btn-quiet btn-small" id="cr-open" href="#">${icon("ads")}Open in Ads</a>
+    </div>
+    <p class="muted small flush cr-note" id="cr-note"></p>`;
   if (!head) box.innerHTML = bar + '<div class="panel-body" id="cr-results"></div>';
-  else box.querySelectorAll("#cr-filter button").forEach((b) => {
+  else box.querySelectorAll("#cr-filter [data-filter]").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.filter === table.filter));
     b.querySelector(".n").textContent = counts[b.dataset.filter];
   });
+  const del = document.getElementById("cr-deleted");
+  del.hidden = !gone.length;
+  del.setAttribute("aria-pressed", String(showDeleted));
+  del.querySelector(".n").textContent = gone.length;
+  // The analysis lives here; turning ads on or off, budgets and several at once live in Ads, opened on the same days and campaign.
+  document.getElementById("cr-open").href = adsHref();
+  // Read-only clients change nothing in Ads, so they get no action wording.
+  document.getElementById("cr-note").textContent = [
+    me.role === "client" ? "" : "To turn ads on or off or change budgets, open them in Ads.",
+    gone.length && !showDeleted ? `${gone.length} deleted ad${gone.length === 1 ? "" : "s"} spent ${money(goneSpend, { exact: true })} in these days: counted in the figures above, left out of this table.` : "",
+  ].filter(Boolean).join(" ");
+  document.getElementById("cr-note").hidden = !document.getElementById("cr-note").textContent;
   document.getElementById("cr-results").innerHTML = body;
 }
 
@@ -200,6 +224,7 @@ function wireAds() {
       document.querySelector(`.results-table [data-sort="${col.key}"]`)?.focus();
       return;
     }
+    if (e.target.closest("#cr-deleted")) { showDeleted = !showDeleted; syncUrl(); renderAds(); return; }
     if (e.target.closest("#cr-panel [data-clear]")) {
       table.filter = "all"; table.q = "";
       const q = document.getElementById("cr-q"); if (q) q.value = "";
@@ -222,12 +247,27 @@ function campaignPicker() {
     `<option value="${esc(c.id)}" ${c.id === campaign ? "selected" : ""}>${esc(c.name)}${c.effective_status === "ACTIVE" ? "" : " (off)"}</option>`).join("");
 }
 
+// Ads opened from here: the same days and campaign, with "vs before", on the view that matches the filter.
+function adsHref() {
+  const u = new URLSearchParams({ range, vs: "1" });
+  if (campaign) u.set("campaign", campaign);
+  if (table.filter === "running") u.set("view", "delivering");
+  if (showDeleted) u.set("archived", "1");
+  return `/ads.html?${u}`;
+}
+
 function syncUrl() {
   const u = new URL(location.href);
   u.searchParams.set("range", range);
   if (campaign) u.searchParams.set("campaign", campaign); else u.searchParams.delete("campaign");
+  if (showDeleted) u.searchParams.set("deleted", "1"); else u.searchParams.delete("deleted");
   history.replaceState(null, "", u);
-  rememberList();
+  // The tabs and breadcrumbs reopen Results on this campaign; the dates come from the shared range, so a
+  // range picked later on another page isn't overruled by an old one kept here.
+  const kept = new URL(u);
+  kept.searchParams.delete("range");
+  rememberList(kept.pathname + kept.search);
+  rememberCampaign(campaign);
 }
 
 // This month: spend so far, where it lands at this pace, the spending limit and the target.

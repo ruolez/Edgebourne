@@ -20,13 +20,14 @@
     <main class="main">
       <header class="page-head no-print">
         <h1>Reports</h1>
-        <div class="segmented" id="kind" role="group" aria-label="Period">
-          <button type="button" data-kind="week">Last week</button>
-          <button type="button" data-kind="month">Last month</button>
+        <div class="segmented" id="kind" role="group" aria-label="Report by">
+          <button type="button" data-kind="week">Week</button>
+          <button type="button" data-kind="month">Month</button>
         </div>
+        <label class="period-pick" id="period-box" hidden><span class="sr-only" id="period-label">Which week</span><select class="input tool" id="period" aria-labelledby="period-label"></select></label>
         <span class="spacer"></span>
-        <button type="button" class="btn" id="share" hidden>Share a link</button>
-        <button type="button" class="btn btn-primary" id="pdf">Download PDF</button>
+        <button type="button" class="btn" id="share" hidden>Share a link…</button>
+        <button type="button" class="btn btn-primary" id="pdf">Print or save as PDF</button>
       </header>
       <div class="content" id="report-wrap"><article class="rp-doc" id="report"><div class="skeleton" role="status"><span></span><span></span><span></span><p>Loading…</p></div></article></div>
     </main>

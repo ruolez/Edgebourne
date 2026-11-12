@@ -65,6 +65,14 @@ export function rememberRange(r) {
   if (!RANGES.some(([k]) => k === r)) return;
   try { localStorage.setItem(RANGE_KEY, r); } catch (e) { /* storage off */ }
 }
+// The campaign picked last on Results or Compare, in this tab only ("" = all campaigns). Insights' tabs open on it.
+const CAMPAIGN_KEY = "ebads-campaign";
+export function sharedCampaign() {
+  try { return sessionStorage.getItem(CAMPAIGN_KEY) || ""; } catch (e) { return ""; }
+}
+export function rememberCampaign(id) {
+  try { if (id) sessionStorage.setItem(CAMPAIGN_KEY, id); else sessionStorage.removeItem(CAMPAIGN_KEY); } catch (e) { /* storage off */ }
+}
 const escText = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 export const rangeSelect = (id, value, ranges = RANGES, label = "Dates") =>
   `<select class="input tool" id="${id}" aria-label="${escText(label)}">${ranges.map(([k, l]) => `<option value="${k}" ${String(k) === String(value) ? "selected" : ""}>${escText(l)}</option>`).join("")}</select>`;

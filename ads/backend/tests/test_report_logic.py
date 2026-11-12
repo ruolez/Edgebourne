@@ -55,5 +55,37 @@ class ShareTests(unittest.TestCase):
                           rl.verify("s3cret", "garbage", TODAY)], [None, None, None, None])
 
 
+
+class RecentPeriodsTests(unittest.TestCase):
+    """The earlier-period picker on Reports: complete weeks or months, newest first, back to the first data."""
+
+    def test_weeks_are_whole_mondays_to_sundays_back_to_back_newest_first(self):
+        weeks = rl.recent_periods("week", TODAY, n=3)
+        self.assertEqual(weeks, [(date(2026, 11, 2), date(2026, 11, 8)), (date(2026, 10, 26), date(2026, 11, 1)),
+                                 (date(2026, 10, 19), date(2026, 10, 25))])
+
+    def test_months_cross_february_and_the_year_end(self):
+        months = rl.recent_periods("month", date(2026, 3, 4), n=4)
+        self.assertEqual(months, [(date(2026, 2, 1), date(2026, 2, 28)), (date(2026, 1, 1), date(2026, 1, 31)),
+                                  (date(2025, 12, 1), date(2025, 12, 31)), (date(2025, 11, 1), date(2025, 11, 30))])
+
+    def test_every_offered_period_is_complete_and_the_first_is_the_default_report(self):
+        for kind in ("week", "month"):
+            got = rl.recent_periods(kind, TODAY, n=12)
+            self.assertEqual(got[0], rl.period(kind, TODAY))
+            self.assertEqual(len(got), 12)
+            self.assertTrue(all(rl.complete(e, TODAY) for _, e in got))
+            self.assertTrue(all((got[i][0] - got[i + 1][1]).days == 1 for i in range(len(got) - 1)))
+
+    def test_it_stops_at_the_period_holding_the_first_day_with_data(self):
+        self.assertEqual(rl.recent_periods("week", TODAY, since=date(2026, 10, 28)),
+                         [(date(2026, 11, 2), date(2026, 11, 8)), (date(2026, 10, 26), date(2026, 11, 1))])
+        self.assertEqual(rl.recent_periods("month", TODAY, since=date(2026, 9, 15)),
+                         [(date(2026, 10, 1), date(2026, 10, 31)), (date(2026, 9, 1), date(2026, 9, 30))])
+
+    def test_an_account_newer_than_the_last_complete_period_still_gets_that_one(self):
+        self.assertEqual(rl.recent_periods("week", TODAY, since=date(2026, 11, 9)), [(date(2026, 11, 2), date(2026, 11, 8))])
+
+
 if __name__ == "__main__":
     unittest.main()

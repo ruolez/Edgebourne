@@ -119,7 +119,7 @@ async function componentDrift(page) {
 
 // 9.2 part 2: one vocabulary. Words the console no longer uses on screen (format.js WORDS has the ones it does).
 // Claude's own reports (.md, a polish run's scorecard and summary), what people typed (.cv-you, .prompt), lead answers and tag values (.chip) are their words, not ours.
-const OLD_WORDS = [/\bImpressions\b/, /\bStopped scrolling\b/, /\bPer lead\b/, /\b[Pp]roposals?\b/, /(?<!Meta )\b[Aa]pprov(e|ing)\b/, /\bjobs?\b/i,
+const OLD_WORDS = [/\bImpressions\b/, /\b[Aa]rms?\b/, /\bStopped scrolling\b/, /\bPer lead\b/, /\b[Pp]roposals?\b/, /(?<!Meta )\b[Aa]pprov(e|ing)\b/, /\bjobs?\b/i,
   /\bTimes each\b/, /\bRunning now\b/, /\b[Ii]n review at Meta\b/, /\bRejected by Meta\b/, /\bPer qualified\b/];
 async function vocabularyLeaks(page) {
   return page.evaluate((sources) => {

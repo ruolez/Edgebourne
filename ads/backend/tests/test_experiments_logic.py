@@ -1,4 +1,5 @@
 import unittest
+from datetime import date, datetime
 
 import experiments as ex
 
@@ -66,7 +67,7 @@ class JudgeTests(unittest.TestCase):
         self.assertEqual((j["state"], j["leader"], j["diff_pct"]), ("winner", "B", 50))
 
     def test_one_arm_cannot_be_compared(self):
-        self.assertEqual(ex.judge("cpl", [arm("A", 1000, 1)], days_run=7)["note"], "Add a second arm to compare.")
+        self.assertEqual(ex.judge("cpl", [arm("A", 1000, 1)], days_run=7)["note"], "Add a second side to compare.")
 
 
 class MembersTests(unittest.TestCase):
@@ -95,6 +96,127 @@ class ContainingTests(unittest.TestCase):
     def test_an_ad_in_no_test_and_an_ad_without_an_ad_set(self):
         exps = [{"id": 1, "name": "T", "status": "running", "arms": [{"ad_ids": ["a2"]}, {"adset_ids": ["s2"]}]}]
         self.assertEqual((ex.containing(exps, "a1", "s1"), ex.containing(exps, "a1", None)), ([], []))
+
+
+
+def live(ads=(), adsets=(), campaigns=()):
+    return {"ads": {a["id"]: a for a in ads}, "adsets": {s["id"]: s for s in adsets}, "campaigns": {c["id"]: c for c in campaigns}}
+
+
+def ad(i, name, status="ACTIVE", adset="s1", campaign="c1", effective=None):
+    return {"id": i, "name": name, "status": status, "effective_status": effective or status, "adset_id": adset, "campaign_id": campaign}
+
+
+def aset(i, name, budget=None, status="ACTIVE", campaign="c1"):
+    return {"id": i, "name": name, "status": status, "effective_status": status, "campaign_id": campaign, "daily_budget_cents": budget}
+
+
+def test_of(arms, status="running", state="winner", leader="A", winner=None, metric="cpl", name="Hook test", closed_at=None, verdict=None):
+    return {"name": name, "metric": metric, "status": status, "winner": winner, "closed_at": closed_at, "verdict": verdict,
+            "judgement": {"state": state, "leader": leader, "note": f"{leader} wins: 40% cheaper, 97% sure."},
+            "arms": [{"label": lab, "ad_ids": list(a), "adset_ids": list(s)} for lab, a, s in arms]}
+
+
+class NextStepTests(unittest.TestCase):
+    """What to do once a test has a winner: switch the others off and fund the winner, each through the
+    console's usual confirmations; nothing is decided while the numbers are still out."""
+
+    def test_a_running_winner_offers_to_turn_off_the_losers_still_on_and_its_own_budget(self):
+        t = test_of([("A", ["a1"], []), ("B", ["b1"], []), ("C", ["c1ad"], [])])
+        world = live([ad("a1", "N1", adset="s1"), ad("b1", "N3", adset="s2"), ad("c1ad", "N5", status="PAUSED", adset="s2")],
+                     [aset("s1", "Owners", budget=2000), aset("s2", "Managers", budget=1500)])
+        step = ex.next_step(t, world)
+        self.assertEqual(step["winner"], "A")
+        self.assertEqual(step["turn_off"], [{"level": "ad", "id": "b1", "name": "N3", "side": "B"}])
+        self.assertEqual(step["budgets"], [{"level": "adset", "id": "s1", "name": "Owners", "daily_budget_cents": 2000, "shared_with": []}])
+        self.assertFalse(step["winner_off"])
+
+    def test_a_budget_the_winner_shares_with_a_loser_still_on_names_that_loser(self):
+        t = test_of([("A", ["a1"], []), ("B", ["b1"], [])])
+        world = live([ad("a1", "N1", adset="s1"), ad("b1", "N3", adset="s1")], [aset("s1", "Owners", budget=2000)])
+        self.assertEqual(ex.next_step(t, world)["budgets"][0]["shared_with"], ["N3"])
+
+    def test_without_an_ad_set_budget_the_campaign_budget_is_the_one_to_raise(self):
+        t = test_of([("A", ["a1"], []), ("B", ["b1"], [])])
+        world = live([ad("a1", "N1", adset="s1", campaign="c1"), ad("b1", "N3", status="PAUSED", adset="s1", campaign="c1")],
+                     [aset("s1", "Owners")], [{"id": "c1", "name": "Free intro call", "daily_budget_cents": 3100}])
+        step = ex.next_step(t, world)
+        self.assertEqual((step["turn_off"], step["budgets"]),
+                         ([], [{"level": "campaign", "id": "c1", "name": "Free intro call", "daily_budget_cents": 3100, "shared_with": []}]))
+
+    def test_a_losing_ad_set_holding_the_winning_ad_is_never_offered_to_turn_off(self):
+        t = test_of([("A", ["a1"], []), ("B", [], ["s1"])])
+        world = live([ad("a1", "N1", adset="s1")], [aset("s1", "Owners", budget=2000)])
+        self.assertEqual(ex.next_step(t, world)["turn_off"], [])
+
+    def test_losers_gone_deleted_or_archived_are_left_out(self):
+        t = test_of([("A", ["a1"], []), ("B", ["gone", "del", "arc"], [])])
+        world = live([ad("a1", "N1"), ad("del", "N7", effective="DELETED"), ad("arc", "N8", effective="ARCHIVED")], [aset("s1", "Owners", 2000)])
+        self.assertEqual(ex.next_step(t, world)["turn_off"], [])
+
+    def test_a_winner_picked_by_hand_when_finishing_still_gets_a_next_step(self):
+        t = test_of([("A", ["a1"], []), ("B", ["b1"], [])], status="done", state="early", leader="A", winner="B")
+        world = live([ad("a1", "N1", adset="s2"), ad("b1", "N3", status="PAUSED", adset="s1")], [aset("s1", "Owners", 2000), aset("s2", "Managers", 900)])
+        step = ex.next_step(t, world)
+        self.assertEqual((step["winner"], [x["id"] for x in step["turn_off"]], step["winner_off"]), ("B", ["a1"], True))
+
+    def test_no_next_step_until_there_is_a_winner(self):
+        arms = [("A", ["a1"], []), ("B", ["b1"], [])]
+        world = live([ad("a1", "N1"), ad("b1", "N3")], [aset("s1", "Owners", 2000)])
+        for t in (test_of(arms, state="early"), test_of(arms, state="leaning"), test_of(arms, state="even"),
+                  test_of(arms, status="done", state="winner", winner=None), test_of(arms, status="stopped", state="winner")):
+            self.assertIsNone(ex.next_step(t, world), (t["status"], t["judgement"]["state"], t["winner"]))
+
+    def test_make_more_like_this_asks_claude_about_the_winning_ad_by_name(self):
+        t = test_of([("A", ["a1"], []), ("B", ["b1"], [])], name="Problem hook vs result hook")
+        world = live([ad("a1", "N1 - One simple system"), ad("b1", "N3")], [aset("s1", "Owners", 2000)])
+        more = ex.next_step(t, world)["more_like"]
+        self.assertEqual((more["ad_id"], more["name"]), ("a1", "N1 - One simple system"))
+        for part in ("N1 - One simple system", "a1", "Problem hook vs result hook", "cost per lead", "40% cheaper"):
+            self.assertIn(part, more["prompt"])
+        self.assertLessEqual(len(more["prompt"]), 4000)
+
+    def test_a_winning_ad_set_is_described_by_its_name(self):
+        t = test_of([("A", [], ["s1"]), ("B", [], ["s2"])], metric="hook")
+        world = live([], [aset("s1", "Owners", 2000), aset("s2", "Managers", 1500)])
+        step = ex.next_step(t, world)
+        self.assertEqual((step["more_like"]["ad_id"], step["turn_off"], [b["id"] for b in step["budgets"]]),
+                         (None, [{"level": "adset", "id": "s2", "name": "Managers", "side": "B"}], ["s1"]))
+        self.assertIn("Owners", step["more_like"]["prompt"])
+        self.assertIn("hook rate", step["more_like"]["prompt"])
+
+    def test_while_meta_still_runs_the_split_nothing_is_offered_to_switch_off_or_fund(self):
+        t = test_of([("A", ["a1"], []), ("B", ["b1"], [])])
+        world = live([ad("a1", "N1"), ad("b1", "N3")], [aset("s1", "Owners", 2000)])
+        for meta in ({"state": "running", "end_day": "2026-11-20"}, {"state": "scheduled", "end_day": "2026-11-20"}, {"creating": True}):
+            step = ex.next_step(t, world, meta)
+            self.assertEqual((step["turn_off"], step["budgets"], step["wait"]), ([], [], {"until": meta.get("end_day")}), meta)
+
+    def test_once_meta_has_ended_the_usual_next_step_comes_back(self):
+        t = test_of([("A", ["a1"], []), ("B", ["b1"], [])])
+        world = live([ad("a1", "N1"), ad("b1", "N3")], [aset("s1", "Owners", 2000)])
+        step = ex.next_step(t, world, {"state": "ended", "end_day": "2026-11-01"})
+        self.assertEqual(([x["id"] for x in step["turn_off"]], step["wait"]), (["b1"], None))
+
+    def test_a_finished_test_offers_its_next_step_for_two_weeks_after_closing(self):
+        arms = [("A", ["a1"], []), ("B", ["b1"], [])]
+        world = live([ad("a1", "N1"), ad("b1", "N3")], [aset("s1", "Owners", 2000)])
+        today = date(2026, 11, 12)
+        fresh = test_of(arms, status="done", winner="A", closed_at=datetime(2026, 10, 29, 9, 0))
+        old = test_of(arms, status="done", winner="A", closed_at="2026-10-28T09:00:00+00:00")
+        self.assertEqual((ex.next_step(fresh, world, today=today) is not None, ex.next_step(old, world, today=today)), (True, None))
+
+    def test_a_hand_picked_winner_is_never_described_with_the_numbers_other_side_note(self):
+        t = test_of([("A", ["a1"], []), ("B", ["b1"], [])], status="done", state="winner", leader="A", winner="B")
+        world = live([ad("a1", "N1"), ad("b1", "N3")], [aset("s1", "Owners", 2000)])
+        prompt = ex.next_step(t, world)["more_like"]["prompt"]
+        self.assertNotIn("A wins", prompt)
+        self.assertIn("B was picked as the winner.", prompt)
+
+    def test_a_finished_test_quotes_what_was_learned(self):
+        t = test_of([("A", ["a1"], []), ("B", ["b1"], [])], status="done", state="early", winner="B", verdict="Naming the pain first won.")
+        world = live([ad("a1", "N1"), ad("b1", "N3")], [aset("s1", "Owners", 2000)])
+        self.assertIn("Naming the pain first won.", ex.next_step(t, world)["more_like"]["prompt"])
 
 
 if __name__ == "__main__":

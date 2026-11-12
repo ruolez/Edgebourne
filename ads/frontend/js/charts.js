@@ -110,8 +110,11 @@ export function barList(el, items, { key, format, max = null, extra = null }) {
 
 // Several lines on one axis (compare: one line per ad). series = [{ label, cls, points: [{day, value}] }].
 // Thin lines, round joins, one shared y axis, a tooltip listing every line on the hovered day.
-export function lineChart({ el, series, format, axisFormat, title, integer = false, height = 220 }) {
-  const W = drawWidth(el), H = height, L = 52, R = 10, T = 12, B = 26;
+// `dashes[i]` gives line i its own dash pattern and a series `key` (1, 2…) is drawn where its line ends, so the
+// lines can be told apart without their colour.
+export function lineChart({ el, series, format, axisFormat, title, integer = false, height = 220, dashes = [] }) {
+  const keyed = series.some((s) => s.key);
+  const W = drawWidth(el), H = height, L = 52, R = keyed ? 26 : 10, T = 12, B = 26;
   const days = series[0]?.points.map((p) => p.day) || [];
   const values = series.flatMap((s) => s.points.map((p) => p.value ?? 0));
   const { top, step } = niceMax(Math.max(...values, 0), 4, integer);
@@ -124,13 +127,20 @@ export function lineChart({ el, series, format, axisFormat, title, integer = fal
     ticks += `<text class="tick" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${esc(axisFormat(v))}</text>`;
   }
   const labels = days.map((d, i) => (dayTick(i, days.length) ? `<text class="tick" x="${x(i)}" y="${H - 6}" text-anchor="middle">${dayLabel(d)}</text>` : "")).join("");
-  const lines = series.map((s) => {
+  const lines = series.map((s, n) => {
     const pts = s.points.map((p, i) => (p.value == null ? null : `${x(i).toFixed(1)},${y(p.value).toFixed(1)}`)).filter(Boolean).join(" ");
-    return `<polyline class="ln ${s.cls}" points="${pts}"/>`;
+    return `<polyline class="ln ${s.cls}" points="${pts}"${dashes[n] ? ` stroke-dasharray="${dashes[n]}"` : ""}/>`;
   }).join("");
+  // Keys at the line ends, nudged apart when two lines end at the same height.
+  const ends = series.map((s) => {
+    const i = s.points.map((p) => p.value != null).lastIndexOf(true);
+    return s.key && i >= 0 ? { s, cx: x(i), cy: y(s.points[i].value) } : null;
+  }).filter(Boolean).sort((a, b) => a.cy - b.cy);
+  ends.forEach((e, i) => { if (i && e.cy - ends[i - 1].cy < 15) e.cy = ends[i - 1].cy + 15; });
+  const keys = ends.map((e) => `<g class="ln-key ${e.s.cls}" aria-hidden="true"><circle cx="${(e.cx + 12).toFixed(1)}" cy="${e.cy.toFixed(1)}" r="7.5"/><text x="${(e.cx + 12).toFixed(1)}" y="${(e.cy + 3.5).toFixed(1)}" text-anchor="middle">${esc(e.s.key)}</text></g>`).join("");
   const hits = days.map((d, i) => `<rect class="hit" data-i="${i}" x="${x(i) - plotW / Math.max(days.length - 1, 1) / 2}" y="${T}" width="${plotW / Math.max(days.length - 1, 1)}" height="${plotH}"/>`).join("");
   const sum = described(title, lineSummary(series, format, title));
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" ${sum.attrs}><g class="grid">${grid}</g>${ticks}${labels}${lines}<line class="cursor" x1="0" x2="0" y1="${T}" y2="${T + plotH}" hidden/>${hits}</svg>${sum.note}<div class="tip" hidden></div>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" ${sum.attrs}><g class="grid">${grid}</g>${ticks}${labels}${lines}${keys}<line class="cursor" x1="0" x2="0" y1="${T}" y2="${T + plotH}" hidden/>${hits}</svg>${sum.note}<div class="tip" hidden></div>`;
   el.querySelector("svg").style.height = `${H}px`;
   const svg = el.querySelector("svg"), tip = el.querySelector(".tip"), cursor = el.querySelector(".cursor");
   el.querySelectorAll(".hit").forEach((hit) => {
@@ -138,7 +148,7 @@ export function lineChart({ el, series, format, axisFormat, title, integer = fal
       const i = Number(hit.dataset.i);
       const scale = svg.getBoundingClientRect().width / W;
       cursor.setAttribute("x1", x(i)); cursor.setAttribute("x2", x(i)); cursor.hidden = false;
-      tip.innerHTML = `<small>${dayLabel(days[i])}</small>${series.map((s) => `<span class="tip-row"><i class="sw ${s.cls}"></i>${esc(s.label)} <b>${s.points[i].value == null ? "—" : esc(format(s.points[i].value))}</b></span>`).join("")}`;
+      tip.innerHTML = `<small>${dayLabel(days[i])}</small>${series.map((s) => `<span class="tip-row"><i class="sw ${s.cls}"></i>${s.key ? `${esc(s.key)} · ` : ""}${esc(s.label)} <b>${s.points[i].value == null ? "—" : esc(format(s.points[i].value))}</b></span>`).join("")}`;
       tip.style.left = `${x(i) * scale}px`;
       tip.style.top = `${T * scale}px`;
       tip.hidden = false;

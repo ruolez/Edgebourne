@@ -1,12 +1,13 @@
 import { api } from "./api.js";
-import { boot, entityLink, esc, toast } from "./ui.js";
+import { boot, confirmDialog, entityLink, esc, toast } from "./ui.js";
 import { EXPLAIN, WORDS, count, dayLabel, money, setCurrency } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const token = params.get("t");
 let kind = params.get("kind") === "month" ? "month" : "week";
-let start = params.get("start") || "";
+let start = /^\d{4}-\d{2}-\d{2}$/.test(params.get("start") || "") ? params.get("start") : "";
+let shown = null;
 
 const LEVEL = { campaign: "Campaign", adset: "Ad set", ad: "Ad", form: "Lead form", study: "A/B test", account: "Account" };
 const ACTION = { status: "turned", budget: "budget", create: "created", duplicate: "copied", enhancement: "automatic change", placement_media: "9:16 video for Reels added", update_creative: "new version put on the ad", restore_creative: "earlier version put back", recommendation: "Meta's suggestion applied",
@@ -63,14 +64,53 @@ function reportHtml(r) {
     <footer class="r-foot">${r.footnotes.map((f) => `<p>${esc(f)}</p>`).join("")}${r.shared_until ? `<p>This link works until ${esc(dayLabel(r.shared_until))}.</p>` : ""}</footer>`;
 }
 
+// Earlier weeks or months to pick from (signed in only), newest first; the first is the one shown by default.
+const monthName = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+function periodLabel(p, i) {
+  const words = kind === "week" ? `${dayLabel(p.start)} – ${dayLabel(p.end)}${p.start.slice(0, 4) !== String(new Date().getFullYear()) ? `, ${p.start.slice(0, 4)}` : ""}` : monthName(p.start);
+  return i === 0 ? `${words} (last ${kind})` : words;
+}
+function periodPicker(r) {
+  const box = $("period-box");
+  if (!box || !r.periods) return;
+  const list = r.periods.some((p) => p.start === r.start) ? r.periods : [{ start: r.start, end: r.end }, ...r.periods];
+  $("period-label").textContent = kind === "week" ? "Which week" : "Which month";
+  $("period").innerHTML = list.map((p) => `<option value="${esc(p.start)}" ${p.start === r.start ? "selected" : ""}>${esc(periodLabel(p, r.periods.indexOf(p)))}</option>`).join("");
+  box.hidden = list.length < 2;
+}
+
+function syncUrl() {
+  history.replaceState(null, "", `?kind=${kind}${start ? `&start=${start}` : ""}`);
+}
+
 async function load() {
   document.querySelectorAll("#kind [data-kind]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.kind === kind)));
   try {
     const r = token ? await api(`/api/reports/shared?t=${encodeURIComponent(token)}`)
       : await api(`/api/reports?kind=${kind}${start ? `&start=${start}` : ""}`);
+    shown = r;
     $("report").innerHTML = reportHtml(r);
+    periodPicker(r);
     document.title = `${r.account} · ${r.kind === "week" ? "Week" : "Month"} of ${dayLabel(r.start)} | Report`;
   } catch (err) { $("report").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
+}
+
+// A share link opens this one report, without signing in, for 90 days: say so before making one.
+async function share() {
+  if (!shown) return;
+  const span = `${dayLabel(shown.start)} – ${dayLabel(shown.end)}`;
+  const ok = await confirmDialog({
+    title: "Share this report with a link?",
+    body: `<p>Anyone who has the link can open the report for <b>${esc(span)}</b> without signing in, for 90 days. It shows what was spent, the leads, the ad names and what changed; never a lead's name or contact details, and nothing in it can be changed.</p>
+      <p class="muted small">To stop every link made so far, use Stop all shared links in <a href="/settings.html#reports-panel">Settings → Clients and reports</a>.</p>`,
+    confirm: "Create the link",
+  });
+  if (!ok) return;
+  try {
+    const r = await api("/api/reports/share", { method: "POST", body: { kind, start: shown.start } });
+    try { await navigator.clipboard.writeText(r.url); toast(`Link copied. It works until ${dayLabel(r.expires)}.`); }
+    catch (err) { prompt("Copy this link", r.url); }
+  } catch (err) { toast(err.message, "bad"); }
 }
 
 $("pdf").addEventListener("click", () => window.print());
@@ -79,6 +119,7 @@ if (token) {
   document.documentElement.classList.add("shared-report");
   document.querySelector(".rail").remove();
   $("kind").remove();
+  $("period-box").remove();
   document.querySelector(".page-head h1").textContent = "Ads report";
   load();
 } else {
@@ -90,16 +131,16 @@ if (token) {
       const b = e.target.closest("[data-kind]");
       if (!b) return;
       kind = b.dataset.kind; start = "";
-      history.replaceState(null, "", `?kind=${kind}`);
+      syncUrl();
       load();
     });
-    $("share").addEventListener("click", async () => {
-      try {
-        const r = await api("/api/reports/share", { method: "POST", body: { kind, start: start || null } });
-        try { await navigator.clipboard.writeText(r.url); toast(`Link copied. It works until ${dayLabel(r.expires)}.`); }
-        catch (err) { prompt("Copy this link", r.url); }
-      } catch (err) { toast(err.message, "bad"); }
+    $("period").addEventListener("change", (e) => {
+      // The newest one is the default report: no start in the address for it.
+      start = e.target.selectedIndex === 0 && shown.periods && shown.periods[0].start === e.target.value ? "" : e.target.value;
+      syncUrl();
+      load();
     });
+    $("share").addEventListener("click", share);
     load();
   }
 }

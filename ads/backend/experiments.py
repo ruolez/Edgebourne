@@ -4,7 +4,7 @@ and whether the data can call a winner yet. `judge` is pure; the rest reads the 
 Rules (from the workspace playbook): an arm can't be judged before it has spent twice the
 target cost and has at least 3 results; a winner needs 95% confidence, never Meta's 65%."""
 import math
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import account_info
 import db
@@ -103,7 +103,7 @@ def judge(metric, arms, target_cents=None, days_run=0, currency="USD"):
     out = {"state": "early", "leader": None, "runner_up": None, "diff_pct": None, "confidence": None,
            "needs": {k: v for k, v in short.items() if v}, "target_cents": target_cents}
     if len(arms) < 2:
-        out["note"] = "Add a second arm to compare."
+        out["note"] = "Add a second side to compare."
         return out
     lead, second = ranked[0], ranked[1]
     lv, sv = value(metric, lead), value(metric, second)
@@ -121,7 +121,7 @@ def judge(metric, arms, target_cents=None, days_run=0, currency="USD"):
         out["note"] = f"Too early to call: {'; '.join(waits)}.{lean}"
         return out
     if lv is None:
-        out["state"], out["note"] = "even", f"No {m['result']}s in any arm yet."
+        out["state"], out["note"] = "even", f"No {m['result']}s on any side yet."
         return out
     c = out["confidence"]
     if c >= WIN:
@@ -202,6 +202,87 @@ def containing(exps, ad_id, adset_id=None):
     hits = [e for e in exps if any(has(a) for a in e.get("arms") or [])]
     hits.sort(key=lambda e: (e["status"] != "running", -e["id"]))
     return [{"id": e["id"], "name": e["name"], "status": e["status"]} for e in hits]
+
+
+GONE = ("DELETED", "ARCHIVED")
+MORE_LIKE = ("Write three new ads like {what}. It won the test “{test}” on {metric}: {note} "
+             "Keep what made it work, try a different hook or visual for each, same offer.")
+
+
+NEXT_STEP_DAYS = 14
+
+
+def next_step(exp, live, meta=None, today=None):
+    """What to do once a test has a winner (Meta's numbers called it, or Eugene picked one when finishing):
+    the losing ads or ad sets still on, to turn off; the budget that pays for the winner, to raise; and a
+    prompt for Claude to make more like it. Only offers: each one goes through the console's usual
+    confirmation. live: {"ads", "adsets", "campaigns"} rows by id (status = the configured on/off).
+    meta: the test's Meta study view ({"state", "end_day"}); while Meta's split still runs nothing is offered
+    to switch off or fund, since that would spoil the paid study. A finished test offers its next step for
+    NEXT_STEP_DAYS after it closed, so an old test doesn't keep asking about ads turned back on on purpose."""
+    if exp["status"] == "done":
+        closed = exp.get("closed_at")
+        if isinstance(closed, str):
+            closed = datetime.fromisoformat(closed)
+        if isinstance(closed, datetime):
+            closed = closed.date()
+        if closed and today and (today - closed).days > NEXT_STEP_DAYS:
+            return None
+        won = exp.get("winner")
+    elif exp["status"] == "running" and exp["judgement"]["state"] == "winner":
+        won = exp["judgement"]["leader"]
+    else:
+        won = None
+    labels = {a["label"]: a for a in exp["arms"]}
+    winner = labels.get(won) or next((a for a in exp["arms"] if won and a["label"].lower() == won.lower()), None)
+    if not winner:
+        return None
+    ads, sets, camps = live["ads"], live["adsets"], live["campaigns"]
+    won_ads = [ads[i] for i in winner.get("ad_ids") or [] if i in ads]
+    won_sets = [sets[i] for i in winner.get("adset_ids") or [] if i in sets]
+    on = lambda r: r.get("status") == "ACTIVE" and r.get("effective_status") not in GONE  # noqa: E731
+    turn_off = []
+    for arm in exp["arms"]:
+        if arm is winner:
+            continue
+        for i in arm.get("ad_ids") or []:
+            if i in ads and on(ads[i]):
+                turn_off.append({"level": "ad", "id": i, "name": ads[i]["name"], "side": arm["label"]})
+        for i in arm.get("adset_ids") or []:
+            holds_winner = any(a["adset_id"] == i for a in won_ads) or any(s["id"] == i for s in won_sets)
+            if i in sets and on(sets[i]) and not holds_winner:
+                turn_off.append({"level": "adset", "id": i, "name": sets[i]["name"], "side": arm["label"]})
+    budgets = []
+    for adset_id, campaign_id in [(a["adset_id"], a["campaign_id"]) for a in won_ads] + [(s["id"], s["campaign_id"]) for s in won_sets]:
+        s, c = sets.get(adset_id), camps.get(campaign_id)
+        holder = ("adset", s) if s and s.get("daily_budget_cents") else ("campaign", c) if c and c.get("daily_budget_cents") else None
+        if not holder or any(b["id"] == holder[1]["id"] for b in budgets):
+            continue
+        level, row = holder
+        # A loser still on under the same budget would get part of any raise.
+        paid_by = lambda x: (ads[x["id"]] if x["level"] == "ad" else {"adset_id": x["id"], **sets[x["id"]]})[  # noqa: E731
+            "adset_id" if level == "adset" else "campaign_id"]
+        shared = [x["name"] for x in turn_off if paid_by(x) == row["id"]]
+        budgets.append({"level": level, "id": row["id"], "name": row["name"], "daily_budget_cents": row["daily_budget_cents"], "shared_with": shared})
+    first = won_ads[0] if won_ads else None
+    what = f"“{first['name']}” (ad {first['id']})" if first else \
+        f"the ones in the ad set “{won_sets[0]['name']}”" if won_sets else f"side {winner['label']}"
+    j = exp["judgement"]
+    if j["state"] == "winner" and j["leader"] == winner["label"]:
+        note = j["note"]
+    elif (exp.get("verdict") or "").strip():
+        note = exp["verdict"].strip()
+    else:
+        note = f"{winner['label']} was picked as the winner."
+    prompt = MORE_LIKE.format(what=what, test=exp["name"], metric=METRICS[exp["metric"]]["label"].lower(), note=note)[:4000]
+    wait = None
+    if meta and (meta.get("creating") or meta.get("state") in ("scheduled", "running")):
+        turn_off, budgets = [], []
+        wait = {"until": meta.get("end_day")}
+    return {"winner": winner["label"], "turn_off": turn_off, "budgets": budgets, "wait": wait,
+            "winner_off": bool(won_ads or won_sets) and not any(on(r) for r in won_ads + won_sets),
+            "more_like": {"ad_id": first["id"] if first else None, "name": first["name"] if first else (won_sets[0]["name"] if won_sets else None),
+                          "prompt": prompt}}
 
 
 def account_today():

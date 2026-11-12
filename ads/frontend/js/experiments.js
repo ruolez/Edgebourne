@@ -1,6 +1,7 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, entityLink, esc, fieldError, onRefresh, toast, when, showLoadError } from "./ui.js";
+import { boot, confirmDialog, entityLink, esc, fieldError, icon, onRefresh, toast, when, showLoadError } from "./ui.js";
 import { count, dayLabel, money, currencySymbol } from "./format.js";
+import { changeStatus, editBudget } from "./controls.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
@@ -24,7 +25,7 @@ function statePill(t) {
   return {
     early: '<span class="pill">Too early</span>',
     even: '<span class="pill">No clear difference</span>',
-    leaning: `<span class="pill warn">Leaning ${esc(j.leader)}</span>`,
+    leaning: `<span class="pill warn">${esc(j.leader)} looks better</span>`,
     winner: `<span class="pill ok">${esc(j.leader)} wins</span>`,
   }[j.state];
 }
@@ -34,7 +35,7 @@ function dates(t) {
   return `${dayLabel(t.start_day)} – ${end} · ${t.days_run} full day${t.days_run === 1 ? "" : "s"} of data`;
 }
 
-// Each ad and ad set in an arm links to its page; one that's gone keeps its plain words.
+// Each ad and ad set on a side links to its page; one that's gone keeps its plain words.
 const armNames = (a) => (a.members ? a.members.map((m, i) => (m.gone ? esc(a.names[i]) : `${m.level === "adset" ? "Ad set: " : ""}${entityLink(m.level, m.id, m.name)}`)) : a.names.map(esc)).join(", ");
 
 function armRows(t) {
@@ -49,11 +50,11 @@ function armRows(t) {
       <td class="arm-metric"><span class="arm-bar" aria-hidden="true"><i data-w="${w}"></i></span><b>${fmtValue(t.metric, a.value)}</b></td>
       <td class="num" data-label="Spent">${money(a.spend_cents, { exact: true })}</td>
       <td class="num" data-label="${esc(rlabel)}">${count(a[rkey])}</td>
-      <td class="arm-need">${need ? `<span class="muted small">needs ${esc(need)}</span>` : ""}</td>
+      <td class="arm-need">${need ? `<span class="muted small">still needs ${esc(need)}</span>` : ""}</td>
     </tr>`;
   }).join("");
   return `<div class="scroll-x"><table class="table middle arms-table">
-    <thead><tr><th>Arm</th><th>${esc(t.metric_label)}</th><th class="num">Spent</th><th class="num">${esc(rlabel)}</th><th><span class="sr-only">Still needs</span></th></tr></thead>
+    <thead><tr><th>Side</th><th>${esc(t.metric_label)}</th><th class="num">Spent</th><th class="num">${esc(rlabel)}</th><th><span class="sr-only">Still needs</span></th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
 
@@ -61,6 +62,34 @@ function verdictLine(t) {
   if (t.status === "running") return `<p class="verdict ${t.judgement.state}">${esc(t.judgement.note)}</p>`;
   const closed = t.closed_at ? ` ${when(t.closed_at)}` : "";
   return `<p class="verdict closed"><b>${t.status === "done" ? "Finished" : "Stopped"}${esc(closed)}.</b> ${esc(t.verdict || (t.winner ? `${t.winner} won.` : "No winner."))}</p>`;
+}
+
+// A winner (called by the numbers, or picked when finishing): turn the others off, fund it, make more like it.
+// Every button goes through the console's usual confirmation; nothing here changes anything by itself.
+const sideName = (t, label) => {
+  const a = t.arms.find((x) => x.label === label);
+  return a ? `${esc(label)} (${armNames(a)})` : esc(label);
+};
+function nextHtml(t) {
+  const n = t.next;
+  if (!n) return "";
+  const offs = n.turn_off.map((x) => `<button type="button" class="btn" data-off="${esc(x.level)}:${esc(x.id)}" data-name="${esc(x.name)}">Turn off ${esc(x.name)}</button>`);
+  const raises = n.budgets.map((b) => `<button type="button" class="btn" data-raise="${esc(b.level)}:${esc(b.id)}" data-name="${esc(b.name)}" data-current="${b.daily_budget_cents}">Change the budget of ${esc(b.name)} · ${money(b.daily_budget_cents, { exact: true })} a day</button>`);
+  const shared = n.budgets.filter((b) => b.shared_with.length).map((b) =>
+    `<p class="muted small flush">The budget of ${esc(b.name)} also pays for ${b.shared_with.map(esc).join(" and ")} while ${b.shared_with.length === 1 ? "it is" : "they are"} on: turn ${b.shared_with.length === 1 ? "it" : "them"} off first, so more of the money goes to the winner.</p>`).join("");
+  const more = `<a class="btn btn-claude-outline" href="/desk.html?kind=creative&amp;ask=${encodeURIComponent(n.more_like.prompt)}">${icon("spark")}Make more like this</a>`;
+  const said = [
+    n.wait ? `${sideName(t, n.winner)} is ahead.` : `${sideName(t, n.winner)} won.`,
+    n.wait ? `Meta's test runs ${n.wait.until ? `until ${esc(dayLabel(n.wait.until))}` : "on"}: leave every side on until it ends, then switch the others off here.`
+      : n.turn_off.length ? "Turn the others off so the money goes to it." : "The others are already off.",
+    n.winner_off ? "The winner is off right now: turn it on from its page when you're ready." : "",
+  ].filter(Boolean).join(" ");
+  return `<div class="test-next" role="group" aria-label="Next step">
+    <h3>Next step</h3>
+    <p class="flush">${said}</p>
+    <div class="row">${offs.join("")}${raises.join("")}${more}</div>
+    ${shared}
+  </div>`;
 }
 
 const STUDY_STATE = { scheduled: ["", "Starts"], running: ["ok", "Running on Meta"], ended: ["", "Ended"] };
@@ -99,6 +128,7 @@ function testCard(t) {
     ${t.hypothesis ? `<p class="test-idea">${esc(t.hypothesis)}</p>` : ""}
     ${armRows(t)}
     ${verdictLine(t)}
+    ${nextHtml(t)}
     ${t.notes ? `<p class="muted small flush test-notes">${esc(t.notes)}</p>` : ""}
     ${metaBlock(t)}
     <div class="row test-actions">
@@ -158,11 +188,11 @@ const armRef = (a) => (a.ad_ids && a.ad_ids.length ? `ad:${a.ad_ids[0]}` : a.ads
 
 async function armField(i, arm = {}) {
   return `<div class="arm-row" data-arm>
-    <label class="sr-only" for="arm-label-${i}">Arm name</label>
+    <label class="sr-only" for="arm-label-${i}">Name of this side</label>
     <input class="input arm-name" id="arm-label-${i}" data-arm-label value="${esc(arm.label || "ABCD"[i])}" maxlength="40" autocomplete="off">
-    <label class="sr-only" for="arm-ref-${i}">Ad or ad set for this arm</label>
+    <label class="sr-only" for="arm-ref-${i}">Ad or ad set on this side</label>
     <select class="input" id="arm-ref-${i}" data-arm-ref>${await adOptions(armRef(arm))}</select>
-    <button type="button" class="btn btn-quiet btn-small" data-arm-remove aria-label="Remove this arm">Remove</button>
+    <button type="button" class="btn btn-quiet btn-small" data-arm-remove aria-label="Remove this side">Remove</button>
   </div>`;
 }
 
@@ -187,10 +217,10 @@ async function openForm(t = null) {
       <textarea class="input" id="f-idea" name="hypothesis" rows="2" placeholder="e.g. Naming the pain first gets cheaper leads than showing the result">${esc(t ? t.hypothesis || "" : "")}</textarea></div>
     <div class="field"><label for="f-metric">Decided by</label><select class="input" id="f-metric" name="metric">
       ${Object.entries(metrics).map(([k, l]) => `<option value="${k}" ${k === metric ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>
-    <fieldset class="field arms-field"><legend class="label">Arms: what you compare</legend>
+    <fieldset class="field arms-field"><legend class="label">What you compare: two to four sides</legend>
       <input type="hidden" name="arms">
       <div id="arm-list">${arms}</div>
-      <button type="button" class="btn btn-quiet btn-small" id="arm-add">Add an arm</button>
+      <button type="button" class="btn btn-quiet btn-small" id="arm-add">Add another side</button>
       <span class="hint">Pick ads or ad sets that run at the same time, to the same people. Different start dates make the comparison unfair.</span>
     </fieldset>
     <div class="row two">
@@ -199,7 +229,7 @@ async function openForm(t = null) {
     </div>
     <div class="field" id="target-field"><label for="f-target">Target cost <span class="muted">(optional)</span></label>
       <span class="money-input">${currencySymbol()}<input class="input" id="f-target" name="target" inputmode="decimal" value="${t && t.target_cents ? t.target_cents / 100 : ""}" placeholder="60" autocomplete="off"></span>
-      <span class="hint">Each arm has to spend twice this before it's judged. Left empty: the cost-per-lead target from Settings → Alerts, or the test's own average.</span></div>
+      <span class="hint">Each side has to spend twice this before it's judged. Left empty: the cost-per-lead target from Settings → Targets, or the test's own average.</span></div>
     ${t ? `<div class="field"><label for="f-notes">Notes</label><textarea class="input" id="f-notes" name="notes" rows="2">${esc(t.notes || "")}</textarea></div>` : ""}
     <div class="row end"><button class="btn" type="button" data-close>Cancel</button><button class="btn btn-primary" type="submit">${t ? "Save" : "Start tracking"}</button></div>
   </form>`;
@@ -332,13 +362,13 @@ function openFinish(t) {
   dlg.innerHTML = `<form novalidate>
     <h2>Finish “${esc(t.name)}”</h2>
     <p class="verdict ${j.state}">${esc(j.note)}</p>
-    <fieldset class="field"><legend class="label">Which arm won?</legend>
+    <fieldset class="field"><legend class="label">Which side won?</legend>
       <div class="choice-list">${t.arms.map((a) => `<label class="check"><input type="radio" name="winner" value="${esc(a.label)}" ${a.label === pick ? "checked" : ""}> ${esc(a.label)} <span class="muted">· ${a.names.map(esc).join(", ")}</span></label>`).join("")}
         <label class="check"><input type="radio" name="winner" value="" ${pick ? "" : "checked"}> No winner</label></div>
       ${j.state !== "winner" ? '<span class="hint">The numbers haven\'t called a winner. Picking one anyway is your call; say why below.</span>' : ""}
     </fieldset>
     <div class="field"><label for="f-verdict">What you learned</label><textarea class="input" id="f-verdict" name="verdict" rows="3" placeholder="e.g. Naming the pain first won; next, try it on the order portal ad">${j.state === "early" ? "" : esc(j.note)}</textarea></div>
-    <p class="muted small flush">Finishing only closes the record. Nothing changes on Meta: turn ads on or off on the Ads page.</p>
+    <p class="muted small flush">Finishing only closes the record; nothing changes on Meta. With a winner, the test then offers the next step.</p>
     <div class="row end"><button class="btn" type="button" data-close>Cancel</button>
       <button class="btn btn-quiet" type="button" data-stop>Stop without a result</button>
       <button class="btn btn-primary" type="submit">Finish</button></div>
@@ -371,6 +401,18 @@ if (me) {
     if (e.target.closest("[data-show-all]")) { show = "all"; render(); return; }
     if (e.target.closest("#tests [data-new]")) { openForm(); return; }
     const byId = (attr) => items.find((t) => t.id === Number(e.target.closest(`[${attr}]`)?.getAttribute(attr)));
+    const off = e.target.closest("[data-off]");
+    if (off) {
+      const [level, id] = off.dataset.off.split(":");
+      changeStatus({ level, id, name: off.dataset.name, turnOn: false }, load, off);
+      return;
+    }
+    const raise = e.target.closest("[data-raise]");
+    if (raise) {
+      const [level, id] = raise.dataset.raise.split(":");
+      editBudget({ level, id, name: raise.dataset.name, current: Number(raise.dataset.current) }, load);
+      return;
+    }
     if (e.target.closest("[data-edit]")) openForm(byId("data-edit"));
     else if (e.target.closest("[data-finish]")) openFinish(byId("data-finish"));
     else if (e.target.closest("[data-meta]")) openMeta(byId("data-meta"));

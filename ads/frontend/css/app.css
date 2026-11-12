@@ -1015,6 +1015,9 @@ iframe.preview-loading { position: absolute; width: 1px !important; height: 1px 
 .results-bar { gap: 10px 14px; align-items: center; }
 .results-bar h2 { margin-right: auto; }
 .results-bar .search .input { width: 220px; min-height: 36px; padding-top: 6px; padding-bottom: 6px; }
+.cr-note { padding: 0 20px 4px; }
+#cr-open svg { width: 16px; height: 16px; }
+.period-pick { display: inline-flex; }
 .th-sort { all: unset; cursor: pointer; user-select: none; -webkit-user-select: none; display: inline-flex; align-items: center; gap: 4px; font: inherit; color: inherit; border-radius: var(--radius-xs); white-space: nowrap; }
 .th-sort:hover { color: var(--ink); }
 .th-sort:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -1034,6 +1037,7 @@ th[aria-sort="ascending"] .arrow, th[aria-sort="descending"] .arrow { opacity: 1
   .results-bar h2 { flex-basis: 100%; }
   .results-bar .search { flex: 1 1 100%; }
   .results-bar .search .input { width: 100%; }
+  .cr-note { padding: 0 18px 4px; }
   #campaign-pick { flex: 1 1 100%; }
   #campaign-pick .input { max-width: none; width: 100%; }
 }
@@ -1071,6 +1075,10 @@ th[aria-sort="ascending"] .arrow, th[aria-sort="descending"] .arrow { opacity: 1
 .verdict.leaning { background: var(--amber-soft); color: var(--amber-ink); }
 .verdict.closed { background: var(--surface-2); color: var(--ink); }
 .test-notes { margin: 8px 24px 0; }
+/* 9.4d: a test with a winner says what to do next (each button opens the usual confirmation). */
+.test-next { margin: 12px 24px 0; padding: 14px 16px; border-radius: var(--radius-s); box-shadow: inset 0 0 0 1px var(--line-strong); display: grid; gap: 10px; }
+.test-next h3 { margin: 0; font: 600 var(--t-m)/1.3 var(--font-display); }
+.test-next .row { flex-wrap: wrap; gap: 8px; }
 .test-actions { padding: 14px 24px 0; }
 dialog.test-dialog { width: min(640px, calc(100vw - 32px)); }
 dialog.test-dialog form { max-height: calc(100vh - 48px); overflow-y: auto; }
@@ -1084,7 +1092,8 @@ fieldset.field legend { padding: 0; margin-bottom: 6px; }
 .choice-list { display: flex; flex-direction: column; gap: 8px; }
 @media (max-width: 720px) {
   .test-head { flex-direction: column; padding: 16px 18px 4px; }
-  .test-idea, .verdict, .test-notes { margin-left: 18px; margin-right: 18px; }
+  .test-idea, .verdict, .test-notes, .test-next { margin-left: 18px; margin-right: 18px; }
+  .test-next .btn { white-space: normal; text-align: left; }
   .test .scroll-x, .test-actions { padding-left: 18px; padding-right: 18px; }
   .arm-bar { width: 80px; }
   .arm-row { grid-template-columns: 56px minmax(0, 1fr); }
@@ -1327,7 +1336,11 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
   .content { padding: 0 !important; }
   .rp-doc { box-shadow: none; max-width: none; padding: 0; color: #141619; background: #fff; }
   .r-sec { break-inside: avoid; }
-  .r-figs div { background: #EEEEEB; }
+  /* Print-safe: printers drop backgrounds, so boxes get a border; text is dark ink, links read as text. */
+  .r-figs div { background: none; border: 1px solid #BDBFB9; }
+  .rp-doc a { color: inherit; text-decoration: none; }
+  .r-head, .r-foot, .r-sec .table th, .r-sec .table td { border-color: #BDBFB9; }
+  .r-figs span, .r-figs small, .r-foot, .rp-doc .muted { color: #4A4E55; }
 }
 .r-funnel tbody tr:last-child th, .r-ads tbody tr:last-child th { border-bottom: 0; }
 

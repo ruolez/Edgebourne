@@ -710,6 +710,39 @@ desk_api.tell_finished(${sched.last_task_id})"`);
     return [all.totals.spend_cents, c.totals.spend_cents, none.totals.spend_cents, none.ads.length];
   });
   check('a campaign narrows the numbers to that campaign', one[0] === one[1] && one[2] === 0 && one[3] === 0, one.join(' '));
+  // 9.4d: deleted ads stay out of the table unless asked for (their spend still counts above); the table points to Ads.
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "
+import db, account_info, datetime as d
+y = account_info.today() - d.timedelta(days=1)
+c = db.query('SELECT id FROM campaigns LIMIT 1', one=True)['id']
+db.execute(\\"INSERT INTO ads (id, name, campaign_id, status, effective_status) VALUES ('qa-deleted', 'QA deleted ad', %s, 'DELETED', 'DELETED') ON CONFLICT (id) DO UPDATE SET effective_status = 'DELETED'\\", (c,))
+db.execute(\\"INSERT INTO ad_daily (day, ad_id, campaign_id, ad_name, spend_cents) VALUES (%s, 'qa-deleted', %s, 'QA deleted ad', 777) ON CONFLICT DO NOTHING\\", (y, c))
+db.execute(\\"INSERT INTO ads (id, name, campaign_id, status, effective_status) VALUES ('qa-deleted-0', 'QA unspent deleted ad', %s, 'DELETED', 'DELETED') ON CONFLICT (id) DO UPDATE SET effective_status = 'DELETED'\\", (c,))"`);
+  await page.goto(BASE + '/performance.html?range=7');
+  await page.waitForSelector('.results-table tbody tr');
+  check('Results leaves deleted ads out of the table by default, and says what they spent',
+    !/QA deleted ad/.test(await page.textContent('.results-table')) && await page.isVisible('#cr-deleted')
+    && /deleted ads? spent \$[\d.,]+ in these days: counted in the figures above/.test(await page.textContent('#cr-note')), await page.textContent('#cr-note'));
+  const delN = [await page.textContent('#cr-deleted .n'), (/(\d+) deleted ads? spent/.exec(await page.textContent('#cr-note')) || [])[1]];
+  check('the Deleted count is the deleted ads that spent, the same number the note gives', delN[0] === delN[1], delN.join(' vs '));
+  await page.click('#cr-filter [data-filter="all"]');
+  await page.click('#cr-deleted');
+  await page.waitForFunction(() => /QA deleted ad/.test(document.querySelector('.results-table')?.textContent || ''));
+  check('Deleted shows them, marked Deleted, and the address keeps it', /Deleted/.test(await page.textContent('.results-table tr:has-text("QA deleted ad")'))
+    && new URL(page.url()).searchParams.get('deleted') === '1' && (await page.getAttribute('#cr-deleted', 'aria-pressed')) === 'true');
+  check('a deleted ad that spent nothing stays out even with Deleted and All on', !/QA unspent deleted ad/.test(await page.textContent('.results-table')));
+  await page.click('#cr-deleted');
+  await page.click('#cr-filter [data-filter="running"]');
+  const openHref = new URL(BASE + await page.getAttribute('#cr-open', 'href'));
+  check('Open in Ads opens the same days with "vs before", on Delivering when that filter is on',
+    openHref.pathname === '/ads.html' && openHref.searchParams.get('range') === '7' && openHref.searchParams.get('vs') === '1' && openHref.searchParams.get('view') === 'delivering', openHref.search);
+  await Promise.all([page.waitForURL('**/ads.html?**'), page.click('#cr-open')]);
+  await page.waitForFunction(() => document.querySelector('#range-pick')?.value === '7');
+  check('Ads opens on those days', (await page.inputValue('#range-pick')) === '7');
+  await page.goto(BASE + '/performance.html?range=7');
+  await page.waitForSelector('.results-table tbody tr');
+  await page.click('#cr-filter [data-filter="spent"]');
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"DELETE FROM ad_daily WHERE ad_id = 'qa-deleted'\\");db.execute(\\"DELETE FROM ads WHERE id IN ('qa-deleted', 'qa-deleted-0')\\")"`);
   await page.screenshot({ path: `${OUT}/flow-results.png`, fullPage: true });
 
   // 5. Claude page: decisions first, then each ad's story, then every run (dev copy of the real Desk).
@@ -1039,11 +1072,11 @@ with account_ctx.use(1):
   await page.selectOption('dialog #arm-ref-0', 'ad:120252672229040312');
   await page.click('dialog button[type=submit]');
   await page.waitForSelector('dialog .field.error .err');
-  check('a test needs at least two arms', /at least two arms/.test(await page.textContent('dialog .field.error')));
+  check('a test needs at least two sides', /at least two sides/.test(await page.textContent('dialog .field.error')));
   errors.splice(testsSeen); // the refused test logs an expected 400
   await page.click('dialog #arm-add');
   await page.click('dialog #arm-add');
-  check('up to four arms can be added', (await page.locator('dialog [data-arm]').count()) === 4 && await page.isHidden('dialog #arm-add'));
+  check('up to four sides can be added', (await page.locator('dialog [data-arm]').count()) === 4 && await page.isHidden('dialog #arm-add'));
   await page.locator('dialog [data-arm-remove]').nth(3).click();
   await page.locator('dialog [data-arm-remove]').nth(2).click();
   await page.selectOption('dialog #arm-ref-1', 'ad:120252672230740312');
@@ -1067,6 +1100,33 @@ with account_ctx.use(1):
   await page.waitForFunction(() => document.querySelector('[data-n="finished"]')?.textContent === '1');
   check('finishing moves it to Finished and keeps it in view', (await page.textContent('[data-n="running"]')) === '0' && (await page.locator('.test').count()) === 1);
   check('a finished test shows the winner and what was learned', /Finished · A won/.test(await page.textContent('.test .pill')) && /keep the problem hook/.test(await page.textContent('.test .verdict')));
+  // 9.4d: a winner gets a next step. Turn the others off and change the winner's budget through the usual
+  // confirmations (cancelled here: nothing changes on Meta), or ask Claude for more like it.
+  await page.waitForSelector('.test .test-next');
+  const nextText = await page.textContent('.test .test-next');
+  check('a test with a winner says the next step in words', /A \(N1 - One simple system\) won\. Turn the others off/.test(nextText.replace(/\s+/g, ' ')), nextText.replace(/\s+/g, ' ').slice(0, 120));
+  const changesNow = () => sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query('SELECT COUNT(*) AS n FROM meta_changes', one=True)['n'])"`).trim();
+  const changesBefore = changesNow();
+  await page.click('.test-next [data-off]');
+  await page.waitForSelector('dialog.confirm #cd-cancel');
+  check('Turn off from a test opens the usual on/off confirmation, starting on Cancel',
+    /Turn off “N3 - Same work twice”\?/.test(await page.textContent('dialog.confirm h2')) && await page.evaluate(() => document.activeElement?.id === 'cd-cancel'));
+  await page.click('dialog.confirm #cd-cancel');
+  await page.click('.test-next [data-raise]');
+  await page.waitForSelector('dialog.confirm #cd-input');
+  check("the winner's budget opens the usual budget confirmation with today's amount", /Daily budget for/.test(await page.textContent('dialog.confirm h2'))
+    && /Now \$[\d.,]+ a day/.test(await page.textContent('dialog.confirm .confirm-body')));
+  await page.click('dialog.confirm #cd-cancel');
+  await page.waitForTimeout(300);
+  check('cancelling either one changes nothing on Meta', changesNow() === changesBefore);
+  const moreHref = new URL(BASE + await page.getAttribute('.test-next a[href^="/desk.html"]', 'href'));
+  check('Make more like this opens Claude with a new-ads request about the winning ad, ready to edit',
+    moreHref.searchParams.get('kind') === 'creative' && /N1 - One simple system/.test(moreHref.searchParams.get('ask')) && /QA problem hook vs result hook/.test(moreHref.searchParams.get('ask')));
+  await page.goto(moreHref.href);
+  await page.waitForFunction(() => /N1 - One simple system/.test(document.getElementById('prompt')?.value || ''));
+  check("Claude's box holds that request, not yet sent", /Write three new ads like/.test(await page.inputValue('#prompt')));
+  await page.goto(BASE + `/experiments.html#${(await getJson('/api/experiments')).items[0].id}`);
+  await page.waitForSelector('.test.flash [data-reopen]');
   await page.click('.test [data-reopen]');
   await page.waitForFunction(() => document.querySelector('[data-n="running"]')?.textContent === '1');
   check('Reopen puts it back to running without a winner', await page.evaluate(async () => (await (await fetch('/api/experiments')).json()).items[0].winner === null));
@@ -1946,6 +2006,16 @@ with account_ctx.all_accounts():
   await cp.waitForSelector('.r-head');
   check("a client opens their own account's report, without the share button", /Burdanova QA/.test(await cp.textContent('.r-head')) && await cp.isHidden('#share'));
   check("a client's report links no form or test", (await cp.locator('#report a[href^="/forms.html"], #report a[href^="/experiments.html"]').count()) === 0);
+  await cp.waitForSelector('#period option', { state: 'attached' });
+  const clientWeeks = await cp.$$eval('#period option', (o) => o.map((x) => x.value));
+  const clientKind = await cp.getAttribute('#kind [aria-pressed="true"]', 'data-kind');
+  check("a client gets the report's period picker too: whole periods, newest first", clientWeeks.length >= 1
+    && clientWeeks.every((d) => (clientKind === 'week' ? new Date(d + 'T12:00:00Z').getUTCDay() === 1 : d.endsWith('-01')))
+    && clientWeeks.every((d, i) => i === 0 || d < clientWeeks[i - 1]), `${clientKind}: ${clientWeeks.join()}`);
+  await cp.goto(BASE + '/performance.html?range=30');
+  await cp.waitForSelector('#cr-note', { state: 'attached' });
+  const clientNote = await cp.textContent('#cr-note');
+  check('a client sees Results without being told to turn ads on or off or change budgets', !/turn ads on or off|change budgets/i.test(clientNote), clientNote);
   const clientToday = await cp.evaluate(async () => (await fetch('/api/home')).json());
   check("a client's Today lists only ad status and leads: no suggestions, money or upkeep", clientToday.queue.every((r) => ['status', 'leads'].includes(r.category) && !r.proposal_id),
     clientToday.queue.map((r) => r.category).join());
@@ -1968,6 +2038,40 @@ with account_ctx.all_accounts():
   await page.click('#kind [data-kind="month"]');
   await page.waitForFunction(() => /Month/.test(document.querySelector('.r-kicker')?.textContent || ''));
   check('a month report covers the last complete month', /Oct 1 – Oct 31, 2026/.test(await page.textContent('.r-head')));
+  // 9.4d: earlier weeks or months, a confirmation before a share link, print in plain words and print-safe colours.
+  check('the month picker starts on the last complete month', /October 2026 \(last month\)/.test(await page.textContent('#period option:checked')), await page.textContent('#period option:checked'));
+  await page.click('#kind [data-kind="week"]');
+  await page.waitForFunction(() => /Week/.test(document.querySelector('.r-kicker')?.textContent || ''));
+  await page.waitForFunction(() => /last week/.test(document.querySelector('#period option:checked')?.textContent || ''));
+  const weekOpts = await page.$$eval('#period option', (o) => o.map((x) => x.value));
+  check('earlier weeks can be picked, newest first, each a Monday', weekOpts.length >= 2 && weekOpts.every((v, i) => !i || v < weekOpts[i - 1]) && weekOpts.every((v) => new Date(v + 'T12:00:00').getDay() === 1), weekOpts.join());
+  const headNow = await page.textContent('.r-head');
+  await page.selectOption('#period', weekOpts[1]);
+  await page.waitForFunction((h) => document.querySelector('.r-head')?.textContent !== h, headNow);
+  const earlier = await page.evaluate(async (s) => (await fetch(`/api/reports?kind=week&start=${s}`)).json(), weekOpts[1]);
+  check('an earlier week opens that week, and the address keeps it', new URL(page.url()).searchParams.get('start') === weekOpts[1] && earlier.start === weekOpts[1]
+    && (await page.textContent('.r-head')).includes(await page.evaluate((iso) => new Date(iso + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), weekOpts[1])));
+  check('the print button says what it does', (await page.textContent('#pdf')).trim() === 'Print or save as PDF');
+  const sharedCount = () => sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query(\\"SELECT COUNT(*) AS n FROM activity WHERE action = 'report.shared'\\", one=True)['n'])"`).trim();
+  const sharesBefore = sharedCount();
+  await page.click('#share');
+  await page.waitForSelector('dialog.confirm #cd-cancel');
+  check('Share a link asks first and says who can open it, for how long', /without signing in, for 90 days/.test(await page.textContent('dialog.confirm .confirm-body'))
+    && await page.evaluate(() => document.activeElement?.id === 'cd-cancel'));
+  await page.click('dialog.confirm #cd-cancel');
+  await page.waitForTimeout(300);
+  check('cancelling makes no link', sharedCount() === sharesBefore);
+  await page.click('#share');
+  await page.waitForSelector('dialog.confirm #cd-ok');
+  await page.click('dialog.confirm #cd-ok');
+  let sharesAfter = sharesBefore;
+  for (let i = 0; i < 20 && sharesAfter === sharesBefore; i++) { await page.waitForTimeout(250); sharesAfter = sharedCount(); }
+  const lastShare = JSON.parse(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,json;print(json.dumps(db.query(\\"SELECT details FROM activity WHERE action = 'report.shared' ORDER BY id DESC LIMIT 1\\", one=True)['details']))"`).trim());
+  check('confirming makes one link, for the week on screen', Number(sharesAfter) === Number(sharesBefore) + 1 && lastShare.start === weekOpts[1], JSON.stringify(lastShare));
+  await page.selectOption('#period', weekOpts[0]);
+  await page.waitForFunction(() => !new URL(location.href).searchParams.get('start'));
+  await page.click('#kind [data-kind="month"]');
+  await page.waitForFunction(() => /Month/.test(document.querySelector('.r-kicker')?.textContent || ''));
   const shareUrl = await page.evaluate(async () => (await (await fetch('/api/reports/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"kind":"week"}' })).json()).url);
   const anonCtx = await browser.newContext();
   const anon = await anonCtx.newPage();
@@ -1986,7 +2090,12 @@ with account_ctx.all_accounts():
   await anonCtx.close();
   await page.emulateMedia({ media: 'print' });
   check('the PDF (print) layout hides the menu and buttons', await page.isHidden('#pdf') && await page.isHidden('.rail'));
-  await page.emulateMedia({ media: 'screen' });
+  await page.emulateMedia({ media: 'print', colorScheme: 'dark' });
+  const inkOf = (sel) => page.$eval(sel, (el) => { const m = getComputedStyle(el).color.match(/\d+/g).map(Number); return (m[0] + m[1] + m[2]) / 3; });
+  const printInk = [await inkOf('.rp-doc'), await inkOf('.r-foot'), await inkOf('.r-figs span')];
+  check('printed from dark mode the report is still dark ink on white paper', printInk.every((v) => v < 110)
+    && await page.$eval('.rp-doc', (el) => getComputedStyle(el).backgroundColor === 'rgb(255, 255, 255)'), printInk.join());
+  await page.emulateMedia({ media: 'screen', colorScheme: 'light' });
   const mailBefore = JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/mail/_sent').read().decode())"`)).length;
   const sent = sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "
 import account_ctx, db, settings_store, reports_api
@@ -2708,6 +2817,18 @@ print(','.join(left))
   check('the Compare table is shown at its full height (only the manager table scrolls in a box)', cmpBox.max === 'none' && cmpBox.cut <= 1, JSON.stringify(cmpBox));
   check('the Compare page lines up 3 ads with a verdict and a line per ad', (await page.locator('.cmp thead .cmp-th').count()) === 3
     && (await page.locator('#cmp-chart .ln').count()) === 3 && /Too early to name a winner|leads on cost per/.test(cmpText));
+  // 9.4d: the metric names stay put while the ads scroll sideways; each ad's number is on its column, its line end and the legend.
+  check('Compare keeps the metric column in view when the ads scroll sideways', await page.evaluate(() => getComputedStyle(document.querySelector('.cmp tbody th')).position === 'sticky'
+    && getComputedStyle(document.querySelector('.cmp .cmp-corner')).position === 'sticky'));
+  const cmpKeys = await page.evaluate(() => ({
+    heads: [...document.querySelectorAll('.cmp thead .cmp-n b')].map((b) => b.textContent),
+    ends: [...document.querySelectorAll('#cmp-chart .ln-key text')].map((t) => t.textContent).sort(),
+    legend: [...document.querySelectorAll('.cmp-legend .cmp-n b')].map((b) => b.textContent),
+    dashes: new Set([...document.querySelectorAll('#cmp-chart polyline.ln')].map((l) => l.getAttribute('stroke-dasharray') || 'solid')).size,
+    visible: (() => { const b = document.querySelector('.cmp thead .cmp-n b'); const cs = getComputedStyle(b); return cs.color !== cs.backgroundColor; })(),
+  }));
+  check('each line is told apart without colour: a number on its column, at its end and in the legend, and its own dash',
+    cmpKeys.heads.join() === '1,2,3' && cmpKeys.ends.join() === '1,2,3' && cmpKeys.legend.join() === '1,2,3' && cmpKeys.dashes === 3 && cmpKeys.visible, JSON.stringify(cmpKeys));
   await page.click('[data-drop]');
   await page.waitForFunction(() => document.querySelectorAll('.cmp thead .cmp-th').length === 2);
   check('removing an ad from the comparison keeps the rest', (new URL(page.url())).searchParams.get('ids').split(',').length === 2);
@@ -2720,6 +2841,37 @@ print(','.join(left))
   await Promise.all([page.waitForURL('**/compare.html?ids=**'), page.click('#cr-actions a[href^="/compare.html"]')]);
   await page.waitForSelector('#cmp-pick');
   check('Compare from an ad opens the picker with that ad already ticked', await page.isChecked(`#cmp-pick input[value="${NAV_AD}"]`));
+  const pickCards = await page.evaluate(() => [...document.querySelectorAll('.cmp-opt')].slice(0, 3).map((c) => ({ img: !!c.querySelector('img.cmp-opt-img'), m: c.querySelector('.cmp-opt-m')?.textContent || '' })));
+  check('the picker shows each ad with its picture and its numbers for the dates', pickCards.length === 3 && pickCards.every((c) => c.img && /spent/.test(c.m) && /lead/.test(c.m)), JSON.stringify(pickCards));
+  check('Compare waits for a second ad', await page.isDisabled('#cmp-go') && /pick 1 more/.test(await page.textContent('#cmp-count')));
+  const boxes = page.locator('#cmp-pick input[type=checkbox]:not(:checked)');
+  const second = await boxes.nth(0).getAttribute('value');
+  await boxes.nth(0).check();
+  // Ticks survive a change of campaign, so ads from two campaigns can be compared.
+  await page.waitForSelector('#cmp-camp');
+  const otherCamp = await page.$eval('#cmp-camp', (s) => [...s.options].map((o) => o.value).find((v) => v && v !== s.value && v !== '120252638288040312'));
+  await page.selectOption('#cmp-camp', otherCamp);
+  await page.waitForFunction((c) => document.getElementById('cmp-camp')?.value === c, otherCamp);
+  check('ticked ads stay ticked, shown and counted when the campaign changes', await page.isChecked(`#cmp-pick input[value="${NAV_AD}"]`)
+    && await page.isChecked(`#cmp-pick input[value="${second}"]`) && /2 of 6 picked/.test(await page.textContent('#cmp-count')) && !(await page.isDisabled('#cmp-go')),
+    await page.textContent('#cmp-count'));
+  await page.selectOption('#cmp-camp', '');
+  await page.waitForFunction(() => document.querySelectorAll('#cmp-pick input:checked').length === 2);
+  for (let i = 0; i < 4; i++) await boxes.nth(0).check();
+  check('six is the most: the other ads can no longer be ticked', /6 of 6 picked/.test(await page.textContent('#cmp-count'))
+    && (await page.locator('#cmp-pick input:not(:checked)').count()) > 0 && (await page.locator('#cmp-pick input:not(:checked):not(:disabled)').count()) === 0);
+  // The campaign picked on Results is the one Insights' tabs come back to; the dates stay the shared ones.
+  await page.goto(BASE + `/performance.html?campaign=${C1}&range=7`);
+  await page.waitForSelector('.results-table tbody tr');
+  await page.goto(BASE + '/experiments.html');
+  await page.waitForSelector('.subnav a[href^="/performance.html"]');
+  const resTab = await page.getAttribute('.subnav a[href^="/performance.html"]', 'href');
+  check('the Results tab reopens Results on the campaign picked there, without old dates', resTab.includes(`campaign=${C1}`) && !/range=/.test(resTab), resTab);
+  await Promise.all([page.waitForURL('**/performance.html?**'), page.click('.subnav a[href^="/performance.html"]')]);
+  await page.waitForFunction((c) => document.getElementById('campaign')?.value === c, C1);
+  check('…and Results opens filtered to it', (await page.inputValue('#campaign')) === C1);
+  await page.goto(BASE + '/performance.html?campaign=');
+  await page.waitForSelector('.results-table tbody tr');
   await call('PUT', '/api/ads/ad/120252672232030312/tags', { tags: { hook: 'Question' } });
   await page.goto(BASE + '/compare.html?ids=120252672232030312,120252672229040312&range=30');
   await page.waitForSelector('.cmp thead');
@@ -3474,6 +3626,16 @@ with account_ctx.all_accounts():
     check(`on a ${w}px phone the bulk bar fits: every action in view, 44px or more, no sideways scroll`, fit.scroll <= 1 && fit.left >= 0 && fit.right <= fit.vw && !fit.small && !fit.clipped && fit.labels.every(Boolean), JSON.stringify(fit));
   }
   await phonePage.click('.bk [data-bulk="clear"]');
+  for (const w of [390, 320]) {
+    await phonePage.setViewportSize({ width: w, height: 760 });
+    await phonePage.goto(BASE + '/compare.html');
+    await phonePage.waitForSelector('#cmp-pick .cmp-opt');
+    const foot = await phonePage.evaluate(() => {
+      const f = document.querySelector('.cmp-pick-foot').getBoundingClientRect(), t = document.querySelector('.tabbar').getBoundingClientRect();
+      return { foot: Math.round(f.bottom * 10) / 10, tabs: Math.round(t.top * 10) / 10, wide: document.documentElement.scrollWidth - innerWidth };
+    });
+    check(`on a ${w}px phone the picker's Compare bar sits right on the tab bar, with no gap for cards to show through`, Math.abs(foot.foot - foot.tabs) <= 1 && foot.wide <= 0, JSON.stringify(foot));
+  }
   await phonePage.setViewportSize({ width: 390, height: 844 });
   await phonePage.goto(BASE + '/adset.html?id=120252672227950312');
   await phonePage.waitForSelector('#range-pick');
