@@ -127,6 +127,14 @@ A failed suggestion carries `failure`, the exact error: read it before explainin
    `proposed_value` (budgets in dollars per day, e.g. "$20/day"), `rationale` (with the
    numbers), `expected`, `rollback` (the exact previous value). Respect the workspace rules:
    one budget change per campaign, ≥ 3 days apart, ≤ +20%.
+   **Before any budget proposal, read `budget_changes` in `desk snapshot`**: each campaign's and ad
+   set's last budget change (`last.at`, `from`, `to`, `where`: `console` or `outside` = changed in
+   Ads Manager or by Claude through MCP), `days_since` and `ok_after`. If the same budget changed
+   less than 3 days ago, say so in the rationale and propose holding, unless the 7-day cost per lead
+   is far over target. You can still propose it: the console never pre-ticks such a raise on the
+   Accept sheet and asks Eugene to confirm it knowingly. Going back to the exact previous amount is
+   always allowed. `recent_changes` lists the changes per day over the snapshot's dates (budget,
+   on/off, edits, Meta's own) so you can line results up with them.
    Eugene approves proposals in the dashboard, and two kinds are then applied on Meta with
    one click, so write them exactly: **status** = `entity_id` (the real Meta id of the
    campaign, ad set or ad) + `proposed_value` `PAUSED` or `ACTIVE`; **budget** = `entity_id`

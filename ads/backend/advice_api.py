@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, request
 import advice as av
 import db
 import meta_client
+import money_rules
 import settings_store
 from auth import admin_required, current_user
 from desk_api import agent_required
@@ -58,8 +59,24 @@ def fix_runs():
     return out
 
 
+def with_recent(items, now=None):
+    """Meta's 'spend more' advice says when that budget last changed; a raise under 3 days after it needs the
+    same knowing yes as anywhere else (rule 6)."""
+    import status_history
+    import words
+    now = now or datetime.now(timezone.utc)
+    scale = [r for r in items if r.get("type") == "SCALE_GOOD_CAMPAIGN" and r.get("budget") and r["budget"].get("to")]
+    lasts = status_history.last_budgets(list({i for r in scale for i in r.get("object_ids") or []}), now) if scale else {}
+    for r in scale:
+        last = next((lasts[i] for i in r["object_ids"] if i in lasts), None)
+        if last:
+            change = money_rules.budget_change(r["budget"]["from"] or 0, r["budget"]["to"], 10 ** 12, last, now)
+            r["budget"] = {**r["budget"], "recent": change["recent"], "last_words": words.ago(last["at"], now)}
+    return items
+
+
 def view(data):
-    items = av.ranked(data.get("items") or [], budgets())
+    items = with_recent(av.ranked(data.get("items") or [], budgets()))
     runs = fix_runs()
     for r in items:
         r["fix_run"] = runs.get(r["key"])
@@ -141,7 +158,7 @@ def _apply(body, sig):
         return api_error("Meta has changed this suggestion since you looked. Check the list again.", 409)
     if not rec["can_apply"]:
         return api_error("This one is done in Ads Manager, not here.", 409)
-    step, holder = rec["budget"], None
+    step, holder, accepted = rec["budget"], None, None
     if rec["type"] == "SCALE_GOOD_CAMPAIGN":
         # Raising a budget: only with an amount we can show and Eugene confirmed (audit A3).
         if not step or step["to"] is None:
@@ -156,6 +173,13 @@ def _apply(body, sig):
             return api_error(f"Couldn't read the budget from Meta, so nothing was changed: {exc}", 400)
         if not live:
             return api_error("Meta says this has no daily budget now, so this isn't applied here. Apply it in Ads Manager.", 409)
+        if holder:
+            stored = db.query("SELECT daily_budget_cents FROM campaigns WHERE id = %s UNION ALL SELECT daily_budget_cents FROM adsets WHERE id = %s",
+                              (holder, holder), one=True)
+            if stored and stored["daily_budget_cents"] and stored["daily_budget_cents"] != live:
+                import status_history  # changed in Ads Manager since the last read: recorded as such first (D2)
+                level_of = "adset" if db.query("SELECT 1 FROM adsets WHERE id = %s", (holder,), one=True) else "campaign"
+                status_history.note_live_budget(level_of, holder, live)
         step = {**step, "from": live, "to": live + step["add"]}
         try:
             confirmed = int(body.get("confirm_to"))
@@ -166,11 +190,17 @@ def _apply(body, sig):
                 db.execute(f"UPDATE {table} SET daily_budget_cents = %s WHERE id = %s", (live, holder))
             return api_error(f"The budget on Meta is {live / 100:,.2f} a day now, so this would make it {step['to'] / 100:,.2f}. "
                              "Check the suggestion again.", 409, fresh=view(json.loads(settings_store.get("meta_advice") or "{}")))
-        import money_rules
-        change = money_rules.budget_change(step["from"], step["to"], money_rules.ceiling(settings_store.get("max_daily_budget_cents")))
-        problem = money_rules.change_problem(change, bool(body.get("accept_big")))
+        now = datetime.now(timezone.utc)
+        change = money_rules.budget_change(step["from"], step["to"], money_rules.ceiling(settings_store.get("max_daily_budget_cents")),
+                                           ads_api.last_budget(holder, now), now)
+        accept_big, accept_recent = bool(body.get("accept_big")), bool(body.get("accept_recent"))
+        problem = money_rules.change_problem(change, accept_big, accept_recent)
         if problem:
-            return api_error(problem, 409)
+            # The list is drawn again from what is known now (the budget may have just turned recent), so the next
+            # Apply asks the right question instead of sending the same answer again.
+            return api_error(problem, 409, fresh=view(json.loads(settings_store.get("meta_advice") or "{}")),
+                             **({"code": "recent_change"} if change["recent"] and not accept_recent else {}))
+        accepted = money_rules.accepted(change, accept_big, accept_recent)
     import ads_api
     user = current_user()
     level = ("account" if not rec["object_ids"] else
@@ -182,7 +212,7 @@ def _apply(body, sig):
     except meta_client.MetaError as exc:
         ads_api.record(user, level, row, "recommendation", None, new_value, False, str(exc))
         return api_error(f"Meta refused: {exc}", 400)
-    ads_api.record(user, level, row, "recommendation", step["from"] if step else None, new_value, True)
+    ads_api.record(user, level, row, "recommendation", step["from"] if step else None, new_value, True, accepted=accepted)
     if step and step["to"] and rec["object_ids"]:
         try:  # read back what Meta set: if it isn't what was shown, say so in the change log
             now = ads_api.fresh_budget(holder or rec["object_ids"][0])

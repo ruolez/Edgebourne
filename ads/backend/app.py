@@ -54,6 +54,7 @@ def create_app(run_migrations=True):
     for module in (accounts_api, ads_api, adsets_api, advice_api, alerts_api, auth, builds_api, bulk_api, entities_api, concepts_api, desk_api, experiments_api, forms_api, gallery_api, home_api, inbox_api, insights_api, leads_api, polish, performance_api, push_api, refresh_api, reports_api, settings_api, swipes_api, team_api, tracking_api, versions_api, webhooks):
         app.register_blueprint(module.bp)
     app.register_blueprint(desk_api.agent_bp)
+    app.register_blueprint(inbox_api.alerts_bp)
     app.teardown_appcontext(db.close_db)
     app.before_request(accounts_api.choose_for_request)
 

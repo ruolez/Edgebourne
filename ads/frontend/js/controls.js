@@ -1,7 +1,7 @@
 // On/off switches and budget changes, with a confirmation that names the change.
 import { api } from "./api.js";
 import { confirmDialog, esc, toast } from "./ui.js";
-import { money, currencySymbol } from "./format.js";
+import { agoWords, dayTimeWords, dayWords, money, currencySymbol } from "./format.js";
 
 const WHAT = { campaign: "campaign", adset: "ad set", ad: "ad" };
 
@@ -58,13 +58,42 @@ export async function changeStatus({ level, id, name, turnOn }, after, btn = doc
   } catch (err) { toast(err.message, "bad"); btn.disabled = false; }
 }
 
+// The last change of this budget, in words: "Last change: Nov 9, $20.00 → $30.00 a day, in Ads Manager, 1 day ago."
+export function lastChangeWords(last) {
+  if (!last) return "";
+  const me = window.ebadsMe && window.ebadsMe.name;
+  const who = last.where === "outside" ? "in Ads Manager" : last.by && last.by === me ? "by you" : last.by ? `by ${esc(last.by)}` : "from this console";
+  const amounts = last.from && last.to ? `, ${money(last.from, { exact: true })} → ${money(last.to, { exact: true })} a day` : "";
+  return `Last change: <b>${esc(dayWords(last.at))}</b>${amounts}, ${who}, ${esc(agoWords(last.at))}.`;
+}
+
+// The one budget dialog. It reads the last change first (a database read; the server checks it again at
+// write time): a raise under 3 days after it needs the same knowing yes as a step over +20% (rule 6).
+// D3 adds `suggest`, `note` and `undoOf` to this signature.
 export async function editBudget({ level, id, name, current }, after) {
   const now = current / 100;
+  let history = null;
+  try { history = await api(`/api/ads/${level}/${encodeURIComponent(id)}/budget/last`); }
+  catch (err) { history = null; /* offline or refused: the server's own check still holds */ }
+  const last = history && history.last;
+  const recentWindow = Boolean(history && history.recent);
+  const typed = (v) => Math.round(Number(String(v).replace(/[$,\s]/g, "")) * 100);
+  const isRollback = (cents) => Boolean(last && last.from && cents === last.from);
+  const isRecentRaise = (cents) => recentWindow && cents > current && !isRollback(cents);
+  const isBig = (cents) => (cents - current) / current > 0.2;
   const value = await confirmDialog({
     title: `Daily budget for “${name}”`,
-    body: `<p>Now <b>${money(current, { exact: true })} a day</b>. Meta may spend up to 75% more on a busy day and evens it out over the week.</p>`,
+    body: `<p>Now <b>${money(current, { exact: true })} a day</b>. Meta may spend up to 75% more on a busy day and evens it out over the week.</p>${last ? `<p class="muted small" id="cd-last">${lastChangeWords(last)}</p>` : ""}`,
     confirm: "Change budget",
-    // The +20% warning is in the hint; confirming with it showing is the knowing yes the server asks for.
+    confirmLabel: (v) => {
+      const cents = typed(v);
+      return Number.isFinite(cents) && cents > 0 && (isBig(cents) || isRecentRaise(cents)) ? "Raise anyway" : "Change budget";
+    },
+    confirmDanger: (v) => {
+      const cents = typed(v);
+      return Number.isFinite(cents) && cents > 0 && (isBig(cents) || isRecentRaise(cents));
+    },
+    // The +20% and 3-day warnings are in the hint; confirming with them showing is the knowing yes the server asks for.
     field: {
       label: "New daily budget", prefix: currencySymbol(), suffix: "/day", inputmode: "decimal", value: now.toFixed(2),
       validate: (v) => {
@@ -76,19 +105,21 @@ export async function editBudget({ level, id, name, current }, after) {
       hint: (v) => {
         const n = Number(String(v).replace(/[$,\s]/g, ""));
         if (!Number.isFinite(n) || n <= 0) return "";
-        const change = (n * 100 - current) / current;
-        const words = `${change > 0 ? "+" : ""}${Math.round(change * 100)}% · about ${money(n * 100 * 30)} a month`;
-        return change > 0.2 ? `${words}. <b>Bigger than +20%:</b> Meta may restart learning and results can wobble for a few days.` : words;
+        const cents = Math.round(n * 100);
+        const change = (cents - current) / current;
+        let words = `${change > 0 ? "+" : ""}${Math.round(change * 100)}% · about ${money(cents * 30)} a month`;
+        if (change > 0.2) words += ". <b>Bigger than +20%:</b> Meta may restart learning and results can wobble for a few days.";
+        if (isRollback(cents)) words += `<br>Back to ${money(last.from, { exact: true })}, the budget before the last change.`;
+        else if (isRecentRaise(cents)) words += `<br><b>Less than 3 days since the last change.</b> Meta is still adjusting to it; another raise now makes results hard to read. The usual rule: wait until ${esc(dayTimeWords(history.ok_after))}.`;
+        return words;
       },
     },
   });
   if (value === false) return;
-  const cents = Math.round(Number(String(value).replace(/[$,\s]/g, "")) * 100);
-  const big = (cents - current) / current > 0.2;
+  const cents = typed(value);
   try {
-    await api(`/api/ads/${level}/${id}/budget`, { method: "POST", body: { daily_budget_cents: cents, from_cents: current, accept_big: big } });
+    await api(`/api/ads/${level}/${id}/budget`, { method: "POST", body: { daily_budget_cents: cents, from_cents: current, accept_big: isBig(cents), accept_recent: isRecentRaise(cents) } });
     toast(`Budget is now ${money(cents, { exact: true })}/day`);
     after();
   } catch (err) { toast(err.message, "bad"); }
 }
-

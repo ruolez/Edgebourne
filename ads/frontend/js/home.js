@@ -222,12 +222,12 @@ function adviceHtml(a) {
   const score = a.score != null ? `<span class="opp-score" title="Meta's Opportunity Score: how closely the account follows its best practices"><b>${a.score}</b>/100${delta}</span>` : "";
   const items = a.items.length ? `<ul class="advice-list">${a.items.map((r) => {
       const b = r.budget;
-      const step = b && b.from ? `<p class="flush small ${b.big ? "bad-text" : "muted"}">${money(b.from, { exact: true })} → ${money(b.to, { exact: true })} a day (+${b.pct}%)${b.big ? ": more than +20%, so Meta may restart learning and results can wobble for a few days." : "."}</p>` : "";
+      const step = b && b.from ? `<p class="flush small ${b.big || b.recent ? "bad-text" : "muted"}">${money(b.from, { exact: true })} → ${money(b.to, { exact: true })} a day (+${b.pct}%)${b.big ? ": more than +20%, so Meta may restart learning and results can wobble for a few days." : "."}${b.last_words ? ` · last change ${esc(b.last_words)}` : ""}</p>` : "";
       return `<li>
         <div class="advice-text"><span class="ttl"><b>${esc(r.label)}</b>${r.points ? `<span class="pill">+${r.points} points</span>` : ""}</span>
           ${r.lift ? `<p class="flush">${esc(r.lift)}</p>` : ""}${step}
           ${r.note ? `<p class="flush muted small">${esc(r.note)}</p>` : ""}</div>
-        <div class="advice-do">${r.can_apply ? `<button type="button" class="btn btn-small" data-apply="${esc(r.signature)}" data-label="${esc(r.label)}" data-big="${b && b.big ? "1" : ""}" data-step="${b && b.from && b.to ? `${money(b.from, { exact: true })} → ${money(b.to, { exact: true })} a day` : ""}" data-to="${b && b.to ? b.to : ""}" data-does="${esc(r.applies || "")}">Apply</button>` : ""}
+        <div class="advice-do">${r.can_apply ? `<button type="button" class="btn btn-small" data-apply="${esc(r.signature)}" data-label="${esc(r.label)}" data-big="${b && b.big ? "1" : ""}" data-recent="${b && b.recent ? "1" : ""}" data-last="${esc(b && b.last_words ? b.last_words : "")}" data-step="${b && b.from && b.to ? `${money(b.from, { exact: true })} → ${money(b.to, { exact: true })} a day` : ""}" data-to="${b && b.to ? b.to : ""}" data-does="${esc(r.applies || "")}">Apply</button>` : ""}
           ${r.can_fix ? fixButton(r) : ""}
           ${r.url ? `<a class="btn btn-quiet btn-small" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Ads Manager ${icon("external")}</a>` : ""}</div>
       </li>`;
@@ -291,15 +291,16 @@ document.addEventListener("click", async (e) => {
   const b = e.target.closest("[data-apply]");
   if (!b) return;
   const big = !!b.dataset.big;
+  const recent = !!b.dataset.recent;
   const yes = await confirmDialog({
     title: `Apply “${b.dataset.label}”?`,
-    body: `<p>${esc(b.dataset.does || "Meta applies it to the account.")}</p>${b.dataset.step ? `<p><b>${esc(b.dataset.step)}</b></p>` : ""}${big ? '<p class="note warn">More than +20% in one step: Meta may restart learning and results can wobble for a few days. The usual rule here is +20% at most, three days apart.</p>' : ""}`,
-    confirm: big ? "Apply anyway" : "Apply", danger: big,
+    body: `<p>${esc(b.dataset.does || "Meta applies it to the account.")}</p>${b.dataset.step ? `<p><b>${esc(b.dataset.step)}</b></p>` : ""}${big ? '<p class="note warn">More than +20% in one step: Meta may restart learning and results can wobble for a few days. The usual rule here is +20% at most, three days apart.</p>' : ""}${recent ? `<p class="note warn"><b>Less than 3 days since the last change</b> (${esc(b.dataset.last)}). Meta is still adjusting to it; another raise now makes results hard to read.</p>` : ""}`,
+    confirm: recent ? "Raise anyway" : big ? "Apply anyway" : "Apply", danger: big || recent,
   });
   if (!yes) return;
   b.disabled = true;
   try {
-    document.getElementById("advice").innerHTML = adviceHtml(await api("/api/advice/apply", { method: "POST", body: { signature: b.dataset.apply, accept_big: big, confirm_to: b.dataset.to ? Number(b.dataset.to) : null } }));
+    document.getElementById("advice").innerHTML = adviceHtml(await api("/api/advice/apply", { method: "POST", body: { signature: b.dataset.apply, accept_big: big, accept_recent: recent, confirm_to: b.dataset.to ? Number(b.dataset.to) : null } }));
     toast("Applied on Meta");
   } catch (err) {
     toast(err.message, "bad");

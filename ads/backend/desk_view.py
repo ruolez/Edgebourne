@@ -297,6 +297,24 @@ REVIEW_ORDER = ("money", "live", "create", "mac", "local", "blocked")
 PLAN_GROUPS = {"vertical": "live", "update": "live", "create": "create", "render": "mac", "experiment": "local", "tags": "local", "record": "mac"}
 
 
+def last_change_note(plan, currency="USD"):
+    """'Budget last changed Nov 9 ($20.00 → $24.00, in Ads Manager), 1 day ago.' for a budget changed under
+    3 days ago (rule 6). The plan carries the day in the account's time zone (`last_day`)."""
+    import words
+    last = plan.get("last") or {}
+    if not last.get("at"):
+        return None
+    old, new = last.get("old", last.get("from")), last.get("new", last.get("to"))
+    was = (f" ({account_info.money(old, currency)} → {account_info.money(new, currency)}, "
+           f"{'in Ads Manager' if last.get('where') == 'outside' else 'by ' + (last.get('by') or 'the team')})"
+           if old and new else "")
+    hours = plan.get("hours") if plan.get("hours") is not None else 0
+    since = "less than an hour ago" if hours < 1 else f"{hours} hour{'s' if hours != 1 else ''} ago" if hours < 24 else \
+        f"{hours // 24} day{'s' if hours // 24 != 1 else ''} ago"
+    when = plan.get("last_day") or (words.day(words.local(last["at"])) if not isinstance(last["at"], str) else last["at"][:10])
+    return f"Budget last changed {when}{was}, {since}."
+
+
 def review_item(p, plan, currency="USD"):
     """How one suggestion shows on the Accept sheet: its group, whether it starts ticked, the reason
     it can't be accepted, and the exact approval body. Starting to spend, a step over +20% and a cut
@@ -312,8 +330,13 @@ def review_item(p, plan, currency="USD"):
         if seen is not None and seen != plan["from"]:
             note = f"Claude saw {account_info.money(seen, currency)} a day. It's {account_info.money(plan['from'], currency)} now."
         deep_cut = plan.get("pct") is not None and plan["pct"] < -100 * money_rules.BIG_STEP
-        needs_tick = bool(plan.get("big") or note or deep_cut)
+        recent = bool(plan.get("recent"))
+        if recent:
+            note = " ".join(filter(None, [note, last_change_note(plan, currency)]))
+        needs_tick = bool(plan.get("big") or note or deep_cut or recent)
         body = {"from_cents": plan["from"], "to_cents": plan["to"], "accept_big": bool(plan.get("big"))}
+        if recent:
+            body["accept_recent"] = True  # sent only when this item is ticked by hand (it never starts ticked)
     elif kind == "status":
         turning_on = plan["to"] == "ACTIVE"
         group = "money" if turning_on else "live"

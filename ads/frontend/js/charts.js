@@ -1,7 +1,55 @@
 // Column charts (one measure per chart, rounded data-ends, tooltips). Colors come
 // from CSS variables validated with the dataviz palette checker.
-import { esc } from "./ui.js";
-import { dayLabel } from "./format.js";
+import { entityLink, esc, historyHref, switchHtml } from "./ui.js";
+import { CHANGE_CATS, dayLabel } from "./format.js";
+
+// ---- change marks (D2): small ticks under the days something changed, listed in the tooltip ----
+const LEVEL_NAMES = { campaign: "Campaign", adset: "Ad set", ad: "Ad" };
+const markOf = (marks) => new Map((marks || []).map((m) => [m.day, m]));
+// The tooltip's list of changes on one day: the change, then what it was on (when that isn't this page) and who.
+function tipChanges(m) {
+  if (!m) return "";
+  const here = new URLSearchParams(location.search).get("id");
+  return `<ul class="tip-chg">${m.items.map((i) => `<li><i class="chg-dot chg-${esc(i.cat)}" aria-hidden="true"></i><span>${esc(i.title)}<small>${[
+    i.entity_id && i.entity_id !== here && i.entity_name ? esc(i.entity_name) : "", i.by ? esc(i.by) : ""].filter(Boolean).join(" · ")}</small></span></li>`).join("")}${
+    m.more ? `<li class="tip-more">and ${m.more} more</li>` : ""}</ul>`;
+}
+// Ticks under the plot, coloured by the day's first (most important) kind; a budget day also gets a faint guide.
+function markShapes(marks, xCenter, T, plotH) {
+  return (marks || []).map(({ m, i }) => {
+    const x = xCenter(i);
+    const cat = m.cats[0] || "meta";
+    return `${m.cats.includes("money") ? `<line class="chg-guide" x1="${x}" x2="${x}" y1="${T}" y2="${T + plotH}"/>` : ""}<rect class="chg-mark chg-${esc(cat)}" x="${x - 2}" y="${T + plotH + 3}" width="4" height="6" rx="1"/>`;
+  }).join("");
+}
+// One tooltip open at a time; a tap outside a chart closes it (touch only: a mouse closes it on leave).
+let openTip = null;
+document.addEventListener("pointerdown", (e) => {
+  if (openTip && !openTip.box.contains(e.target)) { openTip.hide(); openTip = null; }
+});
+// Hover with a mouse, tap with a finger: the same tooltip, its left edge kept inside the chart box.
+function wireTips(el, show, hide) {
+  const tip = el.querySelector(".tip");
+  const place = () => {
+    const box = el.getBoundingClientRect();
+    const w = tip.offsetWidth;
+    const left = parseFloat(tip.style.left) || 0;
+    const min = w / 2, max = box.width - w / 2;
+    if (max > min) tip.style.left = `${Math.min(Math.max(left, min), max)}px`;
+  };
+  el.querySelectorAll(".hit").forEach((hit) => {
+    hit.addEventListener("mouseenter", () => { show(Number(hit.dataset.i)); place(); });
+    hit.addEventListener("mouseleave", hide);
+    hit.addEventListener("pointerup", (e) => {
+      if (e.pointerType === "mouse") return;
+      const i = Number(hit.dataset.i);
+      if (openTip && openTip.box === el && openTip.i === i) { hide(); openTip = null; return; }
+      if (openTip) openTip.hide();
+      show(i); place();
+      openTip = { box: el, i, hide };
+    });
+  });
+}
 
 // Clean tick steps (1, 2, 2.5, 5 × 10^n) so the axis reads in round numbers.
 export function niceMax(max, ticks = 4, integer = false) {
@@ -55,8 +103,10 @@ function drawWidth(el) {
   return w >= 240 && w < 560 ? w : 560;
 }
 
-export function columnChart({ el, series, key, color, format, axisFormat, title, integer = false, height = 220 }) {
-  const W = drawWidth(el), H = height, L = 52, R = 8, T = 10, B = 26;
+export function columnChart({ el, series, key, color, format, axisFormat, title, integer = false, height = 220, marks = [], marksSummary = "" }) {
+  const byDay = markOf(marks);
+  const marked = series.map((d, i) => ({ m: byDay.get(d.day), i })).filter((x) => x.m);
+  const W = drawWidth(el), H = height + (marked.length ? 10 : 0), L = 52, R = 8, T = 10, B = 26 + (marked.length ? 10 : 0);
   const values = series.map((d) => d[key]);
   const { top, step } = niceMax(Math.max(...values, 0), 4, integer);
   const plotW = W - L - R, plotH = H - T - B;
@@ -78,23 +128,20 @@ export function columnChart({ el, series, key, color, format, axisFormat, title,
     const label = dayTick(i, series.length) ? `<text class="tick" x="${L + i * band + band / 2}" y="${H - 6}" text-anchor="middle">${dayLabel(d.day)}</text>` : "";
     return `<rect class="hit" data-i="${i}" x="${L + i * band}" y="${T}" width="${band}" height="${plotH}"/><path class="col" d="${path}" fill="${color}"/>${label}`;
   }).join("");
-  const sum = described(title, columnSummary(series, key, format, title));
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" ${sum.attrs}><g class="grid">${grid}</g>${ticks}${cols}</svg>${sum.note}<div class="tip" hidden></div>`;
+  const sum = described(marksSummary ? `${title}. ${marksSummary}` : title, columnSummary(series, key, format, title));
+  const shapes = markShapes(marked, (i) => L + i * band + band / 2, T, plotH);
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" ${sum.attrs}><g class="grid">${grid}</g>${ticks}${shapes}${cols}</svg>${sum.note}<div class="tip" hidden></div>`;
   el.querySelector("svg").style.height = `${H}px`;
   const tip = el.querySelector(".tip");
   const svg = el.querySelector("svg");
-  el.querySelectorAll(".hit").forEach((hit) => {
-    hit.addEventListener("mouseenter", () => {
-      const i = Number(hit.dataset.i);
-      const d = series[i];
-      const scale = svg.getBoundingClientRect().width / W;
-      tip.innerHTML = `${format(d[key])}<small>${dayLabel(d.day)}</small>`;
-      tip.style.left = `${(L + i * band + band / 2) * scale}px`;
-      tip.style.top = `${y(d[key]) * scale}px`;
-      tip.hidden = false;
-    });
-    hit.addEventListener("mouseleave", () => { tip.hidden = true; });
-  });
+  wireTips(el, (i) => {
+    const d = series[i];
+    const scale = svg.getBoundingClientRect().width / W;
+    tip.innerHTML = `${format(d[key])}<small>${dayLabel(d.day)}</small>${tipChanges(byDay.get(d.day))}`;
+    tip.style.left = `${(L + i * band + band / 2) * scale}px`;
+    tip.style.top = `${y(d[key]) * scale}px`;
+    tip.hidden = false;
+  }, () => { tip.hidden = true; });
 }
 
 // Horizontal bars for a breakdown: one measure, sorted, labels left, values right.
@@ -112,10 +159,12 @@ export function barList(el, items, { key, format, max = null, extra = null }) {
 // Thin lines, round joins, one shared y axis, a tooltip listing every line on the hovered day.
 // `dashes[i]` gives line i its own dash pattern and a series `key` (1, 2…) is drawn where its line ends, so the
 // lines can be told apart without their colour.
-export function lineChart({ el, series, format, axisFormat, title, integer = false, height = 220, dashes = [] }) {
+export function lineChart({ el, series, format, axisFormat, title, integer = false, height = 220, dashes = [], marks = [], marksSummary = "" }) {
   const keyed = series.some((s) => s.key);
-  const W = drawWidth(el), H = height, L = 52, R = keyed ? 26 : 10, T = 12, B = 26;
   const days = series[0]?.points.map((p) => p.day) || [];
+  const byDay = markOf(marks);
+  const marked = days.map((d, i) => ({ m: byDay.get(d), i })).filter((x) => x.m);
+  const W = drawWidth(el), H = height + (marked.length ? 10 : 0), L = 52, R = keyed ? 26 : 10, T = 12, B = 26 + (marked.length ? 10 : 0);
   const values = series.flatMap((s) => s.points.map((p) => p.value ?? 0));
   const { top, step } = niceMax(Math.max(...values, 0), 4, integer);
   const plotW = W - L - R, plotH = H - T - B;
@@ -139,20 +188,62 @@ export function lineChart({ el, series, format, axisFormat, title, integer = fal
   ends.forEach((e, i) => { if (i && e.cy - ends[i - 1].cy < 15) e.cy = ends[i - 1].cy + 15; });
   const keys = ends.map((e) => `<g class="ln-key ${e.s.cls}" aria-hidden="true"><circle cx="${(e.cx + 12).toFixed(1)}" cy="${e.cy.toFixed(1)}" r="7.5"/><text x="${(e.cx + 12).toFixed(1)}" y="${(e.cy + 3.5).toFixed(1)}" text-anchor="middle">${esc(e.s.key)}</text></g>`).join("");
   const hits = days.map((d, i) => `<rect class="hit" data-i="${i}" x="${x(i) - plotW / Math.max(days.length - 1, 1) / 2}" y="${T}" width="${plotW / Math.max(days.length - 1, 1)}" height="${plotH}"/>`).join("");
-  const sum = described(title, lineSummary(series, format, title));
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" ${sum.attrs}><g class="grid">${grid}</g>${ticks}${labels}${lines}${keys}<line class="cursor" x1="0" x2="0" y1="${T}" y2="${T + plotH}" hidden/>${hits}</svg>${sum.note}<div class="tip" hidden></div>`;
+  const sum = described(marksSummary ? `${title}. ${marksSummary}` : title, lineSummary(series, format, title));
+  const shapes = markShapes(marked, x, T, plotH);
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" ${sum.attrs}><g class="grid">${grid}</g>${ticks}${labels}${shapes}${lines}${keys}<line class="cursor" x1="0" x2="0" y1="${T}" y2="${T + plotH}" hidden/>${hits}</svg>${sum.note}<div class="tip" hidden></div>`;
   el.querySelector("svg").style.height = `${H}px`;
   const svg = el.querySelector("svg"), tip = el.querySelector(".tip"), cursor = el.querySelector(".cursor");
-  el.querySelectorAll(".hit").forEach((hit) => {
-    hit.addEventListener("mouseenter", () => {
-      const i = Number(hit.dataset.i);
-      const scale = svg.getBoundingClientRect().width / W;
-      cursor.setAttribute("x1", x(i)); cursor.setAttribute("x2", x(i)); cursor.hidden = false;
-      tip.innerHTML = `<small>${dayLabel(days[i])}</small>${series.map((s) => `<span class="tip-row"><i class="sw ${s.cls}"></i>${s.key ? `${esc(s.key)} · ` : ""}${esc(s.label)} <b>${s.points[i].value == null ? "—" : esc(format(s.points[i].value))}</b></span>`).join("")}`;
-      tip.style.left = `${x(i) * scale}px`;
-      tip.style.top = `${T * scale}px`;
-      tip.hidden = false;
-    });
-    hit.addEventListener("mouseleave", () => { tip.hidden = true; cursor.hidden = true; });
-  });
+  wireTips(el, (i) => {
+    const scale = svg.getBoundingClientRect().width / W;
+    cursor.setAttribute("x1", x(i)); cursor.setAttribute("x2", x(i)); cursor.hidden = false;
+    tip.innerHTML = `<small>${dayLabel(days[i])}</small>${series.map((s) => `<span class="tip-row"><i class="sw ${s.cls}"></i>${s.key ? `${esc(s.key)} · ` : ""}${esc(s.label)} <b>${s.points[i].value == null ? "—" : esc(format(s.points[i].value))}</b></span>`).join("")}${tipChanges(byDay.get(days[i]))}`;
+    tip.style.left = `${x(i) * scale}px`;
+    tip.style.top = `${T * scale}px`;
+    tip.hidden = false;
+  }, () => { tip.hidden = true; cursor.hidden = true; });
+}
+
+// ---- the changes panel under the charts (D2) ----
+// Whether marks show on the charts: one switch per viewer, remembered in this browser (on by default).
+const MARKS_KEY = "eb-chg-marks";
+export function marksShown() {
+  try { return localStorage.getItem(MARKS_KEY) !== "0"; } catch (e) { return true; }
+}
+export function applyMarksShown(on = marksShown()) {
+  document.body.classList.toggle("chg-off", !on);
+}
+function rememberMarks(on) {
+  try { localStorage.setItem(MARKS_KEY, on ? "1" : "0"); } catch (e) { /* storage off: it just isn't remembered */ }
+}
+// "3 changes in this period" with a Show on charts switch and the list, each linking to the History of what changed.
+// `list` = the server's newest changes of the period ({items, total}, newest first, not cut per day like the marks).
+export function marksPanel(el, marks, summary, list = null) {
+  if (!el) return;
+  applyMarksShown();
+  const rows = list ? list.items || []
+    : (marks || []).flatMap((m) => m.items.map((i) => ({ ...i, day: m.day }))).reverse();
+  if (!rows.length) { el.innerHTML = '<p class="muted small flush">No changes in this period.</p>'; return; }
+  const total = list ? list.total : rows.length + (marks || []).reduce((n, m) => n + (m.more || 0), 0);
+  const here = new URLSearchParams(location.search).get("id");
+  const legend = Object.entries(CHANGE_CATS).map(([k, l]) => `<span><i class="chg-dot chg-${k}" aria-hidden="true"></i>${esc(l)}</span>`).join("");
+  const row = (i) => {
+    const where = i.entity_id && i.entity_id !== here && LEVEL_NAMES[i.level]
+      ? ` · ${entityLink(i.level, i.entity_id, i.entity_name ? `${LEVEL_NAMES[i.level]} “${i.entity_name}”` : `the ${LEVEL_NAMES[i.level].toLowerCase()}`)}` : "";
+    const open = i.entity_id && LEVEL_NAMES[i.level] ? `<a class="chg-open" href="${esc(historyHref(i.level, i.entity_id))}">History</a>` : "";
+    return `<li><span class="r-date">${esc(dayLabel(i.day))}</span><i class="chg-dot chg-${esc(i.cat)}" aria-hidden="true"></i><span class="chg-what">${esc(i.title)}${where}${i.by ? ` · by ${esc(i.by)}` : ""}</span>${open}</li>`;
+  };
+  el.innerHTML = `<details class="chg-fold"><summary>${total} change${total === 1 ? "" : "s"} in this period</summary>
+    <div class="chg-tools"><div class="chg-legend">${legend}</div>
+      <span class="chg-show">${switchHtml(marksShown(), "data-chg-toggle", "Show on charts")}<span data-chg-label>Show on charts</span></span></div>
+    <ul class="chg-rows">${rows.map(row).join("")}</ul>${total > rows.length ? `<p class="muted small flush">The latest ${rows.length} of ${total}, newest first. Each History has the rest.</p>` : ""}</details>
+    <p class="sr-only">${esc(summary || "")}</p>`;
+  const sw = el.querySelector("[data-chg-toggle]");
+  const flip = () => {
+    const on = sw.getAttribute("aria-checked") !== "true";
+    sw.setAttribute("aria-checked", on ? "true" : "false");
+    rememberMarks(on);
+    applyMarksShown(on);
+  };
+  sw.addEventListener("click", flip);
+  el.querySelector("[data-chg-label]").addEventListener("click", flip);
 }

@@ -369,6 +369,38 @@ ol.history span { color: var(--ink-2); }
   transform: translate(-50%, -110%); box-shadow: var(--shadow-3);
 }
 .tip small { display: block; font-weight: 600; opacity: .75; }
+/* Change marks (D2): ticks under the days something changed, a faint guide through budget days, the list in the tooltip. */
+.chart .chg-mark { pointer-events: none; }
+.chg-money { fill: var(--mark-money); background: var(--mark-money); }
+.chg-switch { fill: var(--mark-switch); background: var(--mark-switch); }
+.chg-edit { fill: var(--mark-edit); background: var(--mark-edit); }
+.chg-meta { fill: var(--mark-meta); background: var(--mark-meta); }
+.chart .chg-guide { stroke: var(--mark-money); stroke-width: 1; stroke-dasharray: 3 3; opacity: .45; pointer-events: none; }
+body.chg-off .chg-mark, body.chg-off .chg-guide { display: none; }
+.chg-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.tip .chg-dot { box-shadow: 0 0 0 1.5px var(--surface); margin-top: 4px; }
+.tip-chg { list-style: none; margin: 6px 0 0; padding: 6px 0 0; border-top: 1px solid color-mix(in srgb, var(--surface) 25%, transparent);
+  display: flex; flex-direction: column; gap: 4px; white-space: normal; width: max-content; max-width: min(280px, 70vw); }
+.tip-chg li { display: flex; gap: 6px; align-items: flex-start; font-weight: 600; }
+.tip-chg small { display: block; font-weight: 500; opacity: .75; }
+.tip-more { opacity: .75; }
+/* The row under the charts: where the numbers come from on the left (D1), the changes on the right. */
+.fig-foot { display: flex; gap: 12px 24px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.fig-foot .fig-src:empty { display: none; }
+.fig-marks { flex: 1 1 320px; min-width: 0; display: flex; justify-content: flex-end; }
+.fig-marks > p { margin: 0; }
+.chg-fold { width: 100%; max-width: 640px; }
+.chg-fold > summary { cursor: pointer; color: var(--ink-2); font-weight: 600; font-size: var(--t-m); padding: 6px 0; text-align: right; }
+.chg-fold[open] > summary { text-align: left; }
+.chg-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 4px 0 8px; }
+.chg-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--ink-3); font-size: var(--t-s); }
+.chg-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.chg-show { display: inline-flex; align-items: center; gap: 8px; font-size: var(--t-s); font-weight: 600; color: var(--ink-2); cursor: pointer; }
+.chg-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.chg-rows li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: var(--t-s); }
+.chg-rows .r-date { color: var(--ink-3); font-variant-numeric: tabular-nums; min-width: 48px; flex: none; }
+.chg-what { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.chg-open { flex: none; font-weight: 600; }
 details.table-view summary { cursor: pointer; color: var(--ink-2); font-weight: 600; font-size: var(--t-m); padding: 4px 0; }
 
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }

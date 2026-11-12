@@ -461,3 +461,27 @@ class AfterClaimTest(unittest.TestCase):
     def test_an_unknown_outcome_is_shown_as_check_ads_manager(self):
         self.assertEqual(desk_view.proposal_state({"status": "unknown"}, None, None)[0], "unknown")
 
+
+
+class RecentBudgetReviewTest(unittest.TestCase):
+    """D2: a budget changed under 3 days ago is never ticked for you on the Accept sheet."""
+    from datetime import datetime as _dt, timezone as _tz
+    LAST = {"at": _dt(2026, 11, 9, 23, tzinfo=_tz.utc), "field": "daily_budget", "old": 2000, "new": 2400,
+            "by": "Ads Manager", "where": "outside", "proposal_id": None}
+    STEP = {"kind": "budget", "from": 2400, "to": 2600, "pct": 8, "big": False, "problem": None, "recent": True,
+            "rollback": False, "last": LAST, "hours": 25}
+
+    def test_a_recent_raise_waits_for_its_own_tick_and_says_why(self):
+        item = plan_item(plan=self.STEP)
+        self.assertEqual((item["needs_tick"], item["tick"], item["body"]),
+                         (True, False, {"from_cents": 2400, "to_cents": 2600, "accept_big": False, "accept_recent": True}))
+        self.assertEqual(item["note"], "Budget last changed Nov 9 ($20.00 → $24.00, in Ads Manager), 1 day ago.")
+
+    def test_a_console_change_names_who(self):
+        plan = {**self.STEP, "last": {**self.LAST, "where": "console", "by": "Eugene"}, "hours": 5}
+        self.assertEqual(plan_item(plan=plan)["note"], "Budget last changed Nov 9 ($20.00 → $24.00, by Eugene), 5 hours ago.")
+
+    def test_both_notes_when_claude_also_saw_another_amount(self):
+        item = plan_item(plan=self.STEP, current_value="$20/day")
+        self.assertEqual(item["note"], "Claude saw $20.00 a day. It's $24.00 now. "
+                                       "Budget last changed Nov 9 ($20.00 → $24.00, in Ads Manager), 1 day ago.")

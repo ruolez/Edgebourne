@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { confirmDialog, esc, toast, when } from "./ui.js";
 import { renderMarkdown } from "./markdown.js";
 import { money } from "./format.js";
-import { spendBody, spendWords } from "./controls.js";
+import { lastChangeWords, spendBody, spendWords } from "./controls.js";
 import { suggestionCard } from "./suggest.js";
 
 export const KIND_LABELS = { question: "Question", review: "Review results", research: "Research competitors", creative: "New ad ideas", polish: "Polish", render: "New version", advice: "Meta's advice" };
@@ -81,15 +81,18 @@ function approvalDialog(card, plan) {
   if (plan.kind === "budget") {
     if (plan.problem && !plan.big) { toast(plan.problem, "bad"); return null; }
     const pct = plan.pct == null ? "" : ` (${plan.pct > 0 ? "+" : ""}${plan.pct}%)`;
+    // A raise under 3 days after the last change needs the same knowing yes as everywhere else (rule 6).
+    const recent = !!plan.recent;
     return {
       dialog: {
-        title, claude: true, danger: !!plan.big, confirm: plan.big ? "Change it anyway" : "Change the budget",
+        title, claude: true, danger: !!plan.big || recent, confirm: recent ? "Raise anyway" : plan.big ? "Change it anyway" : "Change the budget",
         body: `<p>Daily budget of <b>${esc(plan.name)}</b> on Meta, read just now:</p>
           <p class="big-change"><del>${money(plan.from, { exact: true })}</del> → <ins>${money(plan.to, { exact: true })}</ins> a day${pct}</p>
           <p class="muted small">About ${money(plan.to * 30)} a month. Meta may spend up to 75% more on a busy day and evens it out over the week.</p>
-          ${plan.big ? '<p class="note warn"><b>More than +20% in one step.</b> Meta may restart learning and results can wobble for a few days. The rule here is +20% at most, three days apart.</p>' : ""}`,
+          ${plan.big ? '<p class="note warn"><b>More than +20% in one step.</b> Meta may restart learning and results can wobble for a few days. The rule here is +20% at most, three days apart.</p>' : ""}
+          ${recent ? `<p class="note warn"><b>Less than 3 days since the last change.</b> Meta is still adjusting to it; another raise now makes results hard to read.</p><p class="muted small">${lastChangeWords(plan.last)}</p>` : ""}`,
       },
-      body: { from_cents: plan.from, to_cents: plan.to, accept_big: !!plan.big },
+      body: { from_cents: plan.from, to_cents: plan.to, accept_big: !!plan.big, ...(recent ? { accept_recent: true } : {}) },
     };
   }
   if (plan.kind === "status" && plan.to === "ACTIVE") {

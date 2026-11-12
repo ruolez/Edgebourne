@@ -207,6 +207,9 @@ def overview():
         if ids is not None and campaign_id not in ids:
             return api_error("Not found", 404)
     out = overview_data(user, days, campaign_id, span=((start, end), ranges.previous(start, end, key)))
+    import status_history
+    out.update(status_history.marks_payload(user, {"campaigns": [campaign_id], "ad_meta_only": True} if campaign_id
+                                            else {"account": True, "ad_meta_only": True}, start, end))
     out["campaigns"] = campaign_choices(user, start, end)
     out["campaign"] = campaign_id
     out["pacing"] = pacing_data(visible_campaign_ids(user))

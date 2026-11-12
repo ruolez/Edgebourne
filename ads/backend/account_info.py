@@ -44,12 +44,10 @@ SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
 def money(cents, code=None, whole=False):
     """An amount written in the account's currency (the one given, else this account's): "$1,234.50",
     "€20", "1,234.50 CAD". `whole` leaves the cents out. Every server-made sentence uses it."""
+    import words
     if cents is None:
         return "—"
-    code = (code or currency()).upper()
-    amount = f"{cents / 100:,.{0 if whole else 2}f}"
-    symbol = SYMBOLS.get(code)
-    return f"{symbol}{amount}" if symbol else f"{amount} {code}"
+    return words.money(cents, code or currency(), whole)
 
 
 def currency_problem(code):

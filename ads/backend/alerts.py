@@ -35,7 +35,12 @@ DEFAULTS = {
     "ad_approved": {"on": True},
     "learning_limited": {"on": True},
     "changed_outside": {"on": True},
+    "outside_edit": {"on": True},
 }
+# Events that stay open until someone deals with them get a Done (00-PLAN C16); D3 adds change_result.
+DONE_OK = {"outside_edit"}
+# An outside budget change that broke a money rule closes by itself once the 3-day window has passed.
+OUTSIDE_EDIT_OPEN = timedelta(hours=72)
 MIN_IMPRESSIONS = 1000  # per 7-day window, before fatigue is judged
 
 
@@ -281,7 +286,15 @@ def run(now=None):
     opened = db.query("SELECT id, rule, entity_id FROM alerts WHERE resolved_at IS NULL AND kind = 'condition'")
     for alert_id in to_resolve(opened, found, snap):
         db.execute("UPDATE alerts SET resolved_at = now() WHERE id = %s", (alert_id,))
+    db.execute("UPDATE alerts SET resolved_at = now() WHERE rule = 'outside_edit' AND kind = 'event' AND resolved_at IS NULL "
+               "AND created_at < %s", (now - OUTSIDE_EDIT_OPEN,))
     return [a["key"] for _, a in raised]
+
+
+def mark_done(alert_id):
+    """Done on an owner-closed event (DONE_OK): it leaves Needs action. Returns the alert, or None."""
+    return db.execute("UPDATE alerts SET resolved_at = now() WHERE id = %s AND rule = ANY(%s) AND kind = 'event' "
+                      "AND resolved_at IS NULL RETURNING id, rule, title", (alert_id, sorted(DONE_OK)), returning=True)
 
 
 def to_resolve(opened, found, snap):
@@ -307,7 +320,7 @@ def raise_found(found):
         if row:
             raised.append((row["id"], a))
     if raised:
-        people = notify.reach(notify.admin_ids(), "notify_alerts")
+        people = notify.reach(notify.account_admin_ids(), "notify_alerts")
         for alert_id, a in raised:
             if a["level"] == "info":
                 continue  # shown in the console only

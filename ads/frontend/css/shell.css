@@ -736,4 +736,11 @@ dialog { max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .switch::before { content: ""; position: absolute; left: 0; right: 0; top: 9px; height: 26px; border-radius: var(--radius-pill); background: var(--line-strong); transition: background .15s ease; }
   .switch[aria-checked="true"]::before { background: var(--signal); }
   .switch span { top: 12px; z-index: 1; }
+  /* Change marks: the list's rows and links are 44px to tap, and the summary takes the full width. */
+  .fig-marks { justify-content: stretch; }
+  .chg-fold > summary { text-align: left; }
+  .chg-rows li { min-height: var(--target); }
+  .chg-open, .chg-what .ent-link { display: inline-block; padding: 12px 0; margin: -12px 0; }
+  .chg-open { min-width: var(--target); text-align: right; }
+  .chg-show { min-height: var(--target); }
 }

@@ -180,3 +180,52 @@ class CheckedRefusalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OutsideEditTests(unittest.TestCase):
+    """D2: budget, bid, date and audience changes made in Ads Manager, and the console's knowing yeses."""
+    money = staticmethod(lambda c: f"${c / 100:.2f}")
+
+    def event(self, **kw):
+        base = {"id": 20, "at": T, "level": "campaign", "entity_id": "C", "entity_name": "Leads", "field": "daily_budget",
+                "old_value": "2000", "new_value": "3000", "source": "poll", "by_name": None, "change_id": None, "detail": None,
+                "headline": "Budget $20.00 → $30.00 a day"}
+        base.update(kw)
+        return base
+
+    def test_an_outside_budget_change_is_by_ads_manager_in_the_money_category(self):
+        got = timeline.merge([self.event()], [], [], money=self.money)
+        self.assertEqual([(i["title"], i["by"], i["cat"], i["level"], i["entity_id"], i["entity_name"]) for i in got],
+                         [("Budget $20.00 → $30.00 a day", "Ads Manager", "money", "campaign", "C", "Leads")])
+
+    def test_a_known_person_outside_the_console_is_named(self):
+        got = timeline.merge([self.event(detail={"actor": "Eugene R."})], [], [], money=self.money)
+        self.assertEqual(got[0]["by"], "Eugene R.")
+
+    def test_status_from_meta_is_still_by_meta(self):
+        got = timeline.merge([self.event(field="effective_status", old_value="IN_PROCESS", new_value="ACTIVE", headline="Approved")],
+                             [], [], money=self.money)
+        self.assertEqual((got[0]["by"], got[0]["cat"]), ("Meta", "meta"))
+
+    def test_a_change_confirmed_knowingly_says_which_warning(self):
+        rows = [change("budget", "2600", old="2400", id=1, accepted=["recent"]),
+                change("budget", "3200", old="2400", id=2, accepted=["big", "recent"]),
+                change("budget", "3000", old="2400", id=3, accepted=["big"])]
+        got = sorted(timeline.merge([], rows, [], money=self.money), key=lambda i: i["title"])
+        self.assertEqual([(i["title"], i["sub"], i["tone"], i["cat"]) for i in got], [
+            ("Budget $24.00 → $26.00 a day", "Confirmed knowingly: under 3 days since the last change", "", "money"),
+            ("Budget $24.00 → $30.00 a day", "Confirmed knowingly: more than +20%", "", "money"),
+            ("Budget $24.00 → $32.00 a day", "Confirmed knowingly: more than +20% and under 3 days since the last change", "", "money"),
+        ])
+
+    def test_a_new_version_is_an_edit(self):
+        versions = [{"ad_id": "A", "ad_name": "N3", "number": 2, "label": "shorter hook", "started_at": T},
+                    {"ad_id": "A", "ad_name": "N3", "number": 3, "label": None, "started_at": T - timedelta(hours=1)}]
+        got = timeline.merge([], [], [], money=self.money, versions=versions, checks=None)
+        self.assertEqual([(i["kind"], i["cat"], i["title"], i["level"], i["entity_id"]) for i in got],
+                         [("version", "edit", "Version 2 started: shorter hook", "ad", "A"),
+                          ("version", "edit", "Version 3 started", "ad", "A")])
+
+    def test_switches_and_new_things_have_their_category(self):
+        rows = [change("status", "PAUSED", old="ACTIVE", id=1), change("create", "N6", id=2), change("archive", "ARCHIVED", id=3)]
+        self.assertEqual(sorted(i["cat"] for i in timeline.merge([], rows, [], money=self.money)), ["edit", "switch", "switch"])

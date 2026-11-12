@@ -94,9 +94,11 @@ function action(i) {
     return `<button type="button" class="btn btn-claude" data-accept="${i.proposal_id}">Review and accept</button>${talk}`;
   }
   if (!i.href) return "";
-  const label = i.category === "leads" ? "Open the lead" : i.href.startsWith("/ad.html") ? "Open the ad"
+  const label = i.category === "leads" ? "Open the lead" : /[?&#]tab=history/.test(i.href) ? "Open the history" : i.href.startsWith("/ad.html") ? "Open the ad"
     : i.href.startsWith("/settings") ? "Open Settings" : "Open";
-  return `<a class="btn btn-primary" href="${esc(i.href)}">${label}</a>`;
+  // An event that waits for a person (an outside budget change that broke a money rule) closes with Done.
+  const done = (i.actions || []).includes("done") ? `<button type="button" class="btn" data-done="${i.alert_id}">Done</button>` : "";
+  return `<a class="btn btn-primary" href="${esc(i.href)}">${label}</a>${done}`;
 }
 
 function renderDetail() {
@@ -212,6 +214,14 @@ $("ib-detail").addEventListener("click", (e) => {
   const acc = e.target.closest("[data-accept]");
   if (acc) { acceptSheet([Number(acc.dataset.accept)], () => load().catch((err) => toast(err.message, "bad"))); return; }
   if (e.target.closest("[data-read]")) markRead([current]).then(() => { renderFilters(); renderList(); renderDetail(); });
+  const done = e.target.closest("[data-done]");
+  if (done) {
+    done.disabled = true;
+    api(`/api/alerts/${encodeURIComponent(done.dataset.done)}/done`, { method: "POST", body: {} })
+      .then(() => markRead([current])).then(() => { toast("Done: it moves to For your information"); return load(); })
+      .then(() => setInboxCount(data.counts.need_unread))
+      .catch((err) => { toast(err.message, "bad"); done.disabled = false; });
+  }
 });
 $("ib-all").addEventListener("click", async () => {
   try {

@@ -4,8 +4,10 @@ Amounts are cents (hundredths of the account currency). The hard rules: a budget
 current → new from a fresh read, +20% at most in one step unless confirmed knowingly, and never
 above the account's ceiling (Settings → Targets → highest daily budget)."""
 import re
+from datetime import timedelta
 
 BIG_STEP = 0.20
+RECENT = timedelta(hours=72)  # rule 6: one budget change at least 3 days apart; no setting, never loosened
 MAX_DAILY_DEFAULT = 10000  # $100/day per campaign or ad set until an admin changes it
 
 _AMOUNT = re.compile(r"\$?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(%)?")
@@ -93,16 +95,49 @@ def ceiling(saved):
         return MAX_DAILY_DEFAULT
 
 
-def budget_change(old_cents, new_cents, cap_cents):
-    """What a change from old to new means: {from, to, pct, big, over_cap, cap}."""
+def last_budget_change(rows):
+    """The latest real budget change of one budget, or None. rows: [{at, field: daily_budget|lifetime_budget,
+    old, new (cents or None), by, where: console|outside, proposal_id}] from console writes and Meta's records."""
+    real = [r for r in rows if r.get("old") != r.get("new")]
+    return max(real, key=lambda r: r["at"]) if real else None
+
+
+def recency(last, now, old_cents, new_cents):
+    """How a change from old to new sits against the last one: {recent, raise, rollback, hours, ok_after}, or
+    None without a last change. Rollback = back to exactly the budget before the last change."""
+    if last is None:
+        return None
+    return {"recent": now - last["at"] < RECENT, "raise": new_cents > (old_cents or 0),
+            "rollback": last.get("old") is not None and new_cents == last["old"],
+            "hours": int((now - last["at"]).total_seconds() // 3600), "ok_after": last["at"] + RECENT}
+
+
+def budget_change(old_cents, new_cents, cap_cents, last=None, now=None):
+    """What a change from old to new means: {from, to, pct, big, over_cap, cap, recent, rollback, last}.
+    recent: a raise less than 3 days after the last change that isn't a rollback (a cut never is)."""
     pct = round((new_cents - old_cents) * 100 / old_cents) if old_cents else None
-    return {"from": old_cents, "to": new_cents, "pct": pct,
-            "big": bool(old_cents) and (new_cents - old_cents) / old_cents > BIG_STEP,
-            "over_cap": new_cents > cap_cents, "cap": cap_cents}
+    rec = recency(last, now, old_cents, new_cents) if last is not None and now is not None else None
+    out = {"from": old_cents, "to": new_cents, "pct": pct,
+           "big": bool(old_cents) and (new_cents - old_cents) / old_cents > BIG_STEP,
+           "over_cap": new_cents > cap_cents, "cap": cap_cents,
+           "recent": bool(rec and rec["recent"] and rec["raise"] and not rec["rollback"]),
+           "rollback": bool(rec and rec["rollback"]), "last": last if rec else None}
+    if rec:
+        out["hours"] = rec["hours"]
+        out["ok_after"] = rec["ok_after"]
+    return out
 
 
-def change_problem(change, accept_big):
-    """Why the change can't go ahead as asked, or None."""
+def since_words(hours):
+    if hours < 1:
+        return "less than an hour ago"
+    if hours < 24:
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    return f"{hours // 24} day{'s' if hours // 24 != 1 else ''} ago"
+
+
+def change_problem(change, accept_big, accept_recent=False):
+    """Why the change can't go ahead as asked, or None. The ceiling first, then +20%, then the 3-day rule."""
     if change["to"] is None or change["to"] < 100:
         return "The new daily budget must be at least 1.00"
     if change["over_cap"]:
@@ -110,7 +145,18 @@ def change_problem(change, accept_big):
                 "(Settings → Targets → highest daily budget). Raise the ceiling first if you mean it.")
     if change["big"] and not accept_big:
         return f"That's +{change['pct']}%, more than +20% in one step: confirm it knowingly."
+    if change.get("recent") and not accept_recent:
+        last = change["last"]
+        was = f"{last['old'] / 100:,.2f} → {last['new'] / 100:,.2f} a day" if last.get("old") and last.get("new") else "a new amount"
+        return (f"The budget last changed {since_words(change['hours'])} ({was}). Raising it again this soon "
+                "makes results hard to read: confirm it knowingly.")
     return None
+
+
+def accepted(change, accept_big, accept_recent):
+    """The warnings a person confirmed knowingly for this change, as stored on meta_changes.accepted."""
+    out = (["big"] if change.get("big") and accept_big else []) + (["recent"] if change.get("recent") and accept_recent else [])
+    return out or None
 
 
 def recommendation_amount(extra):

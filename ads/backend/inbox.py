@@ -10,7 +10,7 @@ import today
 
 CATEGORY = {
     "ad_rejected": "status", "ad_approved": "status", "learning_limited": "status", "no_delivery": "status",
-    "fatigue": "status", "changed_outside": "status",
+    "fatigue": "status", "changed_outside": "status", "outside_edit": "money",
     "spend_cap": "money", "cap_soon": "money", "pace_over": "money", "day_overspend": "money",
     "week_overspend": "money", "cpl_high": "money", "no_leads": "money",
     "tracking": "system", "events_quiet": "system", "stale_data": "system",
@@ -29,7 +29,11 @@ def _alert_needs(a):
     return a.get("kind", "condition") == "condition" or a["level"] in ("warn", "bad")
 
 
-def build(alerts, leads, proposals, read_keys):
+DONE_OK = {"outside_edit"}  # alerts.DONE_OK: open events a person closes with Done
+
+
+def build(alerts, leads, proposals, read_keys, can_close=False):
+    """`can_close`: the person may close owner-closed events (admins): those items get the action "done"."""
     items = []
     episodes = set()  # a condition still open from an earlier day needs action once, as its newest row
     for a in sorted(alerts, key=lambda x: (x["created_at"], x["id"]), reverse=True):
@@ -43,7 +47,9 @@ def build(alerts, leads, proposals, read_keys):
                       "title": a["title"], "lines": a.get("lines") or [], "href": a.get("href"), "at": a["created_at"],
                       "entity_id": a.get("entity_id"), "open": a.get("resolved_at") is None, "need": need,
                       "resolved": a.get("kind", "condition") == "condition" and a.get("resolved_at") is not None,
-                      "unread": key not in read_keys})
+                      "unread": key not in read_keys, "alert_id": a["id"],
+                      "actions": ["done"] if can_close and a["rule"] in DONE_OK and a.get("resolved_at") is None
+                      and a.get("kind") == "event" else []})
     for l in leads:
         key = f"lead:{l['id']}"
         items.append({"key": key, "category": "leads", "rule": "new_lead", "level": "lead",
@@ -132,7 +138,7 @@ def items_for(user):
     keys = item_keys(alerts, leads, proposals)
     reads = {r["item_key"] for r in db.query("SELECT item_key FROM inbox_reads WHERE user_id = %s AND item_key = ANY(%s)",
                                              (user["id"], keys))} if keys else set()
-    items = build(alerts, leads, proposals, reads)
+    items = build(alerts, leads, proposals, reads, can_close=user["role"] == "admin")
     ids = list({i["entity_id"] for i in items if i.get("entity_id")})
     known = {}
     if ids:

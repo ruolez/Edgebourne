@@ -4,6 +4,7 @@ on needs the daily total echoed back, a budget step over +20% needs a knowing ye
 archive only when off, no delete. Every write lands in meta_changes with the same bulk_id."""
 import time
 import uuid
+from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 
@@ -12,6 +13,8 @@ import bulk
 import config
 import db
 import meta_client
+import money_rules
+import status_history
 from auth import current_user, login_required
 from util import api_error, log_activity
 
@@ -80,7 +83,12 @@ def _plan(user, data):
         elif action in ("budget_set", "budget_pct"):
             value = int(value) if action == "budget_set" else float(value)
             live = {i: ads_api._cents_of(n.get("daily_budget")) for i, n in live_nodes([r["id"] for r in rows], "daily_budget").items()}
-            lines, totals = bulk.budget_lines(rows, "set" if action == "budget_set" else "pct", value, live, ads_api.ceiling())
+            for r in rows:  # a budget changed in Ads Manager since the last read is recorded first, so the 3-day rule sees it (D2)
+                ads_api.notice_budget(level, r, live.get(r["id"]))
+            now = datetime.now(timezone.utc)
+            lasts = status_history.last_budgets([r["id"] for r in rows], now)
+            lines, totals = bulk.budget_lines(rows, "set" if action == "budget_set" else "pct", value, live, ads_api.ceiling(),
+                                              lasts, now)
         else:
             live = live_nodes([r["id"] for r in rows], "status")
             for r in rows:
@@ -91,7 +99,8 @@ def _plan(user, data):
     except meta_client.MetaError as exc:
         return None, api_error(f"Couldn't read the live values from Meta: {exc}", 400)
     plan = {"action": action, "level": level, "value": value, "user": user["id"],
-            "lines": [{"id": l["id"], "from": l["from"], "to": l["to"]} for l in lines if not l["skip"]], "totals": totals}
+            "lines": [{"id": l["id"], "from": l["from"], "to": l["to"], **({"recent": True} if l.get("recent") else {})}
+                      for l in lines if not l["skip"]], "totals": totals}
     return {"lines": lines, "totals": totals, "plan": plan}, None
 
 
@@ -141,6 +150,13 @@ def apply():
             return api_error("The budgets changed on Meta since the preview, so nothing was turned on. Check the changes again.", 409)
     if action.startswith("budget") and totals.get("big") and not data.get("accept_big"):
         return api_error("Some steps are more than +20%: confirm them knowingly.", 409)
+    accept_recent = bool(data.get("accept_recent"))
+    if action.startswith("budget") and totals.get("recent") and not accept_recent:
+        return api_error("Some budgets changed less than 3 days ago: confirm them knowingly.", 409, code="recent_change")
+    # The 3-day rule is read again now for every line: one that changed since the preview is refused without
+    # the knowing yes, whatever the signed plan said (D2).
+    now = datetime.now(timezone.utc)
+    lasts = status_history.last_budgets([l["id"] for l in plan["lines"]], now) if action.startswith("budget") else {}
     bulk_id = str(uuid.uuid4())
     token = ads_api.BULK_ID.set(bulk_id)
     results = []
@@ -155,6 +171,9 @@ def apply():
                     live = meta_client.get(row["id"], fields="status").get("status")
                 else:
                     live = ads_api.fresh_budget(row["id"])
+                    if live and live != row["daily_budget_cents"]:  # changed outside since the last read: recorded first (D2)
+                        row = ads_api.notice_budget(level, row, live)
+                        lasts[row["id"]] = ads_api.last_budget(row["id"], now)
             except meta_client.MetaError as exc:
                 results.append({"id": line["id"], "name": row["name"], "ok": False, "error": str(exc)})
                 if getattr(exc, "code", None) == "cooldown":
@@ -176,7 +195,14 @@ def apply():
                     ads_api.record(user, "ad", row, "archive", live, "ARCHIVED", False, str(exc))
                     error = str(exc)
             else:
-                error = ads_api.apply_budget(user, level, row, line["to"])
+                change = money_rules.budget_change(live, line["to"], ads_api.ceiling(), lasts.get(row["id"]), now)
+                # The knowing yes covers only the lines the preview flagged: one that became recent since is refused.
+                if change["recent"] and not (accept_recent and line.get("recent")):
+                    results.append({"id": line["id"], "name": row["name"], "ok": False,
+                                    "error": "Changed less than 3 days ago since the preview: skipped. Check the changes again."})
+                    continue
+                error = ads_api.apply_budget(user, level, row, line["to"],
+                                             accepted=money_rules.accepted(change, bool(data.get("accept_big")), accept_recent))
             results.append({"id": line["id"], "name": row["name"], "ok": not error, "error": ads_api.error_words(error)})
         if action == "status":
             ads_api.refresh_entities(level, [r["id"] for r in results if r["ok"]])

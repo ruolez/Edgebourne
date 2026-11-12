@@ -22,7 +22,7 @@ TODAY = date.today()
 
 CAMPAIGN = {"id": "120252638288040312", "name": "Edge Bourne - Free intro call - Leads", "status": "ACTIVE",
             "effective_status": "ACTIVE", "objective": "OUTCOME_LEADS", "daily_budget": "2000",
-            "bid_strategy": "LOWEST_COST_WITHOUT_CAP"}
+            "bid_strategy": "LOWEST_COST_WITHOUT_CAP", "start_time": f"{(TODAY - timedelta(days=10)).isoformat()}T09:00:00-0800"}
 ADSET = {"id": "120252672227950312", "name": "SoCal business owners - Instant form", "campaign_id": CAMPAIGN["id"],
          "status": "ACTIVE", "effective_status": "ACTIVE", "optimization_goal": "LEAD_GENERATION",
          "learning_stage_info": {"status": "LEARNING"},
@@ -37,7 +37,8 @@ ADSET = {"id": "120252672227950312", "name": "SoCal business owners - Instant fo
                                           "behaviors": [{"id": "6002714898572", "name": "Small business owners"},
                                                         {"id": "6020530281783", "name": "Business page admins"}]}],
                        "targeting_automation": {"advantage_audience": 1}},
-         "destination_type": "ON_AD", "billing_event": "IMPRESSIONS", "promoted_object": {"page_id": "1404203629446490"}}
+         "destination_type": "ON_AD", "billing_event": "IMPRESSIONS", "promoted_object": {"page_id": "1404203629446490"},
+         "bid_strategy": "LOWEST_COST_WITHOUT_CAP", "start_time": f"{(TODAY - timedelta(days=10)).isoformat()}T09:00:00-0800"}
 TEXTS = {
     "N1 - One simple system": ("Everything in one system", "Notepads, spreadsheets, sticky notes, sales reports by hand. It works until the business grows.\nWe bring it all into one simple system your team can use. AI can handle the routine updates, if you want it. You own it.\nFree intro call for Southern California businesses."),
     "N2 - Order portal": ("Orders that come in on their own", "Customers order any time, even at 2 AM. Email orders get read in automatically.\nFree intro call for Southern California businesses."),
@@ -386,6 +387,38 @@ def fake_slow():
     return jsonify(SLOW)
 
 
+ACTIVITIES = []  # changes made "in Ads Manager" through /fake/_outside, listed by act_…/activities
+OUTSIDE_KEYS = ("daily_budget", "lifetime_budget", "spend_cap", "bid_strategy", "bid_amount", "start_time", "end_time", "stop_time")
+
+
+@app.route("/fake/_outside")
+def fake_outside():
+    """Change a campaign or ad set as someone in Ads Manager would (QA): budgets, bid, dates, audience
+    (targeting_age_min), Meta's own audience defaults (targeting_noise=1) or clear=<field,…> to remove fields."""
+    a = request.args
+    obj = by_id(a.get("id", ""))
+    if obj is None or a.get("id") in ADS:
+        return jsonify({"error": "campaign or ad set only"}), 404
+    before = {k: obj.get(k) for k in OUTSIDE_KEYS}
+    for key in OUTSIDE_KEYS:
+        if a.get(key) not in (None, ""):
+            obj[key] = a[key]
+    for key in [k for k in (a.get("clear") or "").split(",") if k]:
+        obj.pop(key, None)
+    if a.get("targeting_age_min"):
+        obj["targeting"] = {**(obj.get("targeting") or {}), "age_min": int(a["targeting_age_min"])}
+    if a.get("targeting_noise"):
+        obj["targeting"] = {**(obj.get("targeting") or {}), "targeting_relaxation_types": {"lookalike": 1, "custom_audience": 1}}
+    obj["updated_time"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000")
+    camp = obj.get("objective") is not None
+    kind = "update_campaign_budget" if camp else "update_ad_set_target_spec" if a.get("targeting_age_min") else (
+        "update_ad_set_run_status" if a.get("end_time") or "end_time" in (a.get("clear") or "") else "update_ad_set_budget")
+    ACTIVITIES.insert(0, {"event_time": obj["updated_time"], "event_type": kind, "translated_event_type": kind.replace("_", " ").capitalize(),
+                          "actor_name": "Eugene", "object_name": obj["name"], "object_type": "CAMPAIGN" if camp else "AD_SET",
+                          "object_id": obj["id"], "extra_data": json.dumps({"old_value": before, "new_value": {k: obj.get(k) for k in OUTSIDE_KEYS}})})
+    return jsonify({k: obj.get(k) for k in (*OUTSIDE_KEYS, "targeting", "updated_time")})
+
+
 @app.route("/fake/_refuse_next_ad")
 def fake_refuse_next_ad():
     REFUSE_NEXT_AD.append(1)
@@ -529,7 +562,7 @@ def graph(path):
                                       "conversion_rate_ranking": "BELOW_AVERAGE_35", "frequency": "1.42", "cpm": "13.80",
                                       "ctr": "2.9", "video_avg_time_watched_actions": [{"action_type": "video_view", "value": "4"}]}]})
         if parts == [act, "activities"]:
-            return jsonify({"data": [
+            return jsonify({"data": ACTIVITIES + [
                 {"event_time": TODAY.isoformat() + "T21:36:00+0000", "event_type": "ad_review_approved",
                  "translated_event_type": "Ad approved", "actor_name": "Meta", "object_name": "N5 - Quote to invoice", "object_type": "AD",
                  "object_id": next((k for k, v in ADS.items() if v["name"] == "N5 - Quote to invoice"), None)},
@@ -781,9 +814,12 @@ def graph(path):
             if a.get("daily_budget") and int(a["daily_budget"]) < 100:
                 return jsonify({"error": {"message": "Budget too low (fake)", "code": 100}}), 400
             # lifetime_budget / end_time: QA moves a campaign to a lifetime budget (daily_budget="") and back.
-            for key in ("status", "daily_budget", "lifetime_budget", "end_time", "name"):
+            for key in ("status", "daily_budget", "lifetime_budget", "end_time", "name", "spend_cap", "bid_strategy",
+                        "bid_amount", "start_time", "stop_time"):
                 if key in a:
                     obj[key] = a[key]
+            if "targeting" in a:
+                obj["targeting"] = json.loads(a["targeting"])
             if "creative" in a and parts[0] in ADS:
                 cid = json.loads(a["creative"])["creative_id"]
                 if cid not in CREATIVES:

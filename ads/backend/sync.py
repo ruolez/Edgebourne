@@ -42,13 +42,18 @@ def summarize_targeting(t):
 
 
 ADSET_FIELDS = ("id,name,campaign_id,status,configured_status,effective_status,daily_budget,lifetime_budget,"
-                "optimization_goal,learning_stage_info,targeting,issues_info,created_time,updated_time")
+                "optimization_goal,learning_stage_info,targeting,issues_info,created_time,updated_time,"
+                "bid_strategy,bid_amount,start_time,end_time")
 ADSET_FIELDS_PLAIN = ("id,name,campaign_id,status,effective_status,daily_budget,lifetime_budget,"
                       "optimization_goal,learning_stage_info,targeting")
+# Budget, bid, dates and audience are stored only from a full read (setup_seen_at set, D2); a read with the
+# older field set keeps what was stored.
+_KEEP = "CASE WHEN EXCLUDED.setup_seen_at IS NOT NULL THEN EXCLUDED.{c} ELSE {t}.{c} END"
 ADSET_UPSERT = """INSERT INTO adsets (id, name, campaign_id, status, configured_status, effective_status, daily_budget_cents,
                                    lifetime_budget_cents, optimization_goal, learning_stage, learning, issues,
-                                   targeting_summary, created_time, updated_time, synced_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+                                   targeting_summary, created_time, updated_time, bid_strategy, bid_amount_cents,
+                                   start_time, end_time, targeting_fp, setup_seen_at, synced_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, CASE WHEN %s THEN now() END, now())
                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, campaign_id = EXCLUDED.campaign_id,
                    status = EXCLUDED.status,
                    effective_status = EXCLUDED.effective_status,
@@ -57,6 +62,9 @@ ADSET_UPSERT = """INSERT INTO adsets (id, name, campaign_id, status, configured_
                    optimization_goal = EXCLUDED.optimization_goal, learning_stage = EXCLUDED.learning_stage,
                    learning = EXCLUDED.learning, issues = CASE WHEN %s THEN adsets.issues ELSE EXCLUDED.issues END,
                    targeting_summary = EXCLUDED.targeting_summary,
+                   """ + ", ".join(f"{c} = " + _KEEP.format(c=c, t="adsets") for c in
+                                   ("bid_strategy", "bid_amount_cents", "start_time", "end_time", "targeting_fp")) + """,
+                   setup_seen_at = COALESCE(EXCLUDED.setup_seen_at, adsets.setup_seen_at),
                    configured_status = COALESCE(EXCLUDED.configured_status, adsets.configured_status),
                    created_time = COALESCE(EXCLUDED.created_time, adsets.created_time),
                    updated_time = COALESCE(EXCLUDED.updated_time, adsets.updated_time), synced_at = now()
@@ -93,14 +101,27 @@ def kept_issues(row, prev):
     return {**row, "issues_info": (prev or {}).get("issues")} if row.get(PARTIAL) else row
 
 
+def fields_read(row, fields, fallback):
+    """The field set a row was read with (rows read with the older set are PARTIAL)."""
+    return row.get("_fields") or (fallback if row.get(PARTIAL) else fields)
+
+
+def _time(value):
+    return status_history.parse_time(value) if value else None
+
+
 def upsert_adset(a, source, listed_at):
     learning = a.get("learning_stage_info") or None
+    a = {**a, "_fields": fields_read(a, ADSET_FIELDS, ADSET_FIELDS_PLAIN)}
+    full = status_history.full_read("adset", a)
     prev, written = status_history.upsert_tracked("adset", a["id"], ADSET_UPSERT, (
         a["id"], a["name"], a.get("campaign_id"), a.get("status"), a.get("configured_status"), a.get("effective_status"),
         cents(a.get("daily_budget")), cents(a.get("lifetime_budget")), a.get("optimization_goal"),
         (learning or {}).get("status"), json.dumps(learning) if learning else None,
         json.dumps(a.get("issues_info")) if a.get("issues_info") else None,
         summarize_targeting(a.get("targeting")), a.get("created_time"), a.get("updated_time"),
+        a.get("bid_strategy") or None, cents(a.get("bid_amount")), _time(a.get("start_time")), _time(a.get("end_time")),
+        status_history.targeting_fingerprint(a.get("targeting")), full,
         bool(a.get(PARTIAL)), listed_at))
     if not written:
         return []
@@ -119,28 +140,34 @@ def sync_adsets(source="poll"):
 
 
 CAMPAIGN_FIELDS = ("id,name,status,configured_status,effective_status,objective,daily_budget,lifetime_budget,"
-                   "bid_strategy,issues_info,created_time,updated_time")
+                   "bid_strategy,issues_info,created_time,updated_time,spend_cap,start_time,stop_time")
 CAMPAIGN_FIELDS_PLAIN = "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy"
 CAMPAIGN_UPSERT = """INSERT INTO campaigns (id, name, status, configured_status, effective_status, objective,
                                       daily_budget_cents, lifetime_budget_cents, bid_strategy, issues,
-                                      created_time, updated_time, synced_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+                                      created_time, updated_time, spend_cap_cents, start_time, stop_time, setup_seen_at, synced_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, CASE WHEN %s THEN now() END, now())
                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status,
                    configured_status = COALESCE(EXCLUDED.configured_status, campaigns.configured_status),
                    effective_status = EXCLUDED.effective_status, objective = EXCLUDED.objective,
                    daily_budget_cents = EXCLUDED.daily_budget_cents,
                    lifetime_budget_cents = EXCLUDED.lifetime_budget_cents,
                    bid_strategy = EXCLUDED.bid_strategy, issues = CASE WHEN %s THEN campaigns.issues ELSE EXCLUDED.issues END,
+                   """ + ", ".join(f"{c} = " + _KEEP.format(c=c, t="campaigns") for c in
+                                   ("spend_cap_cents", "start_time", "stop_time")) + """,
+                   setup_seen_at = COALESCE(EXCLUDED.setup_seen_at, campaigns.setup_seen_at),
                    created_time = COALESCE(EXCLUDED.created_time, campaigns.created_time),
                    updated_time = COALESCE(EXCLUDED.updated_time, campaigns.updated_time), synced_at = now()
                """ + status_history.UNLESS_CONSOLE_WROTE.format(table="campaigns")
 
 
 def upsert_campaign(c, source, listed_at):
+    c = {**c, "_fields": fields_read(c, CAMPAIGN_FIELDS, CAMPAIGN_FIELDS_PLAIN)}
+    full = status_history.full_read("campaign", c)
     prev, written = status_history.upsert_tracked("campaign", c["id"], CAMPAIGN_UPSERT, (
         c["id"], c["name"], c.get("status"), c.get("configured_status"), c.get("effective_status"), c.get("objective"),
         cents(c.get("daily_budget")), cents(c.get("lifetime_budget")), c.get("bid_strategy"),
         json.dumps(c.get("issues_info")) if c.get("issues_info") else None, c.get("created_time"), c.get("updated_time"),
+        cents(c.get("spend_cap")), _time(c.get("start_time")), _time(c.get("stop_time")), full,
         bool(c.get(PARTIAL)), listed_at))
     if not written:
         return []

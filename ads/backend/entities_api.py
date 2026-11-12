@@ -92,7 +92,8 @@ def _detail(level, entity_id):
     col = "campaign_id" if level == "campaign" else "adset_id"
     data.update({"level": level, "entity": node, "campaign": {k: v for k, v in (camp or {}).items() if k != "adsets"},
                  "crumbs": crumbs(level, row), "timeline": timeline_for(level, entity_id),
-                 "series": _series(f"{col} = %s", [entity_id], start, end)})
+                 "series": _series(f"{col} = %s", [entity_id], start, end),
+                 **status_history.marks_payload(current_user(), status_history.marks_scope(level, row), start, end)})
     return jsonify(data)
 
 
@@ -114,7 +115,14 @@ def entity_timeline(level, entity_id):
     row, err = _visible(level, entity_id)
     if err:
         return err
-    return jsonify({"items": timeline_for(level, entity_id), "crumbs": crumbs(level, row)})
+    out = {"items": timeline_for(level, entity_id), "crumbs": crumbs(level, row)}
+    if request.args.get("marks"):
+        # The quick look's day-by-day charts: the page's dates (?range=), or the last N days (?marks=14).
+        args = request.args.to_dict()
+        args.setdefault("range", args["marks"] if args["marks"] in ("7", "14", "30") else "14")
+        _, start, end = ads_api.window_from(args)
+        out.update(status_history.marks_payload(current_user(), status_history.marks_scope(level, row), start, end))
+    return jsonify(out)
 
 
 # ---------------------------------------------------------------- compare
@@ -156,8 +164,9 @@ def compare_ads():
             insights.apply_reach([item], reach_before, "prev")
         items.append(item)
     shaped = compare.shape(items, targets.qualified(), targets.lead())
+    parents = list({p for i in ids for p in (rows[i].get("adset_id"), rows[i].get("campaign_id")) if p})
     out = {"range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "label": ranges.label(start, end)},
-           "items": items, **shaped}
+           "items": items, **shaped, **status_history.marks_payload(user, {"entities": ids, "parents": parents}, start, end)}
     if prev:
         out["prev_range"] = {"start": prev[0].isoformat(), "end": prev[1].isoformat(), "label": ranges.label(*prev)}
     return jsonify(out)

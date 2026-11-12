@@ -109,3 +109,18 @@ class SubjectTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OutsideEditTests(unittest.TestCase):
+    """D2: an outside budget change that broke a money rule waits in Needs action until an admin says Done."""
+    def ev(self, level, resolved=None):
+        return {**alert(30, "outside_edit", 5, level), "kind": "event", "resolved_at": resolved}
+
+    def test_a_warning_needs_action_and_admins_can_close_it(self):
+        admin = inbox.build([self.ev("warn")], [], [], set(), can_close=True)[0]
+        member = inbox.build([self.ev("warn")], [], [], set())[0]
+        self.assertEqual((admin["category"], admin["need"], admin["actions"], member["actions"]), ("money", True, ["done"], []))
+
+    def test_a_note_and_a_closed_warning_are_for_information(self):
+        got = inbox.build([self.ev("info", NOW), {**self.ev("warn", NOW), "id": 31}], [], [], set(), can_close=True)
+        self.assertEqual([(i["need"], i["actions"]) for i in got], [(False, []), (False, [])])

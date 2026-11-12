@@ -438,6 +438,14 @@ export function entityHref(level, id, dim) {
   if (ADMIN_ONLY.has(level) && (!window.ebadsMe || window.ebadsMe.role !== "admin")) return null;
   return ENTITY_HREF[level](id, dim);
 }
+// The History tab of a campaign, ad set or ad (links.history_href on the server): campaign and ad set pages keep
+// their tab in the query, the ad page in the hash.
+export function historyHref(level, id, { check = null } = {}) {
+  const q = `?id=${encodeURIComponent(id)}`;
+  const extra = check != null ? `&check=${Number(check)}` : "";
+  if (level === "ad") return `/ad.html${q}${extra}#tab=history`;
+  return `/${level === "campaign" ? "campaign" : "adset"}.html${q}&tab=history${extra}`;
+}
 // The one way a page names a campaign, ad set, ad, lead, form, test or tag: a link to it when the id is
 // known (and the person may open it), its plain name otherwise. `dim` is a tag's dimension (hook, angle…).
 export function entityLink(level, id, name, { cls = "", dim = "" } = {}) {
@@ -462,7 +470,7 @@ export function timelineItem(i, { cards = false } = {}) {
     i.kind === "proposal" && owner && i.task_id ? `<a href="/desk.html#r/${i.task_id}">Conversation</a>` : "",
   ].filter(Boolean);
   return `<li class="tl-${i.tone || "n"}" data-source="${esc(i.source || "")}"><span class="tl-dot"></span><span class="tl-w">${esc(when(i.at))}</span>
-    <span class="tl-t"><b>${esc(i.title)}</b>${i.sub ? `<small${i.kind === "change" ? ' class="bad-text"' : ""}>${esc(i.sub)}</small>` : ""}${who || links.length ? `<small>${[who && esc(who), ...links].filter(Boolean).join(" · ")}</small>` : ""}</span></li>`;
+    <span class="tl-t"><b>${esc(i.title)}</b>${i.sub ? `<small${i.kind === "change" && i.tone === "bad" ? ' class="bad-text"' : ""}>${esc(i.sub)}</small>` : ""}${who || links.length ? `<small>${[who && esc(who), ...links].filter(Boolean).join(" · ")}</small>` : ""}</span></li>`;
 }
 export const timelineHtml = (items, opts) => `<ol class="tl">${items.map((i) => timelineItem(i, opts)).join("")}</ol>`;
 
@@ -877,7 +885,9 @@ export function fieldErrors(form, errors, { focus = true } = {}) {
 // `field` = { label, value, prefix, suffix, inputmode, validate(v) → error|null, hint(v) → html } adds one input;
 // `field.rows` makes it a text box of that many lines (a draft to edit: opens with the caret at the start, nothing selected).
 // `cancel: false` makes it a notice with one button (nothing to decide, e.g. a password shown once). `wide` for a long text.
-export function confirmDialog({ title, body = "", confirm = "Confirm", danger = false, claude = false, field = null, cancel = "Cancel", wide = false }) {
+// `confirmLabel(value)`: the confirm button's words, re-read as the field changes ("Raise anyway");
+// `confirmDanger(value)`: whether that button is the danger one, re-read the same way (a knowing yes looks like one).
+export function confirmDialog({ title, body = "", confirm = "Confirm", danger = false, claude = false, field = null, cancel = "Cancel", wide = false, confirmLabel = null, confirmDanger = null }) {
   return new Promise((resolve) => {
     const dlg = document.createElement("dialog");
     dlg.className = wide ? "confirm wide" : "confirm";
@@ -897,12 +907,22 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
     const input = dlg.querySelector("#cd-input");
     const hint = dlg.querySelector("#cd-hint");
     const err = dlg.querySelector("#cd-err");
-    const refresh = () => { if (field && field.hint) hint.innerHTML = field.hint(input.value); };
+    const okBtn = dlg.querySelector("#cd-ok");
+    const refresh = () => {
+      if (field && field.hint) hint.innerHTML = field.hint(input.value);
+      if (confirmLabel) okBtn.textContent = confirmLabel(input ? input.value : null) || confirm;
+      if (confirmDanger) {
+        const on = Boolean(confirmDanger(input ? input.value : null));
+        okBtn.classList.toggle("btn-danger", on);
+        okBtn.classList.toggle(claude ? "btn-claude" : "btn-primary", !on);
+      }
+    };
     const invalid = (on) => {
       if (on) { input.setAttribute("aria-invalid", "true"); input.setAttribute("aria-describedby", "cd-hint cd-err"); }
       else { input.removeAttribute("aria-invalid"); input.setAttribute("aria-describedby", "cd-hint"); }
     };
     if (input) { input.addEventListener("input", () => { err.hidden = true; invalid(false); refresh(); }); refresh(); }
+    else if (confirmLabel || confirmDanger) refresh();
     let result = false;
     dlg.querySelector("#cd-cancel")?.addEventListener("click", () => dlg.close());
     dlg.querySelector("form").addEventListener("submit", (e) => {

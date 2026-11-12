@@ -1,6 +1,6 @@
 import { api, startLoad } from "./api.js";
 import { boot, entityLink, esc, icon, onRefresh, rememberList, skeleton, toast, when, showLoadError } from "./ui.js";
-import { barList, columnChart } from "./charts.js";
+import { barList, columnChart, marksPanel } from "./charts.js";
 import { EXPLAIN, RANGES, STATUS as FORMAT_STATUS, WORDS, count, dayLabel, money, pct, per, moneyWhole, currencySymbol, rangeSelect, rememberCampaign, rememberRange, sharedCampaign, sharedRange, statusPill } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -99,6 +99,7 @@ function render() {
     <section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
     <section class="panel"><div class="panel-head"><h2>Leads per day</h2></div><div class="chart" id="c-leads"></div></section>
   </div>
+  <div class="fig-foot"><span class="fig-src"></span><div class="fig-marks" id="chg-panel"></div></div>
   <details class="table-view panel"><summary class="panel-body">Show the days as a table</summary><div class="panel-body scroll-x"><table class="table">
     <thead><tr><th>Day</th><th class="num">Spent</th><th class="num">Leads</th></tr></thead>
     <tbody>${data.series.map((d) => `<tr><td>${dayLabel(d.day)}</td><td class="num">${money(d.spend_cents, { exact: true })}</td><td class="num">${d.leads}</td></tr>`).join("")}</tbody></table></div></details>`;
@@ -122,10 +123,12 @@ function render() {
   loadAccountBreakdown();
   if (me.role === "admin") loadActivity();
   fixInlineWidths();
+  const marks = data.marks || [], marksSummary = data.marks_summary || "";
   columnChart({ el: $("c-spend"), series: data.series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day",
-    format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v) });
+    format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v), marks, marksSummary });
   columnChart({ el: $("c-leads"), series: data.series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true,
-    format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
+    format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)), marks, marksSummary });
+  marksPanel($("chg-panel"), marks, marksSummary, data.marks_list);
 }
 
 function adsShown() {

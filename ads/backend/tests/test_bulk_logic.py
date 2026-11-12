@@ -76,6 +76,35 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(lines[0]["skip"], "The new daily budget must be at least 1.00")
 
 
+class RecentBudgetTests(unittest.TestCase):
+    """D2: a budget changed under 3 days ago is marked in the preview; a cut or a rollback never is."""
+    from datetime import datetime as _dt, timezone as _tz
+    NOW = _dt(2026, 11, 10, 15, tzinfo=_tz.utc)
+    LASTS = {"c1": {"at": _dt(2026, 11, 9, 15, tzinfo=_tz.utc), "field": "daily_budget", "old": 2000, "new": 2400,
+                    "by": "Ads Manager", "where": "outside", "proposal_id": None}}
+    ROWS = [{"id": "c1", "name": "Leads"}, {"id": "c2", "name": "Payroll"}]
+    LIVE = {"c1": 2400, "c2": 1500}
+
+    def test_a_raise_soon_after_a_change_is_marked(self):
+        lines, totals = bulk.budget_lines(self.ROWS, "pct", 10, self.LIVE, CAP, self.LASTS, self.NOW)
+        self.assertEqual([(l["id"], l["recent"], l["last_words"]) for l in lines],
+                         [("c1", True, "changed 1 day ago"), ("c2", False, None)])
+        self.assertEqual(totals["recent"], True)
+
+    def test_a_rollback_and_a_cut_are_never_recent(self):
+        back, back_totals = bulk.budget_lines(self.ROWS[:1], "set", 2000, self.LIVE, CAP, self.LASTS, self.NOW)
+        cut, _ = bulk.budget_lines(self.ROWS[:1], "pct", -10, self.LIVE, CAP, self.LASTS, self.NOW)
+        self.assertEqual((back[0]["recent"], back_totals["recent"], cut[0]["recent"]), (False, False, False))
+
+    def test_the_line_still_says_when_it_last_changed(self):
+        cut, _ = bulk.budget_lines(self.ROWS[:1], "pct", -10, self.LIVE, CAP, self.LASTS, self.NOW)
+        self.assertEqual(cut[0]["last_words"], "changed 1 day ago")
+
+    def test_without_history_nothing_changes(self):
+        _, totals = bulk.budget_lines(self.ROWS, "pct", 10, self.LIVE, CAP)
+        self.assertNotIn("recent", totals)
+
+
 class ArchiveTests(unittest.TestCase):
     def test_only_ads_that_are_off(self):
         rows = [{"id": "a1", "name": "N1", "status": "PAUSED"}, {"id": "a2", "name": "N2", "status": "ACTIVE"},

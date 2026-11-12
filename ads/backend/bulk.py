@@ -7,6 +7,7 @@ import hmac
 import json
 
 import money_rules
+import words
 
 TTL = 300
 MAX_ITEMS = 50
@@ -46,7 +47,9 @@ def status_lines(rows, value, contexts):
     return lines, {"count": sum(1 for l in lines if not l["skip"]), **spend_totals(spending)}
 
 
-def budget_lines(rows, mode, value, live, cap):
+def budget_lines(rows, mode, value, live, cap, lasts=None, now=None):
+    """`lasts` ({id: last budget change}, money_rules rows) adds the 3-day rule: a raise soon after the last change
+    is `recent` (needs its own yes), and every line says when it last changed."""
     lines = []
     for r in rows:
         cur = live.get(r["id"])
@@ -59,13 +62,18 @@ def budget_lines(rows, mode, value, live, cap):
                           "skip": "No daily budget of its own (it's set one level up)"})
             continue
         new = int(value) if mode == "set" else int(round(cur * (100 + float(value)) / 100))
-        change = money_rules.budget_change(cur, new, cap)
-        problem = money_rules.change_problem(change, accept_big=True)
+        last = (lasts or {}).get(r["id"])
+        change = money_rules.budget_change(cur, new, cap, last, now)
+        problem = money_rules.change_problem(change, accept_big=True, accept_recent=True)
         lines.append({"id": r["id"], "name": r["name"], "from": cur, "to": new, "big": change["big"], "pct": change["pct"],
+                      "recent": change["recent"], "last_words": f"changed {words.ago(last['at'], now)}" if last and now else None,
                       "skip": problem})
     ok = [l for l in lines if not l["skip"]]
-    return lines, {"count": len(ok), "from_cents": sum(l["from"] for l in ok), "to_cents": sum(l["to"] for l in ok),
-                   "big": any(l["big"] for l in ok)}
+    totals = {"count": len(ok), "from_cents": sum(l["from"] for l in ok), "to_cents": sum(l["to"] for l in ok),
+              "big": any(l["big"] for l in ok)}
+    if lasts is not None:
+        totals["recent"] = any(l.get("recent") for l in ok)
+    return lines, totals
 
 
 def archive_lines(rows):

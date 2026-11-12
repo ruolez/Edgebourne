@@ -260,7 +260,7 @@ async function bulkRun(level, ids, action, value, after) {
   catch (err) { toast(err.message, "bad"); return; }
   const t = pv.totals;
   const line = (l) => `<li class="${l.skip ? "skip" : ""}"><span>${esc(l.name)}</span><span class="tnum">${l.skip ? esc(l.skip)
-    : body.action.startsWith("budget") ? `${money(l.from, { exact: true })} → <b>${money(l.to, { exact: true })}</b>${l.big ? ' <span class="pill warn">+' + l.pct + "%</span>" : ""}`
+    : body.action.startsWith("budget") ? `${money(l.from, { exact: true })} → <b>${money(l.to, { exact: true })}</b>${l.big ? ' <span class="pill warn">+' + l.pct + "%</span>" : ""}${l.recent ? ` <span class="pill warn">${esc(l.last_words)}</span>` : ""}`
     : action === "archive" ? "Archive" : action === "on" ? "On" : "Off"}</span></li>`;
   if (!t.count) {
     await confirmDialog({ title: "Nothing to change", body: `<ul class="bk-lines">${pv.lines.map(line).join("")}</ul>`, confirm: "OK" });
@@ -277,13 +277,14 @@ async function bulkRun(level, ids, action, value, after) {
   }
   if (body.action.startsWith("budget")) {
     summary = `<p>Daily budgets together: ${money(t.from_cents, { exact: true })} → <b>${money(t.to_cents, { exact: true })}</b> a day.</p>${t.big ? "<p><b>Some steps are more than +20%:</b> Meta may restart learning and results can wobble for a few days.</p>" : ""}`;
-    if (t.big) confirm = "Apply anyway";
+    if (t.recent) summary += "<p><b>Some of these changed less than 3 days ago.</b> Raising them again this soon makes results hard to read.</p>";
+    if (t.big || t.recent) confirm = "Apply anyway";
   }
   if (action === "archive") summary = "<p>Archived ads stop for good: Meta can't turn them back on. Their results stay.</p>";
   const ok = await confirmDialog({ title: `${confirm.split(" · ")[0]}?`, body: `${summary}<ul class="bk-lines">${pv.lines.map(line).join("")}</ul>`, confirm, danger: action === "off" || action === "archive" });
   if (!ok) return;
   try {
-    const r = await api("/api/ads/bulk/apply", { method: "POST", body: { plan_token: pv.plan_token, confirm_total_cents: t.daily_cents, confirm_lifetime_cents: t.lifetime_cents, accept_big: !!t.big } });
+    const r = await api("/api/ads/bulk/apply", { method: "POST", body: { plan_token: pv.plan_token, confirm_total_cents: t.daily_cents, confirm_lifetime_cents: t.lifetime_cents, accept_big: !!t.big, accept_recent: !!t.recent } });
     const failed = r.results.filter((x) => !x.ok);
     toast(failed.length ? `${r.done} done, ${failed.length} not: ${failed[0].error}` : `${r.done} ${r.done === 1 ? words[0] : words[1]} changed`, failed.length ? "bad" : "");
     after();
@@ -482,16 +483,22 @@ export async function peek(r, { onClose, focus = true } = {}) {
     const b = e.target.closest("[data-budget]");
     if (b) { const [level, id] = b.dataset.budget.split(":"); editBudget({ level, id, name: b.dataset.name, current: Number(b.dataset.current) }, () => { closePeek(); onClose && onClose(true); }); }
   };
-  if ((r.spark || []).length) {
+  // The day-by-day charts; drawn again with the change marks once the timeline (and its marks) has come back.
+  const drawSpark = (marks = []) => {
     columnChart({ el: drawer.querySelector("#pk-spend"), series: r.spark, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 120,
-      format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v) });
+      format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v), marks });
     columnChart({ el: drawer.querySelector("#pk-leads"), series: r.spark, key: "leads", color: "var(--chart-leads)", title: "Leads per day", height: 120, integer: true,
-      format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
+      format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)), marks });
+  };
+  if ((r.spark || []).length) {
+    drawSpark();
   }
   diagnostics(r);
   const tlBox = drawer.querySelector(".pk-tl");  // this row's: another row's quick look builds its own
   try {
-    const tl = await api(`/api/timeline/${r.level}/${encodeURIComponent(r.id)}`);
+    const range = new URLSearchParams(location.search).get("range") || "";
+    const tl = await api(`/api/timeline/${r.level}/${encodeURIComponent(r.id)}?marks=14${range ? `&range=${encodeURIComponent(range)}` : ""}`);
+    if ((r.spark || []).length && tl.marks && tl.marks.length && drawer.querySelector("#pk-spend")) drawSpark(tl.marks);
     const items = tl.items.slice(0, 8);
     tlBox.innerHTML = items.length ? items.map((i) => timelineItem(i)).join("")
       : '<li class="muted">Nothing recorded yet: status changes show here from the next refresh.</li>';

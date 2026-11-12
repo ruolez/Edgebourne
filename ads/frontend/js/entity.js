@@ -2,7 +2,7 @@
 // and who sees it, the ad sets / ads inside in the manager table, and one History timeline.
 import { api, startLoad } from "./api.js";
 import { boot, emptyState, esc, icon, onRefresh, setCrumbs, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
-import { columnChart } from "./charts.js";
+import { columnChart, marksPanel } from "./charts.js";
 import { count, dayLabel, explain, money, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
 import { LIVE, bulkBarHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, statusCell, tableHtml, hasTrack, trackLegend, unlistedNote, wire } from "./manager.js";
@@ -62,6 +62,7 @@ function render() {
   $("cr-all").innerHTML = `${figuresHtml(e.m, state.vs ? e.prev : null, data.target_qualified_cents, { today: e.today, ever: e.ever })}
     <div class="charts"><section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
       <section class="panel"><div class="panel-head"><h2>Leads per day</h2></div><div class="chart" id="c-leads"></div></section></div>
+    <div class="fig-foot"><span class="fig-src"></span><div class="fig-marks" id="chg-panel"></div></div>
     ${LEVEL === "adset" ? audienceCard(e) : ""}
     <div class="cr-toolbar"><div class="tabs" role="tablist" aria-label="Show" data-tabpanel="en-panel">${tabs.map(([k, l, n]) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${state.tab === k}">${l}<span class="n">${n}</span></button>`).join("")}</div>
       <span class="spacer"></span>
@@ -71,10 +72,12 @@ function render() {
     ${state.tab !== "history" && !narrow() && hasTrack(list) ? trackLegend() : ""}
     <p class="muted small flush">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}).${esc(unlistedNote(e.m, rows.ad))}</p>`;
   document.querySelectorAll("#cr-all [data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
+  const marks = data.marks || [], marksSummary = data.marks_summary || "";
   columnChart({ el: $("c-spend"), series: data.series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 170,
-    format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v) });
+    format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v), marks, marksSummary });
   columnChart({ el: $("c-leads"), series: data.series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true, height: 170,
-    format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
+    format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)), marks, marksSummary });
+  marksPanel($("chg-panel"), marks, marksSummary, data.marks_list);
   if (LEVEL === "adset" && $("estimate")) api(`/api/insights/adset/${encodeURIComponent(e.id)}/estimate`).then((x) => { if (x.lower && x.upper) $("estimate").textContent = `Meta estimates ${count(x.lower)}–${count(x.upper)} people could see these ads.`; }).catch(() => {});
   $("bulk").innerHTML = bulkBarHtml(childLevel(), picked(), canControl);
   document.body.classList.toggle("has-bulk", selected.size > 0);

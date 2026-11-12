@@ -205,16 +205,18 @@ def after_write(what, fn, *args):
         log.exception("after the write to Meta: %s failed", what)
 
 
-def record(user, level, row, action, old, new, ok, error=None, proposal_id=None, entity_id=None):
+def record(user, level, row, action, old, new, ok, error=None, proposal_id=None, entity_id=None, accepted=None):
+    """One write to Meta in meta_changes. `accepted`: the warnings confirmed knowingly ('big', 'recent')."""
     db.execute(
         """INSERT INTO meta_changes (user_id, level, entity_id, entity_name, campaign_id, action, old_value,
-                                     new_value, ok, error, proposal_id, bulk_id)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                     new_value, ok, error, proposal_id, bulk_id, accepted)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
         (user["id"] if user else None, level, entity_id or row["id"], row.get("name"), row.get("campaign_id"),
          action, None if old is None else str(old), None if new is None else str(new), ok, error, proposal_id,
-         BULK_ID.get()))
+         BULK_ID.get(), list(accepted) if accepted else None))
     log_activity(f"meta.{action}" + ("" if ok else "_failed"), subject=entity_id or row["id"],
-                 details={"level": level, "name": row.get("name"), "old": old, "new": new, "error": error})
+                 details={"level": level, "name": row.get("name"), "old": old, "new": new, "error": error,
+                          **({"accepted": list(accepted)} if accepted else {})})
 
 
 RESYNC_DELAY = 3  # seconds after the last write: a burst of switches gives one re-read (audit A3-125)
@@ -325,6 +327,17 @@ def fresh_budget(entity_id):
     return _cents_of(meta_client.get(entity_id, fields="daily_budget").get("daily_budget"))
 
 
+def notice_budget(level, row, live):
+    """A fresh read of the daily budget, before any money rule uses it: when it differs from the stored one it
+    was changed outside the console since the last read, so it is recorded as such first (D2) and the 3-day rule
+    sees it. Returns the row with the live amount."""
+    if not live:
+        return row
+    if live != row.get("daily_budget_cents"):
+        status_history.note_live_budget(level, row["id"], live)
+    return {**row, "daily_budget_cents": live}
+
+
 def forget_budget(level, entity_id):
     """Meta says this has no daily budget now (moved to the other level, or to a lifetime budget): the
     stored one is wrong and is never used as the current amount (audit A3-76)."""
@@ -384,6 +397,31 @@ def ceiling():
     return money_rules.ceiling(settings_store.get("max_daily_budget_cents"))
 
 
+def last_budget(entity_id, now=None):
+    """The last real change of this budget (console writes and Meta's records, 90 days), read now: the 3-day
+    rule is always checked against the database at write time, never against an earlier preview."""
+    return status_history.last_budgets([entity_id], now).get(entity_id)
+
+
+def last_public(last):
+    """A last budget change as the API shows it: {at, field, from, to, by, where} (+ day in words)."""
+    if not last:
+        return None
+    import words
+    return {"at": last["at"].isoformat(), "field": last["field"], "from": last.get("old"), "to": last.get("new"),
+            "by": last.get("by"), "where": last.get("where"), "day": words.day(last["at"].astimezone(account_info.tz()))}
+
+
+def change_public(change):
+    """budget_change for the API: the last change readable, its times as ISO strings."""
+    out = {k: v for k, v in change.items() if k not in ("last", "ok_after")}
+    out["last"] = last_public(change.get("last"))
+    out["ok_after"] = change["ok_after"].isoformat() if change.get("ok_after") else None
+    if out["last"]:
+        out["last_day"] = out["last"]["day"]
+    return out
+
+
 # ---------------------------------------------------------------- changes (shared with proposals)
 
 def apply_status(user, level, row, status, proposal_id=None, live=None):
@@ -413,7 +451,7 @@ def apply_status(user, level, row, status, proposal_id=None, live=None):
     return None
 
 
-def apply_budget(user, level, row, cents, proposal_id=None):
+def apply_budget(user, level, row, cents, proposal_id=None, accepted=None):
     old = row["daily_budget_cents"]
     if not old:
         return NOT_SENT + "This one has no daily budget of its own (the budget is set one level up)."
@@ -422,7 +460,7 @@ def apply_budget(user, level, row, cents, proposal_id=None):
     except meta_client.MetaError as exc:
         record(user, level, row, "budget", old, cents, False, str(exc), proposal_id)
         return (UNKNOWN if exc.unknown else "") + str(exc)
-    record(user, level, row, "budget", old, cents, True, proposal_id=proposal_id)
+    record(user, level, row, "budget", old, cents, True, proposal_id=proposal_id, accepted=accepted)
     after_write("stored budget", db.execute, f"UPDATE {LEVELS[level]} SET daily_budget_cents = %s WHERE id = %s", (int(cents), row["id"]))
     return None
 
@@ -616,10 +654,13 @@ def _ad_series(ad_id):
 @bp.get("/ads/ad/<ad_id>/series")
 @login_required
 def ad_series(ad_id):
-    ad = db.query("SELECT id, campaign_id FROM ads WHERE id = %s", (ad_id,), one=True)
+    ad = db.query("SELECT id, campaign_id, adset_id FROM ads WHERE id = %s", (ad_id,), one=True)
     if not ad or not can_touch(current_user(), ad["campaign_id"]):
         return api_error("Ad not found", 404)
-    return jsonify({"series": _ad_series(ad_id)})
+    start, end = ranges.window(request.args.get("range", "30"), account_info.today(), request.args.get("from"), request.args.get("to"))
+    return jsonify({"series": _ad_series(ad_id), **status_history.marks_payload(
+        current_user(), status_history.marks_scope("ad", {"id": ad_id, "campaign_id": ad["campaign_id"], "adset_id": ad.get("adset_id")}),
+        start, end)})
 
 
 @bp.get("/ads/ad/<ad_id>")
@@ -690,6 +731,8 @@ def ad_detail(ad_id):
                     "timeline": status_rows, "claude_run": claude_run,
                     "history": timeline.merge(status_rows, changes, proposals, money=account_info.money, subject=ad_id,
                                               names={ad["adset_id"]: ad.get("adset_name"), ad["campaign_id"]: ad.get("campaign_name")}),
+                    **status_history.marks_payload(user, status_history.marks_scope("ad", ad), *ranges.window(
+                        request.args.get("range", "30"), account_info.today(), request.args.get("from"), request.args.get("to"))),
                     "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS]})
 
 
@@ -803,6 +846,27 @@ def _remove(ad_id, action):
     return jsonify(entity("ad", ad_id))
 
 
+@bp.get("/ads/<level>/<entity_id>/budget/last")
+@login_required
+def budget_last(level, entity_id):
+    """For the budget dialog: the last change of this budget and whether a raise now is under 3 days after
+    it. From the database only (no Meta call); the write checks it again."""
+    user = current_user()
+    if user["role"] == "client":
+        return api_error("Read-only access", 403)
+    if level not in ("campaign", "adset"):
+        return api_error("Budgets live on campaigns or ad sets", 400)
+    row = entity(level, entity_id)
+    if not row or not can_touch(user, row["campaign_id"]):
+        return api_error("Not found", 404)
+    now = datetime.now(timezone.utc)
+    last = last_budget(entity_id, now)
+    rec = money_rules.recency(last, now, row["daily_budget_cents"], row["daily_budget_cents"]) if last else None
+    return jsonify({"daily_budget_cents": row["daily_budget_cents"], "last": last_public(last),
+                    "recent": bool(rec and rec["recent"]), "ok_after": rec["ok_after"].isoformat() if rec else None,
+                    "hours": rec["hours"] if rec else None})
+
+
 @bp.post("/ads/<level>/<entity_id>/budget")
 @login_required
 def set_budget(level, entity_id):
@@ -828,18 +892,20 @@ def set_budget(level, entity_id):
         return api_error(f"Couldn't read the budget from Meta: {exc}", 400)
     if not live:
         return api_error(forget_budget(level, entity_id), 409, field="budget")
-    if live != row["daily_budget_cents"]:
-        db.execute(f"UPDATE {LEVELS[level]} SET daily_budget_cents = %s WHERE id = %s", (live, entity_id))
-        row = {**row, "daily_budget_cents": live}
+    row = notice_budget(level, row, live)
     # The step confirmed must be the real one: whatever the stored value says (audit A3-77, A3-113).
     if seen != live:
         return api_error(f"The budget on Meta is {live / 100:,.2f} a day now, not what the page showed. "
                          "Check the new amount again.", 409, field="budget", live_cents=live)
-    change = money_rules.budget_change(live, cents, ceiling())
-    problem = money_rules.change_problem(change, bool(data.get("accept_big")))
+    now = datetime.now(timezone.utc)
+    change = money_rules.budget_change(live, cents, ceiling(), last_budget(entity_id, now), now)
+    accept_big, accept_recent = bool(data.get("accept_big")), bool(data.get("accept_recent"))
+    problem = money_rules.change_problem(change, accept_big, accept_recent)
     if problem:
-        return api_error(problem, 409 if change["big"] and not change["over_cap"] else 400, field="budget")
-    error = apply_budget(current_user(), level, row, cents)
+        knowing = (change["big"] or change["recent"]) and not change["over_cap"] and cents >= 100
+        extra = {"code": "recent_change", "last": last_public(change["last"])} if knowing and not (change["big"] and not accept_big) else {}
+        return api_error(problem, 409 if knowing else 400, field="budget", **extra)
+    error = apply_budget(current_user(), level, row, cents, accepted=money_rules.accepted(change, accept_big, accept_recent))
     if error:
         return write_error(error)
     return jsonify(entity(level, entity_id))
@@ -1216,9 +1282,11 @@ def proposal_plan(p, apply_as=None):
     live = fresh_budget(row["id"])
     if not live:
         return {"kind": "unclear", "problem": forget_budget(level, row["id"])}
-    change = money_rules.budget_change(live, value, ceiling())
-    return {"kind": "budget", "name": row["name"], "level": level, **change,
-            "problem": money_rules.change_problem(change, True)}
+    notice_budget(level, row, live)
+    now = datetime.now(timezone.utc)
+    change = money_rules.budget_change(live, value, ceiling(), last_budget(row["id"], now), now)
+    return {"kind": "budget", "name": row["name"], "level": level, **change_public(change),
+            "problem": money_rules.change_problem(change, True, True)}
 
 
 @bp.get("/proposals/<int:proposal_id>/check")
@@ -1381,6 +1449,7 @@ def _approve(user, p, level, row, data):
             live = fresh_budget(row["id"])
             if not live:
                 return api_error(forget_budget(level, row["id"]), 409)
+            row = notice_budget(level, row, live)
             try:
                 echoed = (int(data.get("from_cents")), int(data.get("to_cents")))
             except (TypeError, ValueError):
@@ -1388,10 +1457,15 @@ def _approve(user, p, level, row, data):
             if echoed != (live, value):
                 return api_error(f"Check the amounts again: the budget on Meta is {live / 100:,.2f} a day now.", 409,
                                  plan=proposal_plan(p))
-            row = {**row, "daily_budget_cents": live}
-            problem = money_rules.change_problem(money_rules.budget_change(live, value, ceiling()), bool(data.get("accept_big")))
+            # The 3-day rule is read again now, never taken from the plan shown at /check (D2).
+            now = datetime.now(timezone.utc)
+            change = money_rules.budget_change(live, value, ceiling(), last_budget(row["id"], now), now)
+            accept_big, accept_recent = bool(data.get("accept_big")), bool(data.get("accept_recent"))
+            problem = money_rules.change_problem(change, accept_big, accept_recent)
             if problem:
-                return api_error(problem, 409)
+                return api_error(problem, 409, **({"code": "recent_change"} if change["recent"] and not accept_recent
+                                                   and not (change["big"] and not accept_big) and not change["over_cap"] else {}))
+            budget_accepted = money_rules.accepted(change, accept_big, accept_recent)
     except meta_client.MetaError as exc:
         return api_error(f"Couldn't read the live budget from Meta, so nothing was changed: {exc}", 400)
     if kind == "create":
@@ -1405,7 +1479,7 @@ def _approve(user, p, level, row, data):
     elif kind == "status":
         error = apply_status(user, level, row, value, proposal_id)
     else:
-        error = apply_budget(user, level, row, value, proposal_id)
+        error = apply_budget(user, level, row, value, proposal_id, accepted=budget_accepted)
     if error and error.startswith(NOT_SENT):
         return api_error(error_words(error), 409)  # nothing reached Meta: it stays waiting
     if error and error.startswith(UNKNOWN):

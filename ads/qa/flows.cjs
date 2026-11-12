@@ -41,6 +41,12 @@ const guards = require('./guards.cjs');
     await p.waitForSelector(`#${section}[data-section]:not([hidden])`);
   };
   const openFold = async (id, p = page) => { await p.waitForSelector(`#fold-${id}`, { state: 'attached' }); await p.$eval(`#fold-${id}`, (d) => { d.open = true; }); };
+  // D2: the 3-day rule. Moves every budget change back in time, so a check that raises a budget starts from a
+  // budget last changed long enough ago (earlier steps and earlier runs changed the same budgets).
+  const ageBudget = (days = 4) => sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE meta_changes SET created_at = created_at - interval '${days} days' WHERE action IN ('budget','recommendation','recommendation_check')\\");db.execute(\\"UPDATE status_events SET at = at - interval '${days} days', meta_time = meta_time - interval '${days} days' WHERE field IN ('daily_budget','lifetime_budget')\\")"`);
+  // D2: a change made in Ads Manager (the fake's /fake/_outside), then the console's hourly read.
+  const outside = (id, params) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/fake/_outside?id=${id}&${params}').read().decode())"`));
+  const pull = () => sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "import insights;insights.sync_structure()"`);
   const macSeen = (secondsAgo) => sh(`docker exec -w /app edgebourne-ads-backend python -c "import time, settings_store; settings_store.set('bridge_last_seen', str(time.time() - ${secondsAgo})); settings_store.set('bridge_version', '2.0')"`);
   await page.goto(BASE + '/login.html');
   await page.fill('#email', 'eugene@edgebourne.com');
@@ -72,6 +78,7 @@ const guards = require('./guards.cjs');
   check('switch turns it back on', onOnMeta === 'ACTIVE', `Meta: ${onOnMeta}`);
 
   // 2. Budget: validation, +20% warning, then a real change (campaign budgets live on the Campaigns level).
+  ageBudget();
   await page.goto(BASE + '/ads.html?level=campaign');
   await page.waitForSelector('[data-budget^="campaign:"]');
   const budgetCampaign = (await page.getAttribute('[data-budget^="campaign:"]', 'data-budget')).split(':')[1];
@@ -689,7 +696,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   // Alerts: rules in Settings; a rejected ad raises one alert (Telegram + Today), not twice, and it clears by itself.
   await openSettings('alerts');
   await page.waitForSelector('#al-rules li');
-  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 16);
+  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 17);
   check('Settings shows one section at a time, named in the list, the breadcrumb and the tab title', await page.evaluate(() =>
     [...document.querySelectorAll('[data-section]')].filter((x) => !x.hidden).map((x) => x.id).join() === 'alerts'
     && document.querySelector('.settings-nav [aria-current="page"]')?.dataset.set === 'alerts'
@@ -1705,12 +1712,12 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   check('the grouping switches to who it is for, and the address keeps it', /Wholesale and distribution/.test(await page.textContent('#ideas')) && /by=persona/.test(page.url()));
   // Results keeps one line on the hooks with the way to Ideas; an older link to a tag on Results opens Ideas on it.
   await page.goto(BASE + '/performance.html?range=14');
-  await page.waitForSelector('#ideas-sum p');
+  await page.waitForFunction(() => { const e = document.querySelector('#ideas-sum'); return e && e.querySelector('p') && !e.querySelector('.skeleton'); });
   check('Results says which hook is cheapest and links to Ideas on the same dates', /hook/.test(await page.textContent('#ideas-sum'))
     && (await page.getAttribute('#ideas-open', 'href')) === '/ideas.html?range=14' && (await page.locator('#ideas-panel table').count()) === 0);
   check('… and without a campaign picked it needs no note that it counts every campaign', (await page.locator('#ideas-all').count()) === 0);
   await page.goto(BASE + '/performance.html?campaign=120252638288040312&range=14');
-  await page.waitForSelector('#ideas-sum p');
+  await page.waitForFunction(() => { const e = document.querySelector('#ideas-sum'); return e && e.querySelector('p') && !e.querySelector('.skeleton'); });
   check('with one campaign picked on Results, the hook line says it counts every campaign', (await page.inputValue('#campaign')) === '120252638288040312'
     && /Counts every campaign/.test(await page.textContent('#ideas-sum')), await page.textContent('#ideas-sum'));
   await page.goto(BASE + '/performance.html?campaign=');
@@ -1876,6 +1883,7 @@ db.execute(\\"UPDATE desk_tasks SET status = 'cancelled' WHERE kind = 'creative'
   // Meta's advice on Today: score, suggestions in plain words, apply one through the +20% warning, benchmarks from the Mac.
   sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/120252638288040312?access_token=x', data=b'daily_budget=2000'))"`);
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db,settings_store;settings_store.set('meta_advice',None);settings_store.set('meta_benchmarks',None);db.execute('UPDATE campaigns SET daily_budget_cents = 2000 WHERE id = %s', ('120252638288040312',))"`);
+  ageBudget(); // earlier checks changed this budget today: the +20% warning is what this check is about, not the 3-day rule
   await page.goto(BASE + '/home.html');
   await page.waitForSelector('.advice-list');
   check("Today shows Meta's Opportunity Score and its suggestions, most points first",
@@ -1893,8 +1901,31 @@ db.execute(\\"UPDATE desk_tasks SET status = 'cancelled' WHERE kind = 'creative'
   sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/120252638288040312?access_token=x', data=b'daily_budget=2000'))"`);
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute('UPDATE campaigns SET daily_budget_cents = 2000 WHERE id = %s', ('120252638288040312',))"`);
   errors.splice(advSeen); // the refusal logs an expected 409
+  ageBudget(); // the stale read above recorded Ads Manager's 2400 as a change just now
   check("Meta's budget advice is checked against the live budget, not the last sync's", staleAdvice.status === 409 && /24\.00 a day now/.test(staleAdvice.body.error)
     && staleAdviceMeta === '2400', `${staleAdviceMeta} ${JSON.stringify(staleAdvice.body)}`);
+  // The 3-day rule on Meta's advice: a raise right after another change is refused without the knowing yes, and the
+  // refusal sends the list back so the next Apply asks for it (Raise anyway, as a danger button).
+  sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "INSERT INTO meta_changes (level, entity_id, entity_name, campaign_id, action, old_value, new_value, ok, account_id) VALUES ('campaign', '120252638288040312', 'QA', '120252638288040312', 'budget', '1900', '2000', true, 1)"`);
+  const advRecentSeen = errors.length;
+  const advRecent = await page.evaluate(async (sig) => { const r = await fetch('/api/advice/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signature: sig, accept_big: true, confirm_to: 2600 }) }); return { status: r.status, body: await r.json() }; }, adviceSig);
+  errors.splice(advRecentSeen); // the refusal logs an expected 409
+  const advFresh = advRecent.body.fresh && advRecent.body.fresh.items.find((i) => i.signature === adviceSig);
+  check("Meta's budget advice right after another change is refused without the knowing yes, and the list comes back saying so",
+    advRecent.status === 409 && advRecent.body.code === 'recent_change' && advFresh && advFresh.budget.recent === true
+    && metaObj('120252638288040312').daily_budget === '2000', `${advRecent.status} ${JSON.stringify(advFresh && advFresh.budget)}`);
+  await page.reload();
+  await page.waitForSelector('.advice-list [data-apply]');
+  await page.click('[data-apply]');
+  await page.waitForSelector('dialog.confirm');
+  const advRecentDlg = (await page.textContent('dialog.confirm')).replace(/\s+/g, ' ');
+  const advRecentOk = await page.$eval('dialog.confirm #cd-ok', (b) => [b.textContent, b.classList.contains('btn-danger')]);
+  await page.click('dialog.confirm #cd-cancel');
+  check('Apply then says the budget changed less than 3 days ago and asks Raise anyway, as a danger button',
+    /Less than 3 days since the last change/.test(advRecentDlg) && advRecentOk[0] === 'Raise anyway' && advRecentOk[1], `${advRecentOk} ${advRecentDlg.slice(0, 160)}`);
+  ageBudget();
+  await page.reload();
+  await page.waitForSelector('.advice-list [data-apply]');
   await page.click('[data-apply]');
   await page.waitForSelector('dialog.confirm');
   check('applying it asks first, with the +20% warning, and says "Apply anyway"', /More than \+20% in one step/.test(await page.textContent('dialog.confirm')) && /Apply anyway/.test(await page.textContent('dialog.confirm #cd-ok')));
@@ -1903,7 +1934,8 @@ db.execute(\\"UPDATE desk_tasks SET status = 'cancelled' WHERE kind = 'creative'
   const budgetAfter = sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/v24.0/120252638288040312?access_token=x').read().decode())"`).match(/"daily_budget":"?(\d+)/)[1];
   check('Meta applies it: the budget moves by its step, the score rises, the suggestion goes', budgetBefore === '2000' && budgetAfter === '2600'
     && (await page.locator('.advice-list li').count()) === 1 && /▲ 9/.test(await page.textContent('#advice')), `${budgetBefore} → ${budgetAfter}`);
-  check('the change is logged like any other', sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;r=db.query('SELECT action, ok FROM meta_changes ORDER BY id DESC LIMIT 1', one=True);print(r['action'], r['ok'])"`).trim() === 'recommendation True');
+  const advLogged = sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;r=db.query('SELECT action, ok, accepted FROM meta_changes ORDER BY id DESC LIMIT 1', one=True);print(r['action'], r['ok'], r['accepted'])"`).trim();
+  check('the change is logged like any other, with the +20% warning it was confirmed through', advLogged === "recommendation True ['big']", advLogged);
   check('without benchmarks yet it says where they come from', /come with Claude's Monday summary/.test(await page.textContent('#advice')));
   const bmk = JSON.parse(sh('docker cp dev/qa_agent_benchmarks.py edgebourne-ads-backend:/app/qa_agent_benchmarks.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_agent_benchmarks.py; docker exec edgebourne-ads-backend rm -f /app/qa_agent_benchmarks.py').trim().split('\n').pop());
   await page.reload();
@@ -2744,6 +2776,279 @@ with account_ctx.use(a2):
   await page.waitForTimeout(300);
   check('New ad says so when ?adset= names a deleted or archived ad set, and still picks a real one',
     /deleted or archived/.test(await page.textContent('body')) && (await page.$eval('#aset-pick', (s) => s.selectedIndex)) >= 0);
+  // D2 Edits made in Ads Manager, the 3-day rule and change marks (all against the fake: /fake/_outside is Ads Manager).
+  {
+    // A refusal the check expects (409) logs a console error in the page: dropped only around that call.
+    const expected = async (fn) => { const n = errors.length; const r = await fn(); errors.splice(n); return r; };
+    const DC = '120252638288040312', DS = '120252672227950312';
+    const usd = (c) => `$${(c / 100).toFixed(2)}`;
+    const sql = (q) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "${q}"`).trim();
+    const SETUP_SQL = "field IN ('daily_budget','lifetime_budget','spend_cap','bid_strategy','bid_amount','start_time','end_time','targeting')";
+    const setupEvents = () => Number(sql(`SELECT count(*) FROM status_events WHERE ${SETUP_SQL}`));
+    const outsideAlerts = () => Number(sql("SELECT count(*) FROM alerts WHERE rule = 'outside_edit'"));
+    const timelineOf = async (level, id) => (await getJson(`/api/${level === 'campaign' ? 'campaigns' : 'adsets'}/${id}?range=14`)).timeline;
+    // 10. Seeding: the first read after the update stores budgets, dates and audiences quietly, even when a stored value was stale.
+    pull();
+    sql(`UPDATE campaigns SET setup_seen_at = NULL, daily_budget_cents = daily_budget_cents + 100 WHERE id = '${DC}'`);
+    const beforeSeed = setupEvents();
+    pull();
+    check('the first read after the update records no change (budgets, dates and audiences are stored quietly)', setupEvents() === beforeSeed
+      && sql(`SELECT setup_seen_at IS NOT NULL FROM campaigns WHERE id = '${DC}'`) === 't', String(setupEvents() - beforeSeed));
+    // 1. A budget raised in Ads Manager: recorded once, by Ads Manager, and a warning to act on (it breaks +20%).
+    ageBudget();
+    const b0 = Number(metaObj(DC).daily_budget), b1 = Math.round(b0 * 1.5 / 100) * 100;
+    outside(DC, `daily_budget=${b1}`);
+    pull();
+    const tl1 = await timelineOf('campaign', DC);
+    const ev1 = tl1.find((i) => i.title === `Budget ${usd(b0)} → ${usd(b1)} a day`);
+    check('a budget raised in Ads Manager is in the History, by Ads Manager', ev1 && ev1.by === 'Ads Manager' && ev1.cat === 'money', JSON.stringify(tl1.slice(0, 2)));
+    const money1 = (await getJson('/api/inbox?box=all&kind=money')).items.find((i) => i.title === `Budget changed in Ads Manager: ${usd(b0)} → ${usd(b1)} a day`);
+    check('it lands in the Inbox once as Money that needs action, saying it is more than +20%', money1 && money1.level === 'warn' && money1.need
+      && money1.lines.some((l) => /That's \+\d+%, more than the \+20% step/.test(l)) && money1.href === `/campaign.html?id=${DC}&tab=history`, JSON.stringify(money1));
+    const afterOne = setupEvents(), alertsOne = outsideAlerts();
+    pull();
+    check('reading Meta again records nothing new', setupEvents() === afterOne && outsideAlerts() === alertsOne);
+    // Done closes it (admins), and it moves to For your information.
+    await page.goto(`${BASE}/inbox.html?box=need&kind=money#item=${encodeURIComponent(money1.key)}`);
+    await page.waitForSelector('#ib-detail [data-done]');
+    check('the History link and Done are on the item', /Open the history/.test(await page.textContent('#ib-detail')));
+    await page.click('#ib-detail [data-done]');
+    await page.waitForFunction((k) => !document.querySelector(`#ib-list [data-key="${k}"]`), money1.key);
+    const done1 = (await getJson('/api/inbox?box=all&kind=money')).items.find((i) => i.key === money1.key);
+    check('Done moves it to For your information', done1 && !done1.need && done1.actions.length === 0, JSON.stringify(done1));
+    // 3. The 3-day rule on the server: a raise right after that change needs the knowing yes; it is stored with the change.
+    const r409 = await expected(() => call('POST', `/api/ads/campaign/${DC}/budget`, { daily_budget_cents: b1 + 200, from_cents: b1 }));
+    check('a raise under 3 days after the last change is refused without the knowing yes', r409.status === 409 && r409.body.code === 'recent_change'
+      && r409.body.last.to === b1 && r409.body.last.where === 'outside', JSON.stringify(r409.body));
+    const r200 = await call('POST', `/api/ads/campaign/${DC}/budget`, { daily_budget_cents: b1 + 200, from_cents: b1, accept_recent: true });
+    check('with the knowing yes it goes through, and the change says which warning was confirmed', r200.status === 200 && Number(metaObj(DC).daily_budget) === b1 + 200
+      && sql(`SELECT accepted::text FROM meta_changes WHERE entity_id = '${DC}' AND action = 'budget' ORDER BY id DESC LIMIT 1`) === '{recent}', String(r200.status));
+    const tl3 = await timelineOf('campaign', DC);
+    check('History says it was confirmed knowingly', tl3.some((i) => i.sub === 'Confirmed knowingly: under 3 days since the last change'));
+    // 4. Back to the exact previous amount, or a cut: never "recent".
+    const back = await call('POST', `/api/ads/campaign/${DC}/budget`, { daily_budget_cents: b1, from_cents: b1 + 200 });
+    const cut = await call('POST', `/api/ads/campaign/${DC}/budget`, { daily_budget_cents: b1 - 100, from_cents: b1 });
+    check('going back to the previous budget and a cut need no extra yes', `${back.status} ${cut.status}` === '200 200', `${back.status} ${cut.status}`);
+    // 5. The dialog reads the last change first and says Raise anyway / Back to.
+    const alertsBefore5 = outsideAlerts();
+    await page.goto(`${BASE}/campaign.html?id=${DC}`);
+    await page.waitForSelector('#en-actions [data-budget]');
+    await page.click('#en-actions [data-budget]');
+    await page.waitForSelector('dialog.confirm #cd-last');
+    const lastLine = await page.textContent('dialog.confirm .confirm-body');
+    check('the budget dialog shows the last change, today, by you', /Last change: .*today/.test(lastLine) && /by you/.test(lastLine), lastLine.trim());
+    await page.fill('#cd-input', String(((b1 - 100) / 100 + 2).toFixed(2)));
+    const raiseLabel = await page.textContent('#cd-ok');
+    const raiseHint = await page.textContent('#cd-hint');
+    const raiseDanger = await page.$eval('#cd-ok', (b) => b.classList.contains('btn-danger'));
+    await page.fill('#cd-input', String((b1 / 100).toFixed(2)));
+    const backLabel = await page.textContent('#cd-ok');
+    const backDanger = await page.$eval('#cd-ok', (b) => b.classList.contains('btn-danger'));
+    check("Raise anyway is the danger button, like the same warning on Meta's advice; Change budget is not", raiseDanger && !backDanger, `${raiseDanger} ${backDanger}`);
+    const backHint = await page.textContent('#cd-hint');
+    check('a raise says Raise anyway with the 3-day words; the previous amount says Change budget and Back to', raiseLabel === 'Raise anyway'
+      && /Less than 3 days since the last change/.test(raiseHint) && backLabel === 'Change budget' && /Back to/.test(backHint), `${raiseLabel} | ${backLabel} | ${backHint}`);
+    await page.screenshot({ path: `${OUT}/flow-d2-budget-dialog.png` });
+    await page.click('dialog.confirm #cd-ok');
+    await page.waitForFunction((t) => (document.querySelector('#en-actions [data-budget]')?.textContent || '').includes(t), usd(b1));
+    // 2. A change made here and read back from Meta is not an edit made in Ads Manager.
+    pull();
+    check('a budget changed here, then read from Meta, raises no Ads Manager note', outsideAlerts() === alertsBefore5, `${alertsBefore5} → ${outsideAlerts()}`);
+    // 6. Bulk: the line says when it changed, the button says Apply anyway, the server wants the yes.
+    await page.goto(`${BASE}/ads.html?level=campaign`);
+    await page.waitForSelector(`.tbl [data-pick="${DC}"]`);
+    await page.locator(`.tbl [data-pick="${DC}"]`).check();
+    await page.click('.bk [data-bulk="budget"]');
+    await page.waitForSelector('dialog.confirm #cd-input');
+    await page.fill('#cd-input', '+5%');
+    await page.click('dialog.confirm #cd-ok');
+    await page.waitForSelector('dialog.confirm .bk-lines');
+    const bkPill = await page.textContent('dialog.confirm .bk-lines');
+    const bkOk = await page.textContent('dialog.confirm #cd-ok');
+    await page.screenshot({ path: `${OUT}/flow-d2-bulk.png` });
+    await page.click('dialog.confirm #cd-cancel');
+    check('the bulk preview marks a budget changed today and says Apply anyway', /changed today/.test(bkPill) && bkOk === 'Apply anyway', `${bkPill} | ${bkOk}`);
+    const pv6 = await call('POST', '/api/ads/bulk/preview', { action: 'budget_pct', level: 'campaign', ids: [DC], value: 5 });
+    const ap6 = await expected(() => call('POST', '/api/ads/bulk/apply', { plan_token: pv6.body.plan_token }));
+    check('bulk apply refuses a recent raise without the knowing yes', pv6.body.totals.recent === true && ap6.status === 409 && Number(metaObj(DC).daily_budget) === b1, `${ap6.status} ${JSON.stringify(ap6.body)}`);
+    // 7. Claude's budget suggestion on this campaign is never ticked for you and says when it last changed.
+    const want7 = b1 + 100;
+    const pid = py(`import db, json
+r = db.execute(\\"INSERT INTO desk_proposals (task_id, kind, title, status, entity_type, entity_id, entity_name, proposed_value, payload, account_id) SELECT id, 'budget', 'QA D2 raise', 'pending', 'campaign', '${DC}', 'Edge Bourne campaign', '\\$${(want7 / 100).toFixed(2)}/day', %s, 1 FROM desk_tasks WHERE account_id = 1 ORDER BY id DESC LIMIT 1 RETURNING id\\", (json.dumps({'proposed_cents': ${want7}}),), returning=True)
+print(r['id'])`);
+    await page.goto(`${BASE}/inbox.html?box=need&kind=claude#item=proposal%3A${pid}`);
+    await page.waitForSelector('#ib-detail [data-accept]');
+    await page.click('#ib-detail [data-accept]');
+    await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
+    const item7 = page.locator('dialog.accept-sheet .sheet-item', { hasText: 'QA D2 raise' });
+    const why7 = await item7.textContent();
+    check('the Accept sheet never ticks a budget changed under 3 days ago, and says why', !(await item7.locator('input').isChecked()) && /Budget last changed/.test(why7), why7.replace(/\s+/g, ' '));
+    await page.click('dialog.accept-sheet #cd-cancel');
+    await call('POST', `/api/proposals/${pid}/decline`, {});
+    // 6b. Bulk right after an Ads Manager change the console hasn't read yet: the preview records it first, so the
+    // line is flagged and apply wants the knowing yes.
+    ageBudget();
+    const live6 = Number(metaObj(DC).daily_budget), out6 = live6 + 300;
+    outside(DC, `daily_budget=${out6}`);
+    const pv6b = await call('POST', '/api/ads/bulk/preview', { action: 'budget_pct', level: 'campaign', ids: [DC], value: 5 });
+    const ap6b = await expected(() => call('POST', '/api/ads/bulk/apply', { plan_token: pv6b.body.plan_token }));
+    const tl6b = await timelineOf('campaign', DC);
+    check('a bulk raise right after an unread Ads Manager change: recorded in History by Ads Manager, flagged, refused without the yes',
+      pv6b.body.totals.recent === true && pv6b.body.lines[0].from === out6 && ap6b.status === 409 && ap6b.body.code === 'recent_change'
+      && Number(metaObj(DC).daily_budget) === out6 && tl6b.some((i) => i.title === `Budget ${usd(live6)} → ${usd(out6)} a day` && i.by === 'Ads Manager'),
+      `${JSON.stringify(pv6b.body.totals)} ${ap6b.status} ${JSON.stringify(tl6b.slice(0, 2))}`);
+    // 6c. The yes covers only the lines the preview flagged: one that turned recent after the preview is skipped.
+    ageBudget();
+    const pv6c = await call('POST', '/api/ads/bulk/preview', { action: 'budget_pct', level: 'campaign', ids: [DC], value: 5 });
+    sql(`INSERT INTO meta_changes (level, entity_id, entity_name, campaign_id, action, old_value, new_value, ok, account_id) VALUES ('campaign', '${DC}', 'QA', '${DC}', 'budget', '${out6 - 100}', '${out6}', true, 1)`);
+    const ap6c = await call('POST', '/api/ads/bulk/apply', { plan_token: pv6c.body.plan_token, accept_recent: true });
+    check('a line that changed less than 3 days ago since the preview is skipped, even with a yes sent',
+      !pv6c.body.totals.recent && ap6c.status === 200 && ap6c.body.done === 0 && /less than 3 days/i.test(ap6c.body.results[0].error)
+      && Number(metaObj(DC).daily_budget) === out6, `${ap6c.status} ${JSON.stringify(ap6c.body)}`);
+    // 7b. Accepting Claude's raise right after an unread Ads Manager change: the fresh read records it, the server
+    // wants the knowing yes, and the suggestion card asks Raise anyway (danger) and sends it.
+    ageBudget();
+    const live7b = Number(metaObj(DC).daily_budget), out7b = live7b + 200, want7b = out7b + 100;
+    outside(DC, `daily_budget=${out7b}`);
+    const pid7b = py(`import db, json
+r = db.execute(\\"INSERT INTO desk_proposals (task_id, kind, title, status, entity_type, entity_id, entity_name, proposed_value, payload, account_id) SELECT id, 'budget', 'QA D2 raise after Ads Manager', 'pending', 'campaign', '${DC}', 'Edge Bourne campaign', '\\$${(want7b / 100).toFixed(2)}/day', %s, 1 FROM desk_tasks WHERE account_id = 1 ORDER BY id DESC LIMIT 1 RETURNING id\\", (json.dumps({'proposed_cents': ${want7b}}),), returning=True)
+print(r['id'])`);
+    const chk7b = await call('GET', `/api/proposals/${pid7b}/check`);
+    const no7b = await expected(() => call('POST', `/api/proposals/${pid7b}/approve`, { from_cents: out7b, to_cents: want7b }));
+    check('accepting a raise right after an unread Ads Manager change: the change is recorded and the server wants the knowing yes',
+      chk7b.body.recent === true && chk7b.body.from === out7b && no7b.status === 409 && no7b.body.code === 'recent_change'
+      && (await timelineOf('campaign', DC)).some((i) => i.title === `Budget ${usd(live7b)} → ${usd(out7b)} a day` && i.by === 'Ads Manager'),
+      `${JSON.stringify(chk7b.body).slice(0, 200)} ${no7b.status}`);
+    await page.goto(`${BASE}/ad.html?id=120252672230740312#tab=overview`);
+    const card7b = page.locator(`#props [data-proposal="${pid7b}"]`);
+    await card7b.waitFor();
+    await card7b.locator('[data-approve]').click();
+    await page.waitForSelector('dialog.confirm[open] #cd-ok');
+    const ask7b = (await page.textContent('dialog.confirm[open]')).replace(/\s+/g, ' ');
+    const ok7b = await page.$eval('dialog.confirm[open] #cd-ok', (b) => [b.textContent, b.classList.contains('btn-danger')]);
+    await page.click('dialog.confirm[open] #cd-ok');
+    for (let i = 0; i < 40 && sql(`SELECT status FROM desk_proposals WHERE id = ${pid7b}`) !== 'applied'; i++) await page.waitForTimeout(250);
+    check('the suggestion card asks Raise anyway as a danger button with the last change, and that yes goes through',
+      /Less than 3 days since the last change/.test(ask7b) && /in Ads Manager/.test(ask7b) && ok7b[0] === 'Raise anyway' && ok7b[1]
+      && Number(metaObj(DC).daily_budget) === want7b
+      && sql(`SELECT accepted::text FROM meta_changes WHERE proposal_id = ${pid7b} AND action = 'budget' ORDER BY id DESC LIMIT 1`) === '{recent}',
+      `${ok7b} ${ask7b.slice(0, 200)}`);
+    // Claude's snapshot (bridge desk 2.1) carries when each budget last changed, where, and when a raise is fine again.
+    const snap = JSON.parse(py(`import desk_api, json, account_info, datetime
+t = account_info.today()
+s = desk_api.budget_snapshot({'start': (t - datetime.timedelta(days=14)).isoformat(), 'end': t.isoformat()})
+b = next(x for x in s['budget_changes'] if x['id'] == '${DC}')
+print(json.dumps({'last': b['last'], 'days': b['days_since'], 'ok_after': b['ok_after'], 'marks': len(s['recent_changes'])}))`).split('\n').pop());
+    check("Claude's snapshot says when a budget last changed, where, and when a raise is fine again", snap.last && snap.last.from === out7b
+      && snap.last.to === want7b && snap.last.where === 'console' && snap.days === 0 && !!snap.ok_after && snap.marks > 0, JSON.stringify(snap));
+    // 8. Dates changed in Ads Manager.
+    const endDay = py('import account_info, datetime;print((account_info.today() + datetime.timedelta(days=20)).isoformat())');
+    outside(DS, `end_time=${endDay}T23:59:00-0800`);
+    pull();
+    const tl8 = await timelineOf('adset', DS);
+    const endInbox = (await getJson('/api/inbox?box=all&kind=money')).items.some((i) => /^End date set in Ads Manager: /.test(i.title));
+    check('an end date set in Ads Manager is in the History and the Inbox', tl8.some((i) => /^End date set: /.test(i.title) && i.by === 'Ads Manager') && endInbox);
+    outside(DS, 'clear=end_time');
+    pull();
+    check('an end date taken off in Ads Manager reads “runs until turned off”', (await timelineOf('adset', DS)).some((i) => i.title === 'End date removed: runs until turned off'));
+    // 9. Audience: a real change reads as before → after; Meta's own defaults are no change.
+    const age0 = metaObj(DS).targeting.age_min;
+    outside(DS, 'targeting_age_min=30');
+    pull();
+    const aud = (await timelineOf('adset', DS)).find((i) => /^Audience changed: /.test(i.title));
+    check('an audience changed in Ads Manager says what changed', aud && new RegExp(`Ages ${age0}–.* → Ages 30–`).test(aud.title), aud && aud.title);
+    const audBefore = Number(sql(`SELECT count(*) FROM status_events WHERE field = 'targeting'`));
+    outside(DS, 'targeting_noise=1');
+    pull();
+    check("Meta's own audience defaults are not an audience change", Number(sql(`SELECT count(*) FROM status_events WHERE field = 'targeting'`)) === audBefore);
+    // An outside warning still open after the 3-day window closes by itself.
+    const stale = py(`import alerts, db
+r = db.execute(\\"INSERT INTO alerts (rule, dedupe_key, level, title, lines, kind, entity_id, campaign_id, href, created_at) VALUES ('outside_edit', 'qa-d2-stale-' || md5(random()::text), 'warn', 'QA old outside edit', '[]', 'event', '${DC}', '${DC}', '/campaign.html?id=${DC}&tab=history', now() - interval '73 hours') RETURNING id\\", returning=True)
+alerts.run()
+print(db.query('SELECT resolved_at IS NOT NULL AS done FROM alerts WHERE id = %s', (r['id'],), one=True)['done'])`);
+    check('an Ads Manager warning still open after 3 days closes by itself', stale === 'True', stale);
+    // 12–14. Marks on the charts: the changes of the last days sit under their day (moved to yesterday: charts end there).
+    ageBudget(1);
+    sql(`UPDATE status_events SET at = at - interval '1 day', meta_time = meta_time - interval '1 day' WHERE field IN ('end_time','targeting','start_time')`);
+    const cd = await getJson(`/api/campaigns/${DC}?range=14`);
+    check('the campaign page carries budget marks for the day they happened', cd.marks.some((m) => m.day === cd.series[cd.series.length - 1].day && m.cats.includes('money'))
+      && /\d+ changes? in this period/.test(cd.marks_summary), JSON.stringify(cd.marks.slice(-1)));
+    await page.goto(`${BASE}/campaign.html?id=${DC}&range=14`);
+    await page.waitForSelector('#c-spend svg .chg-mark');
+    check('the campaign charts show the marks and a guide on budget days', (await page.locator('#c-spend svg .chg-guide').count()) > 0
+      && /\d+ changes? in this period/.test(await page.textContent('#chg-panel .chg-fold summary')));
+    await page.locator('#c-spend .hit').last().hover();
+    await page.waitForSelector('#c-spend .tip:not([hidden]) .tip-chg');
+    check('hovering a marked day lists its changes in the tooltip', /budget/i.test(await page.textContent('#c-spend .tip .tip-chg')));
+    await page.screenshot({ path: `${OUT}/flow-d2-marks.png` });
+    // 13. Show on charts: off hides the marks and stays off after a reload; on brings them back.
+    await page.$eval('#chg-panel .chg-fold', (d) => { d.open = true; });
+    await page.click('#chg-panel [data-chg-toggle]');
+    const hidden = await page.$eval('#c-spend .chg-mark', (m) => getComputedStyle(m).display === 'none');
+    await page.reload();
+    await page.waitForSelector('#c-spend svg .chg-mark', { state: 'attached' });
+    const stillHidden = await page.$eval('#c-spend .chg-mark', (m) => getComputedStyle(m).display === 'none');
+    await page.$eval('#chg-panel .chg-fold', (d) => { d.open = true; });
+    await page.click('#chg-panel [data-chg-toggle]');
+    const back13 = await page.$eval('#c-spend .chg-mark', (m) => getComputedStyle(m).display !== 'none');
+    check('Show on charts turns the marks off, remembered after a reload, and back on', hidden && stillHidden && back13, `${hidden} ${stillHidden} ${back13}`);
+    // 14. The same marks on the ad, Results and Compare.
+    const N1d2 = '120252672229040312', N2d2 = '120252672229400312';
+    for (const [url, sel] of [[`/ad.html?id=${N1d2}&range=14`, '#c-spend'], ['/performance.html?range=14', '#c-spend'], [`/compare.html?ids=${N1d2},${N2d2}&range=14&chart=spend`, '#cmp-chart']]) {
+      await page.goto(BASE + url);
+      const got = await page.waitForSelector(`${sel} svg .chg-mark`, { timeout: 15000 }).then(() => true).catch(() => false);
+      check(`change marks on ${url.split('?')[0]}`, got && (await page.locator('#chg-panel .chg-fold').count()) === 1);
+    }
+    // 15. A client sees marks without people's names and gets no budget history; 16. a teammate off this campaign gets a 404.
+    py(`import db
+from werkzeug.security import generate_password_hash as h
+for email, role in (('qa-d2-client@example.com', 'client'), ('qa-d2-mate@example.com', 'member')):
+    db.execute(\\"INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, %s, 1) ON CONFLICT (email) DO UPDATE SET is_active = TRUE, password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, account_id = 1, must_change_password = FALSE\\", (email, 'QA D2 ' + role, h('d2-pass-12345'), role))
+db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users WHERE email = 'qa-d2-mate@example.com')\\")`);
+    for (const [email, label] of [['qa-d2-client@example.com', 'client'], ['qa-d2-mate@example.com', 'mate']]) {
+      const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+      const p = await ctx.newPage();
+      await p.goto(BASE + '/login.html');
+      await p.fill('#email', email); await p.fill('#password', 'd2-pass-12345');
+      await Promise.all([p.waitForURL('**/home.html**'), p.click('button[type=submit]')]);
+      const res = await p.evaluate(async ([c]) => {
+        const last = (await fetch(`/api/ads/campaign/${c}/budget/last`)).status;
+        const r = await fetch(`/api/campaigns/${c}?range=14`);
+        return { last, page: r.status, marks: r.ok ? (await r.json()).marks : null };
+      }, [DC]);
+      if (label === 'client') {
+        const bys = [...new Set(res.marks.flatMap((m) => m.items.map((i) => i.by)))];
+        check('a client sees the marks with no person named and no budget history', res.last === 403 && bys.length > 0 && bys.every((b) => ['Team', 'Meta', 'Ads Manager'].includes(b))
+          && !res.marks.some((m) => m.items.some((i) => /Claude/.test(i.title))), `${res.last} ${bys.join()}`);
+      } else {
+        check("a teammate who isn't on the campaign can't read its budget history", res.last === 404 && res.page === 404, `${res.last} ${res.page}`);
+      }
+      await ctx.close();
+    }
+    py(`import db
+db.execute(\\"UPDATE users SET is_active = FALSE WHERE email IN ('qa-d2-client@example.com', 'qa-d2-mate@example.com')\\")`);
+    // 17. Phones: a tap on a marked day opens the same tooltip; the changes row is 44px; nothing past the edge.
+    {
+      const pctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+      await pctx.addCookies(await page.context().cookies());
+      const pp = await pctx.newPage();
+      pp.on('pageerror', (e) => errors.push('d2 phone: ' + e.message));
+      await pp.goto(`${BASE}/campaign.html?id=${DC}&range=14`);
+      await pp.waitForSelector('#c-spend svg .chg-mark');
+      const box = await pp.locator('#c-spend .hit').last().boundingBox();
+      await pp.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+      const tapped = await pp.waitForSelector('#c-spend .tip:not([hidden]) .tip-chg', { timeout: 3000 }).then(() => true).catch(() => false);
+      const sumH = (await pp.locator('#chg-panel .chg-fold summary').boundingBox()).height;
+      const over = await pp.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+      await pp.screenshot({ path: `${OUT}/flow-d2-phone.png`, fullPage: true });
+      check('on a phone a tap on a marked day shows its changes; the changes row is 44px; nothing past the edge', tapped && sumH >= 44 && over <= 0, `${tapped} ${sumH} ${over}`);
+      await pctx.close();
+    }
+    // Put the ad set's audience back as the later checks expect it.
+    outside(DS, `targeting_age_min=${age0}`);
+    pull();
+  }
+
   // 8.4 APIs for the new screens: ranges with the window before, campaign/ad set pages, compare, search, saved views, bulk.
   const C1 = '120252638288040312';
   const t14 = (await call('GET', '/api/ads?range=14&vs=prev')).body;

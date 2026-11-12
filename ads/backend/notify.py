@@ -89,6 +89,11 @@ def admin_ids():
     return [r["id"] for r in rows if serves(r, account_ctx.current())]
 
 
+def account_admin_ids():
+    """Who hears about an account's alerts: its active admins and the console's owners (00-PLAN S3)."""
+    return admin_ids()
+
+
 def queue(user_id, channel, kind, title, lines, url=None, button="Open", ref=None, dedupe_key=None, html=None):
     if dedupe_key and account_ctx.current() != account_ctx.DEFAULT:
         dedupe_key = f"a{account_ctx.current()}:{dedupe_key}"  # notifications are shared; keys are per account

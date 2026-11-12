@@ -240,7 +240,8 @@ const RULE_UI = [
   ["ad_rejected", "An ad is rejected or has issues", []],
   ["ad_approved", "Meta approves an ad (it starts delivering)", []],
   ["learning_limited", "An ad set is learning limited", []],
-  ["changed_outside", "Something is switched on or off outside this console (Inbox only, no message)", []],
+  ["changed_outside", "Switched on or off in Ads Manager (Inbox only, no message)", []],
+  ["outside_edit", "Changed in Ads Manager: budget, bid, dates or audience", []],
   ["no_delivery", "An ad is live but nobody has seen it", [["hours", "after", "hours"]]],
   ["fatigue", "An ad looks tired", [["frequency", "seen more than", "times a week,"], ["ctr_drop", "clicks down", "%,"], ["cpm_rise", "cost per 1,000 views up", "%"]]],
   ["day_overspend", "One day's spend is high (shown on Today only)", [["times", "more than", "× the daily budget"]]],
@@ -266,7 +267,8 @@ function renderAlerts() {
     const t = s.targets;
     const hint = id === "cpl_high" ? `<small class="muted">${t.lead_cents ? `Target ${money(t.lead_cents, { exact: true })} per lead.`
       : t.lead_used_cents ? `No cost-per-lead target, so it uses ${money(t.lead_used_cents, { exact: true })} per qualified lead: any lead costing more than that misses the goal.`
-        : "Off until a target is set in Targets."} <a href="#targets">Change</a></small>` : "";
+        : "Off until a target is set in Targets."} <a href="#targets">Change</a></small>`
+      : id === "outside_edit" ? '<small class="muted">A note when someone changes these in Ads Manager. It\'s marked as needing action when the change breaks a money rule. Turning it off stops the note only: changes are still recorded and the 3-day rule still holds.</small>' : "";
     return `<li><label class="check"><input type="checkbox" data-rule="${id}" data-key="on" ${r.on ? "checked" : ""}> ${esc(label)}</label>${inputs ? `<div class="al-fields">${inputs}</div>` : ""}${hint}</li>`;
   }).join("");
   const recent = s.alerts.recent;

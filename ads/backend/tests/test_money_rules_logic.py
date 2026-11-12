@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 
 import money_rules as mr
 
@@ -24,7 +25,8 @@ class BudgetChangeTest(unittest.TestCase):
 
     def test_a_twenty_percent_step_is_not_big(self):
         self.assertEqual(mr.budget_change(2000, 2400, self.CAP),
-                         {"from": 2000, "to": 2400, "pct": 20, "big": False, "over_cap": False, "cap": self.CAP})
+                         {"from": 2000, "to": 2400, "pct": 20, "big": False, "over_cap": False, "cap": self.CAP,
+                          "recent": False, "rollback": False, "last": None})
 
     def test_more_than_twenty_percent_needs_confirming(self):
         change = mr.budget_change(2000, 2500, self.CAP)
@@ -117,3 +119,76 @@ class TurnOnProblemTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def t(d, h):
+    return datetime(2026, 11, d, h, tzinfo=timezone.utc)
+
+
+def last(at, old, new, where="outside", by="Ads Manager"):
+    return {"at": at, "field": "daily_budget", "old": old, "new": new, "by": by, "where": where, "proposal_id": None}
+
+
+class RecentChangeTest(unittest.TestCase):
+    """Rule 6: one budget change at least 3 days apart. A raise sooner needs a knowing yes; a cut or going back
+    to the exact previous budget never does."""
+    CAP = 10000
+    LAST = last(t(9, 15), 2000, 2400)
+
+    def test_the_latest_real_change_wins(self):
+        rows = [last(t(7, 10), 1600, 2000, "console", "Eugene"), self.LAST, last(t(10, 9), 2400, 2400)]
+        self.assertEqual(mr.last_budget_change(rows), self.LAST)
+
+    def test_nothing_to_go_on(self):
+        self.assertEqual((mr.last_budget_change([]), mr.recency(None, t(11, 15), 2400, 2600)), (None, None))
+
+    def test_a_raise_inside_three_days(self):
+        self.assertEqual(mr.recency(self.LAST, t(11, 15), 2400, 2600),
+                         {"recent": True, "raise": True, "rollback": False, "hours": 48, "ok_after": t(12, 15)})
+
+    def test_exactly_seventy_two_hours_later_is_not_recent(self):
+        self.assertEqual([mr.recency(self.LAST, now, 2400, 2600)["recent"]
+                          for now in (datetime(2026, 11, 12, 14, 59, 59, tzinfo=timezone.utc), t(12, 15))], [True, False])
+
+    def test_going_back_to_the_budget_before_the_last_change_is_never_recent(self):
+        rec = mr.recency(self.LAST, t(11, 15), 2400, 2000)
+        change = mr.budget_change(2400, 2000, self.CAP, self.LAST, t(11, 15))
+        self.assertEqual((rec["rollback"], change["recent"], change["rollback"]), (True, False, True))
+
+    def test_a_rollback_that_raises_is_not_recent_either(self):
+        cut = last(t(10, 9), 2400, 2000)
+        self.assertEqual(mr.budget_change(2000, 2400, self.CAP, cut, t(11, 15))["recent"], False)
+
+    def test_a_cut_is_never_recent(self):
+        change = mr.budget_change(2400, 2200, self.CAP, self.LAST, t(11, 15))
+        self.assertEqual((mr.recency(self.LAST, t(11, 15), 2400, 2200)["raise"], change["recent"],
+                          mr.change_problem(change, False)), (False, False, None))
+
+    def test_a_recent_raise_is_refused_without_the_knowing_yes(self):
+        change = mr.budget_change(2400, 2600, self.CAP, self.LAST, t(11, 15))
+        self.assertEqual(mr.change_problem(change, accept_big=False),
+                         "The budget last changed 2 days ago (20.00 → 24.00 a day). Raising it again this soon "
+                         "makes results hard to read: confirm it knowingly.")
+        self.assertIsNone(mr.change_problem(change, accept_big=False, accept_recent=True))
+
+    def test_big_and_recent_need_both_yeses(self):
+        change = mr.budget_change(2400, 3200, self.CAP, self.LAST, t(11, 15))
+        self.assertIn("more than +20%", mr.change_problem(change, False, False))
+        self.assertIn("last changed", mr.change_problem(change, True, False))
+        self.assertIsNone(mr.change_problem(change, True, True))
+
+    def test_the_ceiling_is_still_checked_first(self):
+        change = mr.budget_change(2400, 20000, self.CAP, self.LAST, t(11, 15))
+        self.assertIn("ceiling", mr.change_problem(change, True, True))
+
+    def test_without_history_nothing_changes(self):
+        change = mr.budget_change(2000, 2400, self.CAP)
+        self.assertEqual((change["recent"], change["last"], mr.change_problem(change, False)), (False, None, None))
+
+    def test_hours_when_under_a_day(self):
+        change = mr.budget_change(2400, 2600, self.CAP, last(t(11, 10), 2000, 2400), t(11, 15))
+        self.assertIn("last changed 5 hours ago", mr.change_problem(change, False))
+
+    def test_under_an_hour(self):
+        change = mr.budget_change(2400, 2600, self.CAP, last(datetime(2026, 11, 11, 14, 30, tzinfo=timezone.utc), 2000, 2400), t(11, 15))
+        self.assertIn("last changed less than an hour ago", mr.change_problem(change, False))

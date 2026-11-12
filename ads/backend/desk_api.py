@@ -23,6 +23,7 @@ import account_info
 import config
 import db
 import desk_view
+import money_rules
 import schedules
 import settings_store
 from auth import admin_required, current_user, owner_required
@@ -1049,7 +1050,31 @@ def snapshot():
     return jsonify({"account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current())},
                     "performance": perf, "lead_stages_by_ad": stages, "lead_business_types": types,
                     "speed_to_lead": speed, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
-                    "experiments": tests})
+                    "experiments": tests, **budget_snapshot(perf["range"])})
+
+
+def budget_snapshot(rng):
+    """For Claude before it suggests a budget (rule 6): when each budget last changed and where, and the
+    account's changes over the snapshot's days (no names of leads; people's names are kept, Claude is admin-side)."""
+    import status_history
+    from datetime import date, datetime, timezone
+    now = datetime.now(timezone.utc)
+    rows = db.query("""SELECT 'campaign' AS level, id, name, daily_budget_cents FROM campaigns
+                       WHERE daily_budget_cents IS NOT NULL AND COALESCE(effective_status, '') NOT IN ('DELETED', 'ARCHIVED')
+                       UNION ALL
+                       SELECT 'adset', id, name, daily_budget_cents FROM adsets
+                       WHERE daily_budget_cents IS NOT NULL AND COALESCE(effective_status, '') NOT IN ('DELETED', 'ARCHIVED')""")
+    lasts = status_history.last_budgets([r["id"] for r in rows], now)
+    budgets = []
+    for r in rows:
+        last = lasts.get(r["id"])
+        days = (now - last["at"]).days if last else None
+        budgets.append({"level": r["level"], "id": r["id"], "name": r["name"], "daily_budget_cents": r["daily_budget_cents"],
+                        "last": {"at": last["at"].isoformat(), "from": last["old"], "to": last["new"], "where": last["where"]} if last else None,
+                        "days_since": days, "ok_after": (last["at"] + money_rules.RECENT).isoformat() if last else None})
+    marks = status_history.marks_payload({"id": None, "role": "admin"}, {"account": True},
+                                         date.fromisoformat(rng["start"]), date.fromisoformat(rng["end"]))
+    return {"budget_changes": budgets, "recent_changes": marks["marks"]}
 
 
 @agent_bp.get("/history")

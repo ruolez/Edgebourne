@@ -17,6 +17,18 @@ export const per = (cents, n) => (n ? money(cents / n, { exact: true }) : "—")
 export const pct = (a, b) => (b ? `${((a / b) * 100).toFixed(2)}%` : "—");
 export const dayLabel = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
 export const plural = (n, word, many = word + "s") => `${count(n)} ${n === 1 ? word : many}`;
+// words.py twins (00-PLAN S1): "Nov 9", "Thu, Nov 12, 2:00 PM", "today" / "5 hours ago" / "1 day ago".
+export const dayWords = (iso) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+export const dayTimeWords = (iso) => new Date(iso).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+export function agoWords(iso, now = Date.now()) {
+  const hours = Math.floor((now - new Date(iso).getTime()) / 3600000);
+  if (hours < 1) return "today";
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+// Change marks on the charts: the four kinds, in the console's words.
+export const CHANGE_CATS = { money: "Budget", switch: "On/off", edit: "Edits", meta: "Meta" };
 
 export const CTA_LABELS = {
   BOOK_TRAVEL: "Book now", SIGN_UP: "Sign up", LEARN_MORE: "Learn more", GET_QUOTE: "Get quote",
