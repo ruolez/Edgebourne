@@ -94,7 +94,7 @@ def home():
                            FROM meta_changes m LEFT JOIN users u ON u.id = m.user_id
                            WHERE {cw} ORDER BY m.id DESC LIMIT 6""", lp)
     ads = db.query(f"SELECT effective_status, COUNT(*) AS n FROM ads WHERE {lw} GROUP BY 1", lp)
-    call = db.query(f"""SELECT id, full_name, business_type, ad_name, phone, email, created_time FROM leads
+    call = db.query(f"""SELECT id, full_name, business_type, ad_id, ad_name, phone, email, created_time FROM leads
                         WHERE status = 'new' AND NOT is_test AND {lw}
                         ORDER BY created_time ASC LIMIT 5""", lp)
     stages = db.query(f"""SELECT status, COUNT(*) AS n FROM leads

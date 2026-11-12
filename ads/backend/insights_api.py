@@ -308,6 +308,15 @@ def _plain(v):
     return v.get("new_value", v.get("value")) if isinstance(v, dict) else v
 
 
+ACTIVITY_LEVELS = {"CAMPAIGN": "campaign", "AD_SET": "adset", "ADSET": "adset", "AD": "ad"}
+
+
+def activity_object(row):
+    """The campaign, ad set or ad one of Meta's history lines is about, so the page can link to it."""
+    level = ACTIVITY_LEVELS.get((row or {}).get("object_type") or "")
+    return {"level": level, "id": str(row["object_id"])} if level and row.get("object_id") else None
+
+
 def activity_values(event_type, extra):
     """Old and new value of one of Meta's history lines. Budget and spend-limit amounts are minor units (cents)
     and come marked `money`, so the page writes them in the account currency, never as a bare 2000 (audit A3-38)."""
@@ -335,7 +344,7 @@ def activity():
 
     def fetch():
         rows = meta_client.get(f"act_{settings_store.get('meta_ad_account_id')}/activities", since=since, limit=100,
-                               fields="event_time,event_type,translated_event_type,actor_name,object_name,object_type,extra_data"
+                               fields="event_time,event_type,translated_event_type,actor_name,object_id,object_name,object_type,extra_data"
                                ).get("data", [])
         out = []
         for r in rows:
@@ -346,7 +355,7 @@ def activity():
                 pass
             out.append({"time": r.get("event_time"), "what": r.get("translated_event_type") or r.get("event_type"),
                         "who": r.get("actor_name"), "object": r.get("object_name"), "type": r.get("object_type"),
-                        **activity_values(r.get("event_type"), extra)})
+                        "about": activity_object(r), **activity_values(r.get("event_type"), extra)})
         return out
     try:
         items = cached(f"activity:{since}", 600, fetch)

@@ -601,6 +601,24 @@ def ad_funnel(ad_id):
     return {k: int(v) for k, v in row.items()}
 
 
+def _ad_series(ad_id):
+    """The ad's spend and leads per day over ?range= (the shared date range; last 30 days when none is given)."""
+    start, end = ranges.window(request.args.get("range", "30"), account_info.today(), request.args.get("from"), request.args.get("to"))
+    rows = {r["day"].isoformat(): r for r in db.query(
+        "SELECT day, spend_cents, impressions, link_clicks, leads FROM ad_daily WHERE ad_id = %s AND day BETWEEN %s AND %s",
+        (ad_id, start, end))}
+    return ranges.daily_series(rows, start, end, ("spend_cents", "leads", "impressions", "link_clicks"))
+
+
+@bp.get("/ads/ad/<ad_id>/series")
+@login_required
+def ad_series(ad_id):
+    ad = db.query("SELECT id, campaign_id FROM ads WHERE id = %s", (ad_id,), one=True)
+    if not ad or not can_touch(current_user(), ad["campaign_id"]):
+        return api_error("Ad not found", 404)
+    return jsonify({"series": _ad_series(ad_id)})
+
+
 @bp.get("/ads/ad/<ad_id>")
 @login_required
 def ad_detail(ad_id):
@@ -612,17 +630,7 @@ def ad_detail(ad_id):
                      WHERE a.id = %s""", (ad_id,), one=True)
     if not ad or not can_touch(user, ad["campaign_id"]):
         return api_error("Ad not found", 404)
-    end = account_info.today() - timedelta(days=1)
-    start = end - timedelta(days=29)
-    rows = {r["day"].isoformat(): r for r in db.query(
-        "SELECT day, spend_cents, impressions, link_clicks, leads FROM ad_daily WHERE ad_id = %s AND day BETWEEN %s AND %s",
-        (ad_id, start, end))}
-    series = []
-    for i in range(30):
-        d = (start + timedelta(days=i)).isoformat()
-        r = rows.get(d) or {}
-        series.append({"day": d, "spend_cents": int(r.get("spend_cents") or 0), "leads": int(r.get("leads") or 0),
-                       "impressions": int(r.get("impressions") or 0), "link_clicks": int(r.get("link_clicks") or 0)})
+    series = _ad_series(ad_id)
     totals = db.query("""SELECT COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
                                 COALESCE(SUM(reach),0) AS reach, COALESCE(SUM(link_clicks),0) AS link_clicks,
                                 COALESCE(SUM(leads),0) AS leads FROM ad_daily WHERE ad_id = %s""", (ad_id,), one=True)
@@ -647,10 +655,16 @@ def ad_detail(ad_id):
                           WHERE m.entity_id IN (%s, %s, %s) ORDER BY m.id DESC LIMIT 30""",
                        (ad_id, ad["adset_id"], ad["campaign_id"]))
     ad["can_control"] = current_user()["role"] != "client"
+    # The tests it is in (the Tests page is for admins), so the ad page links to them.
+    tests = []
+    if user["role"] == "admin":
+        import experiments
+        tests = experiments.containing(db.query("SELECT id, name, status, arms FROM experiments ORDER BY id DESC LIMIT 200"),
+                                       ad_id, ad["adset_id"])
     import versions_api
     # The funnel comes with the page, so the first paint doesn't wait on Meta's rankings (audit A3-123).
     return jsonify({"ad": ad, "series": series, "lifetime": life, "funnel": ad_funnel(ad_id), "versions": versions_api.for_ad(ad),
-                    "leads": leads, "proposals": proposals, "changes": changes,
+                    "leads": leads, "proposals": proposals, "changes": changes, "tests": tests,
                     "timeline": status_history.timeline("ad", ad_id),
                     "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS]})
 

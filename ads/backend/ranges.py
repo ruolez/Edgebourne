@@ -54,3 +54,13 @@ def previous(start, end, key):
 
 def label(start, end):
     return f"{start:%b} {start.day} – {end:%b} {end.day}" if start != end else f"{start:%b} {start.day}"
+
+
+def daily_series(rows, start, end, keys):
+    """One entry per day from start to end: rows (ISO day → numbers) where a day has them, zero otherwise."""
+    out = []
+    for i in range((end - start).days + 1):
+        d = (start + timedelta(days=i)).isoformat()
+        r = rows.get(d) or {}
+        out.append({"day": d, **{k: int(r.get(k) or 0) for k in keys}})
+    return out

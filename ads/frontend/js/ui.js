@@ -366,8 +366,73 @@ const PAGE_HREF = { ads: "/ads.html", forms: "/forms.html", performance: "/perfo
 
 let frame = { page: null, section: null };
 
+// ---------------------------------------------------------------- links to things
+
+// Where each kind of thing lives. Forms and tests are admin pages: for anyone else their names stay plain.
+const ENTITY_HREF = {
+  campaign: (id) => `/campaign.html?id=${encodeURIComponent(id)}`,
+  adset: (id) => `/adset.html?id=${encodeURIComponent(id)}`,
+  ad: (id) => `/ad.html?id=${encodeURIComponent(id)}`,
+  lead: (id) => `/leads.html#lead=${encodeURIComponent(id)}`,
+  form: (id) => `/forms.html#form=${encodeURIComponent(id)}`,
+  test: (id) => `/experiments.html#${encodeURIComponent(id)}`,
+  tag: (value, dim) => `/performance.html?idea=${encodeURIComponent(dim || "hook")}&tag=${encodeURIComponent(value)}#ideas-panel`,
+};
+const ADMIN_ONLY = new Set(["form", "test"]);
+export function entityHref(level, id, dim) {
+  if (!id || !ENTITY_HREF[level]) return null;
+  if (ADMIN_ONLY.has(level) && (!window.ebadsMe || window.ebadsMe.role !== "admin")) return null;
+  return ENTITY_HREF[level](id, dim);
+}
+// The one way a page names a campaign, ad set, ad, lead, form, test or tag: a link to it when the id is
+// known (and the person may open it), its plain name otherwise. `dim` is a tag's dimension (hook, angle…).
+export function entityLink(level, id, name, { cls = "", dim = "" } = {}) {
+  const href = entityHref(level, id, dim);
+  const text = esc(name ?? "");
+  return href ? `<a class="ent-link${cls ? ` ${cls}` : ""}" href="${esc(href)}">${text}</a>` : text;
+}
+
+// Lists remember how they were filtered (this tab only), so a breadcrumb back to one lands on the same view.
+const LIST_KEY = "ebads-list:";
+export function rememberList(href = location.pathname + location.search) {
+  try { sessionStorage.setItem(LIST_KEY + href.split(/[?#]/)[0], href); } catch (e) { /* storage off */ }
+}
+export function listHref(href) {
+  if (!href || href.includes("?") || href.includes("#")) return href;
+  try { return sessionStorage.getItem(LIST_KEY + href) || href; } catch (e) { return href; }
+}
+
+// ?from= on a page reached from somewhere (the New pages): where Cancel and the way back go. Only a path on
+// this site counts, never another host (//host, /\host) or a script.
+export function safePath(v) {
+  return typeof v === "string" && /^\/[a-z-]+\.html(?:[?#][^\s]*)?$/i.test(v) ? v : null;
+}
+export const returnTo = (fallback) => safePath(new URLSearchParams(location.search).get("from")) || listHref(fallback);
+// The New pages: where Cancel goes, and the breadcrumbs with the page they were opened from in the middle
+// (Ads › Campaign › New ad set), so the phone's back arrow goes there too. `name` names that page once known.
+export function returnCrumbs(own, fallback = "/ads.html", name = "") {
+  const back = returnTo(fallback);
+  const page = back.split(/[?#]/)[0].replace(/^\//, "").replace(/\.html$/, "");
+  const ads = { label: "Ads", href: listHref("/ads.html") };
+  const mid = page && page !== "ads" ? [{ label: name || PAGE_TITLE[page] || "Back", href: back }] : [];
+  setCrumbs([ads, ...mid, { label: own, href: location.pathname + location.search }]);
+  const crumb = document.getElementById("crumb");
+  if (crumb) crumb.href = back;
+  return back;
+}
+// A Cancel link beside a form's main button: back where the page was opened from.
+export const cancelLink = (href) => `<a class="btn btn-quiet" href="${esc(href)}" id="cancel">Cancel</a>`;
+
+// A link that says where it was opened from: href + from=<this page as it is now>.
+export function withFrom(href, from = location.pathname + location.search) {
+  const sep = href.includes("?") ? "&" : "?";
+  return `${href}${sep}from=${encodeURIComponent(from)}`;
+}
+
 // Breadcrumbs: [{label, href}], the last one is the page itself. Pages that load names later call this.
+// A crumb back to a list (Ads, Leads, Results…) opens it as it was last filtered in this tab.
 export function setCrumbs(items) {
+  items = items.map((c, i) => (i < items.length - 1 ? { ...c, href: listHref(c.href) } : c));
   const nav = document.querySelector(".crumbs");
   if (nav) {
     nav.innerHTML = items.map((c, i) => i === items.length - 1

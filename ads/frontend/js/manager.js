@@ -452,7 +452,8 @@ export async function peek(r, { onClose, focus = true } = {}) {
     <div class="row pk-actions"><a class="btn btn-primary btn-small" href="${href(r)}">Open ${esc(LEVEL_WORDS[r.level][0])}</a>
       ${r.can_control && ["ACTIVE", "PAUSED"].includes(r.status) ? `<span class="pk-sw">${switchHtml(isOn(r.status), `data-toggle="${r.level}:${r.id}" data-name="${esc(r.name)}"`, `${r.name} on or off`)} ${isOn(r.status) ? "On" : "Off"}</span>` : ""}
       ${r.level !== "ad" && r.daily_budget_cents ? budgetCell(r) : ""}
-      ${r.level === "ad" ? `<a class="btn btn-small" href="/leads.html?ad=${encodeURIComponent(r.id)}">Its leads</a>` : ""}</div>
+      ${r.level === "ad" ? `<a class="btn btn-small" href="/leads.html?ad=${encodeURIComponent(r.id)}">Its leads</a>` : ""}
+      ${r.level === "campaign" ? `<a class="btn btn-small" href="/leads.html?campaign=${encodeURIComponent(r.id)}">Its leads</a>` : ""}</div>
     ${context(r)}
     <h3 class="pk-h">This period ${r.prev ? "<small>against the same days before</small>" : ""}</h3>
     ${figuresHtml(m, r.prev, null, { today: r.today, ever: r.ever }).replace('class="figs"', 'class="figs pk-figs"')}

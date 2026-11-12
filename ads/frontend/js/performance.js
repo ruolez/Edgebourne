@@ -1,14 +1,14 @@
 import { api, startLoad } from "./api.js";
-import { boot, esc, icon, onRefresh, skeleton, toast, when, showLoadError } from "./ui.js";
+import { boot, entityLink, esc, icon, onRefresh, rememberList, skeleton, toast, when, showLoadError } from "./ui.js";
 import { barList, columnChart } from "./charts.js";
-import { EXPLAIN, RANGES, STATUS as FORMAT_STATUS, WORDS, count, dayLabel, money, pct, per, moneyWhole, currencySymbol, rangeSelect, statusPill } from "./format.js";
+import { EXPLAIN, RANGES, STATUS as FORMAT_STATUS, WORDS, count, dayLabel, money, pct, per, moneyWhole, currencySymbol, rangeSelect, rememberRange, sharedRange, statusPill } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
 let data;
-let range = "7";
+// The dates picked last on any page (Ads, Campaign, Ad set, Ad, Compare), unless the link names its own.
+let range = sharedRange();
 const RANGE_KEYS = RANGES.map(([k]) => k);
-try { const saved = localStorage.getItem("ebads-range"); if (RANGE_KEYS.includes(saved)) range = saved; } catch (e) {}
 const qs = new URLSearchParams(location.search);
 if (RANGE_KEYS.includes(qs.get("range"))) range = qs.get("range");
 let campaign = qs.get("campaign") || "";
@@ -174,7 +174,7 @@ function renderAds() {
     : `<div class="empty-inline"><p class="muted">${table.q ? `No ad called “${esc(table.q)}”` : `No ads ${{ spent: "spent money", running: "are running", all: "" }[table.filter]} in this period`.replace("  ", " ")}.</p>
         <button type="button" class="btn btn-quiet btn-small" data-clear>Show all ads</button></div>`;
   const head = box.querySelector(".results-bar");
-  const bar = `<div class="panel-head wrap results-bar"><h2>Ads</h2><a class="more" href="/ads.html?range=${encodeURIComponent(range)}&vs=1" title="Turn ads on or off, compare or change several at once">Manage in Ads</a>
+  const bar = `<div class="panel-head wrap results-bar"><h2>Ads</h2><a class="more" href="/ads.html?range=${encodeURIComponent(range)}&vs=1${campaign ? `&campaign=${encodeURIComponent(campaign)}` : ""}" title="Turn ads on or off, compare or change several at once">Manage in Ads</a>
       <div class="filters" id="cr-filter" role="group" aria-label="Show ads">${Object.entries(FILTERS).map(([k, [l]]) =>
         `<button type="button" class="view-chip" data-filter="${k}" aria-pressed="${k === table.filter}">${esc(l)} <span class="n">${counts[k]}</span></button>`).join("")}</div>
       <div class="search">${icon("search")}<label class="sr-only" for="cr-q">Find an ad</label><input class="input" id="cr-q" type="search" placeholder="Find an ad" autocomplete="off" value="${esc(table.q)}"></div>
@@ -227,6 +227,7 @@ function syncUrl() {
   u.searchParams.set("range", range);
   if (campaign) u.searchParams.set("campaign", campaign); else u.searchParams.delete("campaign");
   history.replaceState(null, "", u);
+  rememberList();
 }
 
 // This month: spend so far, where it lands at this pace, the spending limit and the target.
@@ -279,7 +280,11 @@ function fixInlineWidths() {
 }
 
 let accBy = "placement";
-let ideaBy = "hook";
+// ?idea=<dimension>&tag=<value> (a tag named on Compare or a report) opens By idea on that row.
+const IDEA_DIMS = ["hook", "angle", "persona", "format", "offer"];
+let ideaBy = IDEA_DIMS.includes(qs.get("idea")) ? qs.get("idea") : "hook";
+let ideaTag = qs.get("tag") || "";
+let ideaShown = false;
 
 const ratePct = (v) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 
@@ -298,12 +303,14 @@ async function loadIdeas() {
     box.innerHTML = `${verdict}<div class="scroll-x"><table class="table middle ideas-table">
       <thead><tr><th>${esc(d.dimensions[d.by][0])}</th><th class="num">Ads</th><th class="num">Spent</th><th class="num">Leads</th><th class="num">Cost per lead</th>
         <th class="num" title="${esc(EXPLAIN.hook)}">${WORDS.hook}</th><th class="num" title="${esc(EXPLAIN.hold)}">${WORDS.hold}</th><th class="num" title="Qualified or won ÷ leads">Qualified rate</th></tr></thead>
-      <tbody>${d.groups.map((g) => `<tr class="${g.best ? "lead" : ""}${g.value === "Not tagged" ? " untagged" : ""}">
-        <th scope="row"><b>${esc(g.value)}</b>${g.best ? ' <span class="pill ok">cheapest</span>' : ""}${g.enough ? "" : ' <span class="pill" title="Fewer than 3 leads or less than twice the target cost spent">too early</span>'}<span class="idea-ads">${g.ad_names.map(esc).join(", ")}</span></th>
+      <tbody>${d.groups.map((g) => `<tr class="${g.best ? "lead" : ""}${g.value === "Not tagged" ? " untagged" : ""}${ideaTag && g.value.toLowerCase() === ideaTag.toLowerCase() ? " flash" : ""}" data-idea-row="${esc(g.value)}">
+        <th scope="row"><b>${esc(g.value)}</b>${g.best ? ' <span class="pill ok">cheapest</span>' : ""}${g.enough ? "" : ' <span class="pill" title="Fewer than 3 leads or less than twice the target cost spent">too early</span>'}<span class="idea-ads">${(g.members || g.ad_names.map((name) => ({ name }))).map((m) => entityLink("ad", m.id, m.name)).join(", ")}</span></th>
         <td class="num">${count(g.ads)}</td><td class="num">${money(g.spend_cents)}</td><td class="num">${count(g.leads)}</td>
         <td class="num">${g.cpl_cents != null ? `<span class="${g.enough ? "" : "early"}">${money(g.cpl_cents, { exact: true })}</span>` : "—"}</td>
         <td class="num">${ratePct(g.hook_rate)}</td><td class="num">${ratePct(g.hold_rate)}</td><td class="num">${ratePct(g.qualified_rate)}</td></tr>`).join("")}</tbody></table></div>
+      ${ideaTag && !d.groups.some((g) => g.value.toLowerCase() === ideaTag.toLowerCase()) ? `<p class="muted small flush">No ad tagged “${esc(ideaTag)}” spent money in the last 30 days.</p>` : ""}
       ${d.untagged_ads ? `<p class="muted small flush">${d.untagged_ads} ad${d.untagged_ads === 1 ? " has" : "s have"} no ${esc(d.dimensions[d.by][0].toLowerCase())} yet: tag them under "The idea" on each ad's page, or ask Claude to.</p>` : ""}`;
+    if (ideaTag && !ideaShown) { ideaShown = true; (box.querySelector("tr.flash") || $("ideas-panel")).scrollIntoView({ block: "center" }); }
   } catch (err) { if (!superseded()) box.innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
@@ -328,7 +335,7 @@ async function loadActivity() {
     const d = await api("/api/insights/activity?days=14");
     $("activity").innerHTML = d.items.length ? `<ul class="chg-list">${d.items.map((a) => {
       const change = a.old != null || a.new != null ? `: ${esc(String(fmtVal(a.old, a.money)))} → ${esc(String(fmtVal(a.new, a.money)))}` : "";
-      return `<li><span><b>${esc(a.what || "")}</b>${a.object ? ` · ${esc(a.object)}` : ""}${change}</span><small>${esc(when(a.time))}${a.who ? ` · ${esc(a.who)}` : ""}</small></li>`;
+      return `<li><span><b>${esc(a.what || "")}</b>${a.object ? ` · ${a.about ? entityLink(a.about.level, a.about.id, a.object) : esc(a.object)}` : ""}${change}</span><small>${esc(when(a.time))}${a.who ? ` · ${esc(a.who)}` : ""}</small></li>`;
     }).join("")}</ul>` : '<p class="muted flush">No changes in the last 14 days.</p>';
   } catch (err) { $("activity").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
@@ -358,6 +365,7 @@ if (me) {
     const ib = e.target.closest("#idea-by [data-idea]");
     if (ib) {
       ideaBy = ib.dataset.idea;
+      ideaTag = "";
       document.querySelectorAll("#idea-by button").forEach((x) => x.setAttribute("aria-pressed", String(x === ib)));
       loadIdeas();
       return;
@@ -373,7 +381,7 @@ if (me) {
   document.querySelector(".page-head").addEventListener("change", (e) => {
     if (e.target.id !== "range-pick") return;
     range = e.target.value;
-    try { localStorage.setItem("ebads-range", range); } catch (err) {}
+    rememberRange(range);
     load();
   });
   onRefresh(load);

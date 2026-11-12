@@ -1,16 +1,17 @@
 // Campaign and ad set pages: their numbers with "vs before", a daily chart, (ad sets) learning progress
 // and who sees it, the ad sets / ads inside in the manager table, and one History timeline.
 import { api, startLoad } from "./api.js";
-import { boot, esc, icon, onRefresh, setCrumbs, switchHtml, toast, when, errorState } from "./ui.js";
+import { boot, esc, icon, onRefresh, setCrumbs, switchHtml, toast, when, errorState, withFrom } from "./ui.js";
 import { columnChart } from "./charts.js";
-import { count, dayLabel, explain, money, moneyWhole, rangeSelect } from "./format.js";
+import { count, dayLabel, explain, money, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
 import { LIVE, bulkBarHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, statusCell, tableHtml, unlistedNote, wire } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
 const LEVEL = document.body.dataset.level;
 const id = new URLSearchParams(location.search).get("id");
-const DEFAULTS = { id: "", tab: LEVEL === "campaign" ? "adsets" : "ads", range: "14", vs: true, sort: "spend", dir: "desc" };
+// The dates are the ones picked last on any page (Ads, Results, Compare…), unless the link says otherwise.
+const DEFAULTS = { id: "", tab: LEVEL === "campaign" ? "adsets" : "ads", range: sharedRange(), vs: true, sort: "spend", dir: "desc", peek: "" };
 let state = UrlState.read({ ...DEFAULTS, id });
 let data = null, me = null, rows = null;
 const selected = new Set();
@@ -44,7 +45,9 @@ function render() {
   const live = LIVE.includes(e.status);
   const budget = e.daily_budget_cents ? (canControl && live ? `<button type="button" class="chip" data-budget="${LEVEL}:${e.id}" data-current="${e.daily_budget_cents}" data-name="${esc(e.name)}">${money(e.daily_budget_cents, { exact: true })}/day</button>` : `<span class="chip">${money(e.daily_budget_cents, { exact: true })}/day</span>`) : "";
   $("en-actions").innerHTML = `${budget}
-    ${me.role === "admin" && live ? (LEVEL === "campaign" ? `<a class="btn" href="/new-adset.html?campaign=${encodeURIComponent(e.id)}">${icon("plus")}New ad set</a>` : `<a class="btn" href="/new-ad.html?adset=${encodeURIComponent(e.id)}">${icon("plus")}New ad</a>`) : ""}
+    ${LEVEL === "campaign" ? `<a class="btn" href="/leads.html?campaign=${encodeURIComponent(e.id)}" id="en-leads">${icon("leads")}Its leads</a>
+      <a class="btn" href="/performance.html?campaign=${encodeURIComponent(e.id)}&range=${encodeURIComponent(state.range)}" id="en-results">${icon("chart")}Results</a>` : ""}
+    ${me.role === "admin" && live ? (LEVEL === "campaign" ? `<a class="btn" href="${esc(withFrom(`/new-adset.html?campaign=${encodeURIComponent(e.id)}`))}">${icon("plus")}New ad set</a>` : `<a class="btn" href="${esc(withFrom(`/new-ad.html?adset=${encodeURIComponent(e.id)}`))}">${icon("plus")}New ad</a>`) : ""}
     ${me.role === "admin" ? `<a class="btn btn-claude-outline" href="/desk.html?ask=1&campaign=${encodeURIComponent(data.campaign.id)}">${icon("spark")}Ask Claude</a>` : ""}
     ${canControl && live ? `<span class="pk-sw">${switchHtml(e.status === "ACTIVE", `data-toggle="${LEVEL}:${e.id}" data-name="${esc(e.name)}"`, `${e.name} on or off`)} ${e.status === "ACTIVE" ? "On" : "Off"}</span>` : ""}`;
   const tabs = [...(LEVEL === "campaign" ? [["adsets", "Ad sets", rows.adset.length]] : []), ["ads", "Ads", rows.ad.length], ["history", "History", data.timeline.length]];
@@ -92,9 +95,34 @@ async function load() {
     ...(LEVEL === "adset" ? [{ label: data.campaign.name, href: `/campaign.html?id=${encodeURIComponent(data.campaign.id)}` }] : []),
     { label: data.entity.name, href: location.pathname + location.search }]);
   render();
+  if (state.peek) openPeek(state.peek, { quiet: true });
 }
 
-const set = (patch, reload = false) => { state = { ...state, ...patch }; UrlState.write(state, { ...DEFAULTS, id }); if (reload) load(); else render(); };
+// id's default is "", so writing the state always keeps ?id= in the address (it used to drop it on a change of dates).
+const KEYS = DEFAULTS;
+const set = (patch, reload = false) => {
+  if (Object.keys(patch).some((k) => k !== "peek")) UrlState.leaveLayer();
+  state = { ...state, ...patch }; UrlState.write(state, KEYS); if (reload) load(); else render();
+};
+
+// The quick look is in the URL (?peek=) and Back closes it, like on Ads.
+let popping = false;
+function openPeek(key, { quiet = false, fromHistory = false } = {}) {
+  const [lv, rid] = key.split(":");
+  const r = (rows[lv] || []).find((x) => x.id === rid);
+  if (!r) return;
+  const wasOpen = Boolean(state.peek);
+  state.peek = key;
+  if (!fromHistory) { if (quiet || wasOpen) UrlState.write(state, KEYS); else UrlState.openLayer(UrlState.url(state, KEYS)); }
+  peek(r, { focus: !quiet, onClose: (changed) => {
+    const was = state.peek;
+    state.peek = "";
+    if (was && !popping) UrlState.closeLayer(UrlState.url(state, KEYS));
+    if (changed) load();
+  } });
+}
+// Closed by the page itself (another tab): no step back, the entry just stops being the quick look's.
+function dropPeek() { popping = true; closePeek(); popping = false; UrlState.leaveLayer(); }
 
 me = await boot({ page: LEVEL });
 if (me) {
@@ -104,17 +132,25 @@ if (me) {
     pick: (rid, on) => { if (on) selected.add(rid); else selected.delete(rid); render(); },
     pickAll: (on) => { children().forEach((r) => (on ? selected.add(r.id) : selected.delete(r.id))); render(); },
     sortBy: (key) => set({ sort: key, dir: state.sort === key && state.dir === "desc" ? "asc" : "desc" }),
-    peek: (key) => { const [lv, rid] = key.split(":"); const r = (rows[lv] || []).find((x) => x.id === rid); if (r) peek(r, { onClose: (changed) => { if (changed) load(); } }); },
+    peek: (key) => (state.peek === key ? closePeek() : openPeek(key)),
   };
   wire($("cr-all"), ctx);
   wire($("bulk"), ctx);
   wire($("en-actions"), ctx);
   $("cr-all").addEventListener("click", (e) => {
     const t = e.target.closest("[data-tab]");
-    if (t) { selected.clear(); closePeek(); set({ tab: t.dataset.tab, sort: "spend", dir: "desc" }); }
+    if (t) { selected.clear(); dropPeek(); set({ tab: t.dataset.tab, sort: "spend", dir: "desc", peek: "" }); }
     if (e.target.closest("#vs")) set({ vs: !state.vs }, true);
   });
-  $("cr-all").addEventListener("change", (e) => { if (e.target.id === "range-pick") set({ range: e.target.value }, true); });
+  $("cr-all").addEventListener("change", (e) => { if (e.target.id === "range-pick") { rememberRange(e.target.value); set({ range: e.target.value }, true); } });
+  // Back / Forward: show what the URL says, the view first, then the quick look.
+  addEventListener("popstate", () => {
+    const next = UrlState.read(KEYS);
+    const viewChanged = Object.keys(KEYS).some((k) => k !== "peek" && next[k] !== state[k]);
+    if (!next.peek && state.peek) { popping = true; closePeek(); popping = false; }
+    if (viewChanged) { selected.clear(); state = next; load(); return; }
+    if (next.peek && next.peek !== state.peek && rows) openPeek(next.peek, { fromHistory: true });
+  });
   onRefresh(load);
   load();
 }

@@ -2,13 +2,14 @@
 // change against the period before, a verdict that waits for enough data, and one chart with a line
 // per ad. Reached from the Ads manager's selection bar (Compare) or Insights → Compare.
 import { api, startLoad } from "./api.js";
-import { boot, esc, icon, onRefresh, toast, errorState } from "./ui.js";
+import { boot, entityLink, esc, icon, onRefresh, toast, errorState } from "./ui.js";
 import { lineChart } from "./charts.js";
-import { count, money, statusOf, moneyWhole, rangeSelect } from "./format.js";
+import { count, money, statusOf, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
 
 const $ = (id) => document.getElementById(id);
-const DEFAULTS = { ids: "", range: "14", vs: true, chart: "leads" };
+// The dates picked last on Ads, Results or any campaign, ad set or ad, unless the link names its own.
+const DEFAULTS = { ids: "", range: sharedRange(), vs: true, chart: "leads" };
 const LOWER = { cpl_cents: 1, cpq_cents: 1, cpm_cents: 1 };
 let state = UrlState.read(DEFAULTS);
 let data = null, all = null;
@@ -48,14 +49,14 @@ function tableHtml() {
     const [cls, label] = statusOf(it.effective_status);
     const img = it.image_url || it.thumbnail_url;
     return `<th><div class="cmp-h">${img ? `<img class="cmp-th" src="${esc(img)}" alt="" referrerpolicy="no-referrer">` : '<span class="cmp-th ph"></span>'}
-      <a href="/ad.html?id=${encodeURIComponent(it.id)}" class="tbl-link">${esc(it.name)}</a><span class="pill ${cls}">${esc(label)}</span>
+      ${entityLink("ad", it.id, it.name, { cls: "tbl-link" })}<span class="pill ${cls}">${esc(label)}</span>
       <span class="cmp-key"><i class="sw s${i + 1}"></i>${ids().length > 2 ? `<button type="button" class="link-btn small" data-drop="${esc(it.id)}">Remove</button>` : ""}</span></div></th>`;
   }).join("")}</tr>`;
   const rows = data.rows.map((r) => `<tr><th scope="row">${esc(r.label)}</th>${r.cells.map((c, i) => {
     const best = r.best === i;
     return `<td class="${best ? "win" : ""}"><b>${c.value == null ? "—" : esc(FMT[r.key](c.value))}</b><span class="cmp-sub">${state.vs ? deltaHtml(r.key, c.delta_pct) : ""}${best ? `<span class="best">${LOWER[r.key] ? "Lowest" : "Highest"}</span>` : ""}</span></td>`;
   }).join("")}</tr>`).join("");
-  const tags = TAGS.filter(([k]) => items.some((it) => it.tags[k])).map(([k, label]) => `<tr class="cmp-tag"><th scope="row">${label}</th>${items.map((it) => `<td>${it.tags[k] ? `<span class="chip">${esc(it.tags[k])}</span>` : '<span class="muted">—</span>'}</td>`).join("")}</tr>`).join("");
+  const tags = TAGS.filter(([k]) => items.some((it) => it.tags[k])).map(([k, label]) => `<tr class="cmp-tag"><th scope="row">${label}</th>${items.map((it) => `<td>${it.tags[k] ? entityLink("tag", it.tags[k], it.tags[k], { cls: "chip", dim: k }) : '<span class="muted">—</span>'}</td>`).join("")}</tr>`).join("");
   return `<div class="tbl-wrap"><table class="cmp"><thead>${head}</thead><tbody>${rows}${tags}</tbody></table></div>`;
 }
 
@@ -136,7 +137,7 @@ if (me) {
     if (d) { state.ids = ids().filter((x) => x !== d.dataset.drop).join(","); save(); load(); }
   });
   document.addEventListener("change", (e) => {
-    if (e.target.id === "cmp-range") { state.range = e.target.value; save(); load(); }
+    if (e.target.id === "cmp-range") { state.range = e.target.value; rememberRange(state.range); save(); load(); }
     if (e.target.id === "cmp-add" && e.target.value) { state.ids = [...ids(), e.target.value].join(","); save(); load(); }
   });
   onRefresh(load);

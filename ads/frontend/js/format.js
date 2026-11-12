@@ -53,6 +53,18 @@ export const explain = (key) => EXPLAIN[key] || "";
 
 // The date ranges every page offers, and the one picker that shows them.
 export const RANGES = [["7", "Last 7 days"], ["14", "Last 14 days"], ["30", "Last 30 days"], ["mtd", "This month"], ["lastmonth", "Last month"]];
+// One date range for Ads, Campaign, Ad set, Ad, Compare and Results: the last one picked in this browser.
+// A page's own ?range= still wins (a shared link opens on its dates); picking one remembers it for the rest.
+const RANGE_KEY = "ebads-range";
+export function sharedRange(fallback = "7", allowed = RANGES) {
+  let r = null;
+  try { r = localStorage.getItem(RANGE_KEY); } catch (e) { /* storage off */ }
+  return allowed.some(([k]) => k === r) ? r : fallback;
+}
+export function rememberRange(r) {
+  if (!RANGES.some(([k]) => k === r)) return;
+  try { localStorage.setItem(RANGE_KEY, r); } catch (e) { /* storage off */ }
+}
 const escText = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 export const rangeSelect = (id, value, ranges = RANGES, label = "Dates") =>
   `<select class="input tool" id="${id}" aria-label="${escText(label)}">${ranges.map(([k, l]) => `<option value="${k}" ${String(k) === String(value) ? "selected" : ""}>${escText(l)}</option>`).join("")}</select>`;

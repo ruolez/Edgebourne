@@ -1,6 +1,6 @@
 import { api, startLoad } from "./api.js";
-import { boot, confirmDialog, esc, icon, onRefresh, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, switchHtml, toast, when, errorState } from "./ui.js";
-import { CTA_LABELS, EXPLAIN, RANGES, WORDS, count, money, pct, per, rangeSelect, statusOf, moneyWhole } from "./format.js";
+import { boot, confirmDialog, entityLink, esc, icon, onRefresh, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, switchHtml, toast, when, errorState, withFrom } from "./ui.js";
+import { CTA_LABELS, EXPLAIN, RANGES, WORDS, count, money, pct, per, rangeSelect, rememberRange, sharedRange, statusOf, moneyWhole } from "./format.js";
 import { barList, columnChart } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
 import { ACTIVE, proposalCard, taskCard, wireTaskActions } from "./tasks.js";
@@ -12,7 +12,11 @@ let format = "MOBILE_FEED_STANDARD";
 try { format = localStorage.getItem("ebads-preview") || format; } catch (e) {}
 let tab = (location.hash.match(/tab=(\w+)/) || [])[1] || "overview";
 let audienceBy = "placement";
-let audienceRange = "7";
+const AUDIENCE_RANGES = [...RANGES, ["lifetime", "All time"]];
+// The overview's daily charts and the Audience tab open on the shared date range (or the link's ?range=).
+const linkRange = new URLSearchParams(location.search).get("range");
+let chartRange = RANGES.some(([k]) => k === linkRange) ? linkRange : sharedRange("7");
+let audienceRange = AUDIENCE_RANGES.some(([k]) => k === linkRange) ? linkRange : sharedRange("7", AUDIENCE_RANGES);
 let pollTimer;
 const openReports = new Set();
 
@@ -61,7 +65,8 @@ function renderHead() {
   $("cr-actions").innerHTML = `
     ${["ACTIVE", "PAUSED"].includes(ad.status) ? `<span class="switch-label">${ad.status === "ACTIVE" ? "On" : "Off"}</span>${switchHtml(ad.status === "ACTIVE", `data-toggle="ad:${ad.id}" data-name="${esc(ad.name)}"`, "Ad on or off")}` : ""}
     <button class="btn" type="button" id="dup">${icon("copy")}<span>Duplicate</span></button>
-    <a class="btn" href="/new-ad.html?from=${encodeURIComponent(ad.id)}">${icon("plus")}<span>New ad from this</span></a>
+    <a class="btn" href="/compare.html?ids=${encodeURIComponent(ad.id)}">${icon("compare")}<span>Compare</span></a>
+    <a class="btn" href="${esc(withFrom(`/new-ad.html?template=${encodeURIComponent(ad.id)}`))}">${icon("plus")}<span>New ad from this</span></a>
     <button class="btn btn-claude" type="button" data-goto="polish">${icon("spark")}<span>Polish</span></button>
     ${me.role === "admin" && !["ACTIVE", "ARCHIVED", "DELETED"].includes(ad.status) ? '<button class="btn" type="button" id="archive">Archive</button>' : ""}
     ${me.role === "admin" && !["ACTIVE", "DELETED"].includes(ad.status) ? '<button class="btn btn-danger-text" type="button" id="delete">Delete</button>' : ""}`;
@@ -157,7 +162,8 @@ function renderOverview() {
               <div title="${esc(EXPLAIN.ctr)}"><dt>${WORDS.ctr}</dt><dd>${pct(lifetime.link_clicks, lifetime.impressions)}</dd></div>
               ${ad.object_type === "VIDEO" ? `<div title="${esc(EXPLAIN.hook)}"><dt>${WORDS.hook}</dt><dd>${hook}</dd></div>` : ""}
             </dl>
-            <div class="charts single"><div><h3 class="chart-title">Spend per day, last 30 days</h3><div class="chart" id="c-spend"></div></div>
+            <div class="chart-dates"><span class="muted small">Per day, complete days only</span><span class="spacer"></span>${rangeSelect("chart-range", chartRange, RANGES, "Dates in the charts")}</div>
+            <div class="charts single"><div><h3 class="chart-title">Spend per day</h3><div class="chart" id="c-spend"></div></div>
             <div><h3 class="chart-title">Leads per day</h3><div class="chart" id="c-leads"></div></div></div>
           </div>
         </section>
@@ -177,8 +183,9 @@ function renderOverview() {
           <div class="panel-head"><h2>Where it runs</h2></div>
           <div class="panel-body">
             <dl class="facts">
-              <div><dt>Campaign</dt><dd>${esc(ad.campaign_name || "—")}</dd></div>
-              <div><dt>Ad set</dt><dd>${esc(ad.adset_name || "—")}</dd></div>
+              <div><dt>Campaign</dt><dd>${ad.campaign_name ? entityLink("campaign", ad.campaign_id, ad.campaign_name) : "—"}</dd></div>
+              <div><dt>Ad set</dt><dd>${ad.adset_name ? entityLink("adset", ad.adset_id, ad.adset_name) : "—"}</dd></div>
+              ${(data.tests || []).length ? `<div><dt>Tests</dt><dd>${data.tests.map((t) => `${entityLink("test", t.id, t.name)}${t.status === "running" ? " (running)" : ""}`).join(", ")}</dd></div>` : ""}
               <div><dt>Audience</dt><dd>${esc(ad.targeting_summary || "—")}<span id="estimate"></span></dd></div>
               <div><dt>Budget</dt><dd>${budgetCents ? `${money(budgetCents, { exact: true })}/day, shared by the ${budgetLevel === "campaign" ? "whole campaign" : "ad set"} <button class="link-btn" type="button" id="edit-budget">Change</button>` : "—"}</dd></div>
               <div><dt>Ad ID</dt><dd><a href="https://adsmanager.facebook.com/adsmanager/manage/ads?${window.ebadsMe && window.ebadsMe.account.ad_account_id ? `act=${encodeURIComponent(window.ebadsMe.account.ad_account_id)}&` : ""}selected_ad_ids=${encodeURIComponent(ad.id)}" target="_blank" rel="noopener noreferrer">${esc(ad.id)} ${icon("external")}</a></dd></div>
@@ -200,10 +207,8 @@ function renderOverview() {
         </section>
       </div>
     </div>`;
-  columnChart({ el: $("c-spend"), series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 160,
-    format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v) });
-  columnChart({ el: $("c-leads"), series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true, height: 160,
-    format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
+  if (series) drawDaily(series); else pickRange(chartRange);
+  $("chart-range").addEventListener("change", (e) => pickRange(e.target.value));
   loadPreview();
   loadEnhancements();
   loadIdea();
@@ -212,6 +217,34 @@ function renderOverview() {
   if (ad.adset_id) api(`/api/insights/adset/${encodeURIComponent(ad.adset_id)}/estimate`).then((e) => {
     if (e.lower && e.upper && $("estimate")) $("estimate").innerHTML = `<br><span class="muted small">Meta estimates ${count(e.lower)}–${count(e.upper)} people could see ads from this ad set.</span>`;
   }).catch(() => {});
+}
+
+function drawDaily(series) {
+  columnChart({ el: $("c-spend"), series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 160,
+    format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v) });
+  columnChart({ el: $("c-leads"), series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true, height: 160,
+    format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)) });
+}
+
+// Dates picked here are the shared range: the address keeps them and the other pages open on them.
+function keepRange(r) {
+  rememberRange(r);
+  const u = new URL(location.href);
+  u.searchParams.set("range", r);
+  history.replaceState(history.state, "", u);
+}
+
+async function pickRange(r) {
+  chartRange = r;
+  audienceRange = r;
+  keepRange(r);
+  const superseded = startLoad("series");
+  try {
+    const d = await api(`/api/ads/ad/${encodeURIComponent(adId)}/series?range=${encodeURIComponent(r)}`);
+    if (superseded() || !$("c-spend")) return;
+    data.series = d.series;
+    drawDaily(d.series);
+  } catch (err) { if (!superseded()) toast(err.message, "bad"); }
 }
 
 // ---------------------------------------------------------------- the idea (concept tags)
@@ -399,7 +432,7 @@ async function renderAudience() {
   $("cr-main").innerHTML = `
     <section class="panel">
       <div class="panel-head wrap"><h2>Who saw it, and where</h2><span class="spacer"></span>
-        ${rangeSelect("aud-range", audienceRange, [...RANGES.slice(0, 3), ["lifetime", "All time"]])}</div>
+        ${rangeSelect("aud-range", audienceRange, AUDIENCE_RANGES)}</div>
       <div class="panel-body stack">
         <div class="format-scroll"><div class="segmented" id="aud-by">${BY.map(([k, l]) => `<button type="button" data-by="${k}" aria-pressed="${k === audienceBy}">${l}</button>`).join("")}</div></div>
         <div class="aud-grid">
@@ -410,7 +443,11 @@ async function renderAudience() {
       </div>
     </section>`;
   $("aud-by").addEventListener("click", (e) => { const b = e.target.closest("[data-by]"); if (b) { audienceBy = b.dataset.by; renderAudience(); } });
-  $("aud-range").addEventListener("change", (e) => { audienceRange = e.target.value; renderAudience(); });
+  $("aud-range").addEventListener("change", (e) => {
+    audienceRange = e.target.value;
+    if (RANGES.some(([k]) => k === audienceRange)) { chartRange = audienceRange; keepRange(audienceRange); data.series = null; }
+    renderAudience();
+  });
   const superseded = startLoad("tab");
   try {
     const d = await api(`/api/insights/breakdown?level=ad&id=${encodeURIComponent(adId)}&by=${audienceBy}&range=${audienceRange}`);
@@ -557,7 +594,7 @@ function renderHistory() {
 
 async function load() {
   try {
-    data = await api(`/api/ads/ad/${encodeURIComponent(adId)}`);
+    data = await api(`/api/ads/ad/${encodeURIComponent(adId)}?range=${encodeURIComponent(chartRange)}`);
     renderHead();
     if (tab === "video" && data.ad.object_type !== "VIDEO") tab = "overview";
     showTab(tab);

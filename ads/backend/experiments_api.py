@@ -137,8 +137,8 @@ def summaries(rows):
 def _summary(exp, ctx, ads, sets):
     out = ex.with_results(exp, ctx=ctx)
     for a in out["arms"]:
-        a["names"] = [ads.get(i, "an ad that's gone") for i in a.get("ad_ids") or []] + \
-                     [f"Ad set: {sets.get(i, 'gone')}" for i in a.get("adset_ids") or []]
+        a["members"] = ex.arm_members(a, ads, sets)
+        a["names"] = [(m["name"] or "an ad that's gone") if m["level"] == "ad" else f"Ad set: {m['name'] or 'gone'}" for m in a["members"]]
     for k in ("created_at", "closed_at"):
         out[k] = exp[k].isoformat() if exp.get(k) else None
     out["metric_label"] = ex.METRICS[exp["metric"]]["label"]

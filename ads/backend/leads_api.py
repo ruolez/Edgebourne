@@ -29,7 +29,8 @@ def _scope(user, alias="l"):
 def _get_visible(lead_id, user):
     where, params = _scope(user)
     return db.query(
-        f"SELECT l.*, u.name AS owner_name FROM leads l LEFT JOIN users u ON u.id = l.owner_id "
+        f"SELECT l.*, u.name AS owner_name, s.name AS adset_name FROM leads l LEFT JOIN users u ON u.id = l.owner_id "
+        f"LEFT JOIN adsets s ON s.id = l.adset_id "
         f"WHERE l.id = %s AND {where}",
         [lead_id] + params, one=True,
     )

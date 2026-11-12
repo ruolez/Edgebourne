@@ -74,3 +74,11 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual([insights_api.activity_values("ad_account_update_spend_limit", limit),
                           insights_api.activity_values("update_campaign_spend_cap", cap)],
                          [{"old": old_cents, "new": new_cents, "money": True}] * 2)
+
+    def test_a_history_line_points_at_its_campaign_ad_set_or_ad_and_nothing_else(self):
+        rows = [{"object_type": "CAMPAIGN", "object_id": "c1"}, {"object_type": "AD_SET", "object_id": "s1"},
+                {"object_type": "AD", "object_id": "a1"}, {"object_type": "ACCOUNT", "object_id": "act_1"},
+                {"object_type": "AD"}, {}]
+        self.assertEqual([insights_api.activity_object(r) for r in rows],
+                         [{"level": "campaign", "id": "c1"}, {"level": "adset", "id": "s1"}, {"level": "ad", "id": "a1"},
+                          None, None, None])

@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, fieldError, icon, toast, when, errorState, guardLeaving, markSaved } from "./ui.js";
+import { boot, confirmDialog, esc, fieldError, icon, toast, when, errorState, guardLeaving, markSaved, withFrom } from "./ui.js";
 import { count } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -7,6 +7,8 @@ let meta = { standard: {}, limits: {}, max_custom: 3, max_options: 6, privacy_de
 let spec = null;
 let step = "intro";
 let createdId = null;
+// A form named elsewhere (a lead's form, a change on Today) links here as #form=<id>: its row is marked.
+const linkedForm = () => { const m = location.hash.match(/form=([^&]+)/); return m ? decodeURIComponent(m[1]) : null; };
 
 const EXTRA = ["COMPANY_NAME", "JOB_TITLE", "CITY", "ZIP"];
 const SAMPLE = { FULL_NAME: "Maria Lopez", EMAIL: "maria@example.com", PHONE: "(555) 123-4567", COMPANY_NAME: "Lopez Plumbing", JOB_TITLE: "Owner", CITY: "Fontana", ZIP: "92335" };
@@ -22,13 +24,13 @@ async function loadList() {
   try {
     const d = await api("/api/forms");
     meta = d;
-    const rows = d.items.map((f) => `<tr class="${f.id === createdId ? "flash" : ""}">
+    const rows = d.items.map((f) => `<tr class="${f.id === createdId || f.id === linkedForm() ? "flash" : ""}" data-form-row="${esc(f.id)}">
       <td><b>${esc(f.name)}</b></td>
       <td>${f.status === "ACTIVE" ? '<span class="pill ok">Active</span>' : `<span class="pill">${esc((f.status || "").toLowerCase())}</span>`}</td>
       <td class="num">${count(f.leads_count || 0)}</td>
       <td>${f.created_time ? esc(when(f.created_time)) : ""}</td>
       <td class="row-actions"><button type="button" class="btn btn-quiet btn-small" data-copy="${esc(f.id)}">Copy into a new form</button>
-        <a class="btn btn-quiet btn-small" href="/new-ad.html?form=${encodeURIComponent(f.id)}">Use in a new ad</a></td>
+        <a class="btn btn-quiet btn-small" href="${esc(withFrom(`/new-ad.html?form=${encodeURIComponent(f.id)}`, "/forms.html"))}">Use in a new ad</a></td>
     </tr>`).join("");
     $("list").innerHTML = d.items.length ? `<div class="scroll-x"><table class="table middle"><thead><tr><th>Form</th><th>Status</th><th class="num">Leads</th><th>Made</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody></table></div>`
       : '<p class="muted flush">No forms on the Page yet. Start one with New form.</p>';
@@ -236,6 +238,9 @@ if (me) {
   guardLeaving();
   $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
   await loadList();
+  const linked = linkedForm() && document.querySelector(`[data-form-row="${CSS.escape(linkedForm())}"]`);
+  if (linked) linked.scrollIntoView({ block: "center" });
+  else if (linkedForm()) toast("That form isn't on the Page any more.");
   $("new-form").addEventListener("click", () => openBuilder(blank()));
   $("list").addEventListener("click", async (e) => {
     const c = e.target.closest("[data-copy]");

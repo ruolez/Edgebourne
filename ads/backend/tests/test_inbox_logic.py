@@ -47,5 +47,15 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(inbox.counts(items), {"unread": 3, "status": 1, "leads": 1, "claude": 1, "money": 0, "system": 0})
 
 
+class SubjectTests(unittest.TestCase):
+    def test_an_item_about_a_known_campaign_ad_set_or_ad_names_it_with_a_link_target(self):
+        items = [{"key": "alert:1", "entity_id": "a1"}, {"key": "alert:2", "entity_id": "c1"},
+                 {"key": "alert:3", "entity_id": "gone"}, {"key": "lead:9", "entity_id": None}]
+        known = {"a1": {"level": "ad", "name": "N1 - pain"}, "c1": {"level": "campaign", "name": "Free intro call"}}
+        got = inbox.with_subjects(items, known)
+        self.assertEqual([i["subject"] for i in got], [{"level": "ad", "id": "a1", "name": "N1 - pain"},
+                                                        {"level": "campaign", "id": "c1", "name": "Free intro call"}, None, None])
+
+
 if __name__ == "__main__":
     unittest.main()

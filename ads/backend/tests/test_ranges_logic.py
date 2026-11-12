@@ -57,3 +57,26 @@ class PreviousTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DailySeriesTests(unittest.TestCase):
+    KEYS = ("spend_cents", "leads")
+
+    def test_every_day_of_the_window_in_order_with_missing_days_as_zero(self):
+        rows = {"2026-11-02": {"spend_cents": 150, "leads": 1}, "2026-11-04": {"spend_cents": 90, "leads": None}}
+        self.assertEqual(ranges.daily_series(rows, date(2026, 11, 1), date(2026, 11, 4), self.KEYS), [
+            {"day": "2026-11-01", "spend_cents": 0, "leads": 0},
+            {"day": "2026-11-02", "spend_cents": 150, "leads": 1},
+            {"day": "2026-11-03", "spend_cents": 0, "leads": 0},
+            {"day": "2026-11-04", "spend_cents": 90, "leads": 0},
+        ])
+
+    def test_days_outside_the_window_are_left_out(self):
+        rows = {"2026-10-31": {"spend_cents": 5, "leads": 5}, "2026-11-05": {"spend_cents": 7, "leads": 7}}
+        self.assertEqual(ranges.daily_series(rows, date(2026, 11, 1), date(2026, 11, 1), self.KEYS),
+                         [{"day": "2026-11-01", "spend_cents": 0, "leads": 0}])
+
+    def test_a_month_window_has_one_entry_per_day(self):
+        start, end = ranges.window("lastmonth", TODAY)
+        series = ranges.daily_series({}, start, end, self.KEYS)
+        self.assertEqual((len(series), series[0]["day"], series[-1]["day"]), (31, "2026-10-01", "2026-10-31"))

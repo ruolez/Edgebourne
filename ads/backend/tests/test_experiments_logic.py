@@ -69,5 +69,33 @@ class JudgeTests(unittest.TestCase):
         self.assertEqual(ex.judge("cpl", [arm("A", 1000, 1)], days_run=7)["note"], "Add a second arm to compare.")
 
 
+class MembersTests(unittest.TestCase):
+    def test_an_arm_names_each_ad_and_ad_set_with_its_id_and_marks_the_ones_gone(self):
+        got = ex.arm_members({"label": "A", "ad_ids": ["a1", "a9"], "adset_ids": ["s1", "s9"]},
+                             {"a1": "N1 - pain"}, {"s1": "SoCal owners"})
+        self.assertEqual(got, [{"level": "ad", "id": "a1", "name": "N1 - pain", "gone": False},
+                               {"level": "ad", "id": "a9", "name": None, "gone": True},
+                               {"level": "adset", "id": "s1", "name": "SoCal owners", "gone": False},
+                               {"level": "adset", "id": "s9", "name": None, "gone": True}])
+
+    def test_an_arm_without_ids_has_no_members(self):
+        self.assertEqual(ex.arm_members({"label": "A"}, {}, {}), [])
+
+
+class ContainingTests(unittest.TestCase):
+    def test_tests_with_the_ad_or_its_whole_ad_set_running_ones_first_then_newest(self):
+        exps = [{"id": 1, "name": "Old hooks", "status": "done", "arms": [{"ad_ids": ["a1"]}, {"ad_ids": ["a2"]}]},
+                {"id": 2, "name": "Sets", "status": "running", "arms": [{"adset_ids": ["s1"]}, {"adset_ids": ["s2"]}]},
+                {"id": 3, "name": "Other ads", "status": "running", "arms": [{"ad_ids": ["a3"]}, {"ad_ids": ["a4"]}]},
+                {"id": 4, "name": "New hooks", "status": "done", "arms": [{"ad_ids": ["a2", "a1"]}, {"ad_ids": ["a5"]}]}]
+        self.assertEqual(ex.containing(exps, "a1", "s1"), [{"id": 2, "name": "Sets", "status": "running"},
+                                                           {"id": 4, "name": "New hooks", "status": "done"},
+                                                           {"id": 1, "name": "Old hooks", "status": "done"}])
+
+    def test_an_ad_in_no_test_and_an_ad_without_an_ad_set(self):
+        exps = [{"id": 1, "name": "T", "status": "running", "arms": [{"ad_ids": ["a2"]}, {"adset_ids": ["s2"]}]}]
+        self.assertEqual((ex.containing(exps, "a1", "s1"), ex.containing(exps, "a1", None)), ([], []))
+
+
 if __name__ == "__main__":
     unittest.main()

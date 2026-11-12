@@ -661,6 +661,8 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   await page.waitForSelector('#activity .chg-list li');
   check("Meta's history shows a budget change in money, not cents", /\$20\.00 → \$24\.00/.test(await page.textContent('#activity')) && !/2000 → 2400/.test(await page.textContent('#activity')),
     await page.textContent('#activity'));
+  check("Meta's history links the ad and the campaign each line is about", (await page.locator('#activity a.ent-link[href^="/ad.html?id="]').count()) === 1
+    && (await page.locator('#activity a.ent-link[href^="/campaign.html?id="]').count()) === 1);
   check('"Yesterday" under cost per lead is the real yesterday', await page.evaluate(async () => {
     const [d, y] = [await (await fetch('/api/performance?range=lastmonth')).json(), await (await fetch('/api/performance?range=7')).json()];
     return d.yesterday.day === y.range.end;
@@ -1066,6 +1068,13 @@ with account_ctx.use(1):
   await page.click('.test [data-reopen]');
   await page.waitForFunction(() => document.querySelector('[data-n="running"]')?.textContent === '1');
   check('Reopen puts it back to running without a winner', await page.evaluate(async () => (await (await fetch('/api/experiments')).json()).items[0].winner === null));
+  check('each arm names its ad with a link to it', (await page.locator('.test .arm-names a.ent-link[href^="/ad.html?id="]').count()) === 2);
+  await page.goto(BASE + '/ad.html?id=120252672229040312');
+  await page.waitForSelector('#cr-main .facts');
+  const testLink = page.locator('#cr-main .facts a.ent-link[href^="/experiments.html#"]');
+  check("an ad's page links the tests it is in", (await testLink.count()) === 1 && /QA problem hook/.test(await testLink.textContent()));
+  await Promise.all([page.waitForURL('**/experiments.html#*'), testLink.click()]);
+  await page.waitForSelector('.test.flash');
 
   const propId = sh(`docker exec -w /app edgebourne-ads-backend python -c "
 import db, json, desk_api
@@ -1241,6 +1250,7 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   await page.goto(BASE + '/ads.html?level=campaign');
   await Promise.all([page.waitForURL('**/new-adset.html?campaign=**'), page.locator('.campaign-add').first().click()]);
   await page.waitForSelector('#pl-list li b');
+  check('New ad set opened from the Campaigns list has Cancel back to that list', /^\/ads\.html\?.*level=campaign/.test(await page.getAttribute('#cancel', 'href')), await page.getAttribute('#cancel', 'href'));
   check('a new ad set starts from the live one: its places, ages and hints',
     (await page.locator('#pl-list li').count()) === 4 && /San Diego area/.test(await page.textContent('#pl-list'))
     && (await page.inputValue('#age_min')) === '25' && (await page.inputValue('#suggest_min')) === '30' && await page.isChecked('#keep_hints'));
@@ -1275,11 +1285,18 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
     JSON.stringify(newSets[0] && newSets[0].targeting));
   await page.waitForFunction(() => document.querySelectorAll('#aset-pick option').length > 0);
   check('the next step is adding an ad to the new ad set', (await page.inputValue('#aset-pick')) === newSets[0].id);
+  check('that page says the ad set was made, links to it, and Cancel still goes back to the list',
+    (await page.getAttribute('#made-note a.ent-link', 'href')) === `/adset.html?id=${newSets[0].id}` && /^\/ads\.html\?.*level=campaign/.test(await page.getAttribute('#cancel', 'href')));
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll('#aset-pick option').length > 0);
+  check('the "just created" note is said once: a reload keeps the ad set but drops the note', !/[?&]made=/.test(page.url())
+    && (await page.locator('#made-note').count()) === 0 && (await page.inputValue('#aset-pick')) === newSets[0].id, page.url());
 
   // New campaign: one form for campaign, ad set, form and ads; created off; resumes after a refusal; publish needs the budget typed.
   await page.goto(BASE + '/ads.html');
   await page.click('#new-menu summary');
-  await Promise.all([page.waitForURL('**/new-campaign.html'), page.click('#campaign-link')]);
+  await Promise.all([page.waitForURL('**/new-campaign.html?from=**'), page.click('#campaign-link')]);
+  check('New campaign opened from Ads has Cancel back to Ads', /^\/ads\.html/.test(await page.getAttribute('#cancel', 'href')), await page.getAttribute('#cancel', 'href'));
   await page.waitForSelector('#nc-list li b');
   await page.waitForFunction(() => /Still to do/.test(document.getElementById('review').textContent));
   check('the wizard lists what is still missing, by step', /Goal.*Give the campaign a name.*Budget/s.test(await page.textContent('#review')) && await page.isDisabled('#nc-create'));
@@ -1337,6 +1354,9 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   await page.click('#pub-form button[type=submit]');
   await page.click('dialog.confirm #cd-ok');
   await page.waitForFunction(() => /Published/.test(document.getElementById('build').textContent));
+  check('a published campaign links to what was made: the campaign, its ad set and each ad',
+    (await page.locator('#build .note.ok a.ent-link[href^="/campaign.html?id="]').count()) === 1 && (await page.locator('.build-table a.ent-link[href^="/campaign.html?id="]').count()) === 1
+    && (await page.locator('.build-table a.ent-link[href^="/adset.html?id="]').count()) === 1);
   const order = sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(','.join(r['level'] for r in db.query(\\"SELECT level FROM meta_changes WHERE action = 'status' AND new_value = 'ACTIVE' ORDER BY id DESC LIMIT 4\\")[::-1]))"`).trim();
   check('publishing turns on the ads, then the ad set, then the campaign last', order === 'ad,ad,adset,campaign' && Object.values(fake('_campaigns')).slice(-1)[0].status === 'ACTIVE', order);
   await page.screenshot({ path: `${OUT}/flow-new-campaign.png`, fullPage: true });
@@ -1779,7 +1799,7 @@ db.execute(\\"UPDATE users SET password_hash = %s, must_change_password = FALSE 
 db.execute(\\"UPDATE accounts SET archived_at = now() WHERE name = 'QA Studio'\\")
 import account_ctx
 with account_ctx.all_accounts():
-    db.execute(\\"UPDATE leads SET created_time = now(), status = 'new' WHERE meta_lead_id = 'ACCT2MARKlead'\\")
+    db.execute(\\"UPDATE leads SET created_time = now(), status = 'new', form_id = '777000111', form_name = 'QA client form' WHERE meta_lead_id = 'ACCT2MARKlead'\\")
     db.execute(\\"DELETE FROM inbox_reads WHERE user_id = (SELECT id FROM users WHERE email = 'client-qa@burdanova.test')\\")"`);
   const cctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
   const cp = await cctx.newPage();
@@ -1814,9 +1834,19 @@ with account_ctx.all_accounts():
   await cp.waitForSelector('#stages');
   check("a client sees their leads but not the controls that change them", /ACCT2MARK Lead Person/.test(await cp.textContent('#list'))
     && !(await cp.isVisible('#note-form')) && (await cp.locator('#stages button:visible').count()) <= 1);
+  // Forms and tests are admin pages: a client reads their names but gets no link to them.
+  await cp.waitForFunction(() => /QA client form/.test(document.getElementById('detail')?.textContent || ''));
+  const clientPlain = await cp.evaluate(async () => {
+    const ui = await import('/js/ui.js');
+    return { formLinks: document.querySelectorAll('#detail a[href^="/forms.html"], #detail a[href^="/experiments.html"]').length,
+      test: ui.entityLink('test', '42', 'QA test'), form: ui.entityLink('form', '42', 'QA form'), ad: ui.entityLink('ad', '42', 'QA ad') };
+  });
+  check("a client sees a lead's form by name with no link, and tests and forms never link for them", clientPlain.formLinks === 0
+    && clientPlain.test === 'QA test' && clientPlain.form === 'QA form' && /^<a class="ent-link" href="\/ad\.html\?id=42">/.test(clientPlain.ad), JSON.stringify(clientPlain));
   await cp.goto(BASE + '/report.html');
   await cp.waitForSelector('.r-head');
   check("a client opens their own account's report, without the share button", /Burdanova QA/.test(await cp.textContent('.r-head')) && await cp.isHidden('#share'));
+  check("a client's report links no form or test", (await cp.locator('#report a[href^="/forms.html"], #report a[href^="/experiments.html"]').count()) === 0);
   await cctx.close();
 
   // Client reports: the five parts, a share link without sign-in, the print layout, the scheduled email.
@@ -1831,6 +1861,8 @@ with account_ctx.all_accounts():
   const repWeek = await page.evaluate(async () => (await fetch('/api/reports?kind=week')).json());
   check("each change in the report is dated by the account's day, inside the period",
     repWeek.changes.every((c) => c.day >= repWeek.start && c.day <= repWeek.end), repWeek.changes.map((c) => c.day).join(' '));
+  check('signed in, the report links each ad to its page', (await page.locator('.r-ads a.ent-link[href^="/ad.html?id="]').count()) === (await page.locator('.r-ads tbody tr').count())
+    && (await page.locator('.r-ads tbody tr').count()) > 0);
   await page.click('#kind [data-kind="month"]');
   await page.waitForFunction(() => /Month/.test(document.querySelector('.r-kicker')?.textContent || ''));
   check('a month report covers the last complete month', /Oct 1 – Oct 31, 2026/.test(await page.textContent('.r-head')));
@@ -1840,6 +1872,9 @@ with account_ctx.all_accounts():
   await anon.goto(BASE + '/report.html?' + shareUrl.split('?')[1]);
   await anon.waitForSelector('.r-head');
   check('a share link opens the report without signing in, with no menu', /Edge Bourne/.test(await anon.textContent('.r-head')) && (await anon.locator('.rail').count()) === 0 && /This link works until/.test(await anon.textContent('.r-foot')));
+  const sharedRep = await anon.evaluate(async (q) => (await fetch('/api/reports/shared?' + q)).json(), shareUrl.split('?')[1]);
+  check('a shared report links nothing and carries no ids', (await anon.locator('#report a.ent-link').count()) === 0 && sharedRep.ads.every((a) => !('id' in a))
+    && sharedRep.changes.every((c) => !('entity_id' in c)), JSON.stringify(sharedRep.ads[0] || {}));
   const rSeen = errors.length;
   await anon.goto(BASE + '/report.html?' + shareUrl.split('?')[1].replace(/.$/, (c) => (c === 'a' ? 'b' : 'a')));
   await anon.waitForSelector('#report .note');
@@ -2235,6 +2270,29 @@ print(','.join(left))
   await page.goto(BASE + '/inbox.html');
   await page.waitForSelector('.ib-item, .ib-none');
   check('the Inbox page lists items with read state and filters', (await page.locator('#ib-filters [data-f]').count()) === 7 && (await page.locator('.ib-item').count()) > 0);
+  // 9.3a: an item about a campaign, ad set or ad names it with a link, and the open item is in the URL.
+  const navAlert = py(`import alerts;r=alerts.raise_found([{'rule':'changed_outside','key':'qa-nav-subject-'+__import__('uuid').uuid4().hex,'level':'info','title':'QA changed outside','lines':['Budget changed in Ads Manager'],'entity_id':'120252638288040312','campaign_id':'120252638288040312','href':'/campaign.html?id=120252638288040312','kind':'event'}]);print(r[0][0])`);
+  await page.goto(BASE + `/inbox.html?show=all#item=alert%3A${navAlert}`);
+  await page.waitForSelector('#ib-detail .ib-about a.ent-link');
+  check('an Inbox item opened by its address names its campaign with a link to it', (await page.getAttribute('#ib-detail .ib-about a.ent-link', 'href')) === '/campaign.html?id=120252638288040312'
+    && /QA changed outside/.test(await page.textContent('#ib-detail h2')), navAlert);
+  // The item named by the address only counts on arrival: picking a filter, opening an item and refreshing keep the filter.
+  await page.click('#ib-filters [data-f="unread"]');
+  await page.waitForSelector('#ib-filters [data-f="unread"][aria-selected="true"]');
+  await page.waitForSelector('.ib-item, .ib-none');
+  const ibPicked = (await page.locator('.ib-item').count()) ? await page.locator('.ib-item').first().getAttribute('data-key') : null;
+  if (ibPicked) { await page.locator('.ib-item').first().click(); await page.waitForFunction(() => /item=/.test(location.hash)); }
+  const ibTitle = ibPicked ? (await page.textContent('#ib-detail h2')).trim() : '';
+  await Promise.all([page.waitForResponse((r) => /\/api\/inbox\?/.test(r.url())), page.click('.topline [data-refresh]')]);
+  await page.waitForTimeout(400);
+  const ibAfter = await page.evaluate(() => ({ sel: document.querySelector('#ib-filters [aria-selected="true"]')?.dataset.f, show: new URLSearchParams(location.search).get('show'),
+    title: document.querySelector('#ib-detail h2')?.textContent.trim() || '' }));
+  check('in Unread, opening an item and refreshing keep Unread selected and the item on screen', ibPicked && ibAfter.sel === 'unread' && ibAfter.show === 'unread' && ibAfter.title === ibTitle,
+    JSON.stringify({ ibPicked, ibTitle, ...ibAfter }));
+  await page.click('#ib-filters [data-f="leads"]');
+  await page.waitForTimeout(400);
+  const ibLeads = await page.evaluate(() => ({ sel: document.querySelector('#ib-filters [aria-selected="true"]')?.dataset.f, show: new URLSearchParams(location.search).get('show'), hash: location.hash }));
+  check('picking another filter after an item was open keeps that filter and drops the item from the address', ibLeads.sel === 'leads' && ibLeads.show === 'leads' && !/item=/.test(ibLeads.hash), JSON.stringify(ibLeads));
   // 8.6 Ads manager: select → bulk bar (Cancel changes nothing, confirm turns off), peek with the timeline, level in the URL,
   // a saved view from the toolbar, campaign and ad set pages with breadcrumbs.
   await page.goto(BASE + '/ads.html?view=delivering');
@@ -2298,6 +2356,114 @@ print(','.join(left))
   await page.click('[data-drop]');
   await page.waitForFunction(() => document.querySelectorAll('.cmp thead .cmp-th').length === 2);
   check('removing an ad from the comparison keeps the rest', (new URL(page.url())).searchParams.get('ids').split(',').length === 2);
+  // 9.3a Navigation: names link to their pages, reverse links, one date range, breadcrumbs back to the filtered list,
+  // Cancel back to where a New page was opened from, and Back closes the quick look.
+  const NAV_AD = '120252672229400312';
+  await page.goto(BASE + `/ad.html?id=${NAV_AD}`);
+  await page.waitForSelector('#cr-main .facts a.ent-link[href^="/campaign.html?id="]');
+  check('the ad page links its campaign and ad set', (await page.locator('#cr-main .facts a.ent-link[href^="/adset.html?id="]').count()) === 1);
+  await Promise.all([page.waitForURL('**/compare.html?ids=**'), page.click('#cr-actions a[href^="/compare.html"]')]);
+  await page.waitForSelector('#cmp-pick');
+  check('Compare from an ad opens the picker with that ad already ticked', await page.isChecked(`#cmp-pick input[value="${NAV_AD}"]`));
+  await call('PUT', '/api/ads/ad/120252672232030312/tags', { tags: { hook: 'Question' } });
+  await page.goto(BASE + '/compare.html?ids=120252672232030312,120252672229040312&range=30');
+  await page.waitForSelector('.cmp thead');
+  const tagLink = page.locator('.cmp-tag a.ent-link[href^="/performance.html?idea="]').first();
+  check('Compare names each tag with a link to that idea on Results', (await tagLink.count()) === 1);
+  const tagWord = (await tagLink.textContent()).trim();
+  await Promise.all([page.waitForURL('**/performance.html?idea=**'), tagLink.click()]);
+  await page.waitForSelector('#ideas tr.flash');
+  check('the idea opens on Results with its row marked and its ads linked', (await page.textContent('#ideas tr.flash th b')).trim() === tagWord
+    && (await page.locator('#ideas tr.flash .idea-ads a.ent-link[href^="/ad.html?id="]').count()) > 0, tagWord);
+  await page.goto(BASE + `/campaign.html?id=${C1}`);
+  await page.waitForSelector('#en-leads');
+  check('a campaign page links to its leads and its results', (await page.getAttribute('#en-leads', 'href')) === `/leads.html?campaign=${C1}`
+    && (await page.getAttribute('#en-results', 'href')).startsWith(`/performance.html?campaign=${C1}`));
+  await Promise.all([page.waitForURL('**/leads.html?campaign=**'), page.click('#en-leads')]);
+  await page.waitForFunction((c) => document.getElementById('source')?.value === `c:${c}`, C1).catch(() => {});
+  check("its leads open filtered to that campaign", (await page.inputValue('#source')) === `c:${C1}`, await page.inputValue('#source'));
+  await page.waitForSelector('.lead-row');
+  await page.locator('.lead-row').first().click();
+  await page.waitForSelector('#detail .facts');
+  check("a lead's detail links its ad and its campaign", (await page.locator('#detail .facts a.ent-link[href^="/campaign.html?id="]').count()) === 1);
+  // One date range: picked on Ads, it is what a campaign, Compare and Results open on.
+  await page.goto(BASE + '/ads.html?view=delivering&range=7');
+  await page.waitForSelector('#range-pick');
+  await page.selectOption('#range-pick', '30');
+  await page.waitForFunction(() => /range=30/.test(location.search));
+  const rangeOn = async (url, sel) => { await page.goto(BASE + url); await page.waitForSelector(sel); return page.inputValue(sel); };
+  const shared = [await rangeOn(`/campaign.html?id=${C1}`, '#range-pick'), await rangeOn('/adset.html?id=120252672227950312', '#range-pick'),
+    await rangeOn('/compare.html?ids=120252672232030312,120252672233160312', '#cmp-range'), await rangeOn('/performance.html', '#range-pick')];
+  check('the dates picked on Ads carry to Campaign, Ad set, Compare and Results', shared.every((r) => r === '30'), shared.join());
+  await page.selectOption('#range-pick', '14');
+  await page.waitForFunction(() => /range=14/.test(location.search));
+  check('dates picked on Results carry back to Ads', (await rangeOn('/ads.html', '#range-pick')) === '14');
+  const [adReq] = await Promise.all([page.waitForRequest((r) => new RegExp(`/api/ads/ad/${NAV_AD}\\?`).test(r.url())), page.goto(BASE + `/ad.html?id=${NAV_AD}`)]);
+  await page.waitForSelector('#chart-range');
+  check("the ad's daily charts open on the shared dates", (await page.inputValue('#chart-range')) === '14' && new URL(adReq.url()).searchParams.get('range') === '14', adReq.url());
+  const [seriesRes] = await Promise.all([page.waitForResponse((r) => /\/series\?range=30/.test(r.url())), page.selectOption('#chart-range', '30')]);
+  const days30 = (await seriesRes.json()).series.length;
+  await page.waitForFunction(() => /range=30/.test(location.search));
+  check('dates picked on the ad redraw its charts for 30 days and carry to the rest', days30 === 30 && new URL(page.url()).searchParams.get('id') === NAV_AD
+    && (await page.evaluate(() => localStorage.getItem('ebads-range'))) === '30', `${days30} ${page.url()}`);
+  await page.goto(BASE + `/campaign.html?id=${C1}`);
+  await page.waitForSelector('#range-pick');
+  await page.selectOption('#range-pick', '7');
+  await page.waitForFunction(() => /range=7/.test(location.search) || document.querySelector('#range-pick').value === '7');
+  await page.waitForTimeout(300);
+  check('changing the dates on a campaign keeps the campaign in the address', new URL(page.url()).searchParams.get('id') === C1, page.url());
+  // Breadcrumbs: back to the list as it was filtered.
+  await page.goto(BASE + '/ads.html?view=delivering&q=N');
+  await page.waitForSelector('.tbl tbody tr');
+  await page.goto(BASE + `/ad.html?id=${NAV_AD}`);
+  await page.waitForSelector('.crumbs a');
+  const adsCrumb = await page.getAttribute('.crumbs a', 'href');
+  check('the Ads breadcrumb goes back to the list as it was filtered', /view=delivering/.test(adsCrumb) && /q=N/.test(adsCrumb), adsCrumb);
+  // ?from= on New pages: Cancel and the breadcrumb go back to the page it was opened from.
+  await page.goto(BASE + `/campaign.html?id=${C1}`);
+  await page.waitForSelector('#en-actions a[href^="/new-adset.html"]');
+  await Promise.all([page.waitForURL('**/new-adset.html?**'), page.click('#en-actions a[href^="/new-adset.html"]')]);
+  await page.waitForSelector('#cancel');
+  const cancelTo = await page.getAttribute('#cancel', 'href');
+  const midCrumb = await page.$$eval('.crumbs a', (as) => as.map((a) => `${a.textContent}=${a.getAttribute('href')}`));
+  check('New ad set opened from a campaign has Cancel back to that campaign, and says so in the breadcrumbs',
+    cancelTo === `/campaign.html?id=${C1}` && midCrumb.some((c) => c === `Campaign=/campaign.html?id=${C1}`), `${cancelTo} ${midCrumb.join(' | ')}`);
+  await Promise.all([page.waitForURL(`**/campaign.html?id=${C1}`), page.click('#cancel')]);
+  check('Cancel goes back to the campaign', page.url().endsWith(`/campaign.html?id=${C1}`));
+  await page.goto(BASE + `/new-ad.html?from=${encodeURIComponent('//example.com/x.html')}`);
+  await page.waitForSelector('#cancel');
+  check('a ?from= pointing at another site is ignored', !/example\.com/.test(await page.getAttribute('#cancel', 'href')), await page.getAttribute('#cancel', 'href'));
+  await page.goto(BASE + `/ad.html?id=${NAV_AD}`);
+  await page.waitForSelector('#cr-actions a[href^="/new-ad.html"]');
+  await Promise.all([page.waitForURL('**/new-ad.html?template=**'), page.click('#cr-actions a[href^="/new-ad.html"]')]);
+  await page.waitForFunction((id) => document.getElementById('template')?.value === id, NAV_AD);
+  check('New ad from this starts from the ad and Cancel goes back to it', (await page.getAttribute('#cancel', 'href')) === `/ad.html?id=${NAV_AD}`
+    && await page.evaluate(() => document.getElementById('mt-same').getAttribute('aria-selected') === 'true'));
+  await page.goto(BASE + `/new-ad.html?from=${NAV_AD}`);
+  await page.waitForSelector('#template option', { state: 'attached' });
+  await page.waitForTimeout(300);
+  check('an older New ad link (?from=<ad>) still starts from that ad', (await page.inputValue('#template')) === NAV_AD, await page.inputValue('#template'));
+  await page.goto(BASE + '/home.html');
+  await page.waitForSelector('.today-changes');
+  const viaAll = await page.locator('.call .via').count();
+  check('Today links the ad each lead came from and the things changed from the console',
+    (await page.locator('.today-changes a.ent-link').count()) > 0 && (await page.locator('.call .via a.ent-link[href^="/ad.html?id="]').count()) === viaAll, String(viaAll));
+  // Back closes the quick look and stays on Ads.
+  await page.goto(BASE + '/ads.html?range=7');
+  await page.evaluate(() => localStorage.setItem('ebads-range', '7'));
+  await page.waitForSelector('.tbl tbody tr');
+  const listUrl = page.url();
+  await page.locator('.tbl tbody tr').first().locator('td.num').first().click();
+  await page.waitForSelector('.pk.open');
+  await page.goBack();
+  await page.waitForSelector('.pk:not(.open)');
+  check('Back closes the quick look and stays on the list', page.url() === listUrl && !/peek=/.test(page.url()), page.url());
+  await page.locator('.tbl tbody tr').first().locator('td.num').first().click();
+  await page.waitForSelector('.pk.open');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.pk:not(.open)');
+  await page.waitForTimeout(200);
+  check('closing the quick look leaves no extra step behind', !/peek=/.test(page.url()) && await page.evaluate(() => !(history.state && history.state.layer)), page.url());
   // The same number everywhere (cluster 6): labels, totals, tracks and dead campaigns.
   check('Compare calls ThruPlays ÷ 3-second views "Hold rate", as the Video tab does', /Hold rate/.test(cmpText) && !/Watched to the end/.test(cmpText));
   const deadCamp = sh(`docker exec -w /app edgebourne-ads-backend python -c "
@@ -2441,6 +2607,19 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
     if (added && added.is_active) await page.evaluate(async (id) => { await fetch(`/api/team/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: false }) }); }, added.id);
     await page.reload();
     await page.waitForSelector('#team-table tbody tr');
+    // 9.3a: a teammate's campaigns link to their pages (assigned for this check, then taken off again).
+    const mateNow = (await getJson('/api/team')).members.find((m) => m.email === QA_MATE);
+    if (mateNow) {
+      const setCamps = (ids) => page.evaluate(async ([id, c]) => (await fetch(`/api/team/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campaign_ids: c }) })).status, [mateNow.id, ids]);
+      await setCamps(['120252638288040312']);
+      await page.reload();
+      await page.waitForSelector('#team-table tbody tr');
+      const teamLinks = await page.$$eval('#team-table a.ent-link', (as) => as.map((a) => a.getAttribute('href')));
+      await setCamps([]);
+      check("Team links each teammate's campaign to its page", teamLinks.includes('/campaign.html?id=120252638288040312'), teamLinks.join());
+      await page.reload();
+      await page.waitForSelector('#team-table tbody tr');
+    }
   }
   await page.evaluate(() => { const b = document.createElement('button'); b.id = 'qa-danger'; b.className = 'btn btn-danger'; b.textContent = 'Delete'; document.querySelector('.content').prepend(b); });
   await page.hover('#qa-danger');
@@ -2697,6 +2876,45 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   await phonePage.waitForTimeout(200);
   check('← All leads keeps the lead source filter (?ad=) in the URL', new URL(phonePage.url()).searchParams.get('ad') === adOpt.slice(2)
     && !(await phonePage.getAttribute('#layout', 'class')).includes('showing-detail'), phonePage.url());
+  // 9.3a: on a phone a lead and an Inbox item cover their list, and the phone's Back closes them.
+  await phonePage.click('.lead-row');
+  await phonePage.waitForSelector('#layout.showing-detail #back');
+  check('on a phone opening a lead puts it in the address', /#lead=\d+/.test(phonePage.url()), phonePage.url());
+  await phonePage.goBack();
+  await phonePage.waitForFunction(() => !document.getElementById('layout').classList.contains('showing-detail'));
+  check('on a phone Back closes the lead and stays on Leads with its filter', /\/leads\.html\?ad=/.test(phonePage.url()) && !/#lead=/.test(phonePage.url()), phonePage.url());
+  await phonePage.goto(BASE + '/inbox.html?show=all');
+  await phonePage.waitForSelector('.ib-item');
+  await phonePage.locator('.ib-item').first().click();
+  await phonePage.waitForSelector('#ib-panel.showing-detail #ib-detail h2');
+  const ibOpen = phonePage.url();
+  check('on a phone an Inbox item opens over the list with a way back', /#item=/.test(ibOpen) && await phonePage.isVisible('#ib-detail [data-ib-back]') && await phonePage.isHidden('#ib-list'), ibOpen);
+  await phonePage.goBack();
+  await phonePage.waitForFunction(() => !document.getElementById('ib-panel').classList.contains('showing-detail'));
+  check('on a phone Back closes the Inbox item and shows the list', /\/inbox\.html\?show=all$/.test(phonePage.url()) && await phonePage.isVisible('.ib-item'), phonePage.url());
+  await phonePage.locator('.ib-item').first().click();
+  await phonePage.waitForSelector('#ib-panel.showing-detail [data-ib-back]');
+  await phonePage.click('#ib-detail [data-ib-back]');
+  await phonePage.waitForFunction(() => !document.getElementById('ib-panel').classList.contains('showing-detail') && !/item=/.test(location.hash));
+  check('← Inbox shows the list and leaves no extra step behind', !/#item=/.test(phonePage.url()) && await phonePage.evaluate(() => !(history.state && history.state.layer)), phonePage.url());
+  {
+    const n = await phonePage.locator('.ib-item').count();
+    const far = phonePage.locator('.ib-item').nth(Math.max(0, n - 1));
+    await far.scrollIntoViewIfNeeded();
+    const y0 = await phonePage.evaluate(() => window.scrollY);
+    const farKey = await far.getAttribute('data-key');
+    await far.click();
+    await phonePage.waitForSelector('#ib-panel.showing-detail [data-ib-back]');
+    const backFocused = await phonePage.evaluate(() => document.activeElement?.hasAttribute('data-ib-back'));
+    const gap = await phonePage.evaluate(() => { const h = document.querySelector('.main h1'); return h ? Math.round(h.getBoundingClientRect().top + window.scrollY) : -1; });
+    check('on a phone a short page (an open Inbox item) starts right under the top bar', gap > 0 && gap < 120, String(gap));
+    await phonePage.click('#ib-detail [data-ib-back]');
+    await phonePage.waitForFunction(() => !document.getElementById('ib-panel').classList.contains('showing-detail'));
+    await phonePage.waitForTimeout(300);
+    const back = await phonePage.evaluate(() => ({ y: window.scrollY, focus: document.activeElement?.dataset?.key || '' }));
+    check('on a phone an Inbox item takes focus to ← Inbox, and the list comes back where it was with that item focused',
+      backFocused && Math.abs(back.y - y0) <= 2 && back.focus === farKey, JSON.stringify({ n, y0, backFocused, ...back, farKey }));
+  }
   // Phones keep their size: iOS zooms into any field under 16px; anything past the edge makes the browser shrink the page.
   const narrow = await (await browser.newContext({ viewport: { width: 320, height: 700 }, isMobile: true, hasTouch: true })).newPage();
   await narrow.goto(BASE + '/login.html?next=//example.com/x');

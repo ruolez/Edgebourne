@@ -1,5 +1,6 @@
 import { api, startLoad } from "./api.js";
-import { boot, esc, fieldError, icon, onRefresh, phoneDisplay, setNewCount, shortWait, toast, waited, when, showLoadError } from "./ui.js";
+import { boot, entityLink, esc, fieldError, icon, onRefresh, phoneDisplay, rememberList, setNewCount, shortWait, toast, waited, when, showLoadError } from "./ui.js";
+import { closeLayer, openLayer } from "./urlstate.js";
 
 const STAGES = [
   { id: "new", label: "New" },
@@ -147,8 +148,10 @@ function detailHtml(lead) {
       <dt>Asked</dt><dd>${when(lead.created_time)}</dd>
       <dt>Phone</dt><dd>${esc(phoneDisplay(lead.phone) || "—")}</dd>
       <dt>Email</dt><dd>${esc(lead.email || "—")}</dd>
-      <dt>Ad</dt><dd>${lead.ad_id && lead.ad_name ? `<a href="/ad.html?id=${encodeURIComponent(lead.ad_id)}">${esc(lead.ad_name)}</a>` : esc(lead.ad_name || (lead.is_organic ? "None: filled in without an ad (organic)" : "—"))}</dd>
-      <dt>Campaign</dt><dd>${esc(lead.campaign_name || "—")}</dd>
+      <dt>Ad</dt><dd>${lead.ad_name ? entityLink("ad", lead.ad_id, lead.ad_name) : esc(lead.is_organic ? "None: filled in without an ad (organic)" : "—")}</dd>
+      ${lead.adset_name ? `<dt>Ad set</dt><dd>${entityLink("adset", lead.adset_id, lead.adset_name)}</dd>` : ""}
+      <dt>Campaign</dt><dd>${lead.campaign_name ? entityLink("campaign", lead.campaign_id, lead.campaign_name) : "—"}</dd>
+      ${lead.form_name ? `<dt>Form</dt><dd>${entityLink("form", lead.form_id, lead.form_name)}</dd>` : ""}
     </dl>
     ${answers ? `<h3 class="section-title">Their answers</h3><dl class="facts">${answers}</dl>` : ""}
     ${emailsHtml(lead)}
@@ -260,10 +263,14 @@ function describe(h) {
   return h.action;
 }
 
+// On a phone the lead covers the list, so opening one is a step Back undoes; side by side it's just the selection.
+const covers = () => matchMedia("(max-width: 960px)").matches;
+const listUrl = () => location.pathname + location.search;
+
 async function select(id, { push = true } = {}) {
   state.selected = id;
   document.querySelectorAll(".lead-row").forEach((r) => r.setAttribute("aria-current", String(Number(r.dataset.id) === id)));
-  if (push) history.replaceState(null, "", `#lead=${id}`);
+  if (push) { if (covers()) openLayer(`${listUrl()}#lead=${id}`); else history.replaceState(null, "", `${listUrl()}#lead=${id}`); }
   $("layout").classList.add("showing-detail");
   try {
     const lead = await api(`/api/leads/${id}`);
@@ -283,7 +290,7 @@ function renderDetail(lead, { keep = false } = {}) {
   detail.innerHTML = detailHtml(lead);
   $("back")?.addEventListener("click", () => {
     $("layout").classList.remove("showing-detail");
-    history.replaceState(null, "", location.pathname + location.search);
+    closeLayer(listUrl());
   });
   wireReply(lead);
   detail.querySelectorAll("[data-stage]").forEach((b) => b.addEventListener("click", () => patch(lead.id, { status: b.dataset.stage })));
@@ -356,6 +363,7 @@ async function main() {
     if (kind === "c") u.searchParams.set("campaign", value);
     if (kind === "a") u.searchParams.set("ad", value);
     history.replaceState(null, "", u);
+    rememberList(u.pathname + u.search);
     state.selected = null;
     load();
   });
@@ -374,12 +382,16 @@ async function main() {
   if (fromHash) state.selected = fromHash; // so the list doesn't open the newest lead instead
   await load();
   if (fromHash) select(fromHash, { push: false });
-  // ⌘K or a notification can point at another lead while this page is open.
-  window.addEventListener("hashchange", () => {
+  // ⌘K or a notification can point at another lead while this page is open; Back closes the one open.
+  const followUrl = () => {
     const id = Number((location.hash.match(/lead=(\d+)/) || [])[1]);
     if (id && id !== state.selected) select(id, { push: false });
-    else if (!id) $("layout").classList.remove("showing-detail");
-  });
+    else if (id) $("layout").classList.add("showing-detail");
+    else $("layout").classList.remove("showing-detail");
+  };
+  window.addEventListener("hashchange", followUrl);
+  window.addEventListener("popstate", followUrl);
+  rememberList(listUrl());
   // New leads appear without a reload; the clocks keep counting.
   setInterval(() => { if (!document.hidden) load({ quiet: true }); }, 30000);
 }

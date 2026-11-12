@@ -1,7 +1,7 @@
 // The one Suggestion card (UX-AUDIT 9.2): what Claude suggests, what would change, why, and what you
 // can do about it. The Claude page (`place: "claude"`) accepts through the Accept sheet; the ad page and
 // Research (`place: "inline"`) through the confirmation in tasks.js. Both read the same card.
-import { esc, icon, previewSkeleton, when } from "./ui.js";
+import { entityLink, esc, icon, previewSkeleton, when } from "./ui.js";
 import { WORDS } from "./format.js";
 
 const isVersion = (p) => /^make a new version/i.test(p.title || "");
@@ -37,15 +37,16 @@ export function changeList(p, ix) {
   const pl = p.payload || {};
   const from = ((ix && ix.ads) || {})[aboutId(p)] || {};
   const adName = from.name || p.entity_name || "this ad";  // a name, never Meta's id
+  const adLink = aboutId(p) && (from.name || p.entity_name) ? entityLink("ad", aboutId(p), adName) : esc(adName);
   if (p.kind === "creative" && pl.vertical) {
-    return `<dl class="facts changes"><div><dt>Ad</dt><dd>${esc(adName)} <span class="muted">(updated, not copied)</span></dd></div>
+    return `<dl class="facts changes"><div><dt>Ad</dt><dd>${adLink} <span class="muted">(updated, not copied)</span></dd></div>
       <div><dt>Reels, Stories</dt><dd><ins>New 9:16 video Claude made</ins></dd></div>
       <div><dt>Feeds</dt><dd class="muted">Same 4:5 video as now</dd></div>
       <div><dt>Words, button, form</dt><dd class="muted">Same as now</dd></div></dl>`;
   }
   if (p.kind === "creative") {
     const rows = [];
-    if (pl.update_ad) rows.push(`<div><dt>Ad</dt><dd>${esc(adName)} <span class="muted">(updated, not copied)</span></dd></div>`);
+    if (pl.update_ad) rows.push(`<div><dt>Ad</dt><dd>${adLink} <span class="muted">(updated, not copied)</span></dd></div>`);
     const same = (a, b) => String(a || "").trim() === String(b || "").trim();
     rows.push(same(pl.title, from.title)
       ? `<div><dt>Headline</dt><dd>${esc(pl.title)} <span class="muted">(same as now)</span></dd></div>`
@@ -63,8 +64,13 @@ export function changeList(p, ix) {
     return `<dl class="facts changes">${Object.entries(p.payload.tags || {}).map(([d, v]) => `<div><dt>${esc(DIM[d] || d)}</dt><dd><ins>${esc(v)}</ins></dd></div>`).join("")}</dl>`;
   }
   if (p.kind === "experiment" && p.payload) {
-    const arm = (a) => (a.names || []).join(", ") || "an ad";
-    const rows = (pl.arms || []).map((a) => `<div><dt>${esc(a.label)}</dt><dd>${esc(arm(a))}</dd></div>`);
+    // Names line up with ad_ids when Claude wrote both: then each links to its ad.
+    const arm = (a) => {
+      const names = a.names || [], ids = a.ad_ids || [];
+      if (!names.length) return "an ad";
+      return names.map((n, i) => (ids.length === names.length ? entityLink("ad", ids[i], n) : esc(n))).join(", ");
+    };
+    const rows = (pl.arms || []).map((a) => `<div><dt>${esc(a.label)}</dt><dd>${arm(a)}</dd></div>`);
     rows.push(`<div><dt>Decided by</dt><dd>${esc(TEST_METRICS[pl.metric] || pl.metric)}</dd></div>`);
     const day = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
     if (pl.start_day) rows.push(`<div><dt>Dates</dt><dd>From ${esc(day(pl.start_day))}${pl.end_day ? ` to ${esc(day(pl.end_day))}` : ", no end set"}</dd></div>`);
@@ -72,7 +78,7 @@ export function changeList(p, ix) {
     return `<dl class="facts changes">${rows.join("")}</dl>`;
   }
   const rows = [];
-  if (p.entity_name) rows.push(`<div><dt>On</dt><dd>${esc([p.entity_type && p.entity_type.replace("adset", "ad set"), p.entity_name].filter(Boolean).join(" · "))}</dd></div>`);
+  if (p.entity_name) rows.push(`<div><dt>On</dt><dd>${p.entity_type ? `${esc(p.entity_type.replace("adset", "ad set"))} · ` : ""}${entityLink(p.entity_type, p.entity_id, p.entity_name)}</dd></div>`);
   if (p.current_value || p.proposed_value) rows.push(`<div><dt>${esc(p.field ? p.field.charAt(0).toUpperCase() + p.field.slice(1) : "Change")}</dt><dd>${p.current_value ? `<del>${esc(p.current_value)}</del> → ` : ""}<ins>${esc(p.proposed_value || "")}</ins></dd></div>`);
   if (p.expected) rows.push(`<div><dt>Then</dt><dd>${esc(p.expected)}</dd></div>`);
   if (p.rollback) rows.push(`<div><dt>Undo</dt><dd>${esc(p.rollback)}</dd></div>`);

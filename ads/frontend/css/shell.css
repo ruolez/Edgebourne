@@ -90,7 +90,7 @@ kbd {
 /* Phones */
 .topbar, .tabbar { display: none; }
 @media (max-width: 960px) {
-  .app { grid-template-columns: minmax(0, 1fr); }
+  .app { grid-template-columns: minmax(0, 1fr); align-content: start; }
   .rail { display: none; }
   .topline { display: none; }
   .topbar {
@@ -194,6 +194,10 @@ dialog.palette::backdrop { background: rgba(10, 12, 14, .35); }
 @media (max-width: 960px) {
   .ib-layout { grid-template-columns: 1fr; }
   .ib-detail { display: none; }
+  /* An item opened on a phone covers the list; ← Inbox or Back shows the list again. */
+  .ib-layout.showing-detail .ib-list { display: none; }
+  .ib-layout.showing-detail .ib-detail { display: flex; position: static; }
+  .ib-detail .back-link { align-self: flex-start; margin-bottom: 0; }
 }
 
 /* Signal density for the shared components (app.css keeps their structure). */
@@ -613,6 +617,7 @@ dialog { max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .results-bar .search .input { min-height: var(--target); height: auto; }
   .cr-cell, .results-table .cr-cell { min-height: var(--target); }
   #preview-open, .swipe footer a, .facts dd > a { display: inline-block; padding: 14px 0; margin: -14px 0; }
+  .idea-ads .ent-link { display: inline-block; padding: 15px 0; margin: -15px 0; }
   .places .radius { min-height: var(--target); }
   .al-num .input, .sort .input, .acct-select, .rail .acct-select { min-height: var(--target); }
   /* Settings' section links: one row that scrolls sideways instead of five rows of 44px links. */

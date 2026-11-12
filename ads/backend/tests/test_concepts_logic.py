@@ -54,5 +54,17 @@ class MergeTests(unittest.TestCase):
         self.assertEqual((up, down), ([("persona", "Ops managers", "manual")], ["angle"]))
 
 
+class MembersTests(unittest.TestCase):
+    def test_each_value_lists_its_ads_by_name_with_their_ids_and_untagged_ads_land_together(self):
+        rows = [{"id": "n5", "name": "N5 - quote"}, {"id": "n2", "name": "n2 - outcome"}, {"id": "x", "name": "Old"},
+                {"id": "n1", "name": "N1 - pain"}]
+        tags = {"n1": {"hook": "Statement of pain"}, "n2": {"hook": "Outcome promise"}, "n5": {"hook": "Outcome promise"},
+                "x": {"angle": "Reports"}}
+        self.assertEqual(c.members(rows, tags, "hook"), {
+            "Outcome promise": [{"id": "n2", "name": "n2 - outcome"}, {"id": "n5", "name": "N5 - quote"}],
+            "Statement of pain": [{"id": "n1", "name": "N1 - pain"}],
+            c.UNTAGGED: [{"id": "x", "name": "Old"}]})
+
+
 if __name__ == "__main__":
     unittest.main()

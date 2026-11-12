@@ -57,6 +57,12 @@ tabs under them (Ads · Lead forms; Results · Compare · Tests · Reports; Clau
 Team). Phones: five tabs (Today, Leads, Ads, Inbox, More). The frame lives in `js/ui.js` (`boot`,
 `setCrumbs`, one map `PAGE_SECTION` / `SECTIONS` / `SUBNAV`).
 
+Getting around (9.3a): every campaign, ad set, ad, lead, form, test or tag named on a page links to it through
+`ui.entityLink` (never a hand-built `<a>`); a breadcrumb back to a list opens it as last filtered in that tab; the
+date range picked on Ads, a campaign, an ad set, an ad, Compare or Results is the one the others open on (a link's
+`?range=` wins); New pages take `?from=<path>` for Cancel and the way back (`ui.withFrom`, `returnCrumbs`); the quick
+look, a lead on a phone and an Inbox item push one history step, so the phone's Back closes them (`urlstate.openLayer`).
+
 | Page | What it's for |
 |---|---|
 | Today (`home.html`) | Needs attention, call these first, money, ads strip, Claude, the latest from the Inbox, Meta's advice |

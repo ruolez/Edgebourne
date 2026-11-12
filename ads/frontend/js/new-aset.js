@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, fieldError, icon, toast, guardLeaving, markSaved } from "./ui.js";
+import { boot, cancelLink, confirmDialog, esc, fieldError, icon, toast, guardLeaving, markSaved, returnCrumbs, withFrom } from "./ui.js";
 import { money } from "./format.js";
 import { placeLabel, placesHtml, placesWidget } from "./places.js";
 
@@ -95,7 +95,9 @@ async function loadTemplate() {
 const me = await boot({ page: "new-adset", admin: true });
 if (me) guardLeaving();
 if (me) {
-  $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
+  $("crumb").innerHTML = `${icon("back")}<span>Back</span>`;
+  const back = returnCrumbs("New ad set");
+  $("create")?.insertAdjacentHTML("afterend", cancelLink(back));
   try { opts = await api("/api/adsets/new/options"); } catch (err) { toast(err.message, "bad"); }
   if (!opts || !opts.campaigns.length || !opts.adsets.length) {
     document.querySelector(".new-ad-layout").innerHTML = `<section class="panel empty"><h3>Nothing to build on yet</h3><p>A new ad set starts from an existing one. Once your campaigns are synced from Meta, come back here.</p><a class="btn" href="/ads.html">Back to ads</a></section>`;
@@ -131,9 +133,9 @@ if (me) {
       $("create").disabled = true;
       try {
         const r = await api("/api/adsets", { method: "POST", body: { campaign_id: c.id, template_adset_id: $("template").value, spec: s } });
-        toast("Ad set created, switched off. Add an ad to it next.");
         markSaved();
-        location.href = `/new-ad.html?adset=${encodeURIComponent(r.id)}`;
+        // On to its first ad; that page says the ad set was made and links to it. Cancel there still goes back.
+        location.href = withFrom(`/new-ad.html?adset=${encodeURIComponent(r.id)}&made=adset`, back);
       } catch (err) {
         $("create").disabled = false;
         const field = err.body && err.body.field;

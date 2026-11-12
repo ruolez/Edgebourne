@@ -1,8 +1,8 @@
 // Ads page: the manager table at three levels with views, saved views, range + "vs before",
 // columns, search, selection → bulk bar / compare, and a peek drawer. Everything is in the URL.
 import { api, startLoad } from "./api.js";
-import { boot, confirmDialog, esc, icon, onRefresh, toast, showLoadError } from "./ui.js";
-import { RANGES, count, dayLabel, rangeSelect } from "./format.js";
+import { boot, confirmDialog, esc, icon, onRefresh, toast, showLoadError, rememberList, withFrom } from "./ui.js";
+import { count, dayLabel, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
 import { COLUMN_SETS, LEVEL_WORDS, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, listHtml, narrow, peek, tableHtml, unlistedNote, wire } from "./manager.js";
 
@@ -12,18 +12,26 @@ const MONTHS = ["mtd", "lastmonth"];
 // The URL and saved views always carry the dates, so a link opens on the same days in any browser.
 const KEEP = { ...DEFAULTS, range: "" };
 let state = UrlState.read(DEFAULTS);
-// This browser's last dates (and the old saved card view) only fill in what the URL doesn't say.
+// This browser's last dates (shared with Campaign, Ad set, Ad, Compare and Results) and the old saved card
+// view only fill in what the URL doesn't say.
 try {
   const old = JSON.parse(localStorage.getItem("ebads-adsview") || "null");
   if (old && !location.search) { if (old.view === "cards") state.display = "cards"; localStorage.removeItem("ebads-adsview"); }
-  const r = localStorage.getItem("ebads-range");
-  if (r && RANGES.some(([k]) => k === r) && !new URLSearchParams(location.search).has("range")) state.range = r;
 } catch (e) { /* storage off */ }
+if (!new URLSearchParams(location.search).has("range")) state.range = sharedRange(state.range);
 let data = null, rows = null, me = null, saved = [];
 const selected = new Set();
 let lastPicked = null;
 
-const save = () => UrlState.write(state, KEEP);
+// The list as filtered now is what breadcrumbs elsewhere come back to (the quick look isn't part of it).
+// New things made from here come back here: Cancel, and the way back once made (?from=).
+const listHere = () => { const q = UrlState.query({ ...state, peek: "" }, KEEP); return `/ads.html${q ? `?${q}` : ""}`; };
+const save = () => {
+  UrlState.write(state, KEEP);
+  const list = listHere();
+  rememberList(list);
+  document.querySelectorAll("#new-menu a, #new-ad").forEach((a) => { a.href = withFrom(a.getAttribute("href").split("?")[0], list); });
+};
 save();
 
 function visibleRows() {
@@ -98,7 +106,7 @@ function render() {
     document.querySelectorAll('#cr-all tr[data-row^="campaign:"] .c-name small').forEach((sm) => {
       const id = sm.closest("tr").dataset.row.split(":")[1];
       if (!LIVE.includes((rows.campaign || []).find((c) => c.id === id)?.status)) return;
-      sm.insertAdjacentHTML("afterend", `<a class="campaign-add" href="/new-adset.html?campaign=${encodeURIComponent(id)}">+ New ad set</a>`);
+      sm.insertAdjacentHTML("afterend", `<a class="campaign-add" href="${esc(withFrom(`/new-adset.html?campaign=${encodeURIComponent(id)}`, listHere()))}">+ New ad set</a>`);
     });
   }
   const all = document.querySelector("#cr-all [data-all]");
@@ -132,17 +140,30 @@ async function load() {
   if (state.peek) openPeek(state.peek, { quiet: true });  // kept open across a reload: focus stays where it is
 }
 
-function openPeek(key, { quiet = false } = {}) {
+// The quick look is in the URL (?peek=): opening it adds a step to the history, so Back closes it.
+let popping = false;
+function openPeek(key, { quiet = false, fromHistory = false } = {}) {
   const [level, id] = key.split(":");
   const r = (rows[level] || []).find((x) => x.id === id);
   if (!r) return;
-  state.peek = key; save();
+  const wasOpen = Boolean(state.peek);
+  state.peek = key;
+  if (!fromHistory) { if (quiet || wasOpen) save(); else UrlState.openLayer(UrlState.url(state, KEEP)); }
   document.querySelectorAll("#cr-all tr.is-peek").forEach((tr) => tr.classList.remove("is-peek"));
   document.querySelector(`#cr-all [data-row="${CSS.escape(key)}"]`)?.classList.add("is-peek");
-  peek(r, { focus: !quiet, onClose: (changed) => { state.peek = ""; save(); document.querySelectorAll("#cr-all .is-peek").forEach((tr) => tr.classList.remove("is-peek")); if (changed) load(); } });
+  peek(r, { focus: !quiet, onClose: (changed) => {
+    const was = state.peek;
+    state.peek = "";
+    if (was && !popping) UrlState.closeLayer(UrlState.url(state, KEEP));
+    document.querySelectorAll("#cr-all .is-peek").forEach((tr) => tr.classList.remove("is-peek"));
+    if (changed) load();
+  } });
 }
+// Closed by the page itself (another level): no step back, the entry just stops being the quick look's.
+function dropPeek() { popping = true; closePeek(); popping = false; UrlState.leaveLayer(); }
 
 function set(patch, reload = false) {
+  if (Object.keys(patch).some((k) => k !== "peek")) UrlState.leaveLayer();
   state = { ...state, ...patch };
   save();
   if (reload) load(); else render();
@@ -155,8 +176,8 @@ if (me) {
   $("level").addEventListener("click", (e) => {
     const b = e.target.closest("[data-level]");
     if (!b || b.dataset.level === state.level) return;
-    selected.clear(); closePeek();
-    set({ level: b.dataset.level, sort: "spend", dir: "desc", display: b.dataset.level === "ad" ? state.display : "table" });
+    selected.clear(); dropPeek();
+    set({ level: b.dataset.level, sort: "spend", dir: "desc", display: b.dataset.level === "ad" ? state.display : "table", peek: "" });
   });
   const root = $("cr-all");
   wire(root, {
@@ -207,7 +228,7 @@ if (me) {
     }
   });
   root.addEventListener("change", (e) => {
-    if (e.target.id === "range-pick") { try { localStorage.setItem("ebads-range", e.target.value); } catch (err) {} set({ range: e.target.value }, true); }
+    if (e.target.id === "range-pick") { rememberRange(e.target.value); set({ range: e.target.value }, true); }
     if (e.target.id === "cols-pick") set({ cols: e.target.value });
     if (e.target.id === "camp-pick") { selected.clear(); set({ campaign: e.target.value }); }
   });
@@ -226,6 +247,14 @@ if (me) {
   });
   let wasNarrow = narrow();
   addEventListener("resize", () => { if (narrow() !== wasNarrow && rows) { wasNarrow = narrow(); render(); } });
+  // Back / Forward: show what the URL says, the view first, then the quick look.
+  addEventListener("popstate", () => {
+    const next = UrlState.read(DEFAULTS);
+    const viewChanged = Object.keys(DEFAULTS).some((k) => k !== "peek" && next[k] !== state[k]);
+    if (!next.peek && state.peek) { popping = true; closePeek(); popping = false; }
+    if (viewChanged) { selected.clear(); state = next; save(); load(); return; }
+    if (next.peek && next.peek !== state.peek && rows) openPeek(next.peek, { fromHistory: true });
+  });
   onRefresh(load);
   await loadSaved();
   load();

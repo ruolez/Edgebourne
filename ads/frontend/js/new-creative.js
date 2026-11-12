@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, icon, toast, guardLeaving, markSaved } from "./ui.js";
+import { boot, cancelLink, entityLink, esc, icon, toast, guardLeaving, markSaved, returnCrumbs, safePath } from "./ui.js";
 import { CTA_LABELS } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -138,7 +138,12 @@ const me = await boot({ page: "new-ad" });
 if (me) guardLeaving();
 if (me && me.role === "client") location.replace("/ads.html");
 else if (me) {
-  $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
+  $("crumb").innerHTML = `${icon("back")}<span>Back</span>`;
+  // ?template=<ad> starts from that ad (older links said ?from=<ad>); ?from=<page> is where Cancel goes.
+  const q0 = new URLSearchParams(location.search);
+  const templateId = q0.get("template") || (q0.get("from") && !safePath(q0.get("from")) ? q0.get("from") : null);
+  const back = returnCrumbs("New ad");
+  $("create")?.insertAdjacentHTML("afterend", cancelLink(back));
   $("drop-icon").innerHTML = icon("upload");
   if (me.role === "admin") $("claude-tip").hidden = false;
   try { options = await api("/api/ads/new/options"); } catch (err) { toast(err.message, "bad"); options = { adsets: [], templates: [], cta_types: [] }; }
@@ -155,8 +160,12 @@ else if (me) {
     const wantSet = new URLSearchParams(location.search).get("adset");
     if (wantSet && offered(wantSet)) { $("aset-pick").value = wantSet; $("aset-pick").dataset.touched = "1"; }
     else if (wantSet) toast(goneSet, "bad");
-    const from = new URLSearchParams(location.search).get("from");
-    if (from && options.templates.some((t) => t.id === from)) $("template").value = from;
+    if (templateId && options.templates.some((t) => t.id === templateId)) $("template").value = templateId;
+    // Arrived from New ad set: say what was just made, with a link to it.
+    const made = wantSet && q0.get("made") === "adset" && options.adsets.find((x) => x.id === wantSet);
+    if (made) document.querySelector("#new-form").insertAdjacentHTML("afterbegin", `<p class="note ok flush" id="made-note">Ad set ${entityLink("adset", made.id, made.name)} created, switched off. Add its first ad below.</p>`);
+    // Said once: a reload or coming back with Back doesn't announce it again.
+    if (q0.has("made")) { const u = new URL(location.href); u.searchParams.delete("made"); history.replaceState(history.state, "", u); }
     counter($("body"), $("body-count"), 125);
     counter($("title"), $("title-count"));
     fillFromTemplate();
@@ -171,7 +180,7 @@ else if (me) {
     });
     $("template").addEventListener("change", () => { if (media && media.kind === "same") useSame(); });
     const q = new URLSearchParams(location.search);
-    if (q.get("from")) pickTab("same");
+    if (templateId) pickTab("same");
     if (q.get("proposal")) {
       try {
         const p = await api(`/api/proposals/${encodeURIComponent(q.get("proposal"))}`);

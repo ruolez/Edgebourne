@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, fieldError, icon, toast, guardLeaving, markSaved } from "./ui.js";
+import { boot, cancelLink, confirmDialog, entityLink, esc, fieldError, icon, toast, guardLeaving, markSaved, returnCrumbs } from "./ui.js";
 import { STATUS as FORMAT_STATUS, CTA_LABELS, money, currencySymbol } from "./format.js";
 import { placesHtml, placesWidget } from "./places.js";
 
@@ -176,10 +176,10 @@ function buildView(b) {
     : b.status === "partial" ? `<section class="panel"><div class="panel-body stack tight"><p class="note bad flush">${esc(b.error || "It stopped halfway.")}</p>
         <p class="muted flush">What was made stays, switched off. Fix the cause (often in Ads Manager or Settings), then finish: nothing is made twice.</p>
         <div class="row"><button type="button" class="btn btn-primary" id="resume">Finish creating</button></div></div></section>`
-    : `<section class="panel"><div class="panel-body"><p class="note ok flush">Published. Meta is reviewing the ads; they start delivering once approved. Follow it on <a href="/ads.html">Ads</a>.</p></div></section>`;
+    : `<section class="panel"><div class="panel-body"><p class="note ok flush">Published. Meta is reviewing the ads; they start delivering once approved. Follow it on ${m.campaign_id ? `its campaign page: ${entityLink("campaign", m.campaign_id, r.campaign.split(" · ")[0])}` : '<a href="/ads.html">Ads</a>'}.</p></div></section>`;
   $("build").innerHTML = `<section class="panel"><div class="panel-head"><h2>${b.status === "published" ? "Published" : b.status === "created" ? "Created, switched off" : "Partly created"}</h2></div>
       <div class="panel-body"><table class="table middle build-table"><tbody>${rows.map(([kind, what, id, isAd]) => `<tr>
-        <th scope="row">${esc(kind)}</th><td>${esc(what)}</td><td>${id ? pill(s[id]) : '<span class="pill">Not made yet</span>'}</td>
+        <th scope="row">${esc(kind)}</th><td>${id && !isAd ? entityLink(kind === "Campaign" ? "campaign" : "adset", id, what) : esc(what)}</td><td>${id ? pill(s[id]) : '<span class="pill">Not made yet</span>'}</td>
         <td class="row-actions">${id && isAd ? `<a class="btn btn-quiet btn-small" href="/ad.html?id=${encodeURIComponent(id)}" target="_blank" rel="noopener">Preview</a>` : ""}</td></tr>`).join("")}</tbody></table></div></section>
     ${publishBox}`;
   $("wizard").hidden = true;
@@ -209,7 +209,9 @@ function buildView(b) {
 const me = await boot({ page: "new-campaign", admin: true });
 if (me) guardLeaving();
 if (me) {
-  $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
+  $("crumb").innerHTML = `${icon("back")}<span>Back</span>`;
+  const back = returnCrumbs("New campaign");
+  $("nc-create")?.insertAdjacentHTML("afterend", cancelLink(back));
   const buildId = new URLSearchParams(location.search).get("build");
   if (buildId) {
     try { buildView(await api(`/api/builds/${encodeURIComponent(buildId)}`)); } catch (err) { toast(err.message, "bad"); }
@@ -262,7 +264,8 @@ if (me) {
           // One key per wizard: a double click or a retry after a timeout returns the same build.
           const b = await api("/api/builds", { method: "POST", body: { ...s, client_key: CLIENT_KEY } });
           markSaved();
-          history.replaceState(null, "", `?build=${b.id}`);
+          const keep = new URLSearchParams(location.search).get("from");
+          history.replaceState(null, "", `?build=${b.id}${keep ? `&from=${encodeURIComponent(keep)}` : ""}`);
           buildView(b);
           toast(b.status === "created" ? "Created, switched off" : "Stopped halfway; see below", b.status === "created" ? "" : "bad");
         } catch (err) {

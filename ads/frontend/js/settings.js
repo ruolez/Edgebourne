@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { money, currencySymbol } from "./format.js";
-import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when, errorState, guardLeaving, markSaved } from "./ui.js";
+import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when, errorState, guardLeaving, markSaved, safePath } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let s;
@@ -214,7 +214,7 @@ function renderAlerts() {
   }).join("");
   const recent = s.alerts.recent;
   $("al-recent").innerHTML = recent.length ? `<h3 class="section-title">Recent alerts</h3><ul class="history">${recent.map((a) =>
-    `<li>${when(a.created_at)}: ${esc(a.title)}${a.resolved_at ? ` <span class="muted">(cleared ${when(a.resolved_at)})</span>` : ""}</li>`).join("")}</ul>` : '<p class="muted small">No alerts yet.</p>';
+    `<li>${when(a.created_at)}: ${safePath(a.href) ? `<a class="ent-link" href="${esc(a.href)}">${esc(a.title)}</a>` : esc(a.title)}${a.resolved_at ? ` <span class="muted">(cleared ${when(a.resolved_at)})</span>` : ""}</li>`).join("")}</ul>` : '<p class="muted small">No alerts yet.</p>';
 }
 
 const every = (m) => (m === 60 ? "Every hour" : `Every ${m} minutes`);

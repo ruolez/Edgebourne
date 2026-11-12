@@ -55,6 +55,15 @@ def group(ads, tags, dimension, target_cents=None):
             "best_is_clear": sure is not None and sure >= experiments_win()}
 
 
+def members(ads, tags, dimension):
+    """The ads behind each value of a dimension, by name, each with its id so a page can link to it."""
+    out = {}
+    for a in ads:
+        value = (tags.get(a["id"]) or {}).get(dimension) or UNTAGGED
+        out.setdefault(value, []).append({"id": a["id"], "name": a["name"]})
+    return {k: sorted(v, key=lambda m: (m["name"] or "").casefold()) for k, v in out.items()}
+
+
 def experiments_win():
     import experiments
     return experiments.WIN

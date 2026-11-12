@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, fieldError, onRefresh, toast, when, showLoadError } from "./ui.js";
+import { boot, confirmDialog, entityLink, esc, fieldError, onRefresh, toast, when, showLoadError } from "./ui.js";
 import { count, dayLabel, money, currencySymbol } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -34,6 +34,9 @@ function dates(t) {
   return `${dayLabel(t.start_day)} – ${end} · ${t.days_run} full day${t.days_run === 1 ? "" : "s"} of data`;
 }
 
+// Each ad and ad set in an arm links to its page; one that's gone keeps its plain words.
+const armNames = (a) => (a.members ? a.members.map((m, i) => (m.gone ? esc(a.names[i]) : `${m.level === "adset" ? "Ad set: " : ""}${entityLink(m.level, m.id, m.name)}`)) : a.names.map(esc)).join(", ");
+
 function armRows(t) {
   const max = Math.max(...t.arms.map((a) => a.value || 0), 0);
   const [rlabel, rkey] = RESULT[t.metric];
@@ -42,7 +45,7 @@ function armRows(t) {
     const w = a.value != null && max ? Math.max(2, (a.value / max) * 100) : 0;
     const need = !finished(t) && t.judgement.needs[a.label];
     return `<tr class="${a.label === lead ? "lead" : ""}">
-      <th scope="row"><span class="arm-label">${esc(a.label)}</span><span class="arm-names">${a.names.map(esc).join(", ")}</span></th>
+      <th scope="row"><span class="arm-label">${esc(a.label)}</span><span class="arm-names">${armNames(a)}</span></th>
       <td class="arm-metric"><span class="arm-bar" aria-hidden="true"><i data-w="${w}"></i></span><b>${fmtValue(t.metric, a.value)}</b></td>
       <td class="num" data-label="Spent">${money(a.spend_cents, { exact: true })}</td>
       <td class="num" data-label="${esc(rlabel)}">${count(a[rkey])}</td>

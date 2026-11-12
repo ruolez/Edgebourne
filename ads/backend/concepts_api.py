@@ -99,10 +99,9 @@ def by_concept():
     target = targets.lead_own()  # none set: the groups' own average (see targets.py)
     tags = tags_for([r["id"] for r in rows])
     out = c.group(rows, tags, dim, target)
-    names = {}
-    for r in rows:
-        names.setdefault((tags.get(r["id"]) or {}).get(dim) or c.UNTAGGED, []).append(r["name"])
+    members = c.members(rows, tags, dim)
     for g in out["groups"]:
-        g["ad_names"] = sorted(names.get(g["value"], []))
+        g["members"] = members.get(g["value"], [])
+        g["ad_names"] = [m["name"] for m in g["members"]]
     return jsonify({**out, "by": dim, "dimensions": c.DIMENSIONS, "range": {"start": start.isoformat(), "end": end.isoformat(), "days": days},
-                    "untagged_ads": len(names.get(c.UNTAGGED, []))})
+                    "untagged_ads": len(members.get(c.UNTAGGED, []))})

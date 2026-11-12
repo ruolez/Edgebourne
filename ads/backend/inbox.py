@@ -45,6 +45,14 @@ def build(alerts, leads, proposals, read_keys):
     return items
 
 
+def with_subjects(items, known):
+    """Each item names the campaign, ad set or ad it is about (known: {id: {level, name}}), or None."""
+    for i in items:
+        k = known.get(i.get("entity_id")) if i.get("entity_id") else None
+        i["subject"] = {"level": k["level"], "id": i["entity_id"], "name": k["name"]} if k else None
+    return items
+
+
 def item_keys(alerts, leads, proposals):
     """The keys build() gives these items: the only read marks worth loading (audit A3-131)."""
     return [f"alert:{a['id']}" for a in alerts] + [f"lead:{l['id']}" for l in leads] + [f"proposal:{p['id']}" for p in proposals]
@@ -86,7 +94,14 @@ def items_for(user):
     keys = item_keys(alerts, leads, proposals)
     reads = {r["item_key"] for r in db.query("SELECT item_key FROM inbox_reads WHERE user_id = %s AND item_key = ANY(%s)",
                                              (user["id"], keys))} if keys else set()
-    return build(alerts, leads, proposals, reads)
+    items = build(alerts, leads, proposals, reads)
+    ids = list({i["entity_id"] for i in items if i.get("entity_id")})
+    known = {}
+    if ids:
+        for level, table in (("campaign", "campaigns"), ("adset", "adsets"), ("ad", "ads")):
+            for r in db.query(f"SELECT id, name FROM {table} WHERE id = ANY(%s)", (ids,)):
+                known[r["id"]] = {"level": level, "name": r["name"]}
+    return with_subjects(items, known)
 
 
 def mark_read(user, keys):

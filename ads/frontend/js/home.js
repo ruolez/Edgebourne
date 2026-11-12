@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, esc, icon, onRefresh, skeleton, toast, when, editing, showLoadError } from "./ui.js";
+import { boot, confirmDialog, entityLink, esc, icon, onRefresh, skeleton, toast, when, editing, showLoadError, withFrom } from "./ui.js";
 import { money, per, plural } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -29,8 +29,8 @@ function render(d) {
         const mins = (Date.now() - new Date(l.created_time).getTime()) / 60000;
         return `<li>
           <span class="initials ${mins < 5 ? "fresh" : ""}" aria-hidden="true">${esc(initials(l.full_name))}</span>
-          <a class="who" href="/leads.html#lead=${l.id}"><b>${esc(l.full_name || "Unnamed")}</b>
-            <span><em>${esc(l.business_type || "No business given")}</em>${l.ad_name ? `<span class="via">via ${esc(shortAd(l.ad_name))}</span>` : ""}</span></a>
+          <div class="who"><a class="who-link" href="/leads.html#lead=${l.id}"><b>${esc(l.full_name || "Unnamed")}</b></a>
+            <span><em>${esc(l.business_type || "No business given")}</em>${l.ad_name ? `<span class="via">via ${entityLink("ad", l.ad_id, shortAd(l.ad_name))}</span>` : ""}</span></div>
           ${leadClock(l.created_time)}
           ${l.phone ? `<a class="btn btn-call" href="tel:${esc(l.phone)}">${icon("phone")}Call</a>` : `<a class="btn btn-call" href="/leads.html#lead=${l.id}">Open</a>`}
           ${l.email ? `<a class="btn mail" href="mailto:${esc(l.email)}" aria-label="Email ${esc(l.full_name || "")}">${icon("mail")}</a>` : ""}
@@ -119,7 +119,8 @@ function render(d) {
 
 // Today → Changes: each kind of change in its own words (audit A21).
 function changeWords(c, LEVEL) {
-  const name = esc(c.entity_name || "");
+  // The thing changed links to its page (a deleted ad has none left).
+  const name = c.action !== "delete" && ["campaign", "adset", "ad", "form"].includes(c.level) ? entityLink(c.level, c.entity_id, c.entity_name || "") : esc(c.entity_name || "");
   const lvl = LEVEL[c.level] || c.level || "";
   const short = (v) => esc(String(v || "").slice(0, 80));
   switch (c.action) {
@@ -158,6 +159,7 @@ if (me) {
   $("today-date").textContent = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   if (me.role === "admin") { $("ask-claude").hidden = false; $("ask-claude").innerHTML = `${icon("spark")}<span>Ask Claude</span>`; }
   $("new-ad").innerHTML = `${icon("plus")}<span>New ad</span>`;
+  $("new-ad").href = withFrom("/new-ad.html", "/home.html");
   // New leads every minute. Both this timer and the frame's catch-up fire on the same tick, so
   // whichever reloads second skips: the catch-up when Today loaded in the last 15 s (that load
   // already read what the server pulled), the timer when the catch-up reloaded in the last 50 s.

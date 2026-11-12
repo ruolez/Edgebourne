@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, esc, fieldError, toast, when, confirmDialog, errorState, onRefresh } from "./ui.js";
+import { boot, entityLink, esc, fieldError, toast, when, confirmDialog, errorState, onRefresh } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let data = { members: [], campaigns: [] };
@@ -8,7 +8,8 @@ let me;
 
 function campaignNames(ids) {
   if (!ids.length) return '<span class="muted">None yet</span>';
-  return ids.map((id) => esc((data.campaigns.find((c) => c.id === id) || { name: id }).name)).join("<br>");
+  // A campaign still synced links to its page; an id the console no longer knows stays plain.
+  return ids.map((id) => { const c = data.campaigns.find((x) => x.id === id); return c ? entityLink("campaign", id, c.name) : esc(id); }).join("<br>");
 }
 
 function render() {

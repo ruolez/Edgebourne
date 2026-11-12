@@ -189,6 +189,21 @@ def default_target(metric):
     return targets.lead_own()
 
 
+def arm_members(arm, ads, sets):
+    """Each ad and ad set in an arm with its name (None when it's gone), so pages link to the ones still there."""
+    return [{"level": "ad", "id": i, "name": ads.get(i), "gone": i not in ads} for i in arm.get("ad_ids") or []] + \
+           [{"level": "adset", "id": i, "name": sets.get(i), "gone": i not in sets} for i in arm.get("adset_ids") or []]
+
+
+def containing(exps, ad_id, adset_id=None):
+    """The tests an ad takes part in, by itself or through its whole ad set: running ones first, then the newest."""
+    def has(arm):
+        return ad_id in (arm.get("ad_ids") or []) or (adset_id is not None and adset_id in (arm.get("adset_ids") or []))
+    hits = [e for e in exps if any(has(a) for a in e.get("arms") or [])]
+    hits.sort(key=lambda e: (e["status"] != "running", -e["id"]))
+    return [{"id": e["id"], "name": e["name"], "status": e["status"]} for e in hits]
+
+
 def account_today():
     return account_info.today()
 

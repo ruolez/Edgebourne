@@ -531,10 +531,11 @@ def graph(path):
         if parts == [act, "activities"]:
             return jsonify({"data": [
                 {"event_time": TODAY.isoformat() + "T21:36:00+0000", "event_type": "ad_review_approved",
-                 "translated_event_type": "Ad approved", "actor_name": "Meta", "object_name": "N5 - Quote to invoice", "object_type": "AD"},
+                 "translated_event_type": "Ad approved", "actor_name": "Meta", "object_name": "N5 - Quote to invoice", "object_type": "AD",
+                 "object_id": next((k for k, v in ADS.items() if v["name"] == "N5 - Quote to invoice"), None)},
                 {"event_time": TODAY.isoformat() + "T21:27:00+0000", "event_type": "update_campaign_budget",
                  "translated_event_type": "Campaign budget updated", "actor_name": "Eugene", "object_name": CAMPAIGN["name"],
-                 "object_type": "CAMPAIGN", "extra_data": json.dumps({"old_value": {"new_value": 2000, "currency": "USD"}, "new_value": 2400})}]})
+                 "object_type": "CAMPAIGN", "object_id": CAMPAIGN["id"], "extra_data": json.dumps({"old_value": {"new_value": 2000, "currency": "USD"}, "new_value": 2400})}]})
         if len(parts) == 2 and parts[1] == "delivery_estimate":
             return jsonify({"data": [{"estimate_mau_lower_bound": 1_400_000, "estimate_mau_upper_bound": 1_650_000,
                                       "estimate_ready": True}]})

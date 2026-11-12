@@ -43,7 +43,8 @@ def totals(start, end):
             "median_minutes": round(float(stages["median_minutes"])) if stages["median_minutes"] is not None else None}
 
 
-def build(kind, start=None, for_admin=False):
+def build(kind, start=None, for_admin=False, links=False):
+    """links: the signed-in page links each ad, change and test; share links and emails carry no ids."""
     t = today()
     s, e = rl.period(kind, t, start)
     ps, pe = rl.previous(s, e, kind)
@@ -52,15 +53,16 @@ def build(kind, start=None, for_admin=False):
     target = int(target) if target else None
     # By name: a new version of an ad (the old one deleted) keeps the name and is the same ad to a client.
     every = db.query("""SELECT COALESCE(a.name, d.ad_name, 'Unnamed ad') AS name, SUM(d.spend_cents) AS spend_cents, SUM(d.leads) AS leads,
+                               (ARRAY_AGG(a.id ORDER BY d.day DESC) FILTER (WHERE a.id IS NOT NULL))[1] AS id,
                                SUM(d.impressions) AS impressions, SUM(d.link_clicks) AS link_clicks, SUM(d.video_3s) AS video_3s
                         FROM ad_daily d LEFT JOIN ads a ON a.id = d.ad_id WHERE d.day BETWEEN %s AND %s
                         GROUP BY 1 HAVING SUM(d.spend_cents) > 0 ORDER BY 2 DESC, 1""", (s, e))
-    ads = [{"name": a["name"], "spend_cents": int(a["spend_cents"]), "leads": int(a["leads"]),
+    ads = [{"name": a["name"], **({"id": a["id"]} if links else {}), "spend_cents": int(a["spend_cents"]), "leads": int(a["leads"]),
             "cpl_cents": round(int(a["spend_cents"]) / int(a["leads"])) if a["leads"] else None,
             "ctr": round(100 * int(a["link_clicks"]) / int(a["impressions"]), 2) if a["impressions"] else None,
             "hook": round(100 * int(a["video_3s"]) / int(a["impressions"]), 1) if a["impressions"] and a["video_3s"] else None}
            for a in every[:6]]
-    changes = db.query("""SELECT m.created_at, (m.created_at AT TIME ZONE %s)::date AS day, m.level, m.entity_name, m.action, m.old_value, m.new_value
+    changes = db.query("""SELECT m.created_at, (m.created_at AT TIME ZONE %s)::date AS day, m.level, m.entity_id, m.entity_name, m.action, m.old_value, m.new_value
                           FROM meta_changes m WHERE m.ok AND (m.created_at AT TIME ZONE %s)::date BETWEEN %s AND %s
                           ORDER BY m.created_at""", (account_info.tz_name(), account_info.tz_name(), s, e))
     import experiments_api
@@ -94,8 +96,9 @@ def build(kind, start=None, for_admin=False):
         "headline": rl.headline(now, before, target, account_info.currency()), "target_cents": target, "now": now, "before": before,
         "funnel": rl.funnel(now["inbox"], now["contacted"], now["qualified"], now["won"]),
         "ads": ads, "ads_total": len(every), "ideas": ideas,
-        "changes": [{**c, "created_at": c["created_at"].isoformat(), "day": c["day"].isoformat()} for c in changes],
-        "tests": [{"name": x["name"], "status": x["status"], "note": x["judgement"]["note"] if x["status"] == "running" else (x["verdict"] or "")} for x in tests],
+        "changes": [{**{k: v for k, v in c.items() if links or k != "entity_id"}, "created_at": c["created_at"].isoformat(), "day": c["day"].isoformat()}
+                    for c in changes],
+        "tests": [{"name": x["name"], **({"id": x["id"]} if links else {}), "status": x["status"], "note": x["judgement"]["note"] if x["status"] == "running" else (x["verdict"] or "")} for x in tests],
         # Claude's pending ideas are internal: clients and share links don't see their titles.
         "needs": [p["title"] for p in pending] if for_admin else [],
         "footnotes": rl.footnotes(s, e),
@@ -137,7 +140,7 @@ def get_report():
         return err
     if current_user()["role"] == "member":
         return api_error("Reports are for admins and clients", 403)
-    return jsonify(build(kind, start, for_admin=current_user()["role"] == "admin"))
+    return jsonify(build(kind, start, for_admin=current_user()["role"] == "admin", links=True))
 
 
 @bp.post("/share")
