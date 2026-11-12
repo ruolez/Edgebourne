@@ -1,67 +1,104 @@
-/* Edge Bourne Ads console, "Signal" (chosen 2026-11-10). Graphite neutrals, one signal green that
-   means "on air", Geist with Geist Mono for numbers, borders-only depth. Components read only tokens.
-   Older token names (--seal, --pine, --rust, …) are kept as aliases so every screen follows. */
+/* Edge Bourne Ads console, "Signal" (chosen 2026-11-10, refined in Phase 9). Graphite neutrals, one signal
+   green that means "on air", Geist with Geist Mono for numbers, borders-only depth. Components read only
+   these tokens. Text pairs are checked for contrast in both themes by qa/guards.cjs:
+   --*-ink is the readable text colour of a hue, the plain hue is for marks (dots, bars), --on-* is text on
+   a filled background. */
 @font-face { font-family: "Geist"; src: url("/fonts/geist-var.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
 @font-face { font-family: "Geist Mono"; src: url("/fonts/geist-mono-var.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
 
 :root {
-  --canvas: #F6F6F4;
-  --fog: var(--canvas);          /* page */
+  /* Neutrals */
+  --canvas: #F6F6F4;             /* page */
   --surface: #FFFFFF;            /* cards, tables */
-  --surface-2: #EEEEEB;          /* inset fields, subtle fills */
+  --surface-2: #EEEEEB;          /* inset fields, subtle fills, selection */
   --ink: #141619;
   --ink-2: #474C54;
-  --ink-3: #6B7079;              /* 4.6:1 on the canvas: fine for 12px metadata */
+  --ink-3: #62666F;              /* 4.9:1 even on surface-2: fine for 12px metadata */
   --line: rgba(20, 22, 25, .09);
   --line-strong: rgba(20, 22, 25, .17);
-  --signal: #16A34A;             /* delivering / on air: the one accent */
-  --signal-ink: #0F8A4C;
+  /* Primary action = ink */
+  --primary: #141619;
+  --primary-hover: #2B2F35;
+  --on-primary: #FFFFFF;
+  /* Signal: delivering / on air, the one accent */
+  --signal: #16A34A;
+  --signal-ink: #0B7A42;
   --signal-soft: #E7F6EC;
-  --seal: #141619;               /* primary action = ink */
-  --seal-deep: #000000;
-  --seal-soft: #ECECE8;          /* neutral selection */
-  --on-seal: #FFFFFF;
+  --signal-fill: #15803D;        /* a green background that carries text */
+  --on-signal: #FFFFFF;
+  /* In review / warning */
+  --amber: #D99A0B;
+  --amber-ink: #8A5B00;
+  --amber-soft: #FCF3DC;
+  /* Rejected / waiting too long / danger */
+  --bad: #C8372D;
+  --bad-ink: #A42B22;
+  --bad-soft: #FBE9E7;
+  --on-bad: #FFFFFF;
+  --info: #3B5BDB;
+  --info-soft: #E9EDFC;
+  /* Claude only */
+  --violet: #6A4FD8;
+  --violet-soft: #EFEBFC;
+  --on-violet: #FFFFFF;
+  --focus: #3B5BDB;
   --rail: #141619;
   --rail-ink: #ECEDEE;
   --rail-ink-2: #9EA3AB;
   --rail-active: #23262B;
-  --amber: #D99A0B;
-  --amber-ink: #8A5B00;
-  --amber-soft: #FCF3DC;
-  --rust: #C8372D;
-  --rust-ink: #A42B22;
-  --rust-soft: #FBE9E7;
-  --pine: #0F8A4C;
-  --pine-soft: #E7F6EC;
-  --on-pine: #FFFFFF;
-  --info: #3B5BDB;
-  --info-soft: #E9EDFC;
-  --violet: #6A4FD8;             /* Claude only */
-  --violet-soft: #EFEBFC;
-  --on-violet: #FFFFFF;
-  --focus: #3B5BDB;
-  --lift: 0 0 0 1px var(--line);
-  --shadow-pop: 0 0 0 1px rgba(20, 22, 25, .08), 0 16px 40px -12px rgba(20, 22, 25, .35);
-  --radius-s: 6px;
-  --radius-m: 10px;
+  --scrim: rgba(10, 12, 14, .45);        /* behind dialogs */
+  --scrim-media: rgba(10, 12, 14, .6);   /* labels on top of pictures */
+  --chart-spend: #5B6170; --chart-leads: #16A34A; --grid: rgba(20, 22, 25, .07);
+
+  /* Depth: hairline, stronger hairline, raised (menus, dialogs, drawers, toasts) */
+  --shadow-1: 0 0 0 1px var(--line);
+  --shadow-2: 0 0 0 1px var(--line-strong);
+  --shadow-3: 0 0 0 1px rgba(20, 22, 25, .08), 0 16px 40px -12px rgba(20, 22, 25, .35);
+
+  /* Corners */
+  --radius-xs: 4px;              /* tags, thumbnails */
+  --radius-s: 6px;               /* controls */
+  --radius-m: 10px;              /* cards, panels, dialogs */
+  --radius-l: 16px;              /* phone sheets */
+  --radius-pill: 999px;
+
+  /* Type: 12px is the smallest label */
+  --t-xs: 12px;
+  --t-s: 13px;
+  --t-m: 14px;
+  --t-l: 16px;
+  --t-xl: 22px;
+  --t-2xl: 28px;
+  --t-3xl: 36px;
+  --t-4xl: 44px;
   --font-ui: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-num: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --font-display: var(--font-ui);
+
+  /* Space: a 4px step */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px;
+  --gutter: 32px;                /* page side padding (16px on phones) */
+  --target: 44px;                /* smallest touch target on phones */
+
   --ease: cubic-bezier(.23, 1, .32, 1);
   --rail-w: 232px;
-  --chart-spend: #5B6170; --chart-leads: #16A34A; --grid: rgba(20, 22, 25, .07);
   color-scheme: light;
 }
+@media (max-width: 960px) { :root { --gutter: 16px; } }
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --canvas: #0E0F11; --surface: #16181B; --surface-2: #1D2024; --ink: #ECEDEE; --ink-2: #B4B9C0; --ink-3: #8A9099;
     --line: rgba(255, 255, 255, .08); --line-strong: rgba(255, 255, 255, .15);
-    --signal: #22C55E; --signal-ink: #4ADE80; --signal-soft: #12261A;
-    --seal: #ECEDEE; --seal-deep: #FFFFFF; --seal-soft: #23262B; --on-seal: #0E0F11; --rail: #0B0C0E; --rail-active: #1D2024;
-    --amber: #F2B53A; --amber-ink: #F2C56B; --amber-soft: #2A2110; --rust: #F07065; --rust-ink: #F48C82; --rust-soft: #2C1513;
-    --pine: #4ADE80; --pine-soft: #12261A; --on-pine: #0E0F11; --info: #8DA2F7; --info-soft: #161C33;
+    --primary: #ECEDEE; --primary-hover: #FFFFFF; --on-primary: #0E0F11;
+    --signal: #22C55E; --signal-ink: #4ADE80; --signal-soft: #12261A; --signal-fill: #22C55E; --on-signal: #0E0F11;
+    --amber: #F2B53A; --amber-ink: #F2C56B; --amber-soft: #2A2110;
+    --bad: #F07065; --bad-ink: #F48C82; --bad-soft: #2C1513; --on-bad: #1A0D0B;
+    --info: #8DA2F7; --info-soft: #161C33;
     --violet: #A895F5; --violet-soft: #1E1934; --on-violet: #141619; --focus: #8DA2F7;
-    --shadow-pop: 0 0 0 1px rgba(255, 255, 255, .1), 0 16px 40px -12px rgba(0, 0, 0, .7);
+    --rail: #0B0C0E; --rail-active: #1D2024;
+    --scrim: rgba(0, 0, 0, .6);
+    --shadow-3: 0 0 0 1px rgba(255, 255, 255, .1), 0 16px 40px -12px rgba(0, 0, 0, .7);
     --chart-spend: #9EA3AB; --chart-leads: #22C55E; --grid: rgba(255, 255, 255, .07);
     color-scheme: dark;
   }
@@ -69,12 +106,15 @@
 :root[data-theme="dark"] {
   --canvas: #0E0F11; --surface: #16181B; --surface-2: #1D2024; --ink: #ECEDEE; --ink-2: #B4B9C0; --ink-3: #8A9099;
   --line: rgba(255, 255, 255, .08); --line-strong: rgba(255, 255, 255, .15);
-  --signal: #22C55E; --signal-ink: #4ADE80; --signal-soft: #12261A;
-  --seal: #ECEDEE; --seal-deep: #FFFFFF; --seal-soft: #23262B; --on-seal: #0E0F11; --rail: #0B0C0E; --rail-active: #1D2024;
-  --amber: #F2B53A; --amber-ink: #F2C56B; --amber-soft: #2A2110; --rust: #F07065; --rust-ink: #F48C82; --rust-soft: #2C1513;
-  --pine: #4ADE80; --pine-soft: #12261A; --on-pine: #0E0F11; --info: #8DA2F7; --info-soft: #161C33;
+  --primary: #ECEDEE; --primary-hover: #FFFFFF; --on-primary: #0E0F11;
+  --signal: #22C55E; --signal-ink: #4ADE80; --signal-soft: #12261A; --signal-fill: #22C55E; --on-signal: #0E0F11;
+  --amber: #F2B53A; --amber-ink: #F2C56B; --amber-soft: #2A2110;
+  --bad: #F07065; --bad-ink: #F48C82; --bad-soft: #2C1513; --on-bad: #1A0D0B;
+  --info: #8DA2F7; --info-soft: #161C33;
   --violet: #A895F5; --violet-soft: #1E1934; --on-violet: #141619; --focus: #8DA2F7;
-  --shadow-pop: 0 0 0 1px rgba(255, 255, 255, .1), 0 16px 40px -12px rgba(0, 0, 0, .7);
+  --rail: #0B0C0E; --rail-active: #1D2024;
+  --scrim: rgba(0, 0, 0, .6);
+  --shadow-3: 0 0 0 1px rgba(255, 255, 255, .1), 0 16px 40px -12px rgba(0, 0, 0, .7);
   --chart-spend: #9EA3AB; --chart-leads: #22C55E; --grid: rgba(255, 255, 255, .07);
   color-scheme: dark;
 }
@@ -83,3 +123,8 @@
 :root { --s1: #16A34A; --s2: #3B5BDB; --s3: #D99A0B; --s4: #6A4FD8; --s5: #0E9AA7; --s6: #6B7079; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --s1: #22C55E; --s2: #8DA2F7; --s3: #F2B53A; --s4: #A895F5; --s5: #3CC8D4; --s6: #9EA3AB; } }
 :root[data-theme="dark"] { --s1: #22C55E; --s2: #8DA2F7; --s3: #F2B53A; --s4: #A895F5; --s5: #3CC8D4; --s6: #9EA3AB; }
+
+/* Less motion when the system asks for it: no slides, spins or pulses anywhere. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}

@@ -31,8 +31,8 @@ function shell(title, inner) {
 // panes: [{ label, url(format) }]
 export function openViewer({ title, panes, format = PLACEMENTS[0][0], link, placements = PLACEMENTS }) {
   const dlg = shell(title, `
-    ${placements.length > 1 ? `<div class="viewer-tabs" role="tablist" aria-label="Placement">${placements.map(([f, l]) => `<button type="button" role="tab" data-f="${f}" aria-selected="${f === format}">${esc(l)}</button>`).join("")}</div>` : ""}
-    <div class="viewer-panes ${panes.length > 1 ? "two" : ""}">${panes.map((p, i) => `<figure>${panes.length > 1 ? `<figcaption>${esc(p.label)}</figcaption>` : ""}<div class="decision-preview" data-pane="${i}"></div></figure>`).join("")}</div>
+    ${placements.length > 1 ? `<div class="viewer-tabs" role="tablist" aria-label="Placement" data-tabpanel="viewer-panes">${placements.map(([f, l]) => `<button type="button" role="tab" data-f="${f}" aria-selected="${f === format}">${esc(l)}</button>`).join("")}</div>` : ""}
+    <div class="viewer-panes ${panes.length > 1 ? "two" : ""}" id="viewer-panes">${panes.map((p, i) => `<figure>${panes.length > 1 ? `<figcaption>${esc(p.label)}</figcaption>` : ""}<div class="decision-preview" data-pane="${i}"></div></figure>`).join("")}</div>
     ${link ? `<p class="viewer-foot"><a href="${esc(link.href)}">${esc(link.label)}</a></p>` : ""}`);
   const show = (f) => panes.forEach((p, i) => fill(dlg.querySelector(`[data-pane="${i}"]`), p.url(f), `${title}: ${p.label}`));
   dlg.addEventListener("click", (e) => {

@@ -34,7 +34,7 @@ function useSame() {
 }
 
 function pickTab(name) {
-  document.querySelectorAll("#media-tabs button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.tab === name)));
+  document.querySelectorAll("#media-tabs button").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.tab === name)));
   $("tab-upload").hidden = name !== "upload";
   $("tab-library").hidden = name !== "library";
   $("tab-same").hidden = name !== "same";

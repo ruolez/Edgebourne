@@ -90,7 +90,7 @@ function render() {
         <ul class="cmp-legend">${data.items.map((it, i) => `<li><i class="sw s${i + 1}"></i>${esc(it.name)}</li>`).join("")}</ul></section></div>
     <p class="muted small flush">“Lowest” and “Highest” describe this window only; the verdict above says when the difference is big enough to act on.</p>`;
   const money2 = (v) => money(v, { exact: true });
-  lineChart({ el: $("cmp-chart"), series: chartSeries(), title: "Compare chart", height: 240, integer: state.chart === "leads",
+  lineChart({ el: $("cmp-chart"), series: chartSeries(), title: charts.find(([k]) => k === state.chart)[1], height: 240, integer: state.chart === "leads",
     format: state.chart === "leads" ? (v) => `${v} leads` : money2,
     axisFormat: state.chart === "leads" ? (v) => String(Math.round(v)) : (v) => moneyWhole(v) });
 }

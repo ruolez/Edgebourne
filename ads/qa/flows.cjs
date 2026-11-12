@@ -12,6 +12,7 @@ const OUT = process.argv[2] || 'qa/out';
 const IMG = process.argv[3];
 const results = [];
 const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`); };
+const guards = require('./guards.cjs');
 
 (async () => {
   require('fs').mkdirSync(OUT, { recursive: true });
@@ -704,6 +705,14 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   check('Undo brings a declined suggestion back', hire?.status === 'pending', hire?.status);
   await page.locator('#cv-col .sg', { hasText: 'the next hire' }).locator('[data-decline-one]').click();
   await page.waitForFunction(() => document.querySelectorAll('#cv-col .sg').length === 1);
+  await page.locator('#cv-col .sg [data-accept]').click();
+  await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
+  const sheetFocus = await page.evaluate(() => document.activeElement.id);
+  const waitingId = await page.getAttribute('#cv-col .sg', 'data-proposal');
+  await page.keyboard.press('Enter');  // a stray Enter lands on Cancel
+  await page.waitForSelector('dialog.accept-sheet', { state: 'detached' });
+  const stillWaiting = (await getJson('/api/desk')).tasks.flatMap((t) => t.proposals || []).find((p) => String(p.id) === waitingId);
+  check('the Accept sheet opens on Cancel: a stray Enter accepts nothing', sheetFocus === 'cd-cancel' && stillWaiting?.status === 'pending', `${sheetFocus} ${stillWaiting?.status}`);
   await page.locator('#cv-col .sg [data-accept]').click();
   await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
   await page.click('dialog.accept-sheet #cd-ok');
@@ -2245,6 +2254,8 @@ print(','.join(left))
   await page.goto(BASE + '/compare.html?ids=120252672232030312,120252672233160312,120252672230740312&range=14');
   await page.waitForSelector('#cmp-chart svg .ln');
   const cmpText = await page.textContent('#cmp');
+  const cmpWords = await page.evaluate(() => { const svg = document.querySelector('#cmp-chart svg'); const d = document.getElementById(svg.getAttribute('aria-describedby')); return d ? d.textContent : ''; });
+  check('the Compare chart says in words, per ad, its highest day and its last value', (cmpWords.match(/: (highest .+? on .+?, last [^;.]+|no data)/g) || []).length === 3, cmpWords);
   check('the Compare page lines up 3 ads with a verdict and a line per ad', (await page.locator('.cmp thead .cmp-th').count()) === 3
     && (await page.locator('#cmp-chart .ln').count()) === 3 && /Too early to name a winner|leads on cost per/.test(cmpText));
   await page.click('[data-drop]');
@@ -2411,6 +2422,131 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   check('Today loads once when its minute timer and a catch-up with Meta land together', homeLoads === 1, `${homeLoads} loads of /api/home`);
   await clockCtx.close();
   errors.splice(seen91, errors.length - seen91, ...errors.slice(seen91).filter((e) => !/ERR_FAILED/.test(e)));
+  {
+  // 9.2 Design system: token contrast in both themes, no retired token names, and keyboard / screen reader basics.
+  await page.goto(BASE + '/home.html');
+  await page.waitForSelector('.rail .nav a');
+  const lowContrast = await guards.tokenContrast(page);
+  check('every text colour token pair reads at 4.5:1 (marks 3:1) in light and dark', lowContrast.length === 0, lowContrast.join(' | '));
+  const retired = await guards.retiredTokens(page);
+  check('no stylesheet uses a retired token (--seal, --rust, --pine, --fog, --lift)', retired.length === 0, retired.join(' | '));
+  await page.keyboard.press('Tab');
+  const firstStop = await page.evaluate(() => document.activeElement.className);
+  const hashBefore = await page.evaluate(() => location.hash);
+  await page.keyboard.press('Enter');
+  const skipped = await page.evaluate(() => ({ id: document.activeElement.id, hash: location.hash }));
+  check('the first Tab reaches "Skip to the page", which moves focus to the page without touching the hash', firstStop === 'skip-link' && skipped.id === 'main' && skipped.hash === hashBefore, `${firstStop} → ${JSON.stringify(skipped)}`);
+  // Real tablists: arrow keys move and open, one tab in the Tab order, the panel names its tab.
+  await page.goto(BASE + '/ad.html?id=120252672229400312');
+  await page.waitForSelector('#cr-tabs [role="tab"][aria-selected="true"]');
+  await page.waitForSelector('#preview-frame');
+  await page.waitForTimeout(800);  // the tabs are drawn again once the ad's data is in
+  await page.focus('#cr-tabs [data-tab="overview"]');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(() => /tab=polish/.test(location.hash));
+  const tabState = await page.evaluate(() => {
+    const tabs = [...document.querySelectorAll('#cr-tabs [role="tab"]')];
+    const sel = tabs.find((t) => t.getAttribute('aria-selected') === 'true');
+    const panel = document.getElementById('cr-main');
+    return { focused: document.activeElement.dataset.tab, selected: sel && sel.dataset.tab, inOrder: tabs.filter((t) => t.tabIndex === 0).length,
+      panel: panel.getAttribute('role') === 'tabpanel' && panel.getAttribute('aria-labelledby') === sel.id && sel.getAttribute('aria-controls') === 'cr-main' };
+  });
+  check('ad page tabs: → moves to the next tab and opens it, only that tab is in the Tab order, its panel names it', tabState.focused === 'polish' && tabState.selected === 'polish' && tabState.inOrder === 1 && tabState.panel, JSON.stringify(tabState));
+  await page.keyboard.press('End');
+  await page.waitForFunction(() => /tab=history/.test(location.hash));
+  check('End jumps to the last tab', (await page.evaluate(() => document.activeElement.dataset.tab)) === 'history');
+  // Inbox draws its filter tabs again after each switch: focus follows to the new copy.
+  await page.goto(BASE + '/inbox.html');
+  await page.waitForSelector('#ib-filters [role="tab"]');
+  await page.waitForTimeout(800);
+  const ibFrom = await page.getAttribute('#ib-filters [role="tab"][aria-selected="true"]', 'data-f');
+  await page.focus('#ib-filters [role="tab"][aria-selected="true"]');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction((f) => document.querySelector('#ib-filters [aria-selected="true"]')?.dataset.f !== f, ibFrom);
+  await page.waitForTimeout(600);
+  const ib = await page.evaluate(() => ({ focus: document.activeElement.dataset.f, sel: document.querySelector('#ib-filters [aria-selected="true"]').dataset.f,
+    panel: document.getElementById('ib-panel').getAttribute('aria-labelledby') === document.querySelector('#ib-filters [aria-selected="true"]').id }));
+  check('Inbox filters work as tabs: → switches, focus stays on the chosen tab after the list redraws, the list names it', ib.focus === ib.sel && ib.sel !== ibFrom && ib.panel, `${ibFrom} → ${JSON.stringify(ib)}`);
+  // Money dialogs start on Cancel; Escape gives focus back to the switch that opened them.
+  await page.goto(BASE + '/ads.html');
+  const sw = '[data-toggle="ad:120252672229400312"]';
+  await page.waitForSelector(sw);
+  const swOnBefore = await page.getAttribute(sw, 'aria-checked');
+  await page.focus(sw);
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('dialog.confirm');
+  const startFocus = await page.evaluate(() => document.activeElement.id);
+  await page.keyboard.press('Enter');  // a stray Enter lands on Cancel
+  await page.waitForSelector('dialog.confirm', { state: 'detached' });
+  const back = await page.evaluate((s) => document.activeElement === document.querySelector(s), sw);
+  check('a confirm without a field opens on Cancel: a stray Enter changes nothing, and focus returns to the switch',
+    startFocus === 'cd-cancel' && (await page.getAttribute(sw, 'aria-checked')) === swOnBefore && back, `${startFocus} ${back}`);
+  // A toast raised while a dialog is open shows above it.
+  await page.focus(sw);
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('dialog.confirm');
+  await page.evaluate(async () => (await import('/js/ui.js')).toast('QA toast over a dialog', 'bad'));
+  // Behind the dialog's backdrop the toast's red would be dimmed: read one pixel of its padding from the screen.
+  const tr = await page.evaluate(() => { const r = document.querySelector('.toast').getBoundingClientRect(); return { x: Math.round(r.left + 4), y: Math.round(r.top + r.height / 2) }; });
+  const shot = (await page.screenshot({ clip: { x: tr.x, y: tr.y, width: 1, height: 1 } })).toString('base64');
+  const px = await page.evaluate(async (b64) => { const img = new Image(); img.src = `data:image/png;base64,${b64}`; await img.decode();
+    const c = document.createElement('canvas'); c.width = c.height = 1; const g = c.getContext('2d'); g.drawImage(img, 0, 0); return [...g.getImageData(0, 0, 1, 1).data].slice(0, 3); }, shot);
+  const want = await page.evaluate(() => getComputedStyle(document.querySelector('.toast')).backgroundColor.match(/\d+/g).map(Number));
+  check('a toast shows above an open dialog, not dimmed behind it', await page.evaluate(() => document.querySelector('.toast').matches(':popover-open'))
+    && px.every((v, i) => Math.abs(v - want[i]) <= 6), `${px} vs ${want}`);
+  // Outside an open modal dialog everything is inert: the toast must sit inside it to reach a screen reader.
+  const heard = await page.evaluate(() => { const t = document.querySelector('.toast'); return { inDialog: !!t.closest('dialog[open]'), inert: !!t.closest('[inert]'), role: t.getAttribute('role') }; });
+  check('a toast raised over a dialog is inside it (not inert) and is an alert', heard.inDialog && !heard.inert && heard.role === 'alert', JSON.stringify(heard));
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('dialog.confirm', { state: 'detached' });
+  await page.waitForTimeout(100);
+  const after = await page.evaluate(() => { const t = document.querySelector('.toast'); return { onPage: t.parentNode === document.body, open: t.matches(':popover-open') }; });
+  check('when the dialog closes, the toast goes back to the page and stays up', after.onPage && after.open, JSON.stringify(after));
+  // A budget the dialog refuses marks the field invalid and points at the reason.
+  await page.goto(BASE + '/ads.html?level=campaign');
+  await page.waitForSelector('[data-budget^="campaign:"]');
+  await page.click('[data-budget^="campaign:"]');
+  await page.fill('#cd-input', '0.2');
+  await page.click('dialog.confirm #cd-ok');
+  const inv = await page.evaluate(() => { const i = document.getElementById('cd-input'); return `${i.getAttribute('aria-invalid')} ${i.getAttribute('aria-describedby')}`; });
+  await page.fill('#cd-input', '30');
+  const cleared = await page.evaluate(() => document.getElementById('cd-input').getAttribute('aria-invalid'));
+  check('a refused amount sets aria-invalid and describes the field with the reason, typing clears it', inv === 'true cd-hint cd-err' && cleared === null, `${inv} / ${cleared}`);
+  await page.click('dialog.confirm #cd-cancel');
+  // Rows open the quick look from the keyboard; the drawer keeps focus and hands it back.
+  await page.goto(BASE + '/ads.html');
+  await page.waitForSelector('.tbl tbody tr[data-row]');
+  const pkInert = await page.evaluate(() => !document.querySelector('.pk') || document.querySelector('.pk').inert);
+  const rowStops = await page.evaluate(() => [...document.querySelectorAll('.tbl tbody tr[data-row]')].filter((r) => r.tabIndex === 0).length);
+  const rowKey = await page.getAttribute('.tbl tbody tr[data-row]', 'data-row');
+  await page.focus('.tbl tbody tr[data-row]');
+  await page.keyboard.press('ArrowDown');
+  const movedTo = await page.evaluate(() => document.activeElement.dataset.row);
+  const roving = await page.evaluate(() => [...document.querySelectorAll('.tbl tbody tr[data-row]')].filter((r) => r.tabIndex === 0).map((r) => r.dataset.row));
+  check('the table is one Tab stop: only one row is in the Tab order, and it follows ↓', rowStops === 1 && roving.length === 1 && roving[0] === movedTo, `${rowStops} ${roving}`);
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.pk.open');
+  const inDrawer = await page.evaluate(() => document.querySelector('.pk').contains(document.activeElement));
+  for (let i = 0; i < 40; i++) await page.keyboard.press('Tab');
+  const stillIn = await page.evaluate(() => document.querySelector('.pk').contains(document.activeElement));
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.pk:not(.open)');
+  const backTo = await page.evaluate(() => ({ row: document.activeElement.dataset.row, inert: document.querySelector('.pk').inert }));
+  check('rows: ↓ ↑ move, Enter opens the quick look with focus inside, Tab stays inside, Escape closes it and returns to the row',
+    pkInert && movedTo && movedTo !== rowKey && inDrawer && stillIn && backTo.row === rowKey && backTo.inert, `${movedTo} ${inDrawer} ${stillIn} ${JSON.stringify(backTo)}`);
+  // Charts say what they show in words.
+  await page.goto(BASE + '/performance.html');
+  await page.waitForSelector('#c-spend svg');
+  const chartWords = await page.evaluate(() => { const svg = document.querySelector('#c-spend svg'); const d = document.getElementById(svg.getAttribute('aria-describedby')); return d ? d.textContent : ''; });
+  check('the spend chart has a summary in words (total and best day)', /^Spend per day, .+ to .+: (\$[\d,.]+ in total, the most on .+|nothing on any day\.)/.test(chartWords), chartWords);
+  // Less motion when the system asks for it.
+  const calm = await (await browser.newContext({ reducedMotion: 'reduce' })).newPage();
+  await calm.goto(BASE + '/login.html');
+  const calmMs = await calm.evaluate(() => { const b = document.querySelector('.btn, button'); return parseFloat(getComputedStyle(b).transitionDuration) * 1000; });
+  check('with reduced motion asked for, transitions are cut to nothing', calmMs < 1, `${calmMs} ms`);
+  await calm.context().close();
+  }
   // Phones: no page wider than the screen.
   const phonePage = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
   await phonePage.goto(BASE + '/login.html');
@@ -2423,6 +2559,29 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
     if (sw > 391) tooWide.push(`${p} ${sw}px`);
   }
   check('on a 390px phone no page is wider than the screen', tooWide.length === 0, tooWide.join(' | '));
+  {
+  const smallOnes = [];
+  for (const p of guards.TARGET_PAGES) {
+    await phonePage.goto(BASE + p); await phonePage.waitForTimeout(1500);
+    const small = await phonePage.evaluate(guards.smallTargets);
+    if (small.length) smallOnes.push(`${p}: ${small.slice(0, 4).join(', ')}${small.length > 4 ? ` +${small.length - 4}` : ''}`);
+  }
+  check('on a phone every control on the main pages is at least 44 × 44 px', smallOnes.length === 0, smallOnes.join(' | '));
+  await phonePage.goto(BASE + '/performance.html');
+  await phonePage.waitForSelector('#c-spend svg');
+  const phoneLook = await phonePage.evaluate(() => {
+    const sum = document.querySelector('details.table-view > summary');
+    const cs = getComputedStyle(sum), mark = getComputedStyle(sum, '::before').content;
+    const svg = document.querySelector('#c-spend svg');
+    return { marker: cs.display === 'list-item' || (mark && mark !== 'none'), scale: svg.getBoundingClientRect().width / svg.viewBox.baseVal.width };
+  });
+  check('on a phone a "show more" summary still shows its ▸ marker', phoneLook.marker, JSON.stringify(phoneLook));
+  check('on a phone charts are drawn at their real width, so 12px labels stay 12px', Math.abs(phoneLook.scale - 1) < 0.02, String(phoneLook.scale));
+  await phonePage.goto(BASE + '/settings.html');
+  await phonePage.waitForSelector('.settings-nav a');
+  const groups = await phonePage.evaluate(() => [...document.querySelectorAll('.settings-nav .muted.small')].filter((e) => e.getBoundingClientRect().width > 0).map((e) => e.textContent));
+  check('on a phone Settings\' section row keeps "This account:" and "Whole console:"', groups.join('|') === 'This account:|Whole console:', groups.join('|'));
+  }
   // ← All leads on a phone keeps the source filter in the URL, which the next poll reads.
   await phonePage.goto(`${BASE}/leads.html?ad=${adOpt.slice(2)}`);
   await phonePage.waitForSelector('.lead-row');

@@ -60,11 +60,11 @@ function render() {
     <div class="charts"><section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
       <section class="panel"><div class="panel-head"><h2>Leads per day</h2></div><div class="chart" id="c-leads"></div></section></div>
     ${LEVEL === "adset" ? learningCard(e) : ""}
-    <div class="cr-toolbar"><div class="tabs-inline" role="tablist">${tabs.map(([k, l, n]) => `<button type="button" role="tab" class="view-chip" data-tab="${k}" aria-selected="${state.tab === k}">${l}<span>${n}</span></button>`).join("")}</div>
+    <div class="cr-toolbar"><div class="tabs-inline" role="tablist" aria-label="Show" data-tabpanel="en-panel">${tabs.map(([k, l, n]) => `<button type="button" role="tab" class="view-chip" data-tab="${k}" aria-selected="${state.tab === k}">${l}<span>${n}</span></button>`).join("")}</div>
       <span class="spacer"></span>
       <select class="input tool" id="range-pick" aria-label="Dates">${RANGES.map(([k, l]) => `<option value="${k}" ${k === state.range ? "selected" : ""}>${l}</option>`).join("")}</select>
       <button type="button" class="tool-tg" id="vs" aria-pressed="${state.vs}">vs before</button></div>
-    ${body}
+    <div id="en-panel">${body}</div>
     <p class="muted small flush">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}).${esc(unlistedNote(e.m, rows.ad))}</p>`;
   document.querySelectorAll("#cr-all [data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
   columnChart({ el: $("c-spend"), series: data.series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 170,

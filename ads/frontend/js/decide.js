@@ -114,6 +114,8 @@ export async function acceptSheet(ids, onDone) {
     refresh();
   });
   refresh();
+  // The sheet's content arrived: focus starts on Cancel, never on Accept.
+  dlg.querySelector("#cd-cancel").focus();
   let busy = false;
   dlg.addEventListener("cancel", (e) => { if (busy) e.preventDefault(); });
   const finish = () => { dlg.close(); dlg.remove(); };

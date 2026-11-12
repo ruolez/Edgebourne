@@ -58,21 +58,95 @@ export const icon = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICO
 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+// Toasts sit in the top layer (a manual popover, shown again on every message), so one raised while a
+// dialog is open shows above the dialog instead of behind its backdrop.
 let toastTimer;
+const topLayer = (el, on) => {
+  if (!el.popover) return;
+  try {
+    if (el.matches(":popover-open")) el.hidePopover();
+    if (on) el.showPopover();
+  } catch (e) { /* not connected yet */ }
+};
 export function toast(message, kind = "") {
   let el = document.querySelector(".toast");
   if (!el) {
     el = document.createElement("div");
     el.className = "toast";
-    el.setAttribute("role", "status");
+    el.setAttribute("role", kind === "bad" ? "alert" : "status");
+    if ("showPopover" in el) el.popover = "manual";
     document.body.appendChild(el);
+  }
+  // An open modal dialog makes everything outside it inert, so screen readers would never hear the toast:
+  // it lives inside that dialog while one is open, and goes back to the page when the dialog closes.
+  const modals = [...document.querySelectorAll("dialog[open]")].filter((d) => { try { return d.matches(":modal"); } catch (e) { return true; } });
+  const host = modals[modals.length - 1] || document.body;
+  if (el.parentNode !== host) {
+    topLayer(el, false);
+    host.appendChild(el);
+    if (host !== document.body) {
+      host.addEventListener("close", () => {
+        if (el.parentNode !== host) return;
+        document.body.appendChild(el);
+        if (!el.hidden) topLayer(el, true);
+      }, { once: true });
+    }
   }
   el.textContent = message;
   el.className = "toast " + kind;
+  el.setAttribute("role", kind === "bad" ? "alert" : "status");
   el.hidden = false;
+  topLayer(el, true);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.hidden = true), kind === "bad" ? 6000 : 3000);
+  toastTimer = setTimeout(() => { el.hidden = true; topLayer(el, false); }, kind === "bad" ? 6000 : 3000);
 }
+
+// Tablists: arrow keys (Home / End) move between the tabs and open the one reached; only the chosen tab
+// sits in the Tab order. A tablist with data-tabpanel="<id>" names the panel its tabs show.
+const tabsOf = (list) => [...list.querySelectorAll('[role="tab"]')].filter((t) => t.closest('[role="tablist"]') === list && !t.disabled && !t.hidden);
+let tabSeq = 0;
+export function syncTabs(root = document) {
+  root.querySelectorAll('[role="tablist"]').forEach((list) => {
+    const tabs = tabsOf(list);
+    const chosen = tabs.find((t) => t.getAttribute("aria-selected") === "true") || tabs[0];
+    const panel = list.dataset.tabpanel && document.getElementById(list.dataset.tabpanel);
+    tabs.forEach((t) => {
+      if (!t.hasAttribute("aria-selected")) t.setAttribute("aria-selected", "false");  // once: setting it again would wake the observer
+      const want = t === chosen ? 0 : -1;
+      if (t.tabIndex !== want) t.tabIndex = want;
+      if (panel) { if (!t.id) t.id = `tab-${++tabSeq}`; t.setAttribute("aria-controls", panel.id); }
+    });
+    if (panel && chosen) { panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", chosen.id); }
+  });
+}
+document.addEventListener("keydown", (e) => {
+  const tab = e.target.closest && e.target.closest('[role="tab"]');
+  const list = tab && tab.closest('[role="tablist"]');
+  if (!list || e.metaKey || e.ctrlKey || e.altKey) return;
+  const tabs = tabsOf(list);
+  const i = tabs.indexOf(tab);
+  const to = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+  if (to === undefined || i < 0) return;
+  e.preventDefault();
+  const next = tabs[(to + tabs.length) % tabs.length];
+  next.focus();
+  if (next.getAttribute("aria-selected") === "true") return;
+  // Some pages draw their tabs again on a switch (now, or once the data is in): focus follows to the new copy.
+  const key = [...next.attributes].filter((a) => a.name.startsWith("data-")).map((a) => `[${a.name}="${CSS.escape(a.value)}"]`).join("");
+  next.click();
+  const follow = (tries) => {
+    const again = !next.isConnected && key && document.querySelector(`[role="tab"]${key}`);
+    if (again) { if (!document.activeElement || document.activeElement === document.body) again.focus(); return; }
+    if (tries) setTimeout(() => follow(tries - 1), 150);
+  };
+  follow(12);
+});
+let tabsQueued = false;
+new MutationObserver(() => {
+  if (tabsQueued) return;
+  tabsQueued = true;
+  queueMicrotask(() => { tabsQueued = false; syncTabs(); });
+}).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-selected"] });
 
 // ---------- time ----------
 export function waited(iso, now = Date.now()) {
@@ -402,6 +476,21 @@ export async function boot({ page, admin = false }) {
     </div>`;
 
   const main = document.querySelector(".main");
+  // Skip link: the first stop for the keyboard, past the sidebar to the page. It focuses the page without
+  // touching the hash, which several pages use for their own state (#tab=, #lead=, #r/…).
+  if (!main.id) main.id = "main";
+  const skip = document.createElement("a");
+  skip.className = "skip-link";
+  skip.href = `#${main.id}`;
+  skip.textContent = "Skip to the page";
+  skip.addEventListener("click", (e) => {
+    e.preventDefault();
+    main.tabIndex = -1;  // only while it holds focus: a click on empty space shouldn't focus the page
+    main.addEventListener("blur", () => main.removeAttribute("tabindex"), { once: true });
+    main.focus({ preventScroll: true });
+    main.scrollIntoView({ block: "start" });
+  });
+  document.body.prepend(skip);
   const line = document.createElement("div");
   line.className = "topline";
   line.innerHTML = `<nav class="crumbs" aria-label="Breadcrumb"></nav><span class="grow"></span>${refreshButton()}`;
@@ -566,8 +655,16 @@ export function setNewCount(n) {
   });
 }
 
+// A field's own error: marked invalid for screen readers and tied to its message (aria-describedby keeps
+// the field's hint too). fieldError(form) clears every error in the form.
+let errSeq = 0;
 export function fieldError(form, name, message) {
   form.querySelectorAll(".field.error").forEach((f) => f.classList.remove("error"));
+  form.querySelectorAll('[aria-invalid="true"]').forEach((el) => {
+    el.removeAttribute("aria-invalid");
+    const rest = (el.getAttribute("aria-describedby") || "").split(" ").filter((id) => id && !id.startsWith("ferr-")).join(" ");
+    if (rest) el.setAttribute("aria-describedby", rest); else el.removeAttribute("aria-describedby");
+  });
   form.querySelectorAll(".field .err").forEach((e) => e.remove());
   if (!name) return;
   const input = form.querySelector(`[name="${name}"]`);
@@ -576,8 +673,11 @@ export function fieldError(form, name, message) {
   field.classList.add("error");
   const err = document.createElement("div");
   err.className = "err";
+  err.id = `ferr-${++errSeq}`;
   err.textContent = message;
   field.appendChild(err);
+  input.setAttribute("aria-invalid", "true");
+  input.setAttribute("aria-describedby", [input.getAttribute("aria-describedby"), err.id].filter(Boolean).join(" "));
   input.focus();
 }
 
@@ -592,8 +692,8 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
       <h2>${esc(title)}</h2>
       ${body ? `<div class="confirm-body">${body}</div>` : ""}
       ${field ? `<div class="field"><label for="cd-input">${esc(field.label)}</label>
-        <div class="affix">${field.prefix ? `<span>${esc(field.prefix)}</span>` : ""}<input class="input" id="cd-input" inputmode="${field.inputmode || "text"}" value="${esc(field.value ?? "")}" autocomplete="off">${field.suffix ? `<span>${esc(field.suffix)}</span>` : ""}</div>
-        <span class="hint" id="cd-hint"></span><span class="err" id="cd-err" hidden></span></div>` : ""}
+        <div class="affix">${field.prefix ? `<span>${esc(field.prefix)}</span>` : ""}<input class="input" id="cd-input" inputmode="${field.inputmode || "text"}" value="${esc(field.value ?? "")}" autocomplete="off" aria-describedby="cd-hint">${field.suffix ? `<span>${esc(field.suffix)}</span>` : ""}</div>
+        <span class="hint" id="cd-hint" aria-live="polite"></span><span class="err" id="cd-err" role="alert" hidden></span></div>` : ""}
       <div class="row end"><button class="btn" type="button" value="cancel" id="cd-cancel">Cancel</button>
         <button class="btn ${danger ? "btn-danger" : claude ? "btn-claude" : "btn-primary"}" type="submit" id="cd-ok">${esc(confirm)}</button></div>
     </form>`;
@@ -602,19 +702,25 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
     const hint = dlg.querySelector("#cd-hint");
     const err = dlg.querySelector("#cd-err");
     const refresh = () => { if (field && field.hint) hint.innerHTML = field.hint(input.value); };
-    if (input) { input.addEventListener("input", () => { err.hidden = true; refresh(); }); refresh(); }
+    const invalid = (on) => {
+      if (on) { input.setAttribute("aria-invalid", "true"); input.setAttribute("aria-describedby", "cd-hint cd-err"); }
+      else { input.removeAttribute("aria-invalid"); input.setAttribute("aria-describedby", "cd-hint"); }
+    };
+    if (input) { input.addEventListener("input", () => { err.hidden = true; invalid(false); refresh(); }); refresh(); }
     let result = false;
     dlg.querySelector("#cd-cancel").addEventListener("click", () => dlg.close());
     dlg.querySelector("form").addEventListener("submit", (e) => {
       if (field) {
         const problem = field.validate ? field.validate(input.value) : null;
-        if (problem) { e.preventDefault(); err.textContent = problem; err.hidden = false; input.focus(); return; }
+        if (problem) { e.preventDefault(); err.textContent = problem; err.hidden = false; invalid(true); input.focus(); return; }
         result = input.value;
       } else result = true;
     });
     dlg.addEventListener("close", () => { dlg.remove(); resolve(result); });
     dlg.showModal();
-    (input || dlg.querySelector("#cd-ok")).focus();
+    // Safe default: a stray Enter or Space never confirms. With a field, focus is on it (typing is deliberate);
+    // otherwise on Cancel, never on the button that acts.
+    (input || dlg.querySelector("#cd-cancel")).focus();
     if (input) input.select();
   });
 }

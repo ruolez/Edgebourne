@@ -146,19 +146,26 @@ export function tableHtml({ level, rows, cols, sort, dir, selected, selectable, 
     const title = c.key === "vs" ? vsTitle(range) : c.title;
     return `<th class="${c.num ? "num" : ""} ${c.cls || ""}" ${s ? `aria-sort="${s}"` : ""} ${title ? `title="${esc(title)}"` : ""}>${c.sort ? `<button type="button" data-sort="${c.key}">${esc(c.label)}${c.sub ? ` <small>${esc(c.sub)}</small>` : ""}<span class="arrow">${icon("back")}</span></button>` : esc(c.label)}</th>`;
   }).join("")}</tr>`;
-  const body = sorted.map((r) => `<tr data-row="${r.level}:${esc(r.id)}" class="${selected.has(r.id) ? "is-sel" : ""} ${["PAUSED", "ARCHIVED"].includes(r.status) ? "is-off" : ""}">
-      ${selectable ? `<td class="c-cb"><input type="checkbox" class="tbl-cb" data-pick="${esc(r.id)}" aria-label="Select ${esc(r.name)}" ${selected.has(r.id) ? "checked" : ""}></td>` : ""}
+  const focusKey = rovingKey(sorted);
+  const body = sorted.map((r) => `<tr data-row="${r.level}:${esc(r.id)}" tabindex="${rowKey(r) === focusKey ? 0 : -1}" class="${selected.has(r.id) ? "is-sel" : ""} ${["PAUSED", "ARCHIVED"].includes(r.status) ? "is-off" : ""}">
+      ${selectable ? `<td class="c-cb"><label class="pick"><input type="checkbox" class="tbl-cb" data-pick="${esc(r.id)}" aria-label="Select ${esc(r.name)}" ${selected.has(r.id) ? "checked" : ""}></label></td>` : ""}
       ${columns.map((c) => `<td class="${c.num ? "num" : ""} ${c.cls || ""}">${c.cell(r)}</td>`).join("")}</tr>`).join("");
   return `<div class="tbl-wrap"><table class="tbl"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
+
+// One row of a list is in the Tab order (the last one focused, else the first); ↑ ↓ move between them.
+let lastRow = null;
+const rowKey = (r) => `${r.level}:${r.id}`;
+const rovingKey = (sorted) => (sorted.some((r) => rowKey(r) === lastRow) ? lastRow : sorted[0] && rowKey(sorted[0]));
 
 // Phones: one compact line per row instead of a wide table (same checkboxes, switches and quick look).
 export const narrow = () => matchMedia("(max-width: 960px)").matches;
 export function listHtml({ rows, selected, sort, dir }) {
   const sorter = C[sort] && C[sort].sort ? C[sort] : C.spend;
   const sorted = [...rows].sort((a, b) => { const ka = sorter.sort(a), kb = sorter.sort(b); return (ka < kb ? -1 : ka > kb ? 1 : 0) * (dir === "asc" ? 1 : -1) * (sorter.key === "name" ? -1 : 1); });
-  return `<ul class="pl">${sorted.map((r) => `<li data-row="${r.level}:${esc(r.id)}" class="${selected.has(r.id) ? "is-sel" : ""}">
-    <input type="checkbox" class="tbl-cb" data-pick="${esc(r.id)}" aria-label="Select ${esc(r.name)}" ${selected.has(r.id) ? "checked" : ""}>
+  const focusKey = rovingKey(sorted);
+  return `<ul class="pl">${sorted.map((r) => `<li data-row="${r.level}:${esc(r.id)}" tabindex="${rowKey(r) === focusKey ? 0 : -1}" class="${selected.has(r.id) ? "is-sel" : ""}">
+    <label class="pick"><input type="checkbox" class="tbl-cb" data-pick="${esc(r.id)}" aria-label="Select ${esc(r.name)}" ${selected.has(r.id) ? "checked" : ""}></label>
     ${r.level === "ad" ? thumb(r) : ""}
     <span class="pl-b"><a href="${href(r)}" class="tbl-link">${esc(r.name)}</a><span class="pl-st">${statusCell(r)}</span>
       <small class="tnum">${money(r.m.spend_cents, { exact: true })} · ${count(r.m.impressions)} views · ${count(r.m.leads)} leads · ${per(r.m.spend_cents, r.m.leads)}${r.prev && cpl(r.prev) && cpl(r.m) ? ` ${delta(cpl(r.m), cpl(r.prev), true)}` : ""}</small></span>
@@ -310,6 +317,23 @@ export function wire(root, ctx) {
     const row = e.target.closest("[data-row]");
     if (row) ctx.peek(row.dataset.row);
   });
+  // Rows work from the keyboard too: Enter or Space opens the quick look, ↑ ↓ move between rows.
+  root.addEventListener("keydown", (e) => {
+    const row = e.target.matches && e.target.matches("[data-row]") ? e.target : null;
+    if (!row || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); ctx.peek(row.dataset.row); return; }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const rows = [...root.querySelectorAll("[data-row]")];
+      rows[rows.indexOf(row) + (e.key === "ArrowDown" ? 1 : -1)]?.focus();
+    }
+  });
+  root.addEventListener("focusin", (e) => {
+    const row = e.target.closest && e.target.closest("[data-row]");
+    if (!row) return;
+    lastRow = row.dataset.row;
+    root.querySelectorAll("[data-row]").forEach((r) => { const want = r === row ? 0 : -1; if (r.tabIndex !== want) r.tabIndex = want; });
+  });
   root.addEventListener("change", (e) => {
     const all = e.target.closest("[data-all]");
     if (all) { ctx.pickAll(all.checked); return; }
@@ -386,15 +410,40 @@ async function diagnostics(r) {
   } catch (err) { box.innerHTML = ""; }
 }
 
-export async function peek(r, { onClose } = {}) {
+// Keyboard: opening moves focus into the drawer, Tab stays inside it, Escape closes it and focus goes back
+// to the row (or button) it came from. Closed, it is inert: nothing in it can be reached.
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+let opener = null;
+function keepFocusIn(e) {
+  const items = [...drawer.querySelectorAll(FOCUSABLE)].filter((el) => el.getClientRects().length);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1];
+  if (!drawer.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
+export async function peek(r, { onClose, focus = true } = {}) {
   if (!drawer) {
     drawer = document.createElement("aside");
     drawer.className = "pk";
     drawer.setAttribute("role", "dialog");
+    drawer.setAttribute("aria-modal", "true");
     drawer.setAttribute("aria-label", "Quick look");
+    drawer.inert = true;
     document.body.append(drawer);
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && drawer.classList.contains("open")) closePeek(); });
+    document.addEventListener("keydown", (e) => {
+      // A confirm opened from inside the drawer handles its own keys.
+      if (!drawer.classList.contains("open") || document.querySelector("dialog[open]")) return;
+      if (e.key === "Escape") closePeek();
+      else if (e.key === "Tab") keepFocusIn(e);
+    });
   }
+  const wasOpen = drawer.classList.contains("open");
+  const hadFocus = wasOpen && drawer.contains(document.activeElement);
+  const from = document.activeElement;
+  if (from && from !== document.body && !drawer.contains(from)) opener = { el: from, row: from.closest("[data-row]")?.dataset.row || `${r.level}:${r.id}` };
+  else if (!opener) opener = { el: null, row: `${r.level}:${r.id}` };
   drawer._onClose = onClose;
   const m = r.m || {};
   const word = LEVEL_WORDS[r.level][0].replace(/^./, (c) => c.toUpperCase());
@@ -412,8 +461,10 @@ export async function peek(r, { onClose } = {}) {
     <div class="pk-diag"><p class="muted small">Asking Meta how it rates this ad…</p></div>
     <h3 class="pk-h">What happened</h3><ol class="pk-tl"><li class="muted">Loading…</li></ol>`;
   drawer.classList.add("open");
+  drawer.inert = false;
   drawer.scrollTop = 0;
   drawer.querySelector(".pk-x").addEventListener("click", closePeek);
+  if (focus || hadFocus) drawer.querySelector(".pk-x").focus({ preventScroll: true });
   drawer.onclick = (e) => {
     const t = e.target.closest("[data-toggle]");
     if (t) toggleEntity(t, () => { closePeek(); onClose && onClose(true); });
@@ -438,8 +489,16 @@ export async function peek(r, { onClose } = {}) {
 
 export function closePeek() {
   if (!drawer || !drawer.classList.contains("open")) return;
+  const focusWasIn = drawer.contains(document.activeElement);
   drawer.classList.remove("open");
+  drawer.inert = true;
   const cb = drawer._onClose;
   drawer._onClose = null;
   if (cb) cb(false);
+  const back = opener;
+  opener = null;
+  if (focusWasIn && back) {
+    const el = back.el && back.el.isConnected ? back.el : document.querySelector(`[data-row="${CSS.escape(back.row)}"]`);
+    el?.focus();
+  }
 }

@@ -86,8 +86,8 @@ function editor() {
         <span class="muted small">Nothing runs until an ad uses the form.</span></div>
     </div>
     <div class="builder-preview">
-      <div class="segmented" id="steps" role="tablist" aria-label="Preview">${["intro", "questions", ...(spec.higher_intent ? ["review"] : []), "thanks"].map((s) =>
-        `<button type="button" role="tab" data-show-step="${s}" aria-pressed="${s === step}">${{ intro: "Intro", questions: "Questions", review: "Review", thanks: "Thanks" }[s]}</button>`).join("")}</div>
+      <div class="segmented" id="steps" role="tablist" aria-label="Preview" data-tabpanel="phone">${["intro", "questions", ...(spec.higher_intent ? ["review"] : []), "thanks"].map((s) =>
+        `<button type="button" role="tab" data-show-step="${s}" aria-selected="${s === step}">${{ intro: "Intro", questions: "Questions", review: "Review", thanks: "Thanks" }[s]}</button>`).join("")}</div>
       <div class="phone" aria-label="How the form looks on a phone"><div class="phone-screen" id="phone"></div></div>
       <p class="muted small flush">A close sketch, not Meta's exact layout.</p>
     </div>
@@ -123,7 +123,7 @@ function phone() {
   };
   if (!screens[step] || (step === "review" && !s.higher_intent)) step = "intro";
   $("phone").innerHTML = screens[step];
-  document.querySelectorAll("#steps [data-show-step]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.showStep === step)));
+  document.querySelectorAll("#steps [data-show-step]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.showStep === step)));
 }
 
 function counts() {
@@ -158,7 +158,7 @@ function changed() {
   counts();
   const tabs = ["intro", "questions", ...(spec.higher_intent ? ["review"] : []), "thanks"];
   if ($("steps").children.length !== tabs.length) {
-    $("steps").innerHTML = tabs.map((s) => `<button type="button" role="tab" data-show-step="${s}" aria-pressed="${s === step}">${{ intro: "Intro", questions: "Questions", review: "Review", thanks: "Thanks" }[s]}</button>`).join("");
+    $("steps").innerHTML = tabs.map((s) => `<button type="button" role="tab" data-show-step="${s}" aria-selected="${s === step}">${{ intro: "Intro", questions: "Questions", review: "Review", thanks: "Thanks" }[s]}</button>`).join("");
   }
   $("thanks-link").hidden = spec.thanks_button !== "website";
   phone();

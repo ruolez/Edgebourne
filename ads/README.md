@@ -177,8 +177,14 @@ secrets can't be read (paste them again in Settings).
 
 "Signal" (chosen 2026-11-10, `.superdesign/design-system.md`, mockups in `.superdesign/redesign/`):
 graphite neutrals, one signal green that means delivering, Geist + Geist Mono (numbers),
-borders-only depth, light and dark. Stylesheets: `css/tokens.css` (tokens; the older names such as
-`--seal` stay as aliases), `css/app.css` (components), `css/shell.css` (frame, manager, Inbox,
-compare, palette). Violet is reserved for anything Claude does. Never name a class, id or file with
+borders-only depth, light and dark. Stylesheets: `css/tokens.css` (colours with `--*-ink` for text,
+`--on-*` for text on a fill, and the spacing, radius, type and shadow scales; the Seal & ledger names
+`--seal`, `--rust`, `--pine`, `--fog`, `--lift` are gone), `css/app.css` (components), `css/shell.css`
+(frame, manager, Inbox, compare, palette, accessibility and the phone 44px rules). QA (`qa/guards.cjs`)
+fails on a token pair under 4.5:1 in either theme, on a retired token name, and on a control smaller
+than 44 × 44 px on the main pages at phone width. Keyboard: skip link, tablists with arrow keys
+(`syncTabs` in `ui.js`, `data-tabpanel` names the panel), a table is one Tab stop (↑ ↓ move
+between rows, Enter opens the quick look), the drawer keeps focus and hands it back, money confirms and
+the Accept sheet open on Cancel, a toast raised over a dialog sits inside it so screen readers hear it. Violet is reserved for anything Claude does. Never name a class, id or file with
 an ad-like token (ad-, ads-, adset, banner, sponsor, promo, `/ads.js`): ad blockers hide or block
 them, and QA checks both.

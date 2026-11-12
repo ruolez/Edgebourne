@@ -146,8 +146,8 @@ function suggestionMedia(p, ix) {
   if (p.kind === "creative" && p.payload) {
     const reels = p.payload.vertical;
     return `<div class="sg-media">
-      ${reels ? '<p class="sg-media-label">How Reels will show it</p>' : `<div class="sg-tabs" role="tablist" aria-label="Placement">${PREVIEW_TABS.map(([f, l], i) => `<button type="button" role="tab" data-pf="${f}" aria-selected="${!i}">${l}</button>`).join("")}</div>`}
-      <div class="decision-preview" data-preview="${p.id}"${reels ? ' data-format="INSTAGRAM_REELS"' : ""} aria-label="Preview of the ad as Meta shows it"><div class="preview-skeleton"><span></span><span></span><span></span><p>Loading Meta's preview…</p></div></div>
+      ${reels ? '<p class="sg-media-label">How Reels will show it</p>' : `<div class="sg-tabs" role="tablist" aria-label="Placement" data-tabpanel="sgp-${p.id}">${PREVIEW_TABS.map(([f, l], i) => `<button type="button" role="tab" data-pf="${f}" aria-selected="${!i}">${l}</button>`).join("")}</div>`}
+      <div class="decision-preview" id="sgp-${p.id}" data-preview="${p.id}"${reels ? ' data-format="INSTAGRAM_REELS"' : ""} aria-label="Preview of the ad as Meta shows it"><div class="preview-skeleton"><span></span><span></span><span></span><p>Loading Meta's preview…</p></div></div>
       <div class="sg-media-do"><button class="btn btn-small btn-quiet" type="button" data-view-proposal="${p.id}">Larger</button>${ix.ads[p.about_ad] ? `<button class="btn btn-small btn-quiet" type="button" data-compare="${p.id}">Compare with current</button>` : ""}</div>
     </div>`;
   }

@@ -20,8 +20,43 @@ function dayTick(i, n) {
   return i === n - 1 || (i % every === 0 && n - 1 - i >= Math.ceil(every / 2));
 }
 
+// The chart in words, for screen readers (and anyone who'd rather read): the period, the total and the best day.
+let sumSeq = 0;
+export function columnSummary(series, key, format, title) {
+  if (!series.length) return `${title}: no days to show.`;
+  const values = series.map((d) => d[key] || 0);
+  const total = values.reduce((a, b) => a + b, 0);
+  const span = `${dayLabel(series[0].day)} to ${dayLabel(series[series.length - 1].day)}`;
+  if (!total) return `${title}, ${span}: nothing on any day.`;
+  const top = values.indexOf(Math.max(...values));
+  return `${title}, ${span}: ${format(total)} in total, the most on ${dayLabel(series[top].day)} (${format(values[top])}).`;
+}
+
+export function lineSummary(series, format, title) {
+  const parts = series.map((s) => {
+    const pts = s.points.filter((p) => p.value != null);
+    if (!pts.length) return `${s.label}: no data`;
+    const top = pts.reduce((a, b) => (b.value > a.value ? b : a));
+    return `${s.label}: highest ${format(top.value)} on ${dayLabel(top.day)}, last ${format(pts[pts.length - 1].value)}`;
+  });
+  return `${title}. ${parts.join("; ")}.`;
+}
+
+const described = (svgLabel, text) => {
+  const id = `chart-sum-${++sumSeq}`;
+  return { attrs: `role="img" aria-label="${esc(svgLabel)}" aria-describedby="${id}"`, note: `<p class="sr-only" id="${id}">${esc(text)}</p>` };
+};
+
+// Charts are drawn 560 wide and scaled to fit; in a narrower box (phones) they are drawn at the box's own width,
+// so 12px labels stay 12px and the height isn't left half empty.
+function drawWidth(el) {
+  const cs = getComputedStyle(el);
+  const w = Math.floor(el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
+  return w >= 240 && w < 560 ? w : 560;
+}
+
 export function columnChart({ el, series, key, color, format, axisFormat, title, integer = false, height = 220 }) {
-  const W = 560, H = height, L = 52, R = 8, T = 10, B = 26;
+  const W = drawWidth(el), H = height, L = 52, R = 8, T = 10, B = 26;
   const values = series.map((d) => d[key]);
   const { top, step } = niceMax(Math.max(...values, 0), 4, integer);
   const plotW = W - L - R, plotH = H - T - B;
@@ -43,7 +78,8 @@ export function columnChart({ el, series, key, color, format, axisFormat, title,
     const label = dayTick(i, series.length) ? `<text class="tick" x="${L + i * band + band / 2}" y="${H - 6}" text-anchor="middle">${dayLabel(d.day)}</text>` : "";
     return `<rect class="hit" data-i="${i}" x="${L + i * band}" y="${T}" width="${band}" height="${plotH}"/><path class="col" d="${path}" fill="${color}"/>${label}`;
   }).join("");
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}"><g class="grid">${grid}</g>${ticks}${cols}</svg><div class="tip" hidden></div>`;
+  const sum = described(title, columnSummary(series, key, format, title));
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" ${sum.attrs}><g class="grid">${grid}</g>${ticks}${cols}</svg>${sum.note}<div class="tip" hidden></div>`;
   el.querySelector("svg").style.height = `${H}px`;
   const tip = el.querySelector(".tip");
   const svg = el.querySelector("svg");
@@ -75,7 +111,7 @@ export function barList(el, items, { key, format, max = null, extra = null }) {
 // Several lines on one axis (compare: one line per ad). series = [{ label, cls, points: [{day, value}] }].
 // Thin lines, round joins, one shared y axis, a tooltip listing every line on the hovered day.
 export function lineChart({ el, series, format, axisFormat, title, integer = false, height = 220 }) {
-  const W = 560, H = height, L = 52, R = 10, T = 12, B = 26;
+  const W = drawWidth(el), H = height, L = 52, R = 10, T = 12, B = 26;
   const days = series[0]?.points.map((p) => p.day) || [];
   const values = series.flatMap((s) => s.points.map((p) => p.value ?? 0));
   const { top, step } = niceMax(Math.max(...values, 0), 4, integer);
@@ -93,7 +129,8 @@ export function lineChart({ el, series, format, axisFormat, title, integer = fal
     return `<polyline class="ln ${s.cls}" points="${pts}"/>`;
   }).join("");
   const hits = days.map((d, i) => `<rect class="hit" data-i="${i}" x="${x(i) - plotW / Math.max(days.length - 1, 1) / 2}" y="${T}" width="${plotW / Math.max(days.length - 1, 1)}" height="${plotH}"/>`).join("");
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}"><g class="grid">${grid}</g>${ticks}${labels}${lines}<line class="cursor" x1="0" x2="0" y1="${T}" y2="${T + plotH}" hidden/>${hits}</svg><div class="tip" hidden></div>`;
+  const sum = described(title, lineSummary(series, format, title));
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" ${sum.attrs}><g class="grid">${grid}</g>${ticks}${labels}${lines}<line class="cursor" x1="0" x2="0" y1="${T}" y2="${T + plotH}" hidden/>${hits}</svg>${sum.note}<div class="tip" hidden></div>`;
   el.querySelector("svg").style.height = `${H}px`;
   const svg = el.querySelector("svg"), tip = el.querySelector(".tip"), cursor = el.querySelector(".cursor");
   el.querySelectorAll(".hit").forEach((hit) => {

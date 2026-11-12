@@ -130,17 +130,17 @@ async function load() {
   rows = flatten(data);
   for (const id of [...selected]) if (!(rows[state.level] || []).some((r) => r.id === id)) selected.delete(id);
   render();
-  if (state.peek) openPeek(state.peek);
+  if (state.peek) openPeek(state.peek, { quiet: true });  // kept open across a reload: focus stays where it is
 }
 
-function openPeek(key) {
+function openPeek(key, { quiet = false } = {}) {
   const [level, id] = key.split(":");
   const r = (rows[level] || []).find((x) => x.id === id);
   if (!r) return;
   state.peek = key; save();
   document.querySelectorAll("#cr-all tr.is-peek").forEach((tr) => tr.classList.remove("is-peek"));
   document.querySelector(`#cr-all [data-row="${CSS.escape(key)}"]`)?.classList.add("is-peek");
-  peek(r, { onClose: (changed) => { state.peek = ""; save(); document.querySelectorAll("#cr-all .is-peek").forEach((tr) => tr.classList.remove("is-peek")); if (changed) load(); } });
+  peek(r, { focus: !quiet, onClose: (changed) => { state.peek = ""; save(); document.querySelectorAll("#cr-all .is-peek").forEach((tr) => tr.classList.remove("is-peek")); if (changed) load(); } });
 }
 
 function set(patch, reload = false) {
