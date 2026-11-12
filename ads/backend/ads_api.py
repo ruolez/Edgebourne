@@ -18,11 +18,13 @@ import account_info
 import money_rules
 import ranges
 import db
+import delivery
 import desk_view
 import insights
 import meta_client
 import settings_store
 import status_history
+import timeline
 from auth import admin_required, current_user, login_required, visible_campaign_ids
 from util import api_error, log_activity
 
@@ -655,6 +657,13 @@ def ad_detail(ad_id):
                           WHERE m.entity_id IN (%s, %s, %s) ORDER BY m.id DESC LIMIT 30""",
                        (ad_id, ad["adset_id"], ad["campaign_id"]))
     ad["can_control"] = current_user()["role"] != "client"
+    if user["role"] == "client":  # which change came from one of Claude's suggestions is internal too
+        for c in changes:
+            c["proposal_id"] = None
+    else:  # a card says "Not applied" when the console's own check stopped it, as the Claude page does
+        stopped = timeline.checked_refusals(changes)
+        for p in proposals:
+            p["checked"] = p["id"] in stopped
     # The tests it is in (the Tests page is for admins), so the ad page links to them.
     tests = []
     if user["role"] == "admin":
@@ -662,10 +671,24 @@ def ad_detail(ad_id):
         tests = experiments.containing(db.query("SELECT id, name, status, arms FROM experiments ORDER BY id DESC LIMIT 200"),
                                        ad_id, ad["adset_id"])
     import versions_api
+    # The Delivery track (the manager's 14 complete days) and the status in words lead the Overview.
+    today = account_info.today()
+    track_days = [today - timedelta(days=14 - i) for i in range(14)]
+    spent = {r["day"] for r in db.query("SELECT day FROM ad_daily WHERE ad_id = %s AND day BETWEEN %s AND %s AND spend_cents > 0",
+                                        (ad_id, track_days[0], track_days[-1]))}
+    ad["track"] = [{"day": t.isoformat(), "on": t in spent} for t in track_days]
+    status_rows = status_history.timeline("ad", ad_id)
+    # Claude's latest check or new version of this ad, so the Overview says what Claude is doing with it.
+    claude_run = None if user["role"] == "client" else db.query(
+        """SELECT id, kind, status, created_at, finished_at, (scorecard->>'overall') AS score FROM desk_tasks
+           WHERE kind IN ('polish', 'render') AND options->>'ad_id' = %s ORDER BY id DESC LIMIT 1""", (ad_id,), one=True)
     # The funnel comes with the page, so the first paint doesn't wait on Meta's rankings (audit A3-123).
     return jsonify({"ad": ad, "series": series, "lifetime": life, "funnel": ad_funnel(ad_id), "versions": versions_api.for_ad(ad),
                     "leads": leads, "proposals": proposals, "changes": changes, "tests": tests,
-                    "timeline": status_history.timeline("ad", ad_id),
+                    "status": delivery.explain(ad, ad.get("learning_stage"), ad["track"]),
+                    "timeline": status_rows, "claude_run": claude_run,
+                    "history": timeline.merge(status_rows, changes, proposals, money=account_info.money, subject=ad_id,
+                                              names={ad["adset_id"]: ad.get("adset_name"), ad["campaign_id"]: ad.get("campaign_name")}),
                     "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS]})
 
 

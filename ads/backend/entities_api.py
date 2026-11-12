@@ -41,9 +41,14 @@ def timeline_for(level, entity_id):
     events = status_history.timeline(level, entity_id, limit=150)
     changes = db.query("""SELECT m.*, u.name AS user_name FROM meta_changes m LEFT JOIN users u ON u.id = m.user_id
                           WHERE m.entity_id = %s ORDER BY m.id DESC LIMIT 100""", (entity_id,))
-    proposals = db.query("""SELECT id, title, status, decided_at FROM desk_proposals
+    # Claude's suggestions are internal: a client's timeline leaves them out, as the ad page does.
+    client = current_user()["role"] == "client"
+    if client:  # so is which change came from one
+        for c in changes:
+            c["proposal_id"] = None
+    proposals = [] if client else db.query("""SELECT id, task_id, title, status, decided_at FROM desk_proposals
                             WHERE entity_id = %s AND decided_at IS NOT NULL ORDER BY id DESC LIMIT 50""", (entity_id,))
-    return timeline.merge(events, changes, proposals, money=account_info.money)
+    return timeline.merge(events, changes, proposals, money=account_info.money, subject=entity_id)
 
 
 def _visible(level, entity_id):

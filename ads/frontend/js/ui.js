@@ -423,6 +423,26 @@ export function entityLink(level, id, name, { cls = "", dim = "" } = {}) {
   return href ? `<a class="ent-link${cls ? ` ${cls}` : ""}" href="${esc(href)}">${text}</a>` : text;
 }
 
+// The one timeline (timeline.merge on the server): what Meta reported, what was changed here and by whom,
+// Claude's decided suggestions. A line about the ad set or campaign links there (`on`); a suggestion's line
+// can jump to its card on the page (`cards`) and, for owners, open its conversation with Claude.
+const TL_LEVEL = { campaign: "campaign", adset: "ad set", ad: "ad" };
+export function timelineItem(i, { cards = false } = {}) {
+  const who = i.source === "console" ? (i.by ? `${i.by}, from this console` : "From this console")
+    : i.source === "claude" ? "" : i.by || "Meta";
+  const role = window.ebadsMe && window.ebadsMe.role;
+  const owner = role === "admin";
+  const links = [
+    i.on ? `On the ${TL_LEVEL[i.on.level]} ${entityLink(i.on.level, i.on.id, i.on.name || TL_LEVEL[i.on.level])}` : "",
+    i.kind === "change" && i.proposal_id && role && role !== "client" ? "From Claude's suggestion" : "",
+    i.kind === "proposal" && cards ? `<button type="button" class="link-btn" data-jump="p-${i.proposal_id}">See the suggestion</button>` : "",
+    i.kind === "proposal" && owner && i.task_id ? `<a href="/desk.html#r/${i.task_id}">Conversation</a>` : "",
+  ].filter(Boolean);
+  return `<li class="tl-${i.tone || "n"}" data-source="${esc(i.source || "")}"><span class="tl-dot"></span><span class="tl-w">${esc(when(i.at))}</span>
+    <span class="tl-t"><b>${esc(i.title)}</b>${i.sub ? `<small${i.kind === "change" ? ' class="bad-text"' : ""}>${esc(i.sub)}</small>` : ""}${who || links.length ? `<small>${[who && esc(who), ...links].filter(Boolean).join(" · ")}</small>` : ""}</span></li>`;
+}
+export const timelineHtml = (items, opts) => `<ol class="tl">${items.map((i) => timelineItem(i, opts)).join("")}</ol>`;
+
 // Lists remember how they were filtered (this tab only), so a breadcrumb back to one lands on the same view.
 const LIST_KEY = "ebads-list:";
 export function rememberList(href = location.pathname + location.search) {
@@ -491,11 +511,11 @@ export const skeleton = (text = "Loading…", { preview = false } = {}) =>
   `<div class="skeleton${preview ? " preview" : ""}" role="status"><span></span><span></span><span></span><p>${esc(text)}</p></div>`;
 
 // A page whose data didn't arrive: says what happened and offers another try, instead of staying blank.
-export function errorState(el, err, retry, back) {
-  const missing = err && err.status === 404;
+// `panel: false` when `el` sits inside a panel already (its own controls stay usable above it).
+export function errorState(el, err, retry, back, { panel = true, missing = err && err.status === 404 } = {}) {
   const actions = `${retry && !missing ? '<button type="button" class="btn" data-retry>Try again</button>' : ""}${back ? `<a class="btn btn-quiet" href="${esc(back.href)}">${esc(back.label)}</a>` : ""}`;
   el.innerHTML = emptyState({ title: missing ? "Not found" : "This didn't load", body: esc((err && err.message) || "Something went wrong."),
-    actions, tag: el.tagName === "UL" ? "li" : "section", role: "alert" });
+    actions, tag: el.tagName === "UL" ? "li" : "section", role: "alert", panel, variant: panel ? "" : "compact" });
   el.querySelector("[data-retry]")?.addEventListener("click", () => retry());
 }
 

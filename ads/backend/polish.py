@@ -1,6 +1,6 @@
-"""Polish passes: the checks used to bring the Edge Bourne ads from first draft to
-approved (Nov 2026), packaged so any ad can get the same treatment from the
-dashboard. A polish run is a Desk task (kind 'polish') that carries the pass
+"""Polish passes: the checks that took the first ads from first draft to approved
+(Nov 2026), in words that fit any business, packaged so any ad can get the same
+treatment from the dashboard. A polish run is a Desk task (kind 'polish') that carries the pass
 definitions, so Claude on the Mac checks exactly what the dashboard promised.
 A render run (kind 'render') has Claude rebuild the creative on the Mac from the
 fixes and send the new version back as a proposal."""
@@ -27,27 +27,28 @@ PASSES = [
     {"id": "primary_text", "label": "Primary text", "icon": "text",
      "summary": "The first 125 characters carry it",
      "checks": ["Problem and promise land before \"See more\"", "Plain words a busy owner reads in five seconds",
-                "Offer stated exactly: free intro call (never \"free workflow review\")",
-                "No website copy, no process detail or timelines", "AI framed as optional (\"if you want it\")"]},
+                "The offer stated exactly as the form and landing page state it",
+                "No website copy, no process detail or timelines"]},
     {"id": "cta", "label": "Call to action", "icon": "cursor",
      "summary": "One obvious next step",
      "checks": ["Button fits an Instant Form (Book now / Sign up / Get quote)",
-                "\"Tap below\" note big and bold on the creative", "CTA sits at the bottom-right exit of the eye path",
+                "Any \"Tap below\" note on the creative is big and bold", "CTA sits at the bottom-right exit of the eye path",
                 "What happens after the tap is clear and honest"]},
     {"id": "message", "label": "Message & intent", "icon": "target",
      "summary": "One idea, for the right person, different from the others",
-     "checks": ["One idea per ad; problem → solution → CTA", "About the reader's own business, not selling software",
-                "Fits Southern California small-business owners", "Different enough from the other running ads to be shown separately"]},
+     "checks": ["One idea per ad; problem → solution → CTA", "About the reader's own problem, not about the product's features",
+                "Fits the people this ad set is for", "Different enough from the other running ads to be shown separately"]},
     {"id": "visual", "label": "Visual design", "icon": "image",
      "summary": "Hierarchy, readability, harmony",
      "checks": ["Three text levels only: headline, lead, small text", "Small text ≥ 28 px on a 1080 canvas; contrast ≥ 4.5:1",
                 "One accent colour plus ink; no gradients, glass or stray colours", "No clutter: no labels that repeat a word already there",
                 "Harmony and flow: one shape or line carries the eye", "Nothing important sits under a plate or chip"]},
-    {"id": "ai_signal", "label": "AI signal", "icon": "toggle",
-     "summary": "AI present, optional, never too small",
-     "checks": ["The AI chip sits inside the solution object, in a row with what it does",
-                "One chip size across the set, OPTIONAL text ≥ 32 px", "OPTIONAL plus a switch that visibly flicks",
-                "The entrance pop stays ≤ 1.12× and doesn't spill over neighbours"]},
+    {"id": "ai_signal", "label": "Product signal", "icon": "toggle",
+     "summary": "What is sold is visible and readable",
+     "checks": ["The product or service shows inside the solution, next to what it does",
+                "Labels and marks are one size across the set and readable at feed size",
+                "Anything that switches or changes on screen visibly does",
+                "An entrance pop stays ≤ 1.12× and doesn't spill over neighbours"]},
     {"id": "placements", "label": "Placements", "icon": "phone",
      "summary": "Feed, Stories and Reels all read",
      "checks": ["4:5 for feeds, 9:16 for Stories and Reels", "Reels safe zone: 14% top, 35% bottom, clear of the right action strip",
@@ -60,7 +61,7 @@ PASSES = [
     {"id": "policy", "label": "Policy & claims", "icon": "shield",
      "summary": "Nothing Meta or a customer could object to",
      "checks": ["No invented facts (prices, reviews, years, guarantees)", "No personal-attribute wording (\"Are you struggling…\")",
-                "Claims are true and specific to Edge Bourne", "Landing / form matches what the ad promises"]},
+                "Claims are true and specific to this business", "Landing / form matches what the ad promises"]},
     {"id": "performance", "label": "Performance read", "icon": "chart",
      "summary": "What the numbers say about this ad",
      "checks": ["Hook rate (share of views watched for 3 seconds) and hold rate (ThruPlays ÷ 3-second views)",

@@ -562,6 +562,46 @@ dialog.confirm .affix .input:focus { box-shadow: none; }
 .lead-mini a span { color: var(--ink-3); font-size: var(--t-s); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lead-mini small, .chg-list small { color: var(--ink-3); font-size: var(--t-xs); }
 
+/* Ad Overview (9.4c): status first, the results, Claude, then folds. */
+.cr-side { gap: 14px; }
+.cr-state.tone-bad { box-shadow: 0 0 0 1px color-mix(in srgb, var(--bad) 55%, transparent); }
+.cr-state.tone-warn { box-shadow: 0 0 0 1px color-mix(in srgb, var(--amber) 55%, transparent); }
+.cs-top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.cs-top .spacer { flex: 1; }
+.cs-h { margin: 0; font: inherit; }
+.cs-h .pill { font-size: var(--t-m); }
+.cs-line { font-size: var(--t-m); }
+.cs-reasons { margin: 0; padding-left: 18px; color: var(--bad-ink); font-size: var(--t-s); display: flex; flex-direction: column; gap: 4px; }
+.cs-budget { padding-top: 10px; border-top: 1px solid var(--line); }
+.cs-budget .muted { margin-right: 6px; }
+.cr-figs { display: flex; flex-direction: column; gap: 8px; }
+.cr-figs .figs.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.cr-figs .figs.four .fig { border-top: 0; border-left: 1px solid var(--line); }
+.cr-figs .figs.four .fig:first-child { border-left: 0; }
+.fig-more { display: flex; flex-wrap: wrap; gap: 4px 22px; margin: 0; font-size: var(--t-s); }
+.fig-more > div { display: flex; align-items: baseline; gap: 6px; }
+.fig-more dt { color: var(--ink-3); }
+.fig-more dd { margin: 0; font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.fig-more small { color: var(--ink-3); font-size: var(--t-xs); }
+.claude-quiet .panel-body { padding: 12px 16px; gap: 10px; align-items: center; flex-wrap: nowrap; }
+.cq-dot { flex: none; display: inline-flex; color: var(--violet); }
+.cq-dot svg { width: 18px; height: 18px; }
+.cq-line { min-width: 0; color: var(--ink-2); }
+.preview-note { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 0; }
+
+/* Fold: a panel that opens on its summary line, which says what is inside. */
+details.fold > summary { display: flex; align-items: center; gap: 12px; padding: 14px 20px; cursor: pointer; list-style: none; border-radius: var(--radius-m); }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary::after { content: "›"; flex: none; margin-left: auto; font-size: var(--t-l); line-height: 1; color: var(--ink-3); transition: transform .15s var(--ease); }
+details.fold[open] > summary::after { transform: rotate(90deg); }
+details.fold > summary:hover { background: var(--surface-2); }
+details.fold[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.fold-t { flex: none; font-weight: 600; font-size: var(--t-m); }
+.fold-s { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink-3); font-size: var(--t-s); }
+.fold-s .pill { margin-left: 6px; }
+details.fold > .panel-body { padding-top: 4px; }
+@media (prefers-reduced-motion: reduce) { details.fold > summary::after { transition: none; } }
+
 /* ---------- Today: one ranked queue, the day's numbers beside it ---------- */
 .card-head { display: flex; align-items: baseline; gap: 12px; padding: 20px 24px 10px; }
 .card-head .hint { color: var(--ink-3); font-size: var(--t-m); }
@@ -703,9 +743,18 @@ dialog.confirm .affix .input:focus { box-shadow: none; }
 @media (max-width: 1100px) {
   .cr-layout, .new-ad-layout, .research-grid { grid-template-columns: 1fr; }
   .preview-panel, .tips { position: static; }
+  /* One column: the status and the numbers come before the tall preview. */
+  .cr-side { display: contents; }
+  .cr-state { order: -2; }
+  .cr-figs { order: -1; }
     }
 @media (max-width: 720px) {
   .mini-figs.wide { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cr-figs .figs.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cr-figs .figs.four .fig:nth-child(odd) { border-left: 0; }
+  .cr-figs .figs.four .fig:nth-child(n+3) { border-top: 1px solid var(--line); }
+  .claude-quiet .panel-body { flex-wrap: wrap; }
+  details.fold > summary { padding: 10px 16px; }
   .charts.single { grid-template-columns: 1fr; }
   .cr-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .cr-body { padding: 10px; }
@@ -1320,21 +1369,6 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
   .switch::after { content: ""; position: absolute; inset: -9px -4px; }
 }
 
-/* Status from Meta (8.1): a vertical timeline of review, delivery and issue changes. */
-.st-tl{list-style:none;margin:0;padding:0}
-.st-ev{display:grid;grid-template-columns:14px 150px 1fr auto;gap:12px;align-items:baseline;padding:10px 0;position:relative}
-.st-ev::before{content:"";position:absolute;left:5px;top:0;bottom:0;width:2px;background:var(--line)}
-.st-ev:first-child::before{top:16px}
-.st-ev:last-child::before{bottom:auto;height:16px}
-.st-dot{width:12px;height:12px;border-radius:50%;background:var(--ink-3);position:relative;z-index:1;box-shadow:0 0 0 3px var(--surface);align-self:center}
-.st-ev.ok .st-dot{background:var(--signal)}
-.st-ev.warn .st-dot{background:var(--amber)}
-.st-ev.bad .st-dot{background:var(--bad)}
-.st-when{font-size: var(--t-s);color:var(--ink-3);font-variant-numeric:tabular-nums}
-.st-what{display:flex;flex-direction:column;gap:2px}
-.st-what small{color:var(--ink-3);font-size: var(--t-s)}
-.st-src{font-size: var(--t-xs);color:var(--ink-3)}
-@media (max-width:720px){.st-ev{grid-template-columns:14px 1fr auto}.st-when{grid-column:2;order:2}.st-what{grid-column:2}}
 .status-hooks{align-items:center;gap:10px;flex-wrap:wrap}
 .status-hooks #sw-status{display:inline-flex;align-items:center;gap:10px}
 

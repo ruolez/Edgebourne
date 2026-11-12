@@ -1,7 +1,23 @@
 """One timeline per campaign, ad set or ad: Meta's status changes, changes made from the console and
-Claude's proposals that were decided. Pure."""
+Claude's suggestions that were decided. Pure."""
+import re
+
+import desk_view
 
 SOURCE = {"poll": "Meta", "webhook": "Meta", "backfill": "Meta", "console": None}
+LEVELS = ("campaign", "adset", "ad")
+CREATIVE_ID = re.compile(r"\s*\(creative [^)]*\)$")
+ADVICE_ADD = re.compile(r"\(\+(\d+(?:\.\d+)?)/day\)")  # advice_api writes a budget raise as "(+6.00/day)"
+# Rows that store Meta's advice title as their entity_name, so it can't name the ad set or campaign.
+NAMELESS = ("recommendation", "recommendation_check")
+TONE_RANK = {"bad": 3, "warn": 2, "ok": 1, "": 0}
+# A decided suggestion, in the console's words (suggest.js DECIDED says the same).
+DECIDED = {"applied": "accepted and applied", "approved": "accepted", "declined": "declined",
+           "failed": "accepted, but Meta refused", "revised": "sent back to Claude",
+           "unknown": "accepted, but Meta didn't answer (check Ads Manager)", "expired": "expired"}
+# desk_view.CHECK_REFUSED, as a sentence after "Claude's suggestion".
+_WHY = desk_view.CHECK_REFUSED[1].split(": ", 1)
+CHECKED = f"accepted, but {_WHY[0].lower()} ({_WHY[1]})"
 
 
 def _tone(r):
@@ -15,39 +31,120 @@ def _tone(r):
     return "ok" if new == "ACTIVE" else ""
 
 
+def _plain(value):
+    return CREATIVE_ID.sub("", str(value or "")).strip()
+
+
 def change_title(c, money):
-    action, old, new = c["action"], c.get("old_value"), c.get("new_value")
+    action, old, new, ok = c["action"], c.get("old_value"), c.get("new_value"), c.get("ok")
     if action == "status":
         on = new == "ACTIVE"
-        return ("Turned it on" if on else "Turned it off") if c.get("ok") else ("Tried to turn it on" if on else "Tried to turn it off")
+        return ("Turned it on" if on else "Turned it off") if ok else ("Tried to turn it on" if on else "Tried to turn it off")
     if action == "budget":
         try:
             words = f"Budget {money(int(old))} → {money(int(new))} a day"
         except (TypeError, ValueError):
             words = "Budget changed"
-        return words if c.get("ok") else "Tried to change the budget"
-    return {"archive": "Archived", "delete": "Deleted", "create": "Created", "copy": "Copied",
-            "subscribe": "Subscribed", "unsubscribe": "Unsubscribed"}.get(action, action.replace("_", " ").capitalize())
+        return words if ok else "Tried to change the budget"
+    if action == "recommendation_check":
+        return "Meta's advice set a different budget than shown"
+    tried = {"update_creative": "Tried to update the ad", "restore_creative": "Tried to switch back to an earlier version",
+             "placement_media": "Tried to add a 9:16 video for Reels and Stories", "duplicate": "Tried to duplicate it",
+             "enhancement": "Tried to change one of Meta's automatic changes", "create": "Tried to create it",
+             "recommendation": "Tried to apply Meta's advice"}
+    if not ok and action in tried:
+        return tried[action]
+    if action == "duplicate":
+        return f"Duplicated as “{new}”"
+    if action == "update_creative":
+        return f"Updated the ad: {_plain(new)}" if _plain(new) else "Updated the ad"
+    if action == "restore_creative":
+        return _plain(new) or "Switched back to an earlier version"
+    if action == "placement_media":
+        return "Added a 9:16 video for Reels and Stories"
+    if action == "enhancement":
+        return f"Meta's automatic change: {_plain(new)}"
+    if action == "create":
+        return f"Created “{_plain(new)}”" if new else "Created"
+    if action == "rename":
+        return f"Renamed to “{new}”"
+    if action == "recommendation":
+        words = ADVICE_ADD.sub(lambda m: f"(+{money(round(float(m.group(1)) * 100))} a day)", _plain(new))
+        return f"Applied Meta's advice: {words}" if words else "Applied Meta's advice"
+    return {"archive": "Archived", "delete": "Deleted", "copy": "Copied", "subscribe": "Subscribed",
+            "unsubscribe": "Unsubscribed", "comment_reply": "Replied to a comment", "comment_hide": "Hid a comment",
+            "comment_show": "Showed a comment again"}.get(action, action.replace("_", " ").capitalize())
 
 
-def merge(status_events, changes, proposals, money):
-    linked = {s.get("change_id") for s in status_events if s.get("change_id")}
-    items = []
+def _refusal(c):
+    """Who stopped a failed change: the console's own read-back check ("… not used") or Meta."""
+    if c["action"] == "recommendation_check":
+        return c.get("error")  # Meta did it, differently: not a refusal
+    why = "Not applied" if desk_view.refused_by_check(c.get("new_value")) else "Meta refused"
+    return f"{why}: {c['error']}" if c.get("error") else why
+
+
+def checked_refusals(changes):
+    """Ids of suggestions whose change the console's own read-back check stopped (not Meta)."""
+    return {c["proposal_id"] for c in changes
+            if c.get("proposal_id") and not c.get("ok") and desk_view.refused_by_check(c.get("new_value"))}
+
+
+def _elsewhere(level, entity_id, name, subject):
+    if subject is None or not entity_id or entity_id == subject or level not in LEVELS:
+        return None
+    return {"level": level, "id": entity_id, "name": name}
+
+
+def _status_items(status_events):
+    """One line per status change. A switch made here records two events (what was asked, what Meta did)
+    under one change id: the request is the line, Meta's answer its second line."""
+    items, pairs = [], {}
     for s in status_events:
-        by = s.get("by_name") if s.get("source") == "console" else SOURCE.get(s.get("source"), "Meta")
-        items.append({"kind": "status", "at": s["at"], "title": s["headline"], "sub": None, "by": by, "tone": _tone(s)})
+        console = s.get("source") == "console"
+        by = s.get("by_name") if console else SOURCE.get(s.get("source"), "Meta")
+        item = {"kind": "status", "at": s["at"], "title": s["headline"], "sub": None, "by": by,
+                "source": "console" if console else "meta", "tone": _tone(s)}
+        cid = s.get("change_id")
+        first = pairs.get(cid) if cid else None
+        if first is None:
+            if cid:
+                pairs[cid] = item
+            item["_field"] = s.get("field")
+            items.append(item)
+            continue
+        lead, other = (item, first) if s.get("field") == "configured_status" and first["_field"] != "configured_status" else (first, item)
+        first.update(title=lead["title"], sub=other["title"], at=max(first["at"], item["at"]),
+                     tone=max(first["tone"], item["tone"], key=lambda t: TONE_RANK.get(t, 0)))
+    for i in items:
+        i.pop("_field", None)
+    return items
+
+
+def merge(status_events, changes, proposals, money, subject=None, names=None):
+    """Newest first. With `subject` (the page's own id), a change or suggestion about its ad set or campaign
+    says where it happened (`on`), so the page can link there; `names` gives those ids' names."""
+    names = names or {}
+    linked = {s.get("change_id") for s in status_events if s.get("change_id")}
+    checked = checked_refusals(changes)
+    items = _status_items(status_events)
     for c in changes:
         if c["action"] == "status" and c["id"] in linked and c.get("ok"):
             continue  # the status event already says it, with who did it
         items.append({"kind": "change", "at": c["created_at"], "title": change_title(c, money),
-                      "sub": c.get("error") if not c.get("ok") else None, "by": c.get("user_name"),
-                      "tone": "" if c.get("ok") else "bad"})
+                      "sub": None if c.get("ok") else _refusal(c), "by": c.get("user_name"), "source": "console",
+                      "tone": "" if c.get("ok") else "bad", "proposal_id": c.get("proposal_id"),
+                      "on": _elsewhere(c.get("level"), c.get("entity_id"),
+                                       names.get(c.get("entity_id")) or (None if c["action"] in NAMELESS else c.get("entity_name")),
+                                       subject)})
     for p in proposals:
         if not p.get("decided_at"):
             continue
-        word = {"applied": "applied", "approved": "approved", "declined": "declined", "failed": "failed", "revised": "sent back",
-                "unknown": "not confirmed by Meta (check Ads Manager)"}.get(p["status"], p["status"])
-        items.append({"kind": "proposal", "at": p["decided_at"], "title": f"Claude's idea {word}: {p['title']}", "sub": None,
-                      "by": None, "tone": "bad" if p["status"] == "failed" else ""})
+        word = CHECKED if p["status"] == "failed" and (p.get("checked") or p["id"] in checked) else DECIDED.get(p["status"], p["status"])
+        items.append({"kind": "proposal", "at": p["decided_at"], "title": f"Claude's suggestion {word}: {p['title']}", "sub": None,
+                      "by": None, "source": "claude", "tone": "bad" if p["status"] == "failed" else "",
+                      "proposal_id": p["id"], "task_id": p.get("task_id"),
+                      "on": _elsewhere(p.get("entity_type"), p.get("entity_id"),
+                                       names.get(p.get("entity_id")) or p.get("entity_name"), subject)})
     items.sort(key=lambda i: i["at"], reverse=True)
     return items

@@ -3,7 +3,7 @@
 // budget, archive: every money move previewed and confirmed), and a peek drawer. File and class names
 // avoid "ad"-like tokens: ad blockers hide those.
 import { api } from "./api.js";
-import { confirmDialog, esc, icon, skeleton, switchHtml, toast, when } from "./ui.js";
+import { confirmDialog, esc, icon, skeleton, switchHtml, timelineItem, toast, when } from "./ui.js";
 import { columnChart } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
 import { EXPLAIN, LEARNING, PROBLEM_STATES, REVIEW_STATES, WORDS, count, money, moneyWhole, pct, per, statusOf } from "./format.js";
@@ -51,7 +51,7 @@ function delta(now, before, lowerBetter) {
 
 // The signature: one bar per day of the last 14 complete days, whatever the dates picked; green = it
 // spent that day; the last bar shows the review or rejection now.
-function track(r) {
+export function track(r) {
   const days = r.track || [];
   if (!days.length) return "";
   const last = REVIEW_STATES.includes(r.effective_status) ? "d-review" : PROBLEM_STATES.includes(r.effective_status) ? "d-bad" : null;
@@ -493,7 +493,7 @@ export async function peek(r, { onClose, focus = true } = {}) {
   try {
     const tl = await api(`/api/timeline/${r.level}/${encodeURIComponent(r.id)}`);
     const items = tl.items.slice(0, 8);
-    tlBox.innerHTML = items.length ? items.map((i) => `<li class="tl-${i.tone || "n"}"><span class="tl-dot"></span><span class="tl-w">${esc(when(i.at))}</span><span class="tl-t"><b>${esc(i.title)}</b>${i.by ? `<small>${esc(i.by)}</small>` : ""}</span></li>`).join("")
+    tlBox.innerHTML = items.length ? items.map((i) => timelineItem(i)).join("")
       : '<li class="muted">Nothing recorded yet: status changes show here from the next refresh.</li>';
   } catch (err) { tlBox.innerHTML = `<li class="muted">${esc(err.message)}</li>`; }
 }

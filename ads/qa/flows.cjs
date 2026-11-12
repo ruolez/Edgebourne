@@ -32,6 +32,8 @@ const guards = require('./guards.cjs');
   const metaHits = (clear) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/fake/_hits${clear ? '?clear=1' : ''}').read().decode())"`));
   const metaObj = (id) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/v24.0/?ids=${id}').read().decode())"`))[id];
   const getJson = (url) => page.evaluate(async (u) => (await fetch(u)).json(), url);
+  // The ad Overview folds Versions, Words, The idea and Meta's automatic changes (9.4c): open one before using it.
+  const openFold = async (id, p = page) => { await p.waitForSelector(`#fold-${id}`, { state: 'attached' }); await p.$eval(`#fold-${id}`, (d) => { d.open = true; }); };
   const macSeen = (secondsAgo) => sh(`docker exec -w /app edgebourne-ads-backend python -c "import time, settings_store; settings_store.set('bridge_last_seen', str(time.time() - ${secondsAgo})); settings_store.set('bridge_version', '2.0')"`);
   await page.goto(BASE + '/login.html');
   await page.fill('#email', 'eugene@edgebourne.com');
@@ -1429,6 +1431,7 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
 
   // Meta's automatic changes on an ad: read in plain words, warn on the rewriting ones, switch one with a new creative.
   await page.goto(BASE + '/ad.html?id=120252672230740312');
+  await openFold('auto');
   await page.waitForSelector('.enh-list');
   check("the ad page lists Meta's automatic changes in plain words", /Image touch-ups.*Video filters.*Text improvements.*Relevant comments/s.test(await page.textContent('#enh')));
   check('features that change the words or pictures are flagged when on', /On, and they change your words or pictures: Video filters/.test(await page.textContent('#enh')));
@@ -1447,6 +1450,7 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
 
   // Ideas: tags on the ad page, results by idea on Results, Claude's tag suggestion applied on approval.
   await page.goto(BASE + '/ad.html?id=120252672232030312');
+  await openFold('idea');
   await page.waitForSelector('#idea .idea-row');
   check('an ad shows its idea tags, hook first', (await page.inputValue('#tag-hook')) === 'Question'
     && (await page.locator('#idea .idea-row label').first().textContent()) === 'Hook' && (await page.inputValue('#tag-persona')) === 'Ops and office managers');
@@ -1695,6 +1699,7 @@ print(r['id'])"`).trim();
   // Results per version: the switch happened 3 days ago, and Meta approved it the next day.
   dbq(`import account_info as a, datetime as d;t=a.today();s=t-d.timedelta(days=3);db.execute('UPDATE ad_versions SET started_on=%s, started_at=now()-interval \\'3 days\\' WHERE ad_id=%s AND number=2',(s,'${n5}'));db.execute(\\"INSERT INTO status_events (level, entity_id, field, old_value, new_value, source, at) VALUES ('ad', %s, 'effective_status', 'IN_PROCESS', 'ACTIVE', 'poll', now()-interval '2 days')\\",('${n5}',))`);
   await page.goto(BASE + `/ad.html?id=${n5}`);
+  await openFold('versions');
   await page.waitForSelector('.ver-tbl');
   const verRows = await page.$$eval('.ver-tbl tbody tr', (rows) => rows.map((r) => [...r.cells].map((c) => c.textContent.trim())));
   const expected = JSON.parse(dbq(`import account_info as a, datetime as d, json;t=a.today();r=db.query('SELECT day, spend_cents FROM ad_daily WHERE ad_id=%s AND day<%s',('${n5}',t));tz=lambda n:t-d.timedelta(days=n);print(json.dumps({'old':sum(x['spend_cents'] for x in r if x['day']<tz(3)),'old_days':len([x for x in r if x['day']<tz(3)]),'new':sum(x['spend_cents'] for x in r if x['day']>tz(2)),'new_days':len([x for x in r if x['day']>tz(2)]),'mid_days':len([x for x in r if tz(3)<=x['day']<=tz(2)])}))`));
@@ -1702,7 +1707,7 @@ print(r['id'])"`).trim();
   check('each version shows only its own days and spend', verRows.length === 2 && /Version 2/.test(verRows[0][0]) && Number(verRows[0][1]) === expected.new_days && verRows[0][2].includes(verDollars(expected.new))
     && /Version 1/.test(verRows[1][0]) && Number(verRows[1][1]) === expected.old_days && verRows[1][2].includes(verDollars(expected.old)), JSON.stringify([verRows, expected]));
   check('the versions table fits its panel, so Switch back is never scrolled out of sight', await page.$eval('.ver-tbl', (t) => t.parentElement.scrollWidth <= t.parentElement.clientWidth));
-  check('the current version is marked and the days around the switch are explained', /On the ad now/.test(verRows[0][0]) && new RegExp(`${expected.mid_days} days around a switch`).test(await page.textContent('.ver-tbl >> xpath=ancestor::section')));
+  check('the current version is marked and the days around the switch are explained', /On the ad now/.test(verRows[0][0]) && new RegExp(`${expected.mid_days} days around a switch`).test(await page.textContent('.ver-tbl >> xpath=ancestor::details')));
   await page.screenshot({ path: `${OUT}/flow-versions.png`, fullPage: true });
   // Switching back puts the old creative on the same ad.
   await page.click('[data-restore="1"]');
@@ -1888,6 +1893,27 @@ with account_ctx.all_accounts():
   await cp.goto(BASE + '/ads.html');
   await cp.waitForSelector('#cr-all .cr-toolbar');
   check('a client gets no New button or menu on Ads', await cp.isHidden('#new-ad') && await cp.isHidden('#new-menu') && (await cp.locator('#empty-new').count()) === 0);
+  {
+    const CAD = '920000000000003';
+    await cp.goto(BASE + `/ad.html?id=${CAD}`);
+    await cp.waitForSelector('#cr-state');
+    await openFold('idea', cp);
+    await cp.waitForSelector('#idea .facts');
+    const controls = await cp.evaluate(() => ['[data-toggle]', '#dup', '#cr-actions a[href*="new-ad.html"]', '#idea input', '#idea button[type=submit]', '#edit-budget',
+      '[data-goto="polish"]', '[data-restore]', '#cr-tabs [data-tab="polish"]'].filter((x) => document.querySelector(x)));
+    check('a client sees an ad with no switch, copy, new ad, tag editing, budget or Claude controls', controls.length === 0
+      && (await cp.locator('#cr-actions a[href^="/compare.html"]').count()) === 1, controls.join());
+    await cp.goto(BASE + `/ad.html?id=${CAD}#tab=comments`);
+    await cp.reload();
+    await cp.waitForSelector('.comments-panel, #cr-main .empty');
+    check('a client reads the comments with no Reply or Hide', (await cp.locator('[data-reply-open], [data-hide], .c-reply').count()) === 0);
+    await cp.goto(BASE + `/ad.html?id=${CAD}#tab=history`);
+    await cp.reload();
+    await cp.waitForSelector('#cr-main ol.tl, #cr-main .empty');
+    const cd = await cp.evaluate(async (id) => (await fetch(`/api/ads/ad/${id}`)).json(), CAD);
+    check("a client's ad History never says which change came from Claude", cd.changes.every((c) => !c.proposal_id) && cd.history.every((i) => !i.proposal_id && i.source !== 'claude')
+      && !/Claude/.test(await cp.innerText('#cr-main')));
+  }
   await cp.goto(BASE + '/leads.html');
   await cp.waitForSelector('.lead-row');
   await cp.click('.lead-row');
@@ -2144,12 +2170,41 @@ with account_ctx.use(a2):
   for (const to of ['IN_PROCESS', 'DISAPPROVED', 'ACTIVE']) {
     sh(`docker exec edgebourne-ads-backend python -c "import requests;requests.get('http://fake-meta:5001/fake/_review?ad=${N3}&to=${to}')"`);
     pull();
+    if (to === 'DISAPPROVED') {
+      // 9.4c: the Overview leads with the status in words, Meta's reason and the way to fix it.
+      await page.goto(BASE + `/ad.html?id=${N3}`);
+      await page.waitForSelector('#cr-state');
+      const st = (await page.textContent('#cr-state')).replace(/\s+/g, ' ');
+      check("a rejected ad's Overview opens on Rejected with Meta's reason and a way to fix it", (await page.locator('#cr-state.tone-bad').count()) === 1
+        && /Rejected/.test(st) && (await page.locator('#cr-state .cs-reasons li').count()) > 0 && (await page.locator('#cr-state [data-goto="polish"]').count()) === 1, st.slice(0, 200));
+    }
   }
   await page.goto(BASE + `/ad.html?id=${N3}#tab=history`);
-  await page.waitForSelector('.st-tl');
-  const n3Timeline = await page.locator('.st-tl').innerText();
+  await page.reload();  // the Overview was just open: a change of hash alone doesn't load the page again
+  await page.waitForSelector('#cr-main ol.tl');
+  const n3Timeline = await page.locator('#cr-main ol.tl').innerText();
   check('Meta review steps show on the ad\'s History tab in plain words', ['Sent to review', 'Rejected', 'Personal attributes', 'Fixed · delivering again'].every((w) => n3Timeline.includes(w))
     && !/Fixed · delivering again\s*\n\s*by /.test(n3Timeline), n3Timeline.replace(/\n+/g, ' | ').slice(0, 300));
+  const fixedBy = await page.locator('#cr-main ol.tl li', { hasText: 'Fixed · delivering again' }).first().locator('small').last().textContent();
+  check("Meta's own steps are credited to Meta", fixedBy.trim() === 'Meta', fixedBy);
+  // Claude's decided suggestions: the line about the campaign links there, jumps to its card, and owners get the conversation.
+  const jumps = page.locator('#cr-main ol.tl [data-jump]');
+  if (await jumps.count()) {
+    const target = await jumps.first().getAttribute('data-jump');
+    await jumps.first().click();
+    await page.waitForSelector(`#${target}.flash`);
+    check("a suggestion's line in the History jumps to its card below", await page.evaluate((id) => document.activeElement?.id === id, target), target);
+    check('a suggestion about the campaign links to it, and the owner gets its conversation with Claude',
+      (await page.locator('#cr-main ol.tl li[data-source="claude"] a.ent-link[href^="/campaign.html?id="]').count()) > 0 && (await page.locator('#cr-main ol.tl a[href^="/desk.html#r/"]').count()) > 0);
+  } else check("a suggestion's line in the History jumps to its card below", false, 'no decided suggestion on N3');
+  {
+    const n3 = (await call('GET', `/api/ads/ad/${N3}`)).body;
+    const advice = n3.history.filter((i) => /Meta's advice/.test(i.title));
+    check("Meta's advice in the History says what changed, money included, and names the campaign by its own name",
+      advice.some((i) => /^Applied Meta's advice: .+\(\+\$6\.00 a day\)$/.test(i.title))
+      && advice.every((i) => i.on && i.on.level === 'campaign' && i.on.name === n3.ad.campaign_name),
+      advice.slice(0, 2).map((i) => `${i.title} / ${JSON.stringify(i.on)}`).join(' | '));
+  }
   const again = (await call('GET', `/api/ads/ad/${N3}`)).body.timeline.length;
   pull();
   check('a repeat refresh records nothing new', (await call('GET', `/api/ads/ad/${N3}`)).body.timeline.length === again);
@@ -2190,11 +2245,92 @@ with account_ctx.use(a2):
   sh(`docker exec edgebourne-ads-backend python -c "import requests;requests.get('http://fake-meta:5001/fake/_review?ad=${N1}&to=ACTIVE')"`);
   pull();
   await page.goto(BASE + '/ad.html?id=120252672229400312#tab=history');
-  await page.waitForSelector('.st-tl');
-  const n2Timeline = await page.locator('.st-tl').innerText();
-  check('an on/off made from the console is marked as made here, by whom', n2Timeline.includes('This console') && n2Timeline.includes('by Eugene'), n2Timeline.replace(/\n+/g, ' | ').slice(0, 300));
-  check("the ad's dashboard changes are a stacked list, the time on its own line", await page.locator('#cr-main ul.chg-list li').count() > 0
-    && await page.$eval('#cr-main ul.chg-list li small', (s) => getComputedStyle(s).display === 'block' && getComputedStyle(s.closest('ul')).listStyleType === 'none'));
+  await page.waitForSelector('#cr-main ol.tl');
+  const n2Timeline = await page.locator('#cr-main ol.tl').innerText();
+  check('an on/off made from the console is marked as made here, by whom', n2Timeline.includes('Eugene, from this console'), n2Timeline.replace(/\n+/g, ' | ').slice(0, 300));
+  await page.click('#hist-show [data-show="console"]');
+  const madeHere = await page.$$eval('#cr-main ol.tl li', (ls) => ls.map((l) => l.dataset.source));
+  check("the ad's dashboard changes sit in the same timeline, and Made here shows only those", madeHere.length > 0 && madeHere.every((x) => x === 'console')
+    && (await page.getAttribute('#hist-show [data-show="console"]', 'aria-pressed')) === 'true', madeHere.join());
+  {
+    const n2d = (await call('GET', '/api/ads/ad/120252672229400312')).body;
+    const mine = n2d.timeline.filter((r) => r.source === 'console');
+    const expected = new Set(mine.filter((r) => r.change_id).map((r) => r.change_id)).size + mine.filter((r) => !r.change_id).length;
+    const lines = n2d.history.filter((i) => i.kind === 'status' && i.source === 'console');
+    check('an on/off made here is one line in the History (what was asked, with what Meta did under it)',
+      expected > 0 && lines.length === expected && lines.some((i) => i.sub), `${lines.length} lines for ${expected} switches`);
+  }
+  // 9.4c Ad Overview: status, results and Claude first; the rest folds and remembers; the preview stays through a
+  // refresh and reads itself again once Meta's link is old.
+  {
+    const AD = '120252672229400312';
+    await page.goto(BASE + `/ad.html?id=${AD}`);
+    await page.evaluate(() => localStorage.removeItem('ebads-folds'));
+    await page.reload();
+    await page.waitForSelector('#cr-state');
+    const order = await page.evaluate(() => {
+      const els = ['#cr-state', '.cr-figs', '#cr-claude', '#fold-where', '#fold-words', '#fold-idea', '#fold-auto'].map((x) => document.querySelector(x));
+      return els.map((el, i) => !!el && (i === 0 || !!(els[i - 1].compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)));
+    });
+    check('the ad Overview leads with its status, then results, then Claude, with the rest below', order.every(Boolean), JSON.stringify(order));
+    check('the status card says what the ad is doing, with its 14 delivery days', /Delivering|Off|In review/.test(await page.textContent('#cr-state .cs-h'))
+      && (await page.locator('#cr-state .trk i').count()) === 14 && (await page.textContent('#cr-state .cs-line')).trim().length > 10);
+    const folds = await page.$$eval('details.fold', (ds) => Object.fromEntries(ds.map((d) => [d.dataset.fold, d.open])));
+    check("Where it runs starts open; Words, The idea and Meta's automatic changes start folded", folds.where === true && folds.words === false && folds.idea === false && folds.auto === false, JSON.stringify(folds));
+    const adRow = (await getJson(`/api/ads/ad/${AD}`)).ad;
+    await page.waitForFunction(() => ['#fold-idea', '#fold-auto'].every((x) => !/Reading/.test(document.querySelector(`${x} .fold-s`)?.textContent || 'Reading')));
+    check('a folded section says what is inside on its line', (await page.textContent('#fold-words .fold-s')).trim() === (adRow.title || '—')
+      && /on|off|None listed/i.test(await page.textContent('#fold-auto .fold-s')), await page.textContent('#fold-auto .fold-s'));
+    await page.click('#fold-words > summary');
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('ebads-folds') || '{}').words === true);
+    await page.reload();
+    await page.waitForSelector('#fold-words');
+    check('an opened fold stays open after a reload', await page.$eval('#fold-words', (d) => d.open) && await page.isVisible('#fold-words .facts'));
+    await page.click('#fold-words > summary');
+    await page.waitForSelector('#preview-frame iframe:not(.preview-loading)', { timeout: 15000 });
+    await page.$eval('#preview-frame iframe', (f) => { f.dataset.qa = 'kept'; });
+    const previews = [];
+    const onPreview = (r) => { if (/\/preview\?format=/.test(r.url())) previews.push(r.url()); };
+    page.on('request', onPreview);
+    await openFold('idea');
+    await page.waitForSelector('#idea input[name]');
+    await page.fill('#idea input[name] >> nth=0', 'QA unsaved tag');
+    await page.click('.topline [data-refresh]');
+    await page.waitForFunction(() => !document.querySelector('.topline [data-refresh]').disabled, null, { timeout: 60000 });
+    await page.waitForSelector('#cr-state');
+    const keptTag = await page.waitForFunction(() => document.querySelector('#idea input[name]')?.value === 'QA unsaved tag', null, { timeout: 10000 }).then(() => true, () => false);
+    check('a refresh keeps tags typed in The idea but not saved yet', keptTag);
+    await page.$eval('#fold-idea', (d) => { d.open = false; });
+    check('a refresh redraws the numbers but keeps the preview as it was', previews.length === 0 && (await page.locator('#preview-frame iframe[data-qa="kept"]').count()) === 1, `${previews.length} preview reads`);
+    await page.$eval('#preview-frame', (b) => { b.dataset.loadedAt = String(Date.now() - 31 * 60 * 1000); });
+    await Promise.all([page.waitForRequest((r) => /\/preview\?format=/.test(r.url())), page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))]);
+    await page.waitForSelector('#preview-frame iframe:not(.preview-loading)', { timeout: 15000 });
+    check('a preview older than half an hour reads itself again when the page is back in view', (await page.locator('#preview-frame iframe[data-qa="kept"]').count()) === 0);
+    page.off('request', onPreview);
+    // The tabs say when Meta's answer didn't come, with Try again, and keep their own controls.
+    const VID = '120252672230740312';
+    for (const [name, route, done] of [['video', '**/api/insights/ad/*/diagnostics', '#funnel .bars'], ['audience', '**/api/insights/breakdown**', '#aud-spend .bars, #aud-body .empty'],
+      ['comments', '**/api/insights/ad/*/comments', '.comments-panel'], ['polish', '**/api/ads/ad/*/polish-runs', '#polish-form']]) {
+      const seenE = errors.length;
+      await page.route(route, (r) => r.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'QA: Meta did not answer' }) }));
+      await page.goto(BASE + `/ad.html?id=${VID}#tab=${name}`);
+      await page.reload();  // the same ad with another tab: a change of hash alone doesn't load the page again
+      await page.waitForSelector('#cr-main .empty[role="alert"] [data-retry]');
+      const said = (await page.textContent('#cr-main .empty[role="alert"]')).replace(/\s+/g, ' ');
+      const kept = name !== 'audience' || (await page.isVisible('#aud-range'));
+      await page.unroute(route);
+      await page.click('#cr-main [data-retry]');
+      await page.waitForSelector(done);
+      await page.waitForTimeout(300);
+      errors.splice(seenE);
+      check(`the ${name} tab says when its data didn't come, and Try again loads it`, /This didn't load/.test(said) && /QA: Meta did not answer/.test(said) && kept, said.slice(0, 120));
+    }
+    // The ad's own campaign name may say Edge Bourne; the checks themselves may not.
+    const passesText = JSON.stringify(await getJson('/api/polish/passes'));
+    const local = [...((await page.innerText('#cr-main')).match(/\bN1\b|AI chip|OPTIONAL|Southern California/g) || []),
+      ...(passesText.match(/\bN1\b|AI chip|OPTIONAL|Southern California|Edge Bourne|intro call/g) || [])];
+    check('the Polish tab and its checks use words that fit any business', local.length === 0, local.join());
+  }
   // New ad: only ad sets an ad can go into (Meta refuses deleted and archived ones).
   const newOpts = (await call('GET', '/api/ads/new/options')).body;
   const goneSets = sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "SELECT string_agg(id, ',') FROM adsets WHERE effective_status IN ('DELETED', 'ARCHIVED')"`).trim().split(',').filter(Boolean);
@@ -3213,6 +3349,23 @@ with account_ctx.all_accounts():
     if (sw > 391) tooWide.push(`${p} ${sw}px`);
   }
   check('on a 390px phone no page is wider than the screen', tooWide.length === 0, tooWide.join(' | '));
+  await phonePage.goto(BASE + '/ad.html?id=120252672229400312');
+  await phonePage.waitForSelector('#cr-state');
+  const phoneTops = await phonePage.evaluate(() => ['#cr-state', '.cr-figs', '.preview-panel'].map((x) => Math.round(document.querySelector(x).getBoundingClientRect().top)));
+  check('on a phone the ad opens on its status and numbers, the preview after them', phoneTops[0] < phoneTops[1] && phoneTops[1] < phoneTops[2], phoneTops.join());
+  await phonePage.goto(BASE + '/ad.html?id=120252672230740312#tab=history');
+  await phonePage.reload();
+  await phonePage.waitForSelector('#cr-main ol.tl li');
+  const phoneTl = await phonePage.evaluate(() => ({
+    cols: getComputedStyle(document.querySelector('#cr-main ol.tl li')).gridTemplateColumns.split(' ').length,
+    links: document.querySelectorAll('#cr-main ol.tl a, #cr-main ol.tl button').length,
+    small: [...document.querySelectorAll('#cr-main ol.tl a, #cr-main ol.tl button')].filter((e) => e.getClientRects().length)
+      .map((e) => { const r = e.getBoundingClientRect(); return [e.textContent.trim().slice(0, 20), Math.round(r.width), Math.round(r.height)]; })
+      .filter(([, w, h]) => w < 43.5 || h < 43.5),
+    wide: document.documentElement.scrollWidth,
+  }));
+  check("on a phone the ad's History puts the date under each line, and its links are 44px to tap", phoneTl.cols === 2 && phoneTl.links > 0 && phoneTl.small.length === 0 && phoneTl.wide <= 391,
+    JSON.stringify(phoneTl).slice(0, 300));
   {
   const smallOnes = [];
   for (const p of guards.TARGET_PAGES) {

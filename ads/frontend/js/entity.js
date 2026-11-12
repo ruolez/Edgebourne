@@ -1,7 +1,7 @@
 // Campaign and ad set pages: their numbers with "vs before", a daily chart, (ad sets) learning progress
 // and who sees it, the ad sets / ads inside in the manager table, and one History timeline.
 import { api, startLoad } from "./api.js";
-import { boot, emptyState, esc, icon, onRefresh, setCrumbs, switchHtml, toast, when, errorState, withFrom } from "./ui.js";
+import { boot, emptyState, esc, icon, onRefresh, setCrumbs, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
 import { columnChart } from "./charts.js";
 import { count, dayLabel, explain, money, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
@@ -55,7 +55,7 @@ function render() {
   const tabs = [...(LEVEL === "campaign" ? [["adsets", "Ad sets", rows.adset.length]] : []), ["ads", "Ads", rows.ad.length], ["history", "History", data.timeline.length]];
   const list = children();
   const body = state.tab === "history"
-    ? `<section class="panel"><div class="panel-body">${data.timeline.length ? `<ol class="tl">${data.timeline.map((i) => `<li class="tl-${i.tone || "n"}"><span class="tl-dot"></span><span class="tl-w">${esc(when(i.at))}</span><span class="tl-t"><b>${esc(i.title)}</b>${i.sub ? `<small>${esc(i.sub)}</small>` : ""}${i.by ? `<small>${esc(i.by)}</small>` : ""}</span></li>`).join("")}</ol>` : '<p class="muted">Nothing recorded yet.</p>'}</div></section>`
+    ? `<section class="panel"><div class="panel-body">${data.timeline.length ? timelineHtml(data.timeline) : '<p class="muted">Nothing recorded yet.</p>'}</div></section>`
     : list.length && narrow() ? listHtml({ rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), selected, sort: state.sort, dir: state.dir })
     : list.length ? tableHtml({ level: childLevel(), rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: "results", sort: state.sort, dir: state.dir, selected, selectable: true, range: state.range })
     : emptyHere(e, live);
