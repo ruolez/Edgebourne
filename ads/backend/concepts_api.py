@@ -51,6 +51,15 @@ def known_values():
     return out
 
 
+def qualified_by_ad(start, end):
+    """{ad id: qualified or won leads that arrived in these days} (account's days, test entries left out); shared
+    by By idea and the client report (W2) so both judge ideas on the same people."""
+    return {r["ad_id"]: int(r["n"]) for r in db.query(
+        """SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND status IN ('qualified', 'won')
+           AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s GROUP BY ad_id""",
+        (account_info.tz_name(), start, end))}
+
+
 def _can_see(user, ad_id):
     row = db.query("SELECT campaign_id FROM ads WHERE id = %s", (ad_id,), one=True)
     ids = visible_campaign_ids(user)
@@ -97,10 +106,7 @@ def by_concept():
                               COALESCE(SUM(d.impressions) FILTER (WHERE a.object_type = 'VIDEO' OR a.video_id IS NOT NULL),0) AS video_impressions
                        FROM ads a JOIN ad_daily d ON d.ad_id = a.id AND d.day BETWEEN %s AND %s
                        WHERE {where} GROUP BY a.id, a.name, a.thumbnail_url, a.image_url HAVING SUM(d.spend_cents) > 0""", [start, end] + params)
-    q = {r["ad_id"]: int(r["n"]) for r in db.query(
-        """SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND status IN ('qualified', 'won')
-           AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s GROUP BY ad_id""",
-        (account_info.tz_name(), start, end))}
+    q = qualified_by_ad(start, end)
     rows = [{**{k: int(v) if k not in ("id", "name", "thumb") else v for k, v in a.items()}, "qualified": q.get(a["id"], 0)} for a in ads]
     import targets
     target = targets.lead_own()  # none set: the groups' own average (see targets.py)

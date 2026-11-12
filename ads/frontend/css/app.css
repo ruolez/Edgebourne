@@ -1513,6 +1513,32 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
   .r-figs span, .r-figs small, .r-foot, .rp-doc .muted { color: #4A4E55; }
 }
 .r-funnel tbody tr:last-child th, .r-ads tbody tr:last-child th { border-bottom: 0; }
+.r-gap { margin-top: 4px; }
+.r-funnel .r-of { font-family: var(--font-ui); font-variant-numeric: normal; font-size: var(--t-s); }
+@media (max-width: 720px) { .r-funnel td.num { white-space: normal; } .r-funnel .r-of { display: block; } }
+.rv-text { white-space: pre-line; font-size: var(--t-l); line-height: 1.55; }
+.rv-sign { margin-top: 6px; }
+
+/* W2: review a client report before it goes out (admins only, never printed). */
+.rv-bar { max-width: 880px; margin-bottom: 16px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; scroll-margin-top: 16px; }
+@media (max-width: 960px) { .rv-bar { scroll-margin-top: calc(112px + env(safe-area-inset-top)); } }
+.rv-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.rv-state .rv-line { flex: 1 1 260px; }
+.rv-state .rv-line.small { flex-basis: 100%; }
+.rv-form textarea { min-height: 120px; line-height: 1.5; }
+.rv-preview { border: 1px solid var(--line); border-radius: var(--radius-m); }
+.rv-preview > summary { padding: 10px 14px; font-weight: 600; }
+.rv-mailbox { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 4px; }
+.rv-mail { margin: 6px 0 0; padding: 12px 14px; background: var(--surface-2); border-radius: var(--radius-s); white-space: pre-wrap;
+  overflow-wrap: anywhere; font: inherit; font-size: var(--t-m); line-height: 1.5; color: var(--ink); }
+.rv-acts { flex-wrap: wrap; gap: 8px; }
+.rv-asent { max-width: 880px; margin: 0 0 16px; }
+.rv-asent a, .rv-wait a { color: inherit; text-decoration: underline; }
+@media (max-width: 720px) {
+  .rv-bar { padding: 16px; }
+  .rv-acts { flex-direction: column; align-items: stretch; }
+  .rv-acts .btn { width: 100%; justify-content: center; }
+}
 
 /* Audit 2: account name under the page title on phones; console-wide warnings on every page. */
 .top-acct { display: block; font-size: var(--t-xs); font-weight: 500; color: var(--ink-3); line-height: 1.2; }

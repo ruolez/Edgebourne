@@ -2350,8 +2350,10 @@ with account_ctx.all_accounts():
   check('the report reads in the five parts, business result first, with its footnotes',
     /1\. What happened.*Cost per (qualified )?lead.*2\. Why.*3\. What we did.*4\. What's next.*5\. What we need from you/s.test(rep) && /attribution setting/.test(rep), rep.slice(0, 160));
   check('the first sentence measures against the target per qualified lead', /against the \$60\.00 target/.test(await page.textContent('.r-headline')));
-  check('the report funnel starts from the leads in the inbox, Meta\'s count shown apart',
-    /^Leads in the inbox/.test((await page.textContent('.r-funnel tbody tr th')).trim()) && /Leads \(Meta\)/.test(await page.textContent('.r-figs')));
+  check('the report funnel starts from the leads received, each rate naming its base; Meta\'s count only in the ads table',
+    /^Leads received/.test((await page.textContent('.r-funnel tbody tr th')).trim()) && /^Leads/.test((await page.textContent('.r-figs div:nth-child(2) span')).trim())
+    && !/Leads \(Meta\)/.test(await page.textContent('.r-figs')) && (await page.$$eval('.r-funnel tbody tr td:last-child', (t) => t.slice(1).every((c) => !c.textContent.trim() || / of (Leads received|Contacted|Qualified)$/.test(c.textContent.trim()))))
+    && (await page.locator('.r-ads thead th', { hasText: 'Leads (Meta)' }).count()) === (await page.locator('.r-ads').count()));
   const repWeek = await page.evaluate(async () => (await fetch('/api/reports?kind=week')).json());
   check("each change in the report is dated by the account's day, inside the period",
     repWeek.changes.every((c) => c.day >= repWeek.start && c.day <= repWeek.end), repWeek.changes.map((c) => c.day).join(' '));
@@ -2418,19 +2420,330 @@ with account_ctx.all_accounts():
   check('printed from dark mode the report is still dark ink on white paper', printInk.every((v) => v < 110)
     && await page.$eval('.rp-doc', (el) => getComputedStyle(el).backgroundColor === 'rgb(255, 255, 255)'), printInk.join());
   await page.emulateMedia({ media: 'screen', colorScheme: 'light' });
-  const mailBefore = JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/mail/_sent').read().decode())"`)).length;
-  const sent = sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "
-import account_ctx, db, settings_store, reports_api
-from datetime import datetime, timezone
-a2 = db.query(\\"SELECT id FROM accounts WHERE name = 'Burdanova QA'\\", one=True)['id']
-with account_ctx.use(a2):
-    settings_store.set('report_email', 'weekly'); settings_store.set('report_last_sent', None)
-    monday = datetime(2026, 11, 16, 17, 0, tzinfo=timezone.utc)
-    print(reports_api.send_due(monday), reports_api.send_due(monday))
-    settings_store.set('report_email', None)"`).trim();
-  const mails = JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/mail/_sent').read().decode())"`)).slice(mailBefore);
-  const m = mails.find((x) => /client-qa@burdanova\.test/.test(JSON.stringify(x)));
-  check("on Monday the account's clients get the report by email once, with a link that works", sent === '1 0' && !!m && /report\.html\?t=/.test(JSON.stringify(m)) && /Burdanova QA/.test(JSON.stringify(m)), `${sent} ${JSON.stringify(m || {}).slice(0, 160)}`);
+  // W2: one honest funnel, and an admin reviews a client report before it goes out (account Burdanova QA,
+  // its client client-qa@burdanova.test). Python runs in that account; its last printed line is JSON.
+  {
+  const w2Seen = errors.length;
+  const A2 = leak.account2;
+  const CLIENT = 'client-qa@burdanova.test';
+  const mailSent = () => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/mail/_sent').read().decode())"`));
+  const toClient = (from) => mailSent().slice(from).filter((m) => m.to.includes(CLIENT));
+  const py2 = (code) => JSON.parse(sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "
+import account_ctx, account_info, db, settings_store, reports_api, report_logic as rl, json
+from datetime import datetime, date, time, timedelta, timezone
+with account_ctx.use(${A2}):
+    s, e = rl.period('week', reports_api.today())
+    monday = datetime.combine(e + timedelta(days=1), time(17), timezone.utc)
+${code.trim().split('\n').map((l) => '    ' + l).join('\n')}"`).trim().split('\n').pop());
+  const post = (url, body, p = page) => p.evaluate(async ([u, b]) => {
+    const r = await fetch(u, { method: u.endsWith('/note') ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+    let j = null; try { j = await r.json(); } catch (err) { /* not JSON */ }
+    return { status: r.status, body: j };
+  }, [url, body]);
+  // Last week in account 2: Meta counted 6 leads on a tagged ad, 4 reached the console (one contacted, one
+  // qualified); Meta also saw the ad switched off in Ads Manager.
+  const seed = py2(`
+db.execute('DELETE FROM client_reports')
+db.execute('DELETE FROM alerts WHERE rule = ANY(%s)', (['report_review', 'report_sent'],))
+settings_store.set('report_review', None)
+for sql in ('DELETE FROM ad_daily WHERE ad_id = %s', 'DELETE FROM leads WHERE ad_id = %s', 'DELETE FROM ad_tags WHERE ad_id = %s'):
+    db.execute(sql, ('W2QA-ad',))  # left over from a run that stopped half way
+db.execute('DELETE FROM status_events WHERE entity_id = %s AND source = %s AND field = %s AND old_value = %s AND new_value = %s', ('920000000000003', 'poll', 'configured_status', 'ACTIVE', 'PAUSED'))
+base = reports_api.totals(s, e)
+mid = datetime.combine(s + timedelta(days=2), time(18), timezone.utc)
+db.execute('INSERT INTO ad_daily (day, ad_id, ad_name, spend_cents, impressions, leads) VALUES (%s, %s, %s, %s, %s, %s)', (s + timedelta(days=2), 'W2QA-ad', 'W2QA ad', 4800, 3000, 6))
+for i, st in enumerate(['new', 'contacted', 'qualified', 'new']):
+    db.execute('INSERT INTO leads (meta_lead_id, created_time, status, ad_id, ad_name, full_name) VALUES (%s, %s, %s, %s, %s, %s)', ('W2QA-%d' % i, mid, st, 'W2QA-ad', 'W2QA ad', 'W2QA person %d' % i))
+db.execute('INSERT INTO ad_tags (ad_id, dimension, value) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING', ('W2QA-ad', 'hook', 'W2 hook'))
+db.execute('INSERT INTO status_events (level, entity_id, entity_name, field, old_value, new_value, source, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)', ('ad', '920000000000003', 'ACCT2MARK ad', 'configured_status', 'ACTIVE', 'PAUSED', 'poll', mid))
+print(json.dumps({'start': s.isoformat(), 'prev': (s - timedelta(days=7)).isoformat(), 'base': base}))`);
+  await page.goto(`${BASE}/report.html?kind=week&acct=${A2}`);
+  await page.waitForSelector('.r-head');
+  const w2 = await getJson('/api/reports?kind=week');
+  const expReceived = seed.base.received + 4;
+  const expMeta = seed.base.meta_leads + 6;
+  const gapText = (await page.locator('.r-gap').count()) ? await page.textContent('.r-gap') : '';
+  check('the report funnel counts the leads received (Meta\'s count beside it, in plain words); no rate passes 100%',
+    w2.funnel[0].step === 'Leads received' && w2.funnel[0].n === expReceived && w2.funnel.every((f) => f.rate === null || f.rate <= 100)
+    && (await page.textContent('.r-funnel tbody tr th')).trim() === 'Leads received'
+    && new RegExp(`Meta counted ${expMeta} leads; ${expMeta - expReceived} of them didn't reach your leads list`).test(gapText)
+    && new RegExp(`Meta counted ${expMeta}`).test(await page.textContent('.r-figs div:nth-child(2) small')),
+    `${JSON.stringify(w2.funnel)} ${gapText}`);
+  const hookGroup = (w2.ideas && w2.ideas.groups || []).find((g) => g.value === 'W2 hook');
+  check('the ideas in the report count qualified leads of the leads received (not of Meta\'s count)',
+    !!hookGroup && hookGroup.qualified === 1 && hookGroup.received === 4 && hookGroup.leads === 6 && hookGroup.qualified_rate === 0.25, JSON.stringify(hookGroup));
+  check('What we did lists a switch made in Ads Manager, dated by the account\'s day',
+    w2.changes.some((c) => c.where === 'outside' && c.text === 'Ad “ACCT2MARK ad”: turned off (in Ads Manager)' && c.day >= w2.start && c.day <= w2.end)
+    && /ACCT2MARK ad.*turned off \(in Ads Manager\)/.test(await page.textContent('#report')), JSON.stringify(w2.changes.slice(-3)));
+
+  // Wait for me (the default): nothing goes out at 8 AM; one open item for this account's admins.
+  const mails0 = mailSent().length;
+  const waited = py2(`
+settings_store.set('report_email', 'weekly')
+sent = [reports_api.send_due(monday), reports_api.send_due(monday)]
+row = db.query('SELECT status FROM client_reports WHERE kind = %s AND start_day = %s', ('week', s), one=True)
+alert = db.query('SELECT id, level, kind, resolved_at IS NULL AS open, title, href FROM alerts WHERE rule = %s', ('report_review',), one=True)
+told = db.query('SELECT n.user_id, n.button, u.account_id FROM notifications n JOIN users u ON u.id = n.user_id WHERE n.ref = %s AND n.kind = %s', (str(alert['id']), 'alert')) if alert else []
+print(json.dumps({'sent': sent, 'row': row, 'alert': alert, 'told': told}, default=str))`);
+  const told = waited.told.map((t) => t.user_id);
+  check('waiting for review: no email at 8 AM, the week waits, one open Needs-action item and a "Review it" message to this account\'s admins only',
+    waited.sent.join() === '0,0' && toClient(mails0).length === 0 && waited.row && waited.row.status === 'waiting'
+    && waited.alert && waited.alert.open && waited.alert.kind === 'event' && waited.alert.level === 'warn' && waited.alert.title === 'Weekly report for Burdanova QA is waiting for you'
+    && told.includes(1) && waited.told.every((t) => t.button === 'Review it' && (t.account_id === null || t.account_id === A2)) && waited.told.some((t) => t.account_id === A2),
+    JSON.stringify(waited));
+  const w2Inbox = await getJson('/api/inbox?box=need');
+  const w2Today = await getJson('/api/home');
+  check('the waiting report is in the Inbox under Needs action and on Today with the decisions',
+    w2Inbox.items.some((i) => i.rule === 'report_review' && i.need && i.title === 'Weekly report for Burdanova QA is waiting for you')
+    && w2Today.queue.some((r) => r.rule === 'report_review' && r.group === 'decide'), JSON.stringify(w2Today.queue.map((r) => r.rule)));
+  await page.goto(`${BASE}${waited.alert.href.replace('#', `&acct=${A2}#`)}`);
+  await page.waitForSelector('#rv-bar:not([hidden]) #rv-state .pill');
+  await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'rv-note');
+  check('the item opens Reports at the review bar, on the note: "Waiting for you", nothing goes out until Send',
+    (await page.textContent('#rv-state .pill')).trim() === 'Waiting for you' && /Nothing goes to client-qa@burdanova\.test until you press Send\./.test(await page.textContent('#rv-state'))
+    && await page.isVisible('#rv-send') && await page.isVisible('#rv-later') && await page.isVisible('#rv-skip') && await page.isHidden('#rv-hold'));
+
+  // The client meanwhile: still being prepared, no review bar, no writes.
+  const wctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+  const wc = await wctx.newPage();
+  wc.on('pageerror', (e) => errors.push('w2 client: ' + e.message));
+  await wc.goto(BASE + '/login.html');
+  await wc.fill('#email', CLIENT); await wc.fill('#password', 'client-pass-123');
+  await Promise.all([wc.waitForURL('**/home.html**'), wc.click('button[type=submit]')]);
+  await wc.goto(`${BASE}/report.html?kind=week&start=${seed.start}`);
+  await wc.waitForSelector('.r-head');
+  const clientW2Writes = [];
+  for (const u of ['/api/reports/note', '/api/reports/send', '/api/reports/hold', '/api/reports/skip', '/api/reports/resend', '/api/reports/email-preview']) {
+    clientW2Writes.push((await post(u, { kind: 'week', start: seed.start, note: 'x', when: 'now', expect_to: [CLIENT] }, wc)).status);
+  }
+  check('a client sees "still being prepared" until it goes out, with no review bar, and can change nothing',
+    /This report is still being prepared\. It will reach you by email\./.test(await wc.textContent('#report')) && (await wc.locator('#rv-bar').count()) === 0
+    && clientW2Writes.every((x) => x === 403), clientW2Writes.join());
+  // A send that reached nobody (mail server down) leaves no copy: the client still waits and never sees the draft note.
+  // send_at an hour ahead so the running worker leaves the row to this call.
+  const failedSend = py2(`
+from unittest import mock
+import mailer
+db.execute('UPDATE client_reports SET note = %s, status = %s, send_at = now() + make_interval(hours => 1) WHERE kind = %s AND start_day = %s', ('W2QA draft note', 'scheduled', 'week', s))
+rid = db.query('SELECT id FROM client_reports WHERE kind = %s AND start_day = %s', ('week', s), one=True)['id']
+with mock.patch.object(mailer, 'send', side_effect=mailer.MailError('server down')):
+    n = reports_api.send_row(rid, datetime.now(timezone.utc))
+row = db.query('SELECT status, snapshot IS NULL AS no_copy, last_error FROM client_reports WHERE id = %s', (rid,), one=True)
+print(json.dumps({'n': n, 'row': row}))`);
+  await wc.reload();
+  await wc.waitForSelector('.r-head');
+  const failedSeen = errors.length;
+  const nothingSent = await page.evaluate(async (u) => (await fetch(u)).status, `/api/reports/sent?kind=week&start=${seed.start}`);
+  await page.waitForTimeout(800);
+  errors.splice(failedSeen); // the 404 asked for on purpose
+  check('a send that reached nobody keeps no copy: the client still waits, sees no draft note, and there is nothing to see as sent',
+    failedSend.n === 0 && failedSend.row.status === 'scheduled' && failedSend.row.no_copy && failedSend.row.last_error === 'server down'
+    && /still being prepared/.test(await wc.textContent('#report')) && !/W2QA draft note/.test(await wc.textContent('#report')) && nothingSent === 404,
+    `${JSON.stringify(failedSend)} ${nothingSent}`);
+  py2(`
+db.execute('UPDATE client_reports SET note = NULL, status = %s, send_at = NULL, last_error = NULL, attempts = 0 WHERE kind = %s AND start_day = %s', ('waiting', 'week', s))
+print('{}')`);
+  await page.reload();
+  await page.waitForSelector('#rv-bar:not([hidden]) #rv-state .pill');
+
+  // The note shows first as it is typed; the email preview carries it before the headline; Send now sends once.
+  const NOTE = 'W2QA note: N3 was turned off on Wednesday.\nTwo new videos go live this week.';
+  await page.fill('#rv-note', NOTE);
+  check('the note shows first in the report as it is typed, line breaks kept',
+    await page.isVisible('#r-note') && (await page.$eval('#report > section', (el) => el.id)) === 'r-note' && (await page.innerText('#r-note .rv-text')).includes('Wednesday.\nTwo new'));
+  await page.click('#rv-preview summary');
+  await page.waitForSelector('#rv-mailbox .rv-mail');
+  const mailText = await page.textContent('#rv-mailbox .rv-mail');
+  check('Preview the email: to the client, the note before the headline, the link',
+    /^Hi \w+,\s+W2QA note/.test(mailText) && mailText.indexOf('W2QA note') < mailText.indexOf(w2.headline)
+    && mailText.includes("[the report's own link, made when it goes out]") && !/report\.html\?t=/.test(mailText)
+    && /client-qa@burdanova\.test/.test(await page.textContent('#rv-mailbox')) && /Week of /.test(await page.textContent('#rv-mailbox')), mailText.slice(0, 120));
+  const mails1 = mailSent().length;
+  await page.click('#rv-send');
+  await page.waitForSelector('dialog.confirm #cd-ok');
+  const sendWords = await page.textContent('dialog.confirm');
+  await page.click('dialog.confirm #cd-ok');
+  const wentOut = await page.waitForFunction(() => /^Sent /.test(document.querySelector('#rv-state .pill')?.textContent || ''), null, { timeout: 25000 }).then(() => true, () => false);
+  const firstMail = toClient(mails1);
+  const afterSend = py2(`
+print(json.dumps({'open': db.query('SELECT COUNT(*) AS n FROM alerts WHERE rule = %s AND resolved_at IS NULL', ('report_review',), one=True)['n'], 'fyi': db.query('SELECT title, level, kind FROM alerts WHERE rule = %s', ('report_sent',)), 'row': db.query('SELECT status, sent_to, note FROM client_reports WHERE kind = %s AND start_day = %s', ('week', s), one=True)}, default=str))`);
+  check('Send now asks first, the worker sends one email per client starting with the note, the item closes and an FYI says it went',
+    /Send the report now\?/.test(sendWords) && /client-qa@burdanova\.test with a link that works for 90 days/.test(sendWords) && wentOut
+    && firstMail.length === 1 && /^Hi \w+,\r?\n\r?\nW2QA note: N3 was turned off on Wednesday\.\r?\nTwo new videos/.test(firstMail[0].text) && /: your ads report, Week of /.test(firstMail[0].subject)
+    && afterSend.open === 0 && afterSend.fyi.length === 1 && afterSend.fyi[0].title === 'Weekly report sent to 1 client' && afterSend.fyi[0].level === 'info'
+    && afterSend.row.status === 'sent' && afterSend.row.note === NOTE, `${wentOut} ${JSON.stringify(firstMail.map((m) => m.text.slice(0, 60)))} ${JSON.stringify(afterSend)}`);
+  const refusedSeen = errors.length;
+  const sentAgain = await post('/api/reports/send', { kind: 'week', start: seed.start, when: 'now', expect_to: [CLIENT] });
+  await page.waitForTimeout(1500);
+  errors.splice(refusedSeen); // the 409 asked for on purpose
+  check('a second Send now sends nothing', sentAgain.status === 409 && toClient(mails1).length === 1, `${sentAgain.status} ${toClient(mails1).length}`);
+
+  // What the client got is what the client sees: the frozen copy, the note first, "Figures as sent on".
+  await wc.reload();
+  await wc.waitForSelector('.r-foot');
+  const spentSent = await wc.textContent('.r-figs div:first-child b');
+  check('the client sees the copy that went out: our note first and signed, "Figures as sent on", no links',
+    (await wc.$eval('#report > section', (el) => el.id)) === 'r-note' && /W2QA note/.test(await wc.textContent('#r-note')) && /— \w+/.test(await wc.textContent('#r-note'))
+    && /Figures as sent on /.test(await wc.textContent('.r-foot')) && (await wc.locator('#report a.ent-link').count()) === 0);
+  py2(`
+db.execute('UPDATE ad_daily SET spend_cents = spend_cents + 5000 WHERE ad_id = %s', ('W2QA-ad',))
+print('{}')`);
+  await wc.reload();
+  await wc.waitForSelector('.r-foot');
+  await page.reload();
+  await page.waitForSelector('#rv-bar:not([hidden]) #rv-state .pill');
+  const spentNow = await page.textContent('.r-figs div:first-child b');
+  check("later changes don't reach the client's copy; the admin sees today's figures with See what was sent",
+    (await wc.textContent('.r-figs div:first-child b')) === spentSent && spentNow !== spentSent && await page.isVisible('#rv-sent') && await page.isVisible('#rv-resend')
+    && /^Sent /.test(await page.textContent('#rv-state .pill')), `${spentSent} ${spentNow}`);
+  const w2Share = (await post('/api/reports/share', { kind: 'week', start: seed.start })).body.url;
+  const w2anonCtx = await browser.newContext();
+  const w2anon = await w2anonCtx.newPage();
+  await w2anon.goto(BASE + '/report.html?' + w2Share.split('?')[1]);
+  await w2anon.waitForSelector('.r-foot');
+  check('a share link for a sent period shows the same frozen copy with the note',
+    /W2QA note/.test(await w2anon.textContent('#r-note')) && (await w2anon.textContent('.r-figs div:first-child b')) === spentSent && /Figures as sent on /.test(await w2anon.textContent('.r-foot')));
+  await w2anonCtx.close();
+  await page.click('#rv-sent');
+  await page.waitForSelector('#rv-asent:not([hidden])');
+  await page.waitForSelector('.r-foot');
+  check('See what was sent opens the frozen copy, with the way back', /^As sent on /.test(await page.textContent('#rv-asent')) && (await page.textContent('.r-figs div:first-child b')) === spentSent
+    && await page.isHidden('#rv-bar') && (await page.locator('#rv-asent a', { hasText: "Back to today's figures" }).count()) === 1);
+  await page.click('#rv-asent a');
+  await page.waitForSelector('#rv-bar:not([hidden]) #rv-note');
+
+  // A note edited after sending: the client's copy shows the new words, and no email goes.
+  const mails2 = mailSent().length;
+  await page.fill('#rv-note', 'W2QA note, reworded after sending.');
+  await page.click('#rv-note-save');
+  const editedToast = await page.waitForFunction(() => /no new email was sent/.test(document.querySelector('.toast')?.textContent || ''), null, { timeout: 8000 }).then(() => true, () => false);
+  await wc.reload();
+  await wc.waitForSelector('#r-note');
+  await page.waitForTimeout(1000);
+  check('editing the note after sending changes the client\'s copy and sends nothing', editedToast && /reworded after sending/.test(await wc.textContent('#r-note')) && toClient(mails2).length === 0);
+  const refusedSeen2 = errors.length;
+  const stale = await post('/api/reports/note', { kind: 'week', start: seed.start, note: 'from an old tab', note_at: '2020-01-01T00:00:00+00:00' });
+  const listChanged = await post('/api/reports/send', { kind: 'week', start: seed.prev, when: 'now', expect_to: ['someone-else@example.com'] });
+  errors.splice(refusedSeen2); // the two 409s asked for on purpose
+  check('a note saved from an older copy and a send to a client list that changed are refused in plain words',
+    stale.status === 409 && /Someone else changed this note/.test(stale.body.error) && listChanged.status === 409 && /The client list changed/.test(listChanged.body.error)
+    && JSON.stringify(listChanged.body.to) === JSON.stringify([CLIENT]), `${stale.status} ${listChanged.status} ${JSON.stringify(listChanged.body)}`);
+
+  // An older week no one decided on reads "Not sent" (nothing waits for it); one held back still waits.
+  const olderState = (await getJson(`/api/reports?kind=week&start=${seed.prev}`)).review;
+  check('an older week that was never emailed reads "Not sent", with Send now and no Don\'t send',
+    olderState.status === 'not_sent' && olderState.pill[1] === 'Not sent' && olderState.actions.join() === 'send_now,send_later', JSON.stringify(olderState));
+  py2(`
+db.execute('INSERT INTO client_reports (kind, start_day, end_day, status) VALUES (%s, %s, %s, %s)', ('week', s - timedelta(days=7), s - timedelta(days=1), 'waiting'))
+print('{}')`);
+  // Don't send this one, with Undo (the week before, held back and waiting).
+  await page.goto(`${BASE}/report.html?kind=week&start=${seed.prev}`);
+  await page.waitForSelector('#rv-bar:not([hidden]) #rv-skip:not([hidden])');
+  await page.click('#rv-skip');
+  await page.waitForSelector('.toast .toast-act');
+  const skipWords = `${await page.textContent('.toast')} | ${await page.textContent('#rv-state .pill')}`;
+  await page.click('.toast .toast-act');
+  const undone = await page.waitForFunction(() => /Waiting for you/.test(document.querySelector('#rv-state .pill')?.textContent || ''), null, { timeout: 8000 }).then(() => true, () => false);
+  check("Don't send this one says so with Undo, and Undo puts it back to waiting", /This report won't be sent\..*\| Not sending/.test(skipWords) && undone, skipWords);
+
+  // Phones: arriving from the Inbox item the bar's status is below the sticky header, not under it.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${BASE}/report.html?kind=week&start=${seed.prev}&acct=${A2}#review`);
+  await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'rv-note');
+  await page.waitForTimeout(300);
+  const arrival = await page.evaluate(() => {
+    const under = Math.max(0, ...[...document.querySelectorAll('.topbar, .subnav, .page-head')].filter((el) => {
+      const cs = getComputedStyle(el);
+      return (cs.position === 'sticky' || cs.position === 'fixed') && cs.display !== 'none';
+    }).map((el) => el.getBoundingClientRect().bottom));
+    return { under, state: document.getElementById('rv-state').getBoundingClientRect().top, scrolled: window.scrollY };
+  });
+  check('on a phone, opening the review item shows the status line below the header', arrival.state >= arrival.under, JSON.stringify(arrival));
+  // Phones: the bar stacks, full-width 44px buttons, a 16px note field, nothing past the edge; never printed.
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.waitForTimeout(300);
+    const phone = await page.evaluate(() => ({
+      heights: ['rv-send', 'rv-later', 'rv-skip', 'rv-note-save'].map((id) => document.getElementById(id).getBoundingClientRect().height),
+      full: ['rv-send', 'rv-later'].every((id) => Math.abs(document.getElementById(id).getBoundingClientRect().width - document.getElementById('rv-acts').getBoundingClientRect().width) < 2),
+      font: getComputedStyle(document.getElementById('rv-note')).fontSize,
+      over: document.documentElement.scrollWidth - window.innerWidth,
+    }));
+    check(`the review bar at ${width}px: buttons at least 44px tall and full width, a 16px note, nothing past the edge`,
+      phone.heights.every((h) => h >= 44) && phone.full && phone.font === '16px' && phone.over <= 0, JSON.stringify(phone));
+    if (width === 390) await page.screenshot({ path: `${OUT}/w2-review-390.png`, fullPage: false });
+  }
+  await page.setViewportSize({ width: 1360, height: 900 });
+  await page.emulateMedia({ media: 'print' });
+  check('the review bar is never printed', await page.isHidden('#rv-bar'));
+  await page.emulateMedia({ media: 'screen' });
+
+  // Settings: send without my review, kept after a reload.
+  await openSettings('reports-panel');
+  await page.check('#rep-review-auto');
+  await page.click('#rep-form button[type=submit]');
+  await page.waitForFunction(() => /Report settings saved/.test(document.querySelector('.toast')?.textContent || ''));
+  await openSettings('reports-panel');
+  await page.waitForFunction(() => /sent by itself/.test(document.getElementById('rep-state')?.textContent || ''));
+  check('Settings: "Send it without my review" is kept, and the pill says "Weekly · sent by itself"',
+    await page.isChecked('#rep-review-auto') && (await page.textContent('#rep-state')).trim() === 'Weekly · sent by itself');
+
+  // Without review: before 8 AM it would go by itself at 8; Hold stops it; Send at 8 AM sends at the next 8 AM;
+  // with no row it goes once (the behaviour before W2).
+  // The week as the worker set it to go out by itself (an hour from now, so the running worker leaves it alone).
+  const autoNow = py2(`
+db.execute('DELETE FROM client_reports')
+db.execute('INSERT INTO client_reports (kind, start_day, end_day, status, send_at) VALUES (%s, %s, %s, %s, now() + make_interval(hours => 1))', ('week', s, e, 'scheduled'))
+at = reports_api.auto_at('week', s, e, None, datetime.combine(e + timedelta(days=1), time(7), account_info.tz()))
+print(json.dumps({'at': at.isoformat() if at else None, 'day': (e + timedelta(days=1)).isoformat()}))`);
+  const held = await post('/api/reports/hold', { kind: 'week', start: seed.start });
+  const heldSent = py2(`print(json.dumps([reports_api.send_due(monday), db.query('SELECT COUNT(*) AS n FROM alerts WHERE dedupe_key = %s AND resolved_at IS NULL', ('report_review:week:' + s.isoformat(),), one=True)['n']]))`);
+  // Send at 8 AM with a note typed, then edit the note again: it saves (no false "someone else changed it").
+  await page.goto(`${BASE}/report.html?kind=week&start=${seed.start}&acct=${A2}`);
+  await page.waitForSelector('#rv-bar:not([hidden]) #rv-later:not([hidden])');
+  await page.fill('#rv-note', 'W2QA note for 8 AM.');
+  await page.click('#rv-later');
+  await page.waitForSelector('dialog.confirm #cd-ok');
+  await page.click('dialog.confirm #cd-ok');
+  await page.locator('.toast', { hasText: 'Set to go out on' }).first().waitFor({ timeout: 8000 });
+  await page.fill('#rv-note', 'W2QA note for 8 AM, edited.');
+  await page.click('#rv-note-save');
+  const resaved = await page.locator('.toast', { hasText: 'Note saved' }).first().waitFor({ timeout: 8000 }).then(() => true, () => false);
+  check('after Send at 8 AM the note can be edited and saved again', resaved && !(await page.locator('.toast', { hasText: 'Someone else changed' }).count()));
+  const later = { body: await getJson(`/api/reports?kind=week&start=${seed.start}`) };
+  const mails3 = mailSent().length;
+  const laterSent = py2(`
+row = db.query('SELECT send_at FROM client_reports WHERE kind = %s AND start_day = %s', ('week', s), one=True)
+local = row['send_at'].astimezone(account_info.tz())
+print(json.dumps({'early': reports_api.send_due(row['send_at'] - timedelta(minutes=1)), 'due': reports_api.send_due(row['send_at'] + timedelta(minutes=1)), 'hour': local.hour, 'minute': local.minute}))`);
+  check('without review: at 8 AM by itself; Hold keeps it back; Send at 8 AM goes at the next 8 AM, once',
+    autoNow.at && autoNow.at.startsWith(`${autoNow.day}T08:00`) && held.body.review.status === 'waiting' && heldSent.join() === '0,1'
+    && later.body.review.status === 'scheduled' && laterSent.early === 0 && laterSent.due === 1 && laterSent.hour === 8 && laterSent.minute === 0 && toClient(mails3).length === 1,
+    `${JSON.stringify(autoNow)} ${JSON.stringify(held.body && held.body.review && held.body.review.status)} ${heldSent} ${JSON.stringify(laterSent)}`);
+  const mails4 = mailSent().length;
+  const autoOnce = py2(`
+db.execute('DELETE FROM client_reports')
+print(json.dumps([reports_api.send_due(monday), reports_api.send_due(monday)]))`);
+  const m = toClient(mails4)[0];
+  check("without review and no row, Monday's email goes to the account's clients once, with a link that works",
+    autoOnce.join() === '1,0' && !!m && /report\.html\?t=/.test(m.text) && /Burdanova QA/.test(m.subject), `${autoOnce} ${JSON.stringify(m || {}).slice(0, 160)}`);
+
+  py2(`
+for sql in ('DELETE FROM client_reports', 'DELETE FROM ad_daily WHERE ad_id = %s', 'DELETE FROM leads WHERE ad_id = %s', 'DELETE FROM ad_tags WHERE ad_id = %s'):
+    db.execute(sql, ('W2QA-ad',) if '%s' in sql else None)
+db.execute('DELETE FROM alerts WHERE rule = ANY(%s)', (['report_review', 'report_sent'],))
+db.execute('DELETE FROM status_events WHERE entity_id = %s AND source = %s AND field = %s AND old_value = %s AND new_value = %s', ('920000000000003', 'poll', 'configured_status', 'ACTIVE', 'PAUSED'))
+settings_store.set('report_email', None); settings_store.set('report_review', None)
+print('{}')`);
+  // An account that doesn't email reports (wait for me is the default): its client reads the report in the console.
+  await wc.goto(`${BASE}/report.html?kind=week&start=${seed.start}`);
+  await wc.waitForSelector('.r-head');
+  check("a client of an account that doesn't email reports still reads the report (nothing would ever release it)",
+    (await wc.locator('.r-foot').count()) === 1 && !/still being prepared/.test(await wc.textContent('#report')));
+  await wctx.close();
+  await page.evaluate(() => fetch('/api/accounts/switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 1 }) }));
+  check('the report review pages log no console errors', errors.length === w2Seen, errors.slice(w2Seen).join(' | '));
+  }
 
 
   // Ad blockers hide elements whose class or id looks like an ad (EasyList: .ad-cell, .adset, #ads-panel …).

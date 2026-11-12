@@ -1,5 +1,6 @@
 """Every stored lead is announced once (email, phone alerts, automatic reply), whichever path stored
 it; organic form leads are real leads; a failing lead ping waits longer each time."""
+import json
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -205,21 +206,56 @@ class LeadEmailFailedTest(unittest.TestCase):
 
 
 class ReportProgressTest(unittest.TestCase):
-    def test_each_client_mailed_is_recorded_before_the_next_send(self):
+    """W2: a report's progress lives on its client_reports row; each address is saved right after its email went,
+    so a worker killed mid-loop resends to at most the address in flight."""
+
+    SNAP = {"account": "Edge", "kind": "week", "start": NOW.date().isoformat(), "headline": "Good week"}
+
+    def run_send(self, mail_effects, snapshot=None):
         people = [{"email": "a@client.com", "name": "Ann A"}, {"email": "b@client.com", "name": "Bo B"}]
-        saved = []
-        with mock.patch.object(reports_api.settings_store, "get", side_effect=lambda k, *a: {"report_email": "weekly"}.get(k)), \
-                mock.patch("mailer.configured", return_value=True), \
-                mock.patch.object(reports_api.rl, "email_due", return_value=("week", NOW.date(), NOW.date(), "w46")), \
-                mock.patch.object(reports_api.account_info, "tz", return_value=timezone.utc), \
-                mock.patch.object(reports_api.db, "query", return_value=people), \
-                mock.patch.object(reports_api, "build", return_value={"account": "Edge", "headline": "Good week"}), \
-                mock.patch.object(reports_api, "share_token", return_value=("tok", None)), \
-                mock.patch("mailer.send", side_effect=[None, SystemExit("worker killed")]), \
-                mock.patch.object(reports_api.settings_store, "set", side_effect=lambda k, v: saved.append((k, v))):
-            with self.assertRaises(SystemExit):
-                reports_api.send_due(NOW)
-        self.assertEqual(saved, [("report_sent_to", '{"key": "w46", "to": ["a@client.com"], "retry_at": 0}')])
+        row = {"id": 5, "kind": "week", "start_day": NOW.date(), "end_day": NOW.date(), "round": 1, "sent_to": [], "note": "Draft note",
+               "snapshot": {"round": 1, **self.SNAP} if snapshot is None else snapshot or None}
+        writes = []
+
+        def execute(sql, params=None, returning=False):
+            writes.append((" ".join(sql.split()), params))
+            return dict(row) if returning else None
+        with mock.patch.object(reports_api.db, "execute", side_effect=execute), \
+                mock.patch.object(reports_api, "build", return_value=dict(self.SNAP)), \
+                mock.patch.object(reports_api, "local_now", return_value=NOW), \
+                mock.patch.object(reports_api, "clients", return_value=people), \
+                mock.patch.object(reports_api, "share_link", return_value="https://x/report.html?t=tok"), \
+                mock.patch.object(reports_api, "resolve_review"), mock.patch.object(reports_api, "_raise"), \
+                mock.patch.object(reports_api, "log_activity"), \
+                mock.patch("mailer.send", side_effect=mail_effects) as send:
+            try:
+                reports_api.send_row(5, NOW)
+            except SystemExit:
+                pass
+        return writes, [c.args[0] for c in send.call_args_list]
+
+    def test_each_client_mailed_is_recorded_before_the_next_send(self):
+        writes, _ = self.run_send([None, SystemExit("worker killed")])
+        self.assertEqual([p for sql, p in writes if "array_append" in sql], [("a@client.com", 5)])
+        self.assertFalse(any("status = 'sent'" in sql for sql, _ in writes))
+
+    def test_a_failed_address_puts_the_report_back_for_an_hour_and_the_rest_still_go(self):
+        writes, tried = self.run_send([notify.mailer.MailError("mailbox full"), None])
+        self.assertEqual((tried, [p for sql, p in writes if "array_append" in sql]), (["a@client.com", "b@client.com"], [("b@client.com", 5)]))
+        retry = [p for sql, p in writes if sql.startswith("UPDATE client_reports SET status = 'scheduled'")]
+        self.assertEqual([(p[0], p[2]) for p in retry], [(NOW + reports_api.RETRY_AFTER, 5)])
+
+    def test_a_round_that_reached_nobody_keeps_no_copy_for_clients(self):
+        # Clients and links see the frozen copy (and its note) only once an email went: a total failure stores none.
+        down = notify.mailer.MailError("server down")
+        writes, tried = self.run_send([down, down], snapshot=False)
+        self.assertEqual((tried, [sql for sql, _ in writes if "snapshot" in sql]), (["a@client.com", "b@client.com"], []))
+
+    def test_a_new_rounds_copy_is_stored_with_the_first_address_it_reached(self):
+        writes, _ = self.run_send([notify.mailer.MailError("mailbox full"), None], snapshot=False)
+        stored = [(json.loads(p[1]), p[0], p[2]) for sql, p in writes if "snapshot" in sql]
+        self.assertEqual(stored, [({**self.SNAP, "round": 1, "as_sent": NOW.date().isoformat()}, "b@client.com", 5)])
+        self.assertEqual([sql for sql, _ in writes if "array_append" in sql and "snapshot" not in sql], [])
 
 
 if __name__ == "__main__":

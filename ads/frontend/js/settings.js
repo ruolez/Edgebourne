@@ -125,7 +125,12 @@ async function loadReports() {
     const r = await api("/api/reports/settings");
     $("rep-leads").checked = !!s.account.clients_update_leads;
     $("rep-email").value = r.email;
-    $("rep-state").innerHTML = r.email === "off" ? '<span class="pill">Not emailed</span>' : `<span class="pill ok">${r.email === "weekly" ? "Weekly" : "Monthly"}</span>`;
+    $(r.review === "auto" ? "rep-review-auto" : "rep-review-wait").checked = true;
+    $("rep-state").innerHTML = r.email === "off" ? '<span class="pill">Not emailed</span>'
+      : `<span class="pill ok">${r.email === "weekly" ? "Weekly" : "Monthly"} · ${r.review === "auto" ? "sent by itself" : "waits for you"}</span>`;
+    const later = r.scheduled || [];
+    $("rep-scheduled").hidden = !later.length;
+    $("rep-scheduled").innerHTML = later.length ? `${later.length === 1 ? "1 report is" : `${later.length} reports are`} still set to go out${later[0].when ? ` on ${esc(later[0].when)}` : ""}: <a href="/report.html?kind=${esc(later[0].kind)}&start=${esc(later[0].start)}#review">open it</a>.` : "";
     $("rep-clients").textContent = r.clients.length ? `Goes to ${r.clients.join(", ")}, with a link that works for 90 days.` : "No clients on this account yet: add them on the Team page (role Client).";
   } catch (err) { /* panel stays as is */ }
 }
@@ -368,6 +373,9 @@ const ACTIONS = {
   "settings.client_access": "Changed what clients may do",
   "account.created": "Added an account", "account.renamed": "Renamed an account", "account.archived": "Closed an account", "account.reopened": "Reopened an account",
   "report.links_revoked": "Stopped every shared report link",
+  "report.note_saved": "Wrote the report note", "report.send_now": "Sent a report", "report.scheduled": "Set a report to go out at 8 AM",
+  "report.held": "Held a report", "report.skipped": "Chose not to send a report", "report.unskipped": "Took back not sending a report",
+  "report.resent": "Sent a report again", "report.waiting": "A report is waiting for review", "report.emailed": "Emailed a report to clients",
   "settings.smtp": "Changed the email settings",
   "desk.task_created": "Asked Claude something",
   "desk.task_cancelled": "Cancelled something waiting for Claude",
@@ -530,9 +538,12 @@ if (me) {
     e.preventDefault();
     fieldError(e.target, null);
     try {
-      await api("/api/reports/settings", { method: "PUT", body: { email: $("rep-email").value } });
+      const review = $("rep-review-auto").checked ? "auto" : "wait";
+      const r = await api("/api/reports/settings", { method: "PUT", body: { email: $("rep-email").value, review } });
       s = await api("/api/settings/client-access", { method: "PUT", body: { update_leads: $("rep-leads").checked } });
-      saved(e.target); toast("Report settings saved"); loadReports();
+      saved(e.target);
+      toast(review === "auto" && r.waiting ? "Report settings saved. Reports already waiting still need your Send." : "Report settings saved");
+      loadReports();
     } catch (err) { if (err.body && err.body.field) fieldError(e.target, err.body.field, err.message); else toast(err.message, "bad"); }
   });
   $("mt-form").addEventListener("submit", async (e) => {

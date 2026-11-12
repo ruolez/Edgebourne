@@ -29,7 +29,31 @@
         <button type="button" class="btn" id="share" hidden>Share a link…</button>
         <button type="button" class="btn btn-primary" id="pdf">Print or save as PDF</button>
       </header>
-      <div class="content" id="report-wrap"><article class="rp-doc" id="report"><div class="skeleton" role="status"><span></span><span></span><span></span><p>Loading…</p></div></article></div>
+      <div class="content" id="report-wrap">
+        <section class="panel rv-bar no-print" id="rv-bar" aria-labelledby="rv-title" hidden>
+          <div class="rv-top"><h2 class="sr-only" id="rv-title">Before it goes out</h2><div class="rv-state" id="rv-state" aria-live="polite"></div></div>
+          <form class="rv-form stack tight" id="rv-form" novalidate>
+            <div class="field"><label for="rv-note">Our note (optional)</label>
+              <textarea class="input" id="rv-note" name="note" rows="5" maxlength="2000" aria-describedby="rv-note-hint rv-count"
+                placeholder="Anything the numbers don't say: why an ad was turned off, what we're trying next, a question for them."></textarea>
+              <span class="hint" id="rv-note-hint">Shown first in the report and the email. Clients see it once the report goes out.</span>
+              <span class="hint" id="rv-count" aria-live="polite" hidden></span></div>
+            <div class="row"><button class="btn" type="submit" id="rv-note-save">Save note</button></div>
+          </form>
+          <details class="fold rv-preview" id="rv-preview"><summary>Preview the email</summary><div class="rv-mailbox" id="rv-mailbox"><p class="muted flush">Loading…</p></div></details>
+          <div class="row rv-acts" id="rv-acts">
+            <button class="btn btn-primary" type="button" id="rv-send" hidden>Send now</button>
+            <button class="btn" type="button" id="rv-later" hidden>Send at 8 AM</button>
+            <button class="btn" type="button" id="rv-hold" hidden>Hold it</button>
+            <button class="btn" type="button" id="rv-unskip" hidden>Send it after all</button>
+            <button class="btn" type="button" id="rv-sent" hidden>See what was sent</button>
+            <button class="btn" type="button" id="rv-resend" hidden>Send again with today's figures</button>
+            <button class="btn btn-quiet" type="button" id="rv-skip" hidden>Don't send this one</button>
+          </div>
+        </section>
+        <p class="note rv-asent no-print" id="rv-asent" hidden></p>
+        <article class="rp-doc" id="report"><div class="skeleton" role="status"><span></span><span></span><span></span><p>Loading…</p></div></article>
+      </div>
     </main>
   </div>
   <script type="module" src="/js/report.js"></script>

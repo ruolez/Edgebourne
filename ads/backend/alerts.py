@@ -322,11 +322,11 @@ def raise_found(found):
     if raised:
         people = notify.reach(notify.account_admin_ids(), "notify_alerts")
         for alert_id, a in raised:
-            if a["level"] == "info":
+            if a["level"] == "info" or a.get("quiet"):
                 continue  # shown in the console only
             for uid, channel in people:
                 notify.queue(uid, channel, "alert", a["title"], a["lines"], notify.link(a["href"] or "/home.html"),
-                             "Open in the console", ref=str(alert_id), dedupe_key=f"alert:{alert_id}:{uid}")
+                             a.get("button") or "Open in the console", ref=str(alert_id), dedupe_key=f"alert:{alert_id}:{uid}")
     return raised
 
 

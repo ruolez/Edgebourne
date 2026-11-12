@@ -78,6 +78,13 @@
             <div class="field"><label for="rep-email">Email the report to this account's clients</label><select class="input" id="rep-email" name="email">
               <option value="off">Off</option><option value="weekly">Every Monday (last week)</option><option value="monthly">On the 1st (last month)</option></select>
               <span class="hint" id="rep-clients"></span></div>
+            <fieldset class="field" id="rep-review"><legend class="legend">Before it goes out</legend>
+              <div class="stack tight">
+                <label class="check"><input type="radio" name="review" value="wait" id="rep-review-wait"> <span>Wait for me <span class="explain">I read it, add a note if I want, and press Send.</span></span></label>
+                <label class="check"><input type="radio" name="review" value="auto" id="rep-review-auto"> <span>Send it without my review, at 8 AM</span></label>
+              </div>
+              <span class="hint">Either way you can open it first on Reports and add a note.</span>
+              <span class="hint" id="rep-scheduled" hidden></span></fieldset>
             <label class="check"><input type="checkbox" id="rep-leads"> Clients may move leads through stages and add notes <span class="muted">(otherwise they only look)</span></label>
             <div class="row"><button class="btn btn-primary" type="submit">Save report settings</button><a class="btn btn-quiet" href="/report.html">Open the report</a><span class="spacer"></span><button class="btn btn-danger-text" type="button" id="rep-revoke">Stop all shared links</button></div>
           </form>

@@ -8,4 +8,9 @@ cd "$(dirname "$0")/.."
 docker restart edgebourne-fake-meta edgebourne-ads-backend >/dev/null
 sleep 6
 docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "import db, insights; db.execute('DELETE FROM meta_cache'); db.execute('DELETE FROM status_events'); db.execute('DELETE FROM alerts'); insights.sync_structure(); db.execute('DELETE FROM ad_versions')" >/dev/null
+# Client reports (W2) of every account start unsent, with emailing off and the default review.
+docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "import account_ctx, db
+with account_ctx.all_accounts():
+    db.execute('DELETE FROM client_reports'); db.execute(\"DELETE FROM alerts WHERE rule IN ('report_review', 'report_sent')\")
+    db.execute(\"DELETE FROM settings WHERE key ~ '^report_(review|email|last_sent|sent_to)(@[0-9]+)?$'\")" >/dev/null
 node qa/flows.cjs

@@ -416,6 +416,22 @@ finally:
     db.execute("DELETE FROM notifications WHERE id = %s", (fail["id"],))
 if acct_admin_failed != {"n": 0, "last_error": None} or not owner_failed:
     tenant.append(f"Telegram failures: owner sees {owner_failed!r}, account admin sees {acct_admin_failed}")
+# W2: a report note or hold from account 2's admin (its cookie still asking for account 1) lands in account 2
+# only; a member reads and changes no report.
+W2_NOTE = f"{MARK2} report note"
+session_for(ac, acct_admin["id"], 1)
+w2 = {"note": ac.put("/api/reports/note", json={"kind": "week", "note": W2_NOTE}).status_code,
+      "hold": ac.post("/api/reports/hold", json={"kind": "week"}).status_code,
+      "member_get": mc.get("/api/reports?kind=week").status_code,
+      "member_note": mc.put("/api/reports/note", json={"kind": "week", "note": "x"}).status_code,
+      "member_send": mc.post("/api/reports/send", json={"kind": "week", "when": "now", "expect_to": []}).status_code}
+with account_ctx.use(1):
+    w2_in_1 = db.query("SELECT COUNT(*) AS n FROM client_reports WHERE note = %s", (W2_NOTE,), one=True)["n"]
+with account_ctx.use(A2):
+    w2_in_2 = db.query("SELECT COUNT(*) AS n FROM client_reports WHERE note = %s AND status = 'waiting'", (W2_NOTE,), one=True)["n"]
+    db.execute("DELETE FROM client_reports WHERE note = %s", (W2_NOTE,))
+if w2 != {"note": 200, "hold": 200, "member_get": 403, "member_note": 403, "member_send": 403} or w2_in_1 or w2_in_2 != 1:
+    tenant.append(f"report review writes: {w2}, rows in account 1: {w2_in_1}, in account 2: {w2_in_2}")
 session_for(c, admin["id"], 1)
 csrf = app.test_client()
 session_for(csrf, admin["id"], 1)
