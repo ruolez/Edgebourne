@@ -11,41 +11,24 @@
   <meta name="theme-color" content="#0E0F11" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-title" content="EB Ads">
   <script src="/js/theme.js"></script>
-  <link rel="stylesheet" href="/css/tokens.css?v=1794494069">
-  <link rel="stylesheet" href="/css/app.css?v=1794494069">
-  <link rel="stylesheet" href="/css/shell.css?v=1794494069">
+  <link rel="stylesheet" href="/css/tokens.css?v=1794521000">
+  <link rel="stylesheet" href="/css/app.css?v=1794521000">
+  <link rel="stylesheet" href="/css/shell.css?v=1794521000">
 </head>
 <body>
   <div class="app">
     <aside class="rail"></aside>
     <main class="main">
-      <header class="page-head"><h1>Research</h1></header>
+      <header class="page-head"><h1>Research</h1><p class="page-sub">Competitor ads worth learning from, and a straight path to your next ad.</p></header>
       <div class="content stack research">
-        <div class="research-grid">
-          <section class="panel">
-            <div class="panel-head"><h2>Look it up yourself</h2><p>Meta Ad Library</p></div>
-            <form class="panel-body stack tight" id="lib-form" novalidate>
-              <div class="field"><label for="q">Search for an advertiser or words in their ads</label><input class="input" id="q" placeholder="e.g. a competitor's name, or words from their ads"></div>
-              <div class="row">
-                <div class="field inline-field"><label for="country">Country</label><select class="input" id="country"><option value="US">United States</option><option value="ALL">All countries</option></select></div>
-                <label class="check"><input type="checkbox" id="active" checked> Only ads still running</label>
-                <span class="spacer"></span>
-                <button class="btn btn-primary" type="submit">Open in Ad Library</button>
-              </div>
-              <div class="chips" id="quick"></div>
-            </form>
-          </section>
-          <section class="panel composer">
-            <div class="panel-head"><h2>Ask Claude to research</h2></div>
-            <form class="panel-body stack tight" id="ask-form" novalidate>
-              <div class="field"><label for="prompt" class="sr-only">What to research</label>
-                <textarea class="input" id="prompt" rows="4" placeholder="e.g. What are competitors in our area running on Facebook right now? Which angles and offers repeat, and what should we test?"></textarea></div>
-              <div class="row"><span class="muted small" id="mac-line"></span><span class="spacer"></span><button class="btn btn-claude" type="submit">Send to Claude</button></div>
-            </form>
-          </section>
+        <div class="tabs" role="tablist" aria-label="Research" id="rs-tabs" data-tabpanel="rs-panel">
+          <button type="button" role="tab" data-part="swipes" aria-selected="true">Swipe file <span class="n" id="n-swipes" hidden></span></button>
+          <button type="button" role="tab" data-part="search" aria-selected="false">Search</button>
+          <button type="button" role="tab" data-part="watched" aria-selected="false">Watched Pages <span class="n" id="n-watched" hidden></span></button>
+          <button type="button" role="tab" data-part="past" aria-selected="false">Past research <span class="n" id="n-past" hidden></span></button>
         </div>
-        <div class="swipe-layout">
-          <section class="panel">
+        <div id="rs-panel">
+          <section class="panel" data-part-panel="swipes">
             <div class="panel-head wrap"><h2>Swipe file</h2><p id="swipe-count">Competitor ads worth keeping</p><p class="explain-line muted small" data-explain="swipe_file"></p><span class="spacer"></span>
               <div class="filters" id="swipe-filter" role="group" aria-label="Show">
                 <button type="button" class="view-chip" data-sf="all" aria-pressed="true">All</button>
@@ -67,26 +50,55 @@
                 <div class="field"><label for="sw-notes">Why it's worth keeping</label><input class="input" id="sw-notes" name="notes" autocomplete="off" placeholder="e.g. Same offer as ours, but the hook names the cost of the problem"></div>
                 <div class="row"><button class="btn btn-primary" type="submit">Save</button><button class="btn btn-quiet" type="button" id="swipe-cancel">Cancel</button></div>
               </form>
+              <p class="muted small flush" id="swipe-how">Make something like this sends one ad to Claude as a starting point. Tick several to write a brief from them.</p>
               <div id="swipes"><div class="skeleton" role="status"><span></span><span></span><span></span><p>Loading…</p></div></div>
             </div>
           </section>
-          <section class="panel watched">
-            <div class="panel-head"><h2>Watched Pages</h2></div>
+          <div class="research-grid" data-part-panel="search" hidden>
+            <section class="panel">
+              <div class="panel-head"><h2>Look it up yourself</h2><p>Meta Ad Library</p></div>
+              <form class="panel-body stack tight" id="lib-form" novalidate>
+                <div class="field"><label for="q">Search for an advertiser or words in their ads</label><input class="input" id="q" placeholder="e.g. a competitor's name, or words from their ads"></div>
+                <div class="row">
+                  <div class="field inline-field"><label for="country">Country</label><select class="input" id="country"><option value="US">United States</option><option value="ALL">All countries</option></select></div>
+                  <label class="check"><input type="checkbox" id="active" checked> Only ads still running</label>
+                  <span class="spacer"></span>
+                  <button class="btn btn-primary" type="submit">Open in Ad Library</button>
+                </div>
+                <div class="chips" id="quick"></div>
+                <p class="muted small flush">Found one worth keeping? Copy its link and use Save an ad in the Swipe file.</p>
+              </form>
+            </section>
+            <section class="panel composer">
+              <div class="panel-head"><h2>Ask Claude to research</h2></div>
+              <form class="panel-body stack tight" id="ask-form" novalidate>
+                <div class="field"><label for="prompt" class="sr-only">What to research</label>
+                  <textarea class="input" id="prompt" rows="4" placeholder="e.g. What are competitors in our area running on Facebook right now? Which angles and offers repeat, and what should we test?"></textarea></div>
+                <div class="row"><span class="muted small" id="mac-line"></span><span class="spacer"></span><button class="btn btn-claude" type="submit">Send to Claude</button></div>
+                <p class="muted small flush">Its report lands in Past research; ads it finds are saved to the Swipe file.</p>
+              </form>
+            </section>
+          </div>
+          <section class="panel watched" data-part-panel="watched" hidden>
+            <div class="panel-head"><h2>Watched Pages</h2><p>Competitors Claude checks every week</p></div>
             <div class="panel-body stack tight">
-              <p class="muted small flush">Claude checks these every week once the <a href="/desk.html#schedules">Competitor check</a> schedule is on, and saves new and long-running ads here.</p>
+              <p class="muted small flush">Claude checks these every week once the <a href="/desk.html#schedules">Competitor check</a> schedule is on, and saves new and long-running ads to the Swipe file.</p>
               <ul class="watch-list" id="watched"></ul>
-              <form class="stack tight" id="watch-form" novalidate>
+              <form class="stack tight watch-form" id="watch-form" novalidate>
                 <div class="field"><label for="w-name">Page name</label><input class="input" id="w-name" name="name" placeholder="A competitor's Facebook Page" autocomplete="off"></div>
                 <div class="field"><label for="w-id">Page id <span class="muted">(optional)</span></label><input class="input" id="w-id" name="page_id" inputmode="numeric" autocomplete="off"></div>
                 <div class="field"><label for="w-terms">Search words <span class="muted">(optional)</span></label><input class="input" id="w-terms" name="search_terms" placeholder="e.g. custom software Riverside" autocomplete="off"></div>
-                <button class="btn btn-small" type="submit">Watch this Page</button>
+                <div class="row"><button class="btn btn-small" type="submit">Watch this Page</button></div>
               </form>
             </div>
           </section>
+          <div class="stack" data-part-panel="past" hidden>
+            <p class="muted small flush">What Claude found when you asked it to research, newest first.</p>
+            <div class="stack" id="tasks"></div>
+          </div>
         </div>
-        <h2 class="section-h">Research so far</h2>
-        <div class="stack" id="tasks"></div>
       </div>
+      <div id="rs-tray" class="bk-dock"></div>
     </main>
   </div>
   <script type="module" src="/js/research.js"></script>

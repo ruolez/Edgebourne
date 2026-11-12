@@ -1679,15 +1679,45 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   await page.fill('#tag-offer', 'Free intro call');
   await page.click('#idea button[type=submit]');
   await page.waitForFunction(() => document.getElementById('tag-offer')?.value === 'Free intro call');
-  await page.goto(BASE + '/performance.html');
-  await page.waitForSelector('.ideas-table');
-  const hooks = await page.$$eval('.ideas-table tbody th b', (b) => b.map((x) => x.textContent));
-  check('Results groups ads by hook, with both outcome-promise ads in one row', hooks.includes('Outcome promise') && hooks.includes('Question')
-    && /N2 - Order portal, N5 - Quote to invoice/.test(await page.textContent('.ideas-table')), hooks.join(' | '));
-  check('the cheapest idea says how sure that is', /cheapest/.test(await page.textContent('#ideas')) && /sure/.test(await page.textContent('#ideas .note')));
+  // 9.5 Creative › Ideas: the groups with their pictures, the same verdict rule, a way to the Gallery for each.
+  await page.goto(BASE + '/ideas.html?range=30');
+  await page.waitForSelector('.idea-grp');
+  const hooks = await page.$$eval('.idea-grp .idea-name', (b) => b.map((x) => x.textContent));
+  const outcome = page.locator('.idea-grp[data-idea-row="Outcome promise"]');
+  check('Ideas groups ads by hook, with both outcome-promise ads in one group', hooks.includes('Outcome promise') && hooks.includes('Question')
+    && /N2 - Order portal, N5 - Quote to invoice/.test(await outcome.textContent()), hooks.join(' | '));
+  const ideaApi = await page.evaluate(async () => (await fetch('/api/concepts?by=hook&range=30')).json());
+  const outGroup = ideaApi.groups.find((g) => g.value === 'Outcome promise');
+  const pics = await outcome.locator('.idea-th img').evaluateAll((im) => im.map((i) => i.getAttribute('src')));
+  check('each group shows the pictures of its ads, biggest spender first', pics.length === 2 && outGroup
+    && pics.join() === [...outGroup.members].filter((m) => m.thumb).sort((a, b) => b.spend_cents - a.spend_cents).map((m) => m.thumb).join(), JSON.stringify(pics));
+  check('the cheapest idea says how sure that is, and too-early groups are marked', /cheapest/i.test(await page.textContent('#ideas')) && /sure/.test(await page.textContent('#ideas .note'))
+    && ideaApi.groups.filter((g) => !g.enough && g.value !== 'Not tagged').length === await page.locator('.idea-grp .pill:has-text("Too early")').count());
+  const galHref = await outcome.locator('.idea-gal').getAttribute('href');
+  check('a group links to the Gallery filtered on that idea, same dates', galHref === '/gallery.html?dim=hook&tag=Outcome+promise&range=30', galHref);
+  await Promise.all([page.waitForURL('**/gallery.html?**'), outcome.locator('.idea-gal').click()]);
+  await page.waitForSelector('.gal-card, #gal .empty');
+  check('… and the Gallery opens on it', (await page.inputValue('#tag-pick')) === 'hook:Outcome promise' && (await page.inputValue('#range-pick')) === '30');
+  await page.goto(BASE + '/ideas.html?range=30');
+  await page.waitForSelector('.idea-grp');
   await page.click('#idea-by [data-idea="persona"]');
   await page.waitForFunction(() => /Ops and office managers/.test(document.getElementById('ideas').textContent));
-  check('the grouping switches to who it is for', /Wholesale and distribution/.test(await page.textContent('#ideas')));
+  check('the grouping switches to who it is for, and the address keeps it', /Wholesale and distribution/.test(await page.textContent('#ideas')) && /by=persona/.test(page.url()));
+  // Results keeps one line on the hooks with the way to Ideas; an older link to a tag on Results opens Ideas on it.
+  await page.goto(BASE + '/performance.html?range=14');
+  await page.waitForSelector('#ideas-sum p');
+  check('Results says which hook is cheapest and links to Ideas on the same dates', /hook/.test(await page.textContent('#ideas-sum'))
+    && (await page.getAttribute('#ideas-open', 'href')) === '/ideas.html?range=14' && (await page.locator('#ideas-panel table').count()) === 0);
+  check('… and without a campaign picked it needs no note that it counts every campaign', (await page.locator('#ideas-all').count()) === 0);
+  await page.goto(BASE + '/performance.html?campaign=120252638288040312&range=14');
+  await page.waitForSelector('#ideas-sum p');
+  check('with one campaign picked on Results, the hook line says it counts every campaign', (await page.inputValue('#campaign')) === '120252638288040312'
+    && /Counts every campaign/.test(await page.textContent('#ideas-sum')), await page.textContent('#ideas-sum'));
+  await page.goto(BASE + '/performance.html?campaign=');
+  await page.goto(BASE + '/performance.html?idea=hook&tag=Question#ideas-panel');
+  await page.waitForURL('**/ideas.html?**');
+  await page.waitForSelector('.idea-grp.is-marked');
+  check('an older Results link to a tag opens Ideas with that group marked', (await page.getAttribute('.idea-grp.is-marked', 'data-idea-row')) === 'Question', page.url());
   const tagProp = sh(`docker exec -w /app edgebourne-ads-backend python -c "
 import db, json, desk_api
 db.execute(\\"DELETE FROM ad_tags WHERE ad_id = '120252672233160312' AND dimension = 'hook'\\")
@@ -1711,11 +1741,19 @@ print(r['id'])"`).trim();
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute('DELETE FROM swipes');db.execute('DELETE FROM watched_pages')"`);
   await page.goto(BASE + '/research.html');
   await page.waitForSelector('#swipes p');
+  const parts = await page.$$eval('#rs-tabs [role="tab"]', (t) => t.map((x) => x.textContent.replace(/\s*\d+\s*$/, '').trim()));
+  check('Research opens on the swipe file, in four parts: Swipe file, Search, Watched Pages, Past research', parts.join() === 'Swipe file,Search,Watched Pages,Past research'
+    && await page.isVisible('#swipe-add') && await page.isHidden('#watch-form') && await page.isHidden('#ask-form'), parts.join());
+  await page.click('#rs-tabs [data-part="watched"]');
+  await page.waitForSelector('#watch-form', { state: 'visible' });
+  check('a part is in the address', /#tab=watched$/.test(page.url()), page.url());
   await page.fill('#w-name', 'Acme Business Software');
   await page.fill('#w-terms', 'custom software Riverside');
   await page.click('#watch-form button[type=submit]');
   await page.waitForFunction(() => /Acme Business Software/.test(document.getElementById('watched').textContent));
-  check('a competitor Page can be watched', /custom software Riverside · not checked yet/.test(await page.textContent('#watched')));
+  check('a competitor Page can be watched', /custom software Riverside · not checked yet/.test(await page.textContent('#watched'))
+    && (await page.textContent('#n-watched')) === '1');
+  await page.click('#rs-tabs [data-part="swipes"]');
   await page.click('#swipe-add');
   await page.fill('#sw-link', 'https://www.facebook.com/ads/library/?id=1234567890123');
   await page.fill('#sw-page', 'Acme Business Software');
@@ -1743,13 +1781,14 @@ print(r['id'])"`).trim();
   await page.waitForSelector('.swipe');
   check('found ads show as from Claude, with their tags; a stopped one counts to the day it stopped',
     (await page.locator('.swipe').count()) === 3 && /Ran 97 days/.test(await page.textContent('#swipes')) && /Outcome promise/.test(await page.textContent('#swipes'))
-    && /checked/.test(await page.textContent('#watched')) && !/not checked yet/.test(await page.textContent('#watched')));
+    && /checked/.test(await page.evaluate(() => document.getElementById('watched').textContent)) && !/not checked yet/.test(await page.evaluate(() => document.getElementById('watched').textContent)));
   await page.click('#swipe-filter [data-sf="long"]');
   check('Running 30+ days shows only the long runs', (await page.locator('.swipe').count()) === 2);
   check('the note was kept', await page.evaluate(() => [...document.querySelectorAll('.swipe-note')].some((i) => i.value === 'Same promise as N1')));
   // Ask Claude to research: a double click while it sends starts one research run (audit A3-32).
   const researchCount = () => Number(sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(db.query(\\"SELECT COUNT(*) AS n FROM desk_tasks WHERE kind = 'research'\\", one=True)['n'])"`));
   const researchBefore = researchCount();
+  await page.click('#rs-tabs [data-part="search"]');
   await page.fill('#prompt', 'QA: which offers repeat nearby?');
   await page.route('**/api/desk/tasks', async (route) => { await new Promise((r) => setTimeout(r, 900)); await route.continue(); });
   await page.dblclick('#ask-form button[type=submit]');
@@ -1758,6 +1797,77 @@ print(r['id'])"`).trim();
   await page.unroute('**/api/desk/tasks');
   check('a double click on Send to Claude starts one research run', researchCount() === researchBefore + 1, `${researchBefore} → ${researchCount()}`);
   sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;db.execute(\\"UPDATE desk_tasks SET status = 'cancelled' WHERE kind = 'research' AND status = 'queued' AND prompt = 'QA: which offers repeat nearby?'\\")"`);
+  await page.click('#rs-tabs [data-part="past"]');
+  await page.waitForFunction(() => /which offers repeat nearby/.test(document.getElementById('tasks').textContent));
+  check('a research request shows under Past research', /#tab=past$/.test(page.url()));
+  // 9.5 The loop: "Make something like this" on one saved ad, "Write a brief" on several → an editable draft → a Claude conversation.
+  const creativeIds = () => sh(`docker exec -w /app edgebourne-ads-backend python -c "import db;print(','.join(str(r['id']) for r in db.query(\\"SELECT id FROM desk_tasks WHERE kind = 'creative' ORDER BY id\\")))"`).trim().split(',').filter(Boolean);
+  const creativeBefore = creativeIds();
+  py(`import db
+long = ' '.join(['Still running your shop on spreadsheets and retyping every order by hand?'] * 80)
+db.execute(\\"UPDATE swipes SET body = %s WHERE library_id = '1234567890123'\\", (long,))`);
+  await page.goto(BASE + '/research.html');
+  await page.waitForSelector('.swipe [data-like]');
+  const longCard = page.locator('.swipe:has(a[href$="?id=1234567890123"])');
+  await longCard.locator('[data-like]').click();
+  await page.waitForSelector('dialog.confirm.wide #cd-input');
+  const likeDraft = await page.inputValue('#cd-input');
+  check('Make something like this opens a draft with that ad, its note and its link, its long text trimmed to fit under 4,000 characters',
+    /^Make a new ad for Edge Bourne like this competitor ad/.test(likeDraft) && /Acme Business Software · running 4[56] days, likely working/.test(likeDraft) && /Why we kept it: Same promise as N1/.test(likeDraft)
+    && /ads\/library\/\?id=1234567890123/.test(likeDraft) && /Text: Still running.*…$/m.test(likeDraft) && likeDraft.length <= 3500
+    && /of 4,000 characters/.test(await page.textContent('#cd-hint')) && (await page.evaluate(() => document.getElementById('cd-input').selectionEnd)) === 0, `${likeDraft.length} chars`);
+  await page.fill('#cd-input', 'x'.repeat(4001));
+  await page.click('#cd-ok');
+  check('a draft over 4,000 characters is not sent and says why', /Keep it under 4,000 characters/.test(await page.textContent('#cd-err')) && await page.isVisible('dialog.confirm') && creativeIds().length === creativeBefore.length);
+  await page.fill('#cd-input', likeDraft + '\nQA: keep it calm.');
+  await Promise.all([page.waitForURL('**/desk.html#r/**'), page.click('#cd-ok')]);
+  const likeId = page.url().split('#r/')[1];
+  const likeTask = JSON.parse(py(`import db, json;r=db.query('SELECT kind, prompt, status FROM desk_tasks WHERE id = %s', (${Number(likeId)},), one=True);print(json.dumps(r))`));
+  check('… Send to Claude starts a "creative" conversation with the edited words and opens it', likeTask.kind === 'creative' && likeTask.status === 'queued'
+    && likeTask.prompt.endsWith('QA: keep it calm.') && /Acme Business Software/.test(likeTask.prompt), JSON.stringify({ id: likeId, kind: likeTask.kind }));
+  await page.waitForSelector('.cv-you, #cv-col');
+  // Several ticked: Write a brief from the tray, in page order; Cancel sends nothing; the tray caps at 10.
+  await page.goto(BASE + '/research.html');
+  await page.waitForSelector('.swipe [data-pick-swipe]');
+  const swipeBoxes = page.locator('.swipe [data-pick-swipe]');
+  await swipeBoxes.nth(1).check();
+  await swipeBoxes.nth(0).check();
+  await page.waitForSelector('#rs-tray [data-tray="brief"]');
+  const swipePages = await page.$$eval('.swipe', (cs) => cs.slice(0, 2).map((c) => c.querySelector('header b').textContent));
+  check('ticking saved ads shows the tray with Write a brief, and the page makes room for it', /2\s*selected/.test(await page.textContent('#rs-tray'))
+    && await page.evaluate(() => document.body.classList.contains('has-bulk')));
+  await page.click('#rs-tray [data-tray="brief"]');
+  await page.waitForSelector('dialog.confirm.wide #cd-input');
+  const briefText = await page.inputValue('#cd-input');
+  const firstText = await page.locator('.swipe').nth(0).locator('.swipe-body, .swipe-title').first().textContent();
+  check('Write a brief drafts from the picked ads in page order and asks for 3 concepts', /^Write a short creative brief for Edge Bourne from these 2 competitor ads/.test(briefText)
+    && briefText.indexOf('1. ' + swipePages[0]) >= 0 && briefText.indexOf('2. ' + swipePages[1]) > briefText.indexOf('1. ' + swipePages[0]) && /3 genuinely different ad concepts/.test(briefText)
+    && briefText.includes(firstText.trim().slice(0, 20)) && /Write a brief from 2 saved ads/.test(await page.textContent('dialog.confirm h2')), briefText.slice(0, 200));
+  await page.click('#cd-cancel');
+  await page.waitForSelector('dialog.confirm', { state: 'detached' });
+  check('Cancel sends nothing and keeps the ticks', creativeIds().length === creativeBefore.length + 1 && (await page.locator('.swipe.is-picked').count()) === 2);
+  const qaRivals = py(`import db
+ids = []
+for i in range(10):
+    r = db.execute(\\"INSERT INTO swipes (page_name, body, source) VALUES (%s, %s, 'manual') RETURNING id\\", ('QA brief rival ' + str(i), 'Words ' + str(i)), returning=True)
+    ids.append(str(r['id']))
+print(','.join(ids))`).split(',');
+  await page.reload();
+  await page.waitForSelector('.swipe [data-pick-swipe]');
+  const rivalBoxes = page.locator('.swipe [data-pick-swipe]');
+  for (let i = 0; i < 11; i += 1) await rivalBoxes.nth(i).check();
+  await page.waitForSelector('#rs-tray [data-tray="brief"][disabled]');
+  check('more than 10 ticked: Write a brief waits and says why', /A brief takes 10 at most/.test(await page.textContent('#rs-tray')));
+  await page.keyboard.press('Escape');
+  check('Escape clears the ticks', (await page.locator('#rs-tray .bk').count()) === 0 && (await page.locator('.swipe.is-picked').count()) === 0);
+  const seenErrs = errors.length;
+  const otherAcct = await page.evaluate(async (id) => (await fetch(`/api/swipes/brief?ids=${id}`)).status, 999999999);
+  await page.waitForTimeout(300);
+  errors.splice(seenErrs);  // the refused request logs an expected 404
+  check('a brief for a saved ad that is not in this account is refused', otherAcct === 404, String(otherAcct));
+  py(`import db
+db.execute('DELETE FROM swipes WHERE id = ANY(%s)', ([${qaRivals.map(Number).join(',')}],))
+db.execute(\\"UPDATE desk_tasks SET status = 'cancelled' WHERE kind = 'creative' AND status = 'queued' AND id = %s\\", (${Number(likeId)},))`);
   await page.goto(BASE + '/desk.html#schedules');
   await page.waitForSelector('#view');
   await page.waitForTimeout(600);
@@ -2165,6 +2275,24 @@ with account_ctx.all_accounts():
   await cp.waitForSelector('.gal-card, #gal .empty');
   check('a client opens the Gallery to look only: no New ad, no Research tab', await cp.isHidden('#gal-new') && (await cp.locator('.subnav a[href="/research.html"]').count()) === 0
     && (await cp.locator('.rail .nav a[href="/gallery.html"]').count()) === 1);
+  // 9.5 client pass: Ideas and the Gallery show no control that changes anything; Research is not theirs.
+  await cp.goto(BASE + '/ideas.html');
+  await cp.waitForSelector('.idea-grp, #ideas .empty');
+  const clientActs = async () => cp.evaluate(() => [...document.querySelectorAll('.main button, .main a.btn, .main form, .main input:not([type=checkbox]), .main textarea, #gal-tray button')]
+    .filter((el) => el.offsetParent !== null && !el.closest('#idea-by, .crumbs, .subnav, .topline, .views, .empty .row [data-clear-filters]') && !['range-pick', 'status-pick', 'tag-pick'].includes(el.id)
+      && !el.matches('[data-gview], [data-tag], [data-pick], [data-tray="compare"], [data-tray="clear"], [data-retry]'))
+    .map((el) => (el.id || el.className || el.tagName) + ':' + el.textContent.trim().slice(0, 20)));
+  const ideasActs = await clientActs();
+  check('a client sees Ideas with nothing to change: only the grouping, the dates and links', ideasActs.length === 0 && (await cp.locator('.subnav a[href="/ideas.html"]').count()) === 1
+    && !/ask Claude|tag them/.test(await cp.textContent('#ideas')), ideasActs.join(' | '));
+  await cp.goto(BASE + '/gallery.html');
+  await cp.waitForSelector('.gal-card, #gal .empty');
+  const galActs = await clientActs();
+  check('a client sees the Gallery with nothing to change', galActs.length === 0, galActs.join(' | '));
+  await cp.goto(BASE + '/research.html');
+  await cp.waitForURL('**/home.html');
+  const clientBrief = await cp.evaluate(async () => (await fetch('/api/swipes/brief?ids=1')).status);
+  check('a client never reaches Research or a brief', /home\.html/.test(cp.url()) && clientBrief === 403, String(clientBrief));
   await cp.goto(BASE + '/report.html');
   await cp.waitForSelector('.r-head');
   check("a client's report links no form or test", (await cp.locator('#report a[href^="/forms.html"], #report a[href^="/experiments.html"]').count()) === 0);
@@ -2727,7 +2855,7 @@ print(','.join(left))
   check('the prune drops old read marks but keeps recent ones and a pending proposal\'s (A3-131)', pruneLeft === 'alert:qa-prune-new,proposal:qa-prune-old', pruneLeft);
   // 8.5 Signal shell: every page sits in the right section, has breadcrumbs, and ⌘K finds an ad.
   const sections = { 'home': 'Today', 'inbox': 'Inbox', 'leads': 'Leads', 'ads': 'Ads', 'ad.html?id=120252672230740312': 'Ads', 'new-ad': 'Ads',
-    'forms': 'Ads', 'new-campaign': 'Ads', 'performance': 'Insights', 'report': 'Insights', 'experiments': 'Insights', 'desk': 'Claude', 'gallery': 'Creative', 'research': 'Creative' };
+    'forms': 'Ads', 'new-campaign': 'Ads', 'performance': 'Insights', 'report': 'Insights', 'experiments': 'Insights', 'desk': 'Claude', 'gallery': 'Creative', 'ideas': 'Creative', 'research': 'Creative' };
   const wrongNav = [];
   for (const [p, want] of Object.entries(sections)) {
     await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
@@ -2763,7 +2891,7 @@ print(','.join(left))
   };
   const firstFor = {};
   for (const [q, want] of [['results', 'Results'], ['home', 'Today'], ['performance', 'Results'], ['targets', 'Settings: Targets'], ['schedules', 'Claude: Schedules'],
-    ['swipe file', 'Research'], ['gallery', 'Gallery'], ['creative', 'Gallery'], ['tired', 'Gallery: Tired'], ['experiments', 'Tests'], ['dark mode', 'Switch theme'], ['needs attention', 'Ads that need attention'], ['ads review', 'Ads in review']]) {
+    ['swipe file', 'Research'], ['gallery', 'Gallery'], ['by idea', 'Ideas'], ['hooks', 'Ideas'], ['watched pages', 'Research: Watched Pages'], ['creative', 'Gallery'], ['tired', 'Gallery: Tired'], ['experiments', 'Tests'], ['dark mode', 'Switch theme'], ['needs attention', 'Ads that need attention'], ['ads review', 'Ads in review']]) {
     const got = await palette(q);
     firstFor[q] = got[0]?.t;
     if (got[0]?.t !== want) firstFor[q] = `${got[0]?.t} (wanted ${want})`;
@@ -2870,14 +2998,24 @@ print(' '.join(sorted(links)))`).split(' ').filter(Boolean);
   const themeAfter = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
   check('⌘K runs an action (Switch theme) right where you are', themeAfter !== themeBefore && !(await page.isVisible('dialog.palette[open]')), `${themeBefore} → ${themeAfter}`);
   await page.evaluate(() => { localStorage.removeItem('ebads-theme'); document.documentElement.removeAttribute('data-theme'); });
-  // Tabs from the menu land on what they name: Results by idea (drawn after its data), a Claude view, an Inbox filter.
+  // Tabs from the menu land on what they name: Ideas, a Research part, a Claude view, an Inbox filter.
   await page.goto(BASE + '/home.html');
-  await palette('Results: By idea');
-  await Promise.all([page.waitForURL('**/performance.html#ideas-panel'), page.keyboard.press('Enter')]);
-  await page.waitForSelector('#ideas .ideas-table, #ideas .note');
+  await palette('by idea');
+  await Promise.all([page.waitForURL('**/ideas.html'), page.keyboard.press('Enter')]);
+  await page.waitForSelector('.idea-grp, #ideas .empty');
+  check('⌘K → "Ideas" (also found as "by idea") opens Creative › Ideas', /Creative\s*\/\s*Ideas/.test(await page.textContent('.crumbs')));
+  await palette('Research: Watched Pages');
+  await Promise.all([page.waitForURL('**/research.html#tab=watched'), page.keyboard.press('Enter')]);
+  await page.waitForSelector('#watch-form', { state: 'visible' });
+  check('⌘K → "Research: Watched Pages" opens Research on that part', (await page.getAttribute('#rs-tabs [aria-selected="true"]', 'data-part')) === 'watched');
+  // An older link to Results' By idea panel still lands on its summary.
+  await page.goto(BASE + '/performance.html#ideas-panel');
+  await page.waitForSelector('#ideas-sum p');
   await page.waitForTimeout(800);
-  const ideasTop = await page.evaluate(() => Math.round(document.getElementById('ideas-panel').getBoundingClientRect().top));
-  check('⌘K → "Results: By idea" opens Results scrolled to the By idea panel', ideasTop >= 0 && ideasTop < 200, String(ideasTop));
+  // The line is short now, so near the end of the page it can sit lower once the page is scrolled to its end.
+  const ideasAt = await page.evaluate(() => ({ top: Math.round(document.getElementById('ideas-panel').getBoundingClientRect().top),
+    end: Math.ceil(scrollY + innerHeight) >= document.documentElement.scrollHeight - 2, scrolled: scrollY > 0 }));
+  check('an older "Results: By idea" link opens Results scrolled to its By idea line', ideasAt.scrolled && ideasAt.top >= 0 && (ideasAt.top < 200 || ideasAt.end) && ideasAt.top < 700, JSON.stringify(ideasAt));
   await palette('Claude: Schedules');
   await Promise.all([page.waitForURL('**/desk.html#schedules'), page.keyboard.press('Enter')]);
   await page.waitForSelector('[data-sub="schedules"][aria-current="page"]');
@@ -2924,8 +3062,8 @@ for ad, spend, leads in (('qa-gal-copy', 500, 1), ('qa-gal-pic', 300, 1)):
       return { copies: m?.querySelector('.gal-copies')?.textContent || '', hook: !!m && /Hook rate/.test(m.textContent), picHook: !!p && /Hook rate/.test(p.textContent),
         crumbs: document.querySelector('.crumbs')?.textContent, tabs: [...document.querySelectorAll('.subnav a')].map((a) => a.textContent), nav: document.querySelector('.rail .nav a[aria-current="page"]')?.textContent.trim() };
     }, [merged?.key, pic?.key]);
-    check('Gallery page: the merged card says it runs as 2 ads, video cards show a hook rate, the picture card none; it sits under Creative with Gallery · Research',
-      /Runs as 2 ads/.test(shown.copies) && shown.hook && !shown.picHook && /Creative\s*\/\s*Gallery/.test(shown.crumbs) && shown.tabs.join() === 'Gallery,Research' && shown.nav === 'Creative', JSON.stringify(shown));
+    check('Gallery page: the merged card says it runs as 2 ads, video cards show a hook rate, the picture card none; it sits under Creative with Gallery · Ideas · Research',
+      /Runs as 2 ads/.test(shown.copies) && shown.hook && !shown.picHook && /Creative\s*\/\s*Gallery/.test(shown.crumbs) && shown.tabs.join() === 'Gallery,Ideas,Research' && shown.nav === 'Creative', JSON.stringify(shown));
     // A card whose copy Meta rejected shows under "Rejected or has a problem" even when another copy delivers, and says so.
     py(`import db
 db.execute('UPDATE ads SET effective_status = %s WHERE id = %s', ('DISAPPROVED', 'qa-gal-copy'))`);
@@ -3048,7 +3186,7 @@ db.execute('DELETE FROM settings WHERE key = %s', (settings_store.stored_key('qa
     await page.waitForSelector('nav.subnav [data-sub="schedules"]');
     const deskTabs = await page.evaluate(() => [...document.querySelectorAll('nav.subnav a')].map((a) => a.textContent));
     check('Research sits under Creative (same address), and Claude no longer has a Research tab',
-      /Creative\s*\/\s*Research/.test(research.crumbs) && research.tabs.join() === 'Gallery,Research' && deskTabs.join() === 'Conversations,By ad,Schedules', JSON.stringify({ research, deskTabs }));
+      /Creative\s*\/\s*Research/.test(research.crumbs) && research.tabs.join() === 'Gallery,Ideas,Research' && deskTabs.join() === 'Conversations,By ad,Schedules', JSON.stringify({ research, deskTabs }));
   }
   // 9.4 Inbox triage: Needs action first, FYI for the rest; the badge counts what needs you and is new.
   await page.goto(BASE + '/inbox.html');
@@ -3242,13 +3380,13 @@ db.execute('DELETE FROM settings WHERE key = %s', (settings_store.stored_key('qa
   await call('PUT', '/api/ads/ad/120252672232030312/tags', { tags: { hook: 'Question' } });
   await page.goto(BASE + '/compare.html?ids=120252672232030312,120252672229040312&range=30');
   await page.waitForSelector('.cmp thead');
-  const tagLink = page.locator('.cmp-tag a.ent-link[href^="/performance.html?idea="]').first();
-  check('Compare names each tag with a link to that idea on Results', (await tagLink.count()) === 1);
+  const tagLink = page.locator('.cmp-tag a.ent-link[href^="/ideas.html?by="]').first();
+  check('Compare names each tag with a link to that idea on Ideas', (await tagLink.count()) === 1);
   const tagWord = (await tagLink.textContent()).trim();
-  await Promise.all([page.waitForURL('**/performance.html?idea=**'), tagLink.click()]);
-  await page.waitForSelector('#ideas tr.flash');
-  check('the idea opens on Results with its row marked and its ads linked', (await page.textContent('#ideas tr.flash th b')).trim() === tagWord
-    && (await page.locator('#ideas tr.flash .idea-ads a.ent-link[href^="/ad.html?id="]').count()) > 0, tagWord);
+  await Promise.all([page.waitForURL('**/ideas.html?by=**'), tagLink.click()]);
+  await page.waitForSelector('.idea-grp.is-marked');
+  check('the idea opens on Ideas with its group marked and its ads linked', (await page.textContent('.idea-grp.is-marked .idea-name')).trim() === tagWord
+    && (await page.locator('.idea-grp.is-marked .idea-ads a.ent-link[href^="/ad.html?id="]').count()) > 0, tagWord);
   await page.goto(BASE + `/campaign.html?id=${C1}`);
   await page.waitForSelector('#en-leads');
   check('a campaign page links to its leads and its results', (await page.getAttribute('#en-leads', 'href')) === `/leads.html?campaign=${C1}`
@@ -4140,7 +4278,7 @@ with account_ctx.all_accounts():
   await copyCtx.close(); await tabCtx.close();
   const zoomers = [];
   const spilling = [];
-  for (const p of ['/home.html', '/inbox.html', '/leads.html', '/ads.html', '/ad.html?id=120252672229400312', '/new-ad.html', '/new-campaign.html', '/performance.html', '/research.html', '/desk.html', '/settings.html', '/team.html', '/account.html']) {
+  for (const p of ['/home.html', '/inbox.html', '/leads.html', '/ads.html', '/ad.html?id=120252672229400312', '/new-ad.html', '/new-campaign.html', '/performance.html', '/ideas.html', '/research.html', '/desk.html', '/settings.html', '/team.html', '/account.html']) {
     await narrow.goto(BASE + p); await narrow.waitForTimeout(1200);
     const r = await narrow.evaluate(() => {
       const inScroller = (el) => { for (let e = el.parentElement; e && e !== document.body; e = e.parentElement) if (/auto|scroll|hidden|clip/.test(getComputedStyle(e).overflowX)) return true; return false; };
@@ -4167,6 +4305,13 @@ with account_ctx.all_accounts():
   const leadFit = await narrow.evaluate(() => ['#detail', '#detail .detail-top', '#detail .reach', '#stages', ...[...document.querySelectorAll('#stages button')].map((_, i) => `#stages button:nth-child(${i + 1})`)]
     .map((sel) => [sel, Math.round(document.querySelector(sel)?.getBoundingClientRect().right || 0)]).filter(([, r]) => r > innerWidth + 1));
   check('on a 320px phone the lead detail and every stage button fit on screen', leadFit.length === 0, JSON.stringify(leadFit));
+  await narrow.goto(BASE + '/ideas.html?range=7');
+  await narrow.waitForSelector('#range-pick');
+  const ideaRange = await narrow.evaluate(() => { const el = document.getElementById('range-pick'), twin = el.cloneNode(true);
+    twin.removeAttribute('id'); twin.style.cssText = 'position:absolute;visibility:hidden;flex:none;width:auto'; document.body.append(twin);
+    const r = { shown: Math.round(el.getBoundingClientRect().width), natural: Math.round(twin.getBoundingClientRect().width), right: Math.round(el.getBoundingClientRect().right), vw: innerWidth };
+    twin.remove(); return r; });
+  check('on a 320px phone the dates on Ideas keep their full width, so "Last 7 days" is not cut', ideaRange.shown >= ideaRange.natural && ideaRange.right <= ideaRange.vw, JSON.stringify(ideaRange));
   await narrow.goto(BASE + '/desk.html#new');
   await narrow.waitForSelector('#cv-seeds:not([hidden])');
   await narrow.waitForTimeout(300);

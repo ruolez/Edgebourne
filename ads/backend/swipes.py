@@ -67,6 +67,85 @@ def clean(raw):
             "notes": str(raw.get("notes") or "").strip()[:LIMITS["notes"]] or None, "tags": tags}, None
 
 
+PROMPT_LIMIT = 4000  # what Claude takes in one request (desk_api.MAX_PROMPT)
+DRAFT_MAX = 3500     # a draft leaves room to add a few lines before sending
+BRIEF_MAX = 10       # ads in one brief
+MIN_BODY = 80
+FRAMES = {
+    "like": ("Make a new ad for {business} like this competitor ad from our swipe file. Keep what makes it work (the hook, the angle, "
+             "the format), but write it for our offer in our own words: don't copy theirs.", "Send it back as a new ad suggestion."),
+    "brief": ("Write a short creative brief for {business} from these {n} competitor ads in our swipe file: what they have in common, "
+              "what's worth borrowing and what to avoid. Then suggest 3 genuinely different ad concepts for our offer, in our own words, "
+              "as new ad suggestions.", ""),
+    "brief1": ("Write a short creative brief for {business} from this competitor ad in our swipe file: what makes it work, "
+               "what's worth borrowing and what to avoid. Then suggest 3 genuinely different ad concepts for our offer, in our own words, "
+               "as new ad suggestions.", ""),
+}
+
+
+def fit(text, limit):
+    """One line of at most `limit` characters: spacing tidied, cut at a word with an ellipsis when too long."""
+    s = " ".join(str(text or "").split())
+    if len(s) <= limit:
+        return s
+    cut = s[:limit - 1]
+    if " " in cut and s[limit - 1] != " ":
+        cut = cut[:cut.rindex(" ")]
+    return cut.rstrip() + "…"
+
+
+def _ran(s):
+    days = s.get("days_running")
+    if not days:
+        return ""
+    words = f"running {days} days" if s.get("still_running", True) else f"ran {days} days"
+    return words + (", likely working" if s.get("long_running") else "")
+
+
+def _lines(s, body_room, share):
+    """One saved ad as lines; the headline, note and tags get a part of the ad's `share` of the draft, the text the rest."""
+    head = fit(s.get("page_name"), LIMITS["page_name"])
+    ran = _ran(s)
+    cta = str(s.get("cta") or "").replace("_", " ").strip().capitalize()
+    tags = fit(" · ".join(f"{k} {fit(v, 80)}" for k, v in (s.get("tags") or {}).items() if str(v or "").strip()), max(40, min(360, share // 4)))
+    return [head + (f" · {ran}" if ran else ""),
+            *([f"Headline: {fit(s['title'], max(40, min(150, share // 5)))}"] if s.get("title") and str(s["title"]).strip() else []),
+            *([f"Text: {fit(s['body'], body_room)}"] if s.get("body") and str(s["body"]).strip() else []),
+            *([f"Button: {cta}"] if cta else []),
+            *([f"Why we kept it: {fit(s['notes'], max(40, min(300, share // 4)))}"] if s.get("notes") and str(s["notes"]).strip() else []),
+            *([f"Tags: {tags}"] if tags else []),
+            *([f"Ad Library: {s['library_url']}"] if s.get("library_url") else [])]
+
+
+def brief(items, mode, business):
+    """The prompt Claude gets for "Make something like this" (one saved ad) or "Write a brief" (several): every
+    saved detail of each ad, the ad text trimmed so the whole draft stays under DRAFT_MAX. Returns
+    {prompt, left_out} (ads past BRIEF_MAX, or that didn't fit)."""
+    picked = list(items)[:BRIEF_MAX]
+    left_out = len(items) - len(picked)
+    who = " ".join(str(business or "").split()) or "us"
+    while True:
+        n = len(picked)
+        key = ("like" if mode == "like" else "brief1") if n == 1 else "brief"
+        intro, outro = FRAMES[key]
+        intro = intro.format(business=who, n=n)
+        tail = [outro] if outro else []
+        if left_out:
+            tail.append(f"({left_out} more you picked were left out to keep this short.)")
+        frame = len(intro) + sum(len(t) + 2 for t in tail) + 2 * n
+        share = (DRAFT_MAX - frame) // max(n, 1)
+        blocks = []
+        for i, s in enumerate(picked):
+            number = f"{i + 1}. " if key == "brief" else ""
+            fixed = len(number) + len("\n".join(_lines({**s, "body": ""}, 0, share))) + len("\nText: ")
+            blocks.append(number + "\n".join(_lines(s, max(MIN_BODY, share - fixed), share)))
+        prompt = "\n\n".join([intro, *blocks, *tail])
+        if len(prompt) <= DRAFT_MAX or n == 1:
+            return {"prompt": prompt, "left_out": left_out}
+        picked = picked[:-1]
+        left_out += 1
+
+
 def view(row, today):
     until = row.get("stopped_on") or today
     days = days_running(row.get("started_on"), until)

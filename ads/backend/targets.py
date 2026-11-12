@@ -1,10 +1,10 @@
 """An account's targets, in one place (audit A19): Settings → Targets.
 
 - cost per qualified lead (`kpi_target_cents`): the business goal; reports measure against it.
-- cost per lead (`lead_target_cents`): any form lead. Alerts, By idea and Tests judge leads by it.
+- cost per lead (`lead_target_cents`): any form lead. Alerts, Ideas and Tests judge leads by it.
   Not set: the cost-per-lead alert uses the qualified-lead target, a ceiling every lead must stay
   under (a plain lead costing more than a qualified one should misses the goal whatever the
-  quality); By idea and Tests use their own average, so "enough data" isn't set by a stricter goal.
+  quality); Ideas and Tests use their own average, so "enough data" isn't set by a stricter goal.
 - highest daily budget (`max_daily_budget_cents`): the most the console sets on one campaign or ad set.
 - monthly spend target (`monthly_target_cents`): set on Results, read by pacing."""
 import json

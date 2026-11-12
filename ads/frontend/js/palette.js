@@ -26,6 +26,7 @@ const PAGES = [
   P("Campaigns", "/ads.html?level=campaign", "all", "ads", "budgets", "Ads"),
   P("Lead forms", "/forms.html", "admin", "leads", "instant forms questions", "Ads"),
   P("Gallery", "/gallery.html", "all", "image", "creative creatives pictures videos visuals thumbnails what works best ads copies", "Creative"),
+  P("Ideas", "/ideas.html", "all", "grid", "by idea concepts tags hooks angles offers formats who it's for messages what works", "Creative"),
   P("Results", "/performance.html", "all", "chart", "insights performance numbers stats statistics charts spend cost per lead", "Insights"),
   P("Compare ads", "/compare.html", "all", "compare", "side by side versus", "Insights"),
   P("Tests", "/experiments.html", "admin", "tests", "experiments a/b split test", "Insights"),
@@ -44,7 +45,9 @@ const TABS = [
   T("Claude: Schedules", "/desk.html#schedules", "admin", "clock", "scheduled recurring repeat"),
   T("Gallery: Just launched", "/gallery.html?view=launched", "all", "image", "new recent started"),
   T("Gallery: Tired", "/gallery.html?view=tired", "all", "image", "fatigue worn out seen too often"),
-  T("Results: By idea", "/performance.html#ideas-panel", "all", "chart", "concepts tags hooks angles"),
+  T("Research: Search", "/research.html#tab=search", "admin", "research", "ad library look up ask claude to research"),
+  T("Research: Watched Pages", "/research.html#tab=watched", "admin", "research", "competitors watch weekly check"),
+  T("Research: Past research", "/research.html#tab=past", "admin", "research", "reports claude found competitors"),
   T("Inbox: Needs action", "/inbox.html?box=need", "all", "inbox", "needs you to do waiting triage"),
   T("Inbox: For your information", "/inbox.html?box=fyi", "all", "inbox", "fyi notes approved changed outside"),
   T("Inbox: Unread", "/inbox.html?box=all&unread=1", "all", "inbox", "new"),
@@ -152,7 +155,7 @@ function render(groups) {
   ul.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
 }
 
-const QUICK = ["Today", "Inbox", "Leads", "Ads", "Gallery", "Results", "Compare ads", "Tests", "Reports", "Claude", "Research", "Settings",
+const QUICK = ["Today", "Inbox", "Leads", "Ads", "Gallery", "Ideas", "Results", "Compare ads", "Tests", "Reports", "Claude", "Research", "Settings",
   "New ad", "Ask Claude", "Ads that need attention", "Keyboard shortcuts"];
 
 async function update(ctx) {

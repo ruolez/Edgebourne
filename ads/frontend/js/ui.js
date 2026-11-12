@@ -384,13 +384,13 @@ document.addEventListener("click", (e) => {
 const PAGE_SECTION = {
   home: "today", inbox: "inbox", leads: "leads",
   ads: "ads", ad: "ads", "new-ad": "ads", "new-adset": "ads", "new-campaign": "ads", forms: "ads", campaign: "ads", adset: "ads",
-  gallery: "creative", research: "creative",
+  gallery: "creative", ideas: "creative", research: "creative",
   performance: "insights", compare: "insights", experiments: "insights", report: "insights",
   desk: "claude", settings: "settings", team: "settings", account: "account",
 };
 const PAGE_TITLE = {
   home: "Today", inbox: "Inbox", leads: "Leads", ads: "Ads", ad: "Ad", "new-ad": "New ad", "new-adset": "New ad set",
-  "new-campaign": "New campaign", forms: "Lead forms", campaign: "Campaign", adset: "Ad set", gallery: "Gallery", performance: "Results",
+  "new-campaign": "New campaign", forms: "Lead forms", campaign: "Campaign", adset: "Ad set", gallery: "Gallery", ideas: "Ideas", performance: "Results",
   compare: "Compare", experiments: "Tests", report: "Reports", desk: "Claude", research: "Research", settings: "Settings",
   team: "Team", account: "Your account",
 };
@@ -409,11 +409,11 @@ const SECTIONS = {
 const SUBNAV = {
   ads: [["ads", "Ads", "all"], ["forms", "Lead forms", "admin"]],
   insights: [["performance", "Results", "all"], ["compare", "Compare", "all"], ["experiments", "Tests", "admin"], ["report", "Reports", "report"]],
-  creative: [["gallery", "Gallery", "all"], ["research", "Research", "admin"]],
+  creative: [["gallery", "Gallery", "all"], ["ideas", "Ideas", "all"], ["research", "Research", "admin"]],
   claude: [["desk", "Claude", "admin"]],
   settings: [["settings", "Settings", "admin"], ["team", "Team", "admin"]],
 };
-const PAGE_HREF = { ads: "/ads.html", forms: "/forms.html", gallery: "/gallery.html", performance: "/performance.html", compare: "/compare.html",
+const PAGE_HREF = { ads: "/ads.html", forms: "/forms.html", gallery: "/gallery.html", ideas: "/ideas.html", performance: "/performance.html", compare: "/compare.html",
   experiments: "/experiments.html", report: "/report.html", desk: "/desk.html", research: "/research.html",
   settings: "/settings.html", team: "/team.html" };
 
@@ -430,7 +430,7 @@ const ENTITY_HREF = {
   form: (id) => `/forms.html#form=${encodeURIComponent(id)}`,
   test: (id) => `/experiments.html#${encodeURIComponent(id)}`,
   swipe: (id) => `/research.html#swipe=${encodeURIComponent(id)}`,
-  tag: (value, dim) => `/performance.html?idea=${encodeURIComponent(dim || "hook")}&tag=${encodeURIComponent(value)}#ideas-panel`,
+  tag: (value, dim) => `/ideas.html?by=${encodeURIComponent(dim || "hook")}&tag=${encodeURIComponent(value)}`,
 };
 const ADMIN_ONLY = new Set(["form", "test", "swipe"]);
 export function entityHref(level, id, dim) {
@@ -692,6 +692,7 @@ export async function boot({ page, admin = false }) {
   sheet.innerHTML = `<div class="grab"></div>${accountSwitch(me, "sheet")}<nav>
       ${allowed("claude") ? sheetLink(SECTIONS.claude.href, "Claude", "spark", page === "desk", badge("claude")) : ""}
       ${sheetLink(SECTIONS.creative.href, "Creative", "image", page === "gallery")}
+      ${sheetLink(PAGE_HREF.ideas, "Ideas", "grid", page === "ideas")}
       ${isAdmin ? sheetLink(PAGE_HREF.research, "Research", "research", page === "research") : ""}
       ${sheetLink(SECTIONS.insights.href, "Insights", "chart", page === "performance")}
       ${SUBNAV.insights.filter(([p, , who]) => p !== "performance" && canSee(who)).map(([p, label]) => sheetLink(PAGE_HREF[p], label, p === "compare" ? "compare" : p === "experiments" ? "tests" : "table", p === page)).join("")}
@@ -873,17 +874,21 @@ export function fieldErrors(form, errors, { focus = true } = {}) {
 
 // ---------- confirm dialog ----------
 // confirmDialog({ title, body (HTML), confirm, danger, field }) → Promise<false | true | field value>.
-// `field` = { label, value, prefix, suffix, inputmode, validate(v) → error|null, hint(v) → html } adds one input.
-// `cancel: false` makes it a notice with one button (nothing to decide, e.g. a password shown once).
-export function confirmDialog({ title, body = "", confirm = "Confirm", danger = false, claude = false, field = null, cancel = "Cancel" }) {
+// `field` = { label, value, prefix, suffix, inputmode, validate(v) → error|null, hint(v) → html } adds one input;
+// `field.rows` makes it a text box of that many lines (a draft to edit: opens with the caret at the start, nothing selected).
+// `cancel: false` makes it a notice with one button (nothing to decide, e.g. a password shown once). `wide` for a long text.
+export function confirmDialog({ title, body = "", confirm = "Confirm", danger = false, claude = false, field = null, cancel = "Cancel", wide = false }) {
   return new Promise((resolve) => {
     const dlg = document.createElement("dialog");
-    dlg.className = "confirm";
+    dlg.className = wide ? "confirm wide" : "confirm";
+    const box = field && field.rows
+      ? `<textarea class="input" id="cd-input" rows="${Number(field.rows) || 8}" autocomplete="off" aria-describedby="cd-hint">${esc(field.value ?? "")}</textarea>`
+      : field ? `<div class="affix">${field.prefix ? `<span>${esc(field.prefix)}</span>` : ""}<input class="input" id="cd-input" inputmode="${field.inputmode || "text"}" value="${esc(field.value ?? "")}" autocomplete="off" aria-describedby="cd-hint">${field.suffix ? `<span>${esc(field.suffix)}</span>` : ""}</div>` : "";
     dlg.innerHTML = `<form method="dialog" novalidate>
       <h2>${esc(title)}</h2>
       ${body ? `<div class="confirm-body">${body}</div>` : ""}
       ${field ? `<div class="field"><label for="cd-input">${esc(field.label)}</label>
-        <div class="affix">${field.prefix ? `<span>${esc(field.prefix)}</span>` : ""}<input class="input" id="cd-input" inputmode="${field.inputmode || "text"}" value="${esc(field.value ?? "")}" autocomplete="off" aria-describedby="cd-hint">${field.suffix ? `<span>${esc(field.suffix)}</span>` : ""}</div>
+        ${box}
         <span class="hint" id="cd-hint" aria-live="polite"></span><span class="err" id="cd-err" role="alert" hidden></span></div>` : ""}
       <div class="row end">${cancel ? `<button class="btn" type="button" value="cancel" id="cd-cancel">${esc(cancel)}</button>` : ""}
         <button class="btn ${danger ? "btn-danger" : claude ? "btn-claude" : "btn-primary"}" type="submit" id="cd-ok">${esc(confirm)}</button></div>
@@ -912,7 +917,7 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
     // Safe default: a stray Enter or Space never confirms. With a field, focus is on it (typing is deliberate);
     // otherwise on Cancel, never on the button that acts.
     (input || dlg.querySelector("#cd-cancel") || dlg.querySelector("#cd-ok")).focus();
-    if (input) input.select();
+    if (input && field.rows) { input.setSelectionRange(0, 0); input.scrollTop = 0; } else if (input) input.select();
   });
 }
 

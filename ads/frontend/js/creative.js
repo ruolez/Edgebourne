@@ -252,7 +252,7 @@ function renderOverview() {
               <div><dt>Format</dt><dd>${esc(video ? "Video" : ad.object_type ? "Image" : "—")}</dd></div>
             </dl>
             ${ad.can_control ? '<div class="row"><button class="btn btn-small" type="button" data-goto="polish">Improve the words</button></div>' : ""}`)}
-        ${foldHtml("idea", "The idea", '<span class="muted">Reading…</span>', `<p class="muted small flush">Tags that group ads on Results, so you can see which ideas work.</p><form class="stack tight" id="idea" novalidate>${skeleton()}</form>`)}
+        ${foldHtml("idea", "The idea", '<span class="muted">Reading…</span>', `<p class="muted small flush">Tags that group ads on <a href="/ideas.html">Ideas</a>, so you can see which ideas work.</p><form class="stack tight" id="idea" novalidate>${skeleton()}</form>`)}
         ${foldHtml("auto", "Meta's automatic changes", '<span class="muted">Reading from Meta…</span>', `<p class="muted small flush">${esc(EXPLAIN.advantage_creative)}</p><div id="enh"><p class="muted flush">Reading from Meta…</p></div>`)}
       </div>`;
   // A refresh redraws the right-hand side only: the preview stays as it is (an iframe put back reloads),

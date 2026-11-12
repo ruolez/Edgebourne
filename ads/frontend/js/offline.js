@@ -9,7 +9,7 @@
   // Say which page it is waiting to open, in the names the menu uses.
   var NAMES = { "/home.html": "Today", "/inbox.html": "Inbox", "/leads.html": "Leads", "/ads.html": "Ads", "/ad.html": "The ad",
     "/campaign.html": "The campaign", "/adset.html": "The ad set", "/forms.html": "Lead forms", "/performance.html": "Results",
-    "/compare.html": "Compare", "/experiments.html": "Tests", "/report.html": "Reports", "/desk.html": "Claude", "/gallery.html": "Gallery", "/research.html": "Research",
+    "/compare.html": "Compare", "/experiments.html": "Tests", "/report.html": "Reports", "/desk.html": "Claude", "/gallery.html": "Gallery", "/ideas.html": "Ideas", "/research.html": "Research",
     "/settings.html": "Settings", "/team.html": "Team", "/account.html": "Your account" };
   var name = direct ? "Today" : NAMES[location.pathname];
   if (name) document.getElementById("off-next").textContent = name;

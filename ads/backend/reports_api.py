@@ -83,7 +83,7 @@ def build(kind, start=None, for_admin=False, links=False):
             """SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND status IN ('qualified', 'won')
                AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s GROUP BY ad_id""", (account_info.tz_name(), s, e))}
         rows = [{k: (int(v or 0) if k != "id" else v) for k, v in r.items()} | {"qualified": q.get(r["id"], 0)} for r in rows]
-        # Judged like Results › By idea: the cost-per-lead target, else the groups' own average (audit A3-57).
+        # Judged like Creative › Ideas: the cost-per-lead target, else the groups' own average (audit A3-57).
         g = concepts.group(rows, concepts_api.tags_for([r["id"] for r in rows]), "hook", targets.lead_own())
         ideas = {"best": g["best"], "sure": g["best_confidence"], "clear": g["best_is_clear"],
                  "groups": [{"value": x["value"], "ads": x["ads"], "leads": x["leads"], "cpl_cents": x["cpl_cents"]} for x in g["groups"]]}

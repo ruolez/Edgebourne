@@ -508,6 +508,8 @@ dialog.confirm .affix span { display: flex; align-items: center; padding: 0 10px
 dialog.confirm .affix .input { border: 0; flex: 1; min-width: 0; font-size: var(--t-l); font-weight: 600; }
 dialog.confirm .affix:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 25%, transparent); }
 dialog.confirm .affix .input:focus { box-shadow: none; }
+dialog.confirm.wide { width: min(680px, calc(100vw - 32px)); }
+dialog.confirm textarea#cd-input { min-height: 240px; max-height: 52vh; resize: vertical; font-size: var(--t-m); line-height: 1.5; }
 /* Keyboard shortcuts ("?"), in the shared dialog */
 .keys-group { margin: 14px 0 6px; font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); }
 .keys-group:first-child { margin-top: 0; }
@@ -1278,20 +1280,45 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .enh-list li:last-child { border-bottom: 0; }
 .enh-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 
-/* ---------- Ideas (concept tags) ---------- */
-.ideas-table th[scope="row"] { font-weight: 400; min-width: 240px; color: var(--ink); font-size: var(--t-m); }
-.ideas-table tbody tr:last-child th { border-bottom: 0; }
-.idea-ads { display: block; color: var(--ink-3); font-size: var(--t-xs); margin-top: 2px; }
-.ideas-table tr.lead th b { color: var(--ink); }
-.ideas-table tr.untagged th b { color: var(--ink-3); font-weight: 600; }
-.ideas-table .pill { font-size: var(--t-xs); padding: 1px 7px; margin-left: 4px; vertical-align: 1px; }
-#ideas .note { margin-bottom: 10px; }
+/* ---------- Ideas (concept tags): Creative › Ideas, one row per group ---------- */
+.idea-when { margin-top: -6px; }
+.idea-list { display: flex; flex-direction: column; }
+/* The dates keep their full width on phones: the title is short, the spacer takes the rest. */
+.idea-head #range-pick { flex: none; }
+.idea-grp { display: grid; grid-template-columns: minmax(200px, 1fr) 262px minmax(0, 1.7fr); gap: 12px 22px; align-items: center; padding: 14px 20px; border-top: 1px solid var(--line); }
+.idea-grp:first-child { border-top: 0; }
+.idea-grp.is-marked { background: color-mix(in srgb, var(--violet-soft) 45%, var(--surface)); }
+.idea-grp.is-marked:first-child { border-radius: var(--radius-m) var(--radius-m) 0 0; }
+.idea-head { min-width: 0; }
+.idea-head h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; font: 600 var(--t-m)/1.3 var(--font-ui); }
+.idea-name { overflow-wrap: anywhere; }
+.idea-grp.is-untagged .idea-name { color: var(--ink-3); }
+.idea-head .pill { font-size: var(--t-xs); padding: 1px 7px; }
+.idea-sub { margin: 2px 0 0; color: var(--ink-3); font-size: var(--t-xs); }
+.idea-gal { color: var(--ink-2); font-weight: 600; }
+.idea-ads { display: block; color: var(--ink-3); font-size: var(--t-xs); margin: 2px 0 0; }
+.idea-thumbs { display: flex; align-items: center; gap: 4px; }
+.idea-th { display: block; width: 38px; height: 48px; border-radius: var(--radius-xs); overflow: hidden; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.idea-th img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.idea-more { font: 500 var(--t-xs)/1 var(--font-num); color: var(--ink-3); padding-left: 2px; }
+.idea-nums { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px 14px; margin: 0; }
+.idea-nums dt { font-size: var(--t-xs); color: var(--ink-3); white-space: nowrap; }
+.idea-nums dd { margin: 0; font: 500 var(--t-m)/1.3 var(--font-num); color: var(--ink); }
+.idea-nums dd.early { color: var(--ink-3); }
+.idea-cpl dd { font-size: var(--t-l); }
+@media (max-width: 1100px) {
+  .idea-grp { grid-template-columns: minmax(0, 1fr) auto; }
+  .idea-nums { grid-column: 1 / -1; }
+}
+@media (max-width: 720px) {
+  .idea-grp { grid-template-columns: minmax(0, 1fr); padding: 14px 16px; }
+  .idea-nums { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 .idea-row { display: grid; grid-template-columns: 130px minmax(0, 1fr); align-items: center; gap: 4px 12px; }
 .idea-row label { margin: 0; }
 @media (max-width: 720px) { .idea-row { grid-template-columns: 1fr; } }
 
 /* ---------- Swipe file ---------- */
-.swipe-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
 .swipe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
 .swipe { border: 1px solid var(--line); border-radius: var(--radius-s); padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .swipe.long { border-color: color-mix(in srgb, var(--signal) 40%, var(--line)); }
@@ -1305,10 +1332,24 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .swipe footer a { color: var(--focus); font-weight: 600; text-decoration: none; display: inline-flex; gap: 4px; align-items: center; }
 .swipe footer svg { width: 13px; height: 13px; }
 .swipe-form { border: 1px solid var(--line); border-radius: var(--radius-s); padding: 12px; }
+.swipe.is-picked { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.swipe-tick { display: grid; place-items: center; width: 30px; height: 30px; margin: -6px 0 -6px -6px; border-radius: var(--radius-s); cursor: pointer; }
+.swipe-tick:hover { background: var(--surface-2); }
+.swipe-tick input { width: 16px; height: 16px; margin: 0; accent-color: var(--ink); cursor: pointer; }
+.swipe-like { align-self: flex-start; }
+.swipe-like svg { width: 14px; height: 14px; }
+.research #rs-panel > [data-part-panel] { margin-top: 4px; }
+.watch-form { max-width: 520px; }
+/* Phones: 44px to tap for the ticks, the thumbnails and the link in a group's line. */
+@media (max-width: 960px) {
+  .swipe-tick { width: var(--target); height: var(--target); margin: -10px 0 -10px -10px; }
+  .swipe-tick input { width: 20px; height: 20px; }
+  .idea-gal { display: inline; padding: 15px 6px; margin: -15px -6px; }
+  .idea-th { width: 44px; height: 55px; }
+}
 .watch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .watch-list li { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .watch-list li span { display: flex; flex-direction: column; min-width: 0; }
-@media (max-width: 1100px) { .swipe-layout { grid-template-columns: 1fr; } }
 .link-btn.muted { color: var(--ink-3); font-weight: 600; }
 .link-btn.muted:hover { color: var(--ink); }
 .swipe-grid { align-items: start; }
@@ -1483,6 +1524,6 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .ver-tbl td.ver-name { white-space: normal; min-width: 130px; padding-top: 8px; padding-bottom: 8px; }
 .ver-tbl .ver-name b { display: block; font-weight: 600; }
 .ver-tbl .ver-name small { display: block; color: var(--ink-3); font-size: var(--t-xs); margin-bottom: 6px; }
-/* Opened as "Results: By idea" from the command menu: the panel head clears the phone's top bar and section tabs. */
+/* Opened from an older "Results: By idea" link: the panel head clears the phone's top bar and section tabs. */
 #ideas-panel { scroll-margin-top: 16px; }
 @media (max-width: 960px) { #ideas-panel { scroll-margin-top: calc(112px + env(safe-area-inset-top)); } }

@@ -4,6 +4,7 @@ import json
 
 from flask import Blueprint, jsonify, request
 
+import account_ctx
 import db
 import swipes as sw
 from auth import admin_required, current_user
@@ -54,6 +55,24 @@ def get_swipes():
     pages = db.query("SELECT id, name, page_id, search_terms, notes, last_checked_at FROM watched_pages ORDER BY name")
     return jsonify({"items": listing(), "watched": [{**p, "last_checked_at": p["last_checked_at"].isoformat() if p["last_checked_at"] else None} for p in pages],
                     "long_running_days": sw.LONG_RUNNING_DAYS})
+
+
+@bp.get("/swipes/brief")
+@admin_required
+def swipe_brief():
+    """The draft for "Make something like this" (as=like, one saved ad) or "Write a brief" (as=brief, several),
+    in the order picked. Nothing is sent: the page shows it to edit, then sends it as a request to Claude."""
+    wanted = []
+    for part in str(request.args.get("ids") or "").split(","):
+        if part.strip().isdigit() and int(part) not in wanted:
+            wanted.append(int(part))
+    found = {s["id"]: s for s in listing_of(wanted)} if wanted else {}
+    items = [found[i] for i in wanted if i in found]
+    if not items:
+        return api_error("Those saved ads aren't in the swipe file any more", 404)
+    account = db.query("SELECT name FROM accounts WHERE id = %s", (account_ctx.current(),), one=True)
+    draft = sw.brief(items, "like" if request.args.get("as") == "like" else "brief", account["name"] if account else "")
+    return jsonify({**draft, "kind": "creative", "limit": sw.PROMPT_LIMIT, "count": len(items)})
 
 
 @bp.post("/swipes")

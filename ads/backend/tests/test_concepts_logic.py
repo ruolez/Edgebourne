@@ -61,9 +61,23 @@ class MembersTests(unittest.TestCase):
         tags = {"n1": {"hook": "Statement of pain"}, "n2": {"hook": "Outcome promise"}, "n5": {"hook": "Outcome promise"},
                 "x": {"angle": "Reports"}}
         self.assertEqual(c.members(rows, tags, "hook"), {
-            "Outcome promise": [{"id": "n2", "name": "n2 - outcome"}, {"id": "n5", "name": "N5 - quote"}],
-            "Statement of pain": [{"id": "n1", "name": "N1 - pain"}],
-            c.UNTAGGED: [{"id": "x", "name": "Old"}]})
+            "Outcome promise": [{"id": "n2", "name": "n2 - outcome", "thumb": None, "spend_cents": 0},
+                                {"id": "n5", "name": "N5 - quote", "thumb": None, "spend_cents": 0}],
+            "Statement of pain": [{"id": "n1", "name": "N1 - pain", "thumb": None, "spend_cents": 0}],
+            c.UNTAGGED: [{"id": "x", "name": "Old", "thumb": None, "spend_cents": 0}]})
+
+    def test_each_ad_carries_its_picture_and_spend_so_a_group_can_show_its_biggest_spenders(self):
+        rows = [{"id": "a", "name": "A", "thumb": "https://x/a.jpg", "spend_cents": 900},
+                {"id": "b", "name": "B", "thumb": "https://x/b.jpg", "spend_cents": 4000}]
+        got = c.members(rows, {"a": {"hook": "Q"}, "b": {"hook": "Q"}}, "hook")["Q"]
+        self.assertEqual(got, [{"id": "a", "name": "A", "thumb": "https://x/a.jpg", "spend_cents": 900},
+                               {"id": "b", "name": "B", "thumb": "https://x/b.jpg", "spend_cents": 4000}])
+
+    def test_pictures_are_the_biggest_spenders_first_and_skip_ads_without_one(self):
+        rows = [{"id": "a", "thumb": "https://x/a.jpg", "spend_cents": 900}, {"id": "b", "thumb": None, "spend_cents": 9000},
+                {"id": "c", "thumb": "https://x/c.jpg", "spend_cents": 4000}, {"id": "d", "thumb": "https://x/d.jpg", "spend_cents": 100}]
+        self.assertEqual([m["id"] for m in c.pictures(rows, limit=2)], ["c", "a"])
+        self.assertEqual([m["id"] for m in c.pictures(rows)], ["c", "a", "d"])
 
 
 if __name__ == "__main__":

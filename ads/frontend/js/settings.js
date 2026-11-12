@@ -325,8 +325,8 @@ function renderTargets() {
   $("t-qualified").value = t.qualified_cents ? (t.qualified_cents / 100).toFixed(2).replace(/\.00$/, "") : "";
   $("t-lead").value = t.lead_cents ? (t.lead_cents / 100).toFixed(2).replace(/\.00$/, "") : "";
   $("t-max").value = (t.max_daily_cents / 100).toFixed(2).replace(/\.00$/, "");
-  $("t-lead-hint").textContent = t.lead_cents ? "Any form lead. Alerts, By idea and Tests judge leads by it."
-    : t.qualified_cents ? `Not set: the cost-per-lead alert uses the ${money(t.qualified_cents, { exact: true })} per qualified lead instead; By idea and Tests use their own average.` : "Any form lead. Alerts, By idea and Tests judge leads by it.";
+  $("t-lead-hint").textContent = t.lead_cents ? "Any form lead. Alerts, Ideas and Tests judge leads by it."
+    : t.qualified_cents ? `Not set: the cost-per-lead alert uses the ${money(t.qualified_cents, { exact: true })} per qualified lead instead; Ideas and Tests use their own average.` : "Any form lead. Alerts, Ideas and Tests judge leads by it.";
   $("t-monthly").textContent = t.monthly_cents ? `${money(t.monthly_cents)} a month` : "Not set";
 }
 

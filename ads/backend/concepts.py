@@ -56,12 +56,19 @@ def group(ads, tags, dimension, target_cents=None):
 
 
 def members(ads, tags, dimension):
-    """The ads behind each value of a dimension, by name, each with its id so a page can link to it."""
+    """The ads behind each value of a dimension, by name, each with its id so a page can link to it, its picture
+    and what it spent (Ideas shows the biggest spenders' pictures)."""
     out = {}
     for a in ads:
         value = (tags.get(a["id"]) or {}).get(dimension) or UNTAGGED
-        out.setdefault(value, []).append({"id": a["id"], "name": a["name"]})
+        out.setdefault(value, []).append({"id": a["id"], "name": a["name"], "thumb": a.get("thumb"), "spend_cents": a.get("spend_cents") or 0})
     return {k: sorted(v, key=lambda m: (m["name"] or "").casefold()) for k, v in out.items()}
+
+
+def pictures(members_of_value, limit=None):
+    """The members that have a picture, biggest spender first."""
+    shown = sorted((m for m in members_of_value if m.get("thumb")), key=lambda m: -(m.get("spend_cents") or 0))
+    return shown[:limit] if limit else shown
 
 
 def experiments_win():

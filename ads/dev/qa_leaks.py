@@ -62,7 +62,8 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
     activity = once("activity", {"user_id": admin_id, "actor": "qa", "action": "qa.mark", "subject": f"{mark} activity", "account_id": acct}, "subject")
     db.execute("UPDATE activity SET at = now() WHERE id = %s", (activity["id"],))  # History lists the latest 200 only
     once("inbox_reads", {"user_id": admin_id, "item_key": f"{mark}read", "account_id": acct}, "item_key")
-    return {"proposal": proposal["id"], "view": view["id"], "build": build["id"]}
+    swipe = once("swipes", {"page_name": f"{mark} rival", "body": f"{mark} rival words", "source": "manual", "account_id": acct}, "page_name")
+    return {"proposal": proposal["id"], "view": view["id"], "build": build["id"], "swipe": swipe["id"]}
 
 with account_ctx.all_accounts():
     acct = db.query("SELECT id FROM accounts WHERE name = 'Burdanova QA'", one=True)
@@ -111,7 +112,7 @@ with account_ctx.all_accounts():
             for t, col in (("desk_proposals", "title"), ("desk_reports", "title"), ("status_events", "new_value"), ("meta_changes", "new_value"),
                            ("ad_versions", "label"), ("saved_views", "name"), ("campaign_builds", "client_key"), ("alerts", "dedupe_key"),
                            ("lead_notes", "body"), ("lead_replies", "subject"), ("activity", "subject"), ("inbox_reads", "item_key"),
-                           ("desk_tasks", "prompt")):
+                           ("desk_tasks", "prompt"), ("swipes", "page_name")):
                 db.execute(f"DELETE FROM {t} WHERE account_id = 1 AND {col} LIKE %s", (MARK1 + "%",))
     drop_mark1()
     atexit.register(drop_mark1)
@@ -152,6 +153,9 @@ def fill(rule, other):
     return url
 
 
+# GET routes that read their ids from the query: asked with the other account's.
+QUERY = {"/api/swipes/brief": lambda other: f"?ids={other['swipe']}&as=brief"}
+
 SKIP = re.compile(r"^/api/(agent/|auth/logout)|/wait$|/stream$|^/webhooks/")
 
 
@@ -165,7 +169,7 @@ def walk(client, forbidden, other, label, own=None):
     for rule in app.url_map.iter_rules():
         if "GET" not in rule.methods or not rule.rule.startswith("/api/") or SKIP.search(rule.rule):
             continue
-        url = fill(rule, other)
+        url = fill(rule, other) + (QUERY[rule.rule](other) if rule.rule in QUERY else "")
         r = client.get(url)
         checked += 1
         body = r.get_data(as_text=True)
