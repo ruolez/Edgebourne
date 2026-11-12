@@ -1,15 +1,26 @@
 // Inbox: everything that changed or waits for someone: Meta's approvals and rejections, issues,
 // learning limited, new leads, Claude's suggestions, money and tracking alerts. Read/unread per person.
+// Needs action (what waits for someone; its new ones drive the badge) and FYI (the rest) are the two boxes;
+// a problem fixed since moves to FYI by itself. E only marks read; accepting a suggestion opens the Accept sheet.
 import { api, startLoad } from "./api.js";
-import { boot, entityLink, esc, icon, onRefresh, toast, when, errorState } from "./ui.js";
+import { acceptSheet } from "./decide.js";
+import { boot, editing, entityLink, esc, icon, onRefresh, setInboxCount, toast, when, errorState } from "./ui.js";
 import { closeLayer, leaveLayer, openLayer } from "./urlstate.js";
+import { plural } from "./format.js";
 
-const FILTERS = [["unread", "Unread"], ["all", "All"], ["status", "Ad status"], ["leads", "Leads"], ["claude", "Claude"], ["money", "Money"], ["system", "Tracking"]];
+// The FYI tab gets a short label on the narrowest phones, so all three tabs fit without scrolling.
+const BOXES = [["need", "Needs action"], ["fyi", '<span class="ib-long">For your information</span><span class="ib-short">FYI</span>'], ["all", "All"]];
+const KINDS = [["all", "Every kind"], ["status", "Ad status"], ["leads", "Leads"], ["claude", "Claude"], ["money", "Money"], ["system", "Tracking"]];
 const ICON = { status: "ads", leads: "leads", claude: "spark", money: "chart", system: "alarm" };
 const TONE = { bad: "bad", warn: "warn", ok: "ok", info: "info", lead: "lead", claude: "claude" };
 const params = new URLSearchParams(location.search);
-let filter = FILTERS.some(([k]) => k === params.get("show")) ? params.get("show") : "unread";
-let data = { items: [], counts: {} };
+// ?box=&kind=&unread=1; the older ?show=unread|all|<kind> links still land in the right place.
+const legacy = params.get("show");
+let box = BOXES.some(([k]) => k === params.get("box")) ? params.get("box") : legacy ? "all" : "need";
+let kind = KINDS.some(([k]) => k === params.get("kind")) ? params.get("kind") : KINDS.some(([k]) => k === legacy) ? legacy : "all";
+let unreadOnly = params.get("unread") === "1" || legacy === "unread";
+let me = null;
+let data = { items: [], counts: {}, kinds: {} };
 const $ = (id) => document.getElementById(id);
 // The open item is in the URL (#item=<key>). On a phone it covers the list, so opening it is a step Back undoes.
 const itemInUrl = () => { const m = location.hash.match(/item=([^&]+)/); return m ? decodeURIComponent(m[1]) : null; };
@@ -24,23 +35,32 @@ let kept = null;
 let listScroll = 0;
 let newList = false;  // the person picked another filter: nothing from the old list stays open
 const shownItem = () => data.items.find((x) => x.key === current) || (kept && kept.key === current ? kept : null);
-function setShow(f) {
-  const u = new URL(location.href); u.searchParams.set("show", f); history.replaceState(history.state, "", u);
+function writeUrl({ clearItem = false } = {}) {
+  const u = new URL(location.href);
+  u.searchParams.delete("show");
+  u.searchParams.set("box", box);
+  if (kind === "all") u.searchParams.delete("kind"); else u.searchParams.set("kind", kind);
+  if (unreadOnly) u.searchParams.set("unread", "1"); else u.searchParams.delete("unread");
+  if (clearItem) u.hash = "";
+  history.replaceState(history.state, "", u);
 }
 
-function query() {
-  if (filter === "unread" || filter === "all") return `filter=${filter}`;
-  return `filter=all&kind=${filter}`;
-}
+const query = () => `box=${box}&filter=${unreadOnly ? "unread" : "all"}&kind=${kind}`;
 
 function renderFilters() {
   const c = data.counts || {};
-  $("ib-filters").innerHTML = FILTERS.map(([k, label]) => {
-    const n = k === "unread" ? c.unread : k === "all" ? 0 : c[k];
-    return `<button type="button" role="tab" aria-selected="${k === filter}" data-f="${k}">${label}${n ? `<span class="n">${n}</span>` : ""}</button>`;
-  }).join("");
-  $("ib-sub").textContent = c.unread ? `${c.unread} unread · approvals, rejections, leads, Claude and alerts in one place` : "All caught up";
-  $("ib-all").hidden = !c.unread;
+  // Tabs count what is new, like the badge: reading an item or fixing the problem takes it off.
+  const n = { need: c.need_unread, fyi: c.fyi_unread, all: 0 };
+  $("ib-box").innerHTML = BOXES.map(([k, label]) =>
+    `<button type="button" role="tab" aria-selected="${k === box}" data-box="${k}">${label}${n[k] ? `<span class="n">${n[k]}</span>` : ""}</button>`).join("");
+  const kn = data.kinds || {};
+  $("ib-filters").innerHTML = KINDS.filter(([k]) => k !== "claude" || me?.role !== "client")
+    .map(([k, label]) => `<button type="button" class="view-chip" aria-pressed="${k === kind}" data-f="${k}">${label}${k !== "all" && kn[k] ? `<span class="n">${kn[k]}</span>` : ""}</button>`).join("")
+    + `<button type="button" class="view-chip" aria-pressed="${unreadOnly}" data-unread>Unread only</button>`;
+  $("ib-sub").textContent = c.need
+    ? `${plural(c.need, "thing needs", "things need")} you${c.need_unread ? `, ${c.need_unread} new` : ""}. The rest is for your information.`
+    : "Nothing needs you. The rest is for your information.";
+  $("ib-all").hidden = !data.items.some((i) => i.unread);
 }
 
 function itemHtml(i) {
@@ -53,7 +73,10 @@ function itemHtml(i) {
 function renderList() {
   const items = data.items;
   if (!items.length) {
-    $("ib-list").innerHTML = `<li class="empty compact ib-none">${filter === "unread" ? "Nothing new. Meta's approvals and rejections, new leads and Claude's suggestions show up here." : "Nothing here yet."}</li>`;
+    const fyi = data.counts?.fyi_unread;
+    $("ib-list").innerHTML = `<li class="empty compact ib-none">${box === "need" && kind === "all"
+      ? `Nothing needs you right now.${fyi ? ` <button type="button" class="link-btn" data-goto-box="fyi">${plural(fyi, "new note")} for your information</button>` : ""}`
+      : kind !== "all" || unreadOnly ? `Nothing here with these filters. <button type="button" class="link-btn" data-clear-filters>Show every kind</button>` : "Nothing here yet."}</li>`;
     return;
   }
   const today = new Date().toDateString();
@@ -64,8 +87,14 @@ function renderList() {
 }
 
 function action(i) {
+  // A suggestion is accepted through the Accept sheet (Meta read fresh, money never ticked for you), never a bare button.
+  if (i.proposal_id && me.role !== "client") {
+    // The conversation lives on the Claude page, which only admins can open.
+    const talk = i.href && me.role === "admin" ? `<a class="btn" href="${esc(i.href)}">Open the conversation</a>` : "";
+    return `<button type="button" class="btn btn-claude" data-accept="${i.proposal_id}">Review and accept</button>${talk}`;
+  }
   if (!i.href) return "";
-  const label = i.category === "leads" ? "Open the lead" : i.category === "claude" ? "Review in Claude" : i.href.startsWith("/ad.html") ? "Open the ad"
+  const label = i.category === "leads" ? "Open the lead" : i.href.startsWith("/ad.html") ? "Open the ad"
     : i.href.startsWith("/settings") ? "Open Settings" : "Open";
   return `<a class="btn btn-primary" href="${esc(i.href)}">${label}</a>`;
 }
@@ -76,19 +105,25 @@ function renderDetail() {
   const s = i.subject;
   $("ib-detail").innerHTML = `<button type="button" class="btn btn-quiet back-link" data-ib-back>${icon("back")} Inbox</button>
     <div class="ib-dh"><span class="ib-ic k-${TONE[i.level] || "info"}">${icon(ICON[i.category] || "alarm")}</span>
-      <div><p class="ib-kicker">${esc(when(i.at))}${i.resolved ? " · fixed since" : ""}</p><h2>${esc(i.title)}</h2></div></div>
+      <div><p class="ib-kicker">${esc(when(i.at))} · ${i.need ? "Needs action" : i.resolved ? "Fixed since" : "For your information"}</p><h2>${esc(i.title)}</h2></div></div>
     ${(i.lines || []).map((l) => `<p>${esc(l)}</p>`).join("")}
     ${s ? `<p class="ib-about"><span class="muted">${esc({ campaign: "Campaign", adset: "Ad set", ad: "Ad" }[s.level] || "About")}:</span> ${entityLink(s.level, s.id, s.name)}</p>` : ""}
-    <div class="row">${action(i)}${i.unread ? '<button class="btn" type="button" data-read>Mark read</button>' : ""}</div>`;
+    <div class="row">${action(i)}${i.unread ? '<button class="btn" type="button" data-read>Mark read</button>' : ""}</div>
+    <p class="ib-keys">Keys: J and K move, E marks read. Anything that spends money still opens its confirmation.</p>`;
 }
 
 async function markRead(keys) {
-  if (!keys.length) return;
+  const fresh = data.items.filter((i) => keys.includes(i.key) && i.unread);
+  if (!fresh.length) return;
   try {
-    await api("/api/inbox/read", { method: "POST", body: { keys } });
-    data.items.forEach((i) => { if (keys.includes(i.key)) i.unread = false; });
-    data.counts.unread = Math.max(0, (data.counts.unread || 0) - keys.length);
-    document.querySelectorAll("[data-inbox-count]").forEach((el) => { el.hidden = !data.counts.unread; el.textContent = data.counts.unread || ""; });
+    await api("/api/inbox/read", { method: "POST", body: { keys: fresh.map((i) => i.key) } });
+    const c = data.counts;
+    fresh.forEach((i) => {
+      i.unread = false;
+      c.unread = Math.max(0, (c.unread || 0) - 1);
+      if (i.need) c.need_unread = Math.max(0, (c.need_unread || 0) - 1); else c.fyi_unread = Math.max(0, (c.fyi_unread || 0) - 1);
+    });
+    setInboxCount(c.need_unread);
   } catch (err) { toast(err.message, "bad"); }
 }
 
@@ -99,7 +134,9 @@ async function load() {
   const before = newList ? null : shownItem();
   newList = false;
   data = d;
-  if (linked && !data.items.some((i) => i.key === linked) && filter !== "all") { filter = "all"; setShow("all"); return load(); }  // a read item named by a link
+  if (linked && !data.items.some((i) => i.key === linked) && (box !== "all" || kind !== "all" || unreadOnly)) {  // a read or FYI item named by a link
+    box = "all"; kind = "all"; unreadOnly = false; writeUrl(); return load();
+  }
   linked = null;
   if (data.items.some((i) => i.key === current)) kept = null;
   else if (before && before.key === current) kept = before;
@@ -108,17 +145,28 @@ async function load() {
   $("ib-panel").classList.toggle("showing-detail", Boolean(covers() && current && itemInUrl() === current));
 }
 
-$("ib-filters").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-f]");
-  if (!b) return;
-  filter = b.dataset.f;
-  // A new filter starts a new list: the open item and its #item= go, and the list shows its first item.
+// A new box or filter starts a new list: the open item and its #item= go, and the list shows its first item.
+function newFilter() {
   linked = null; kept = null; newList = true;
   if (covers()) current = null;
   leaveLayer();
-  const u = new URL(location.href); u.searchParams.set("show", filter); u.hash = ""; history.replaceState(history.state, "", u);
+  writeUrl({ clearItem: true });
   $("ib-panel").classList.remove("showing-detail");
   load().catch((err) => toast(err.message, "bad"));
+}
+$("ib-box").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-box]");
+  if (b) { box = b.dataset.box; newFilter(); }
+});
+$("ib-filters").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-f], [data-unread]");
+  if (!b) return;
+  if (b.dataset.f) kind = b.dataset.f; else unreadOnly = !unreadOnly;
+  newFilter();
+});
+$("ib-list").addEventListener("click", (e) => {
+  if (e.target.closest("[data-goto-box]")) { box = e.target.closest("[data-goto-box]").dataset.gotoBox; newFilter(); }
+  if (e.target.closest("[data-clear-filters]")) { kind = "all"; unreadOnly = false; newFilter(); }
 });
 function pick(li) {
   current = li.dataset.key;
@@ -161,18 +209,30 @@ $("ib-list").addEventListener("keydown", (e) => {
 });
 $("ib-detail").addEventListener("click", (e) => {
   if (e.target.closest("[data-ib-back]")) { showList(); closeLayer(listUrl()); return; }
+  const acc = e.target.closest("[data-accept]");
+  if (acc) { acceptSheet([Number(acc.dataset.accept)], () => load().catch((err) => toast(err.message, "bad"))); return; }
   if (e.target.closest("[data-read]")) markRead([current]).then(() => { renderFilters(); renderList(); renderDetail(); });
 });
 $("ib-all").addEventListener("click", async () => {
   try {
-    await api("/api/inbox/read", { method: "POST", body: { all: true, kind: ["unread", "all"].includes(filter) ? "all" : filter } });
+    await api("/api/inbox/read", { method: "POST", body: { all: true, kind, box } });
     toast("All marked read");
     await load();
-    document.querySelectorAll("[data-inbox-count]").forEach((el) => { el.hidden = !data.counts.unread; el.textContent = data.counts.unread || ""; });
+    setInboxCount(data.counts.need_unread);
   } catch (err) { toast(err.message, "bad"); }
 });
+// E marks the item under the keyboard (or the open one) read. Nothing else: no opening, no accepting.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "e" || e.metaKey || e.ctrlKey || e.altKey || editing()) return;
+  const key = e.target.closest?.("#ib-list [data-key]")?.dataset.key || current;
+  const i = data.items.find((x) => x.key === key);
+  if (!i) return;
+  e.preventDefault();
+  if (!i.unread) return;
+  markRead([key]).then(() => { renderFilters(); renderList(); renderDetail(); document.querySelector(`#ib-list [data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true }); toast("Marked read"); });
+});
 
-const me = await boot({ page: "inbox" });
+me = await boot({ page: "inbox" });
 if (me) {
   onRefresh(load);
   load().catch((err) => errorState($("ib-list"), err, load));

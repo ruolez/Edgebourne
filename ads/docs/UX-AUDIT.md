@@ -106,7 +106,7 @@ Each phase ships on its own and follows ROADMAP §4: tests first for pure logic,
 | Screen | Changes |
 |---|---|
 | Today | One ranked queue (leads to call, ads with problems, decisions, money). Compact numbers. Advice and benchmarks sit below, kept open. Remove duplicates of Inbox. Clients see only status alerts and leads. Decisions open the existing Accept sheet or Claude. |
-| Inbox | Needs action vs FYI, with a separate needs-action count that drives the badge (`inbox_unread` stays). Resolved items leave the count. `e` only marks read. Any approval goes through the Accept sheet, never a bare button. |
+| Inbox | Needs action vs FYI, with a separate needs-action count that drives the badge (`inbox_unread` stays). Resolved items leave the count. `e` only marks read. Any approval goes through the Accept sheet, never a bare button. Built (9.4a): the badge and the Needs action tab show the same number, Needs action that is still unread (`inbox_need`), so reading an item or fixing the problem takes it off; the summary line above the list still says how many need you in all. Eugene can ask for 'open items' instead (one line in `refresh_api` + `inbox.js`). |
 | Leads | One urgency rule shared with Today. Readable history. Clear-filter action. Undo on stage change. |
 | Ads / Ad sets / Campaigns | Sticky header and name column, delivery-track legend, one primary New button, clear-filter empty state. |
 | Lead forms | Field-level errors, leave warning, leads per form linked to Leads. |

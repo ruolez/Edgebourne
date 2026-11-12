@@ -1,78 +1,130 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, entityLink, esc, icon, onRefresh, skeleton, toast, when, editing, showLoadError, withFrom } from "./ui.js";
+import { acceptSheet } from "./decide.js";
+import { boot, confirmDialog, entityLink, esc, icon, leadClock, onRefresh, toast, when, editing, showLoadError, withFrom } from "./ui.js";
 import { money, per, plural } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
 
 const greeting = () => { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
-const initials = (name) => (name || "?").split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 const shortAd = (name) => (name || "").split(/\s+-\s+|\s+/)[0];
 
-// The lead clock: teal under 5 minutes, amber up to an hour, rust after that.
-function leadClock(iso, now = Date.now()) {
-  const mins = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 60000));
-  const tone = mins < 5 ? "fresh" : mins < 60 ? "warm" : "late";
-  const text = mins < 60 ? `${mins} min` : mins < 48 * 60 ? `${Math.floor(mins / 60)} h` : `${Math.floor(mins / 1440)} d`;
-  return `<span class="lclock ${tone}">${icon(tone === "late" ? "alarm" : "clock")}${text}${tone === "fresh" ? ", new" : " waiting"}</span>`;
+// Today is one ranked queue (the server's today.rank): the Inbox's Needs action, never its FYI, with the
+// leads to call first. Groups keep the server's order; each thing shows once.
+const GROUPS = {
+  call: ["Call first", "the first hour matters most, then the longest wait"],
+  problems: ["Fix", ""],
+  follow: ["Follow up", ""],
+  decide: ["Decide", "nothing changes until you accept"],
+  money: ["Money", ""],
+  system: ["Keep it running", ""],
+  later: ["Later today", ""],
+};
+const ICON = { status: "ads", leads: "leads", claude: "spark", money: "chart", system: "alarm" };
+const TONE = { bad: "bad", warn: "warn", ok: "ok", info: "info", claude: "claude" };
+
+function actionLabel(r) {
+  if (r.action) return r.action;
+  const h = r.href || "";
+  return h.startsWith("/ad.html") ? "Open the ad" : h.startsWith("/adset.html") ? "Open the ad set" : h.startsWith("/campaign.html") ? "Open the campaign"
+    : h.startsWith("/settings") ? "Open Settings" : "Open";
 }
 
-const ATT_ICON = { leads: "missed", claude: "spark", money: "chart", status: "ads", system: "alarm" };
+function leadRow(r) {
+  const l = r.lead;
+  const from = l.ad_name ? ` · from ${entityLink("ad", l.ad_id, shortAd(l.ad_name))}` : "";
+  return `<li class="tq-row tq-lead" data-key="${esc(r.key)}">
+    ${leadClock({ urgency: r.level, created_time: l.created_time })}
+    <div class="tq-b"><a class="tq-name" href="${esc(r.href)}"><b>${esc(r.title)}</b></a><p>${esc(r.line || "No business given")}${from}</p></div>
+    <div class="tq-acts">${l.phone ? `<a class="btn btn-call" href="tel:${esc(l.phone)}">${icon("phone")}Call</a>` : `<a class="btn" href="${esc(r.href)}">Open</a>`}
+      ${l.email ? `<a class="btn tq-mail" href="mailto:${esc(l.email)}" aria-label="Email ${esc(r.title)}">${icon("mail")}</a>` : ""}</div>
+  </li>`;
+}
+
+function itemRow(r) {
+  const s = r.subject;
+  // The thing it is about links to its page, named once (a suggestion's line is that name already).
+  const link = s && !(r.title || "").includes(s.name) ? entityLink(s.level, s.id, s.name) : "";
+  const text = r.line && !(s && r.line === s.name) ? esc(r.line) : "";
+  const line = text || link ? `<p${text ? "" : ' class="tq-about"'}>${[text, link].filter(Boolean).join(" · ")}</p>` : "";
+  let acts;
+  if (r.proposal_id) {
+    acts = `<button type="button" class="btn btn-claude" data-accept="${r.proposal_id}">Review</button>`
+      + (me.role === "admin" ? `<a class="btn btn-quiet" href="${esc(r.href)}">Conversation</a>` : "");
+  } else {
+    acts = r.href ? `<a class="btn" href="${esc(r.href)}">${esc(actionLabel(r))}</a>` : "";
+  }
+  return `<li class="tq-row" data-key="${esc(r.key)}"><span class="tq-ic k-${TONE[r.level] || "info"}">${icon(ICON[r.category] || "alarm")}</span>
+    <div class="tq-b"><b>${esc(r.title)}</b>${line}</div><div class="tq-acts">${acts}</div></li>`;
+}
+
+function queueHtml(d) {
+  const q = d.queue;
+  if (!q.length) return `<p class="tq-clear">${icon("spark")}<span>Nothing needs you right now.</span></p>`;
+  const groups = [...new Set(q.map((r) => r.group))];
+  return groups.map((g) => {
+    const rows = q.filter((r) => r.group === g);
+    const [title, hint] = GROUPS[g] || ["Other", ""];
+    const ids = rows.filter((r) => r.proposal_id).map((r) => r.proposal_id);
+    const all = g === "decide" && ids.length > 1 ? `<button type="button" class="link-btn" data-accept-all="${ids.join(",")}">Review all ${ids.length}</button>` : "";
+    const more = g === "call" && d.waiting_calls > rows.length
+      ? `<li class="tq-more"><a href="/leads.html">${plural(d.waiting_calls - rows.length, "more lead")} waiting for a first call</a></li>` : "";
+    return `<section class="tq-group" aria-labelledby="tq-${g}"><h2 class="tq-h" id="tq-${g}">${title}${hint ? ` <small>${hint}</small>` : ""}<span class="spacer"></span>${all}</h2>
+      <ul>${rows.map((r) => (r.group === "call" ? leadRow(r) : itemRow(r))).join("")}${more}</ul></section>`;
+  }).join("");
+}
+
+function lede(d) {
+  const n = (g) => d.queue.filter((r) => r.group === g).length;
+  const parts = [];
+  if (d.waiting_calls) parts.push(`${plural(d.waiting_calls, "person", "people")} to call`);
+  if (n("problems")) parts.push(`${plural(n("problems"), "problem")} to fix`);
+  if (n("decide")) parts.push(`${plural(n("decide"), "thing")} to decide`);
+  const first = parts.length ? parts.slice(0, -1).join(", ") + (parts.length > 1 ? " and " : "") + parts[parts.length - 1] + "." : "Nothing needs you right now.";
+  const on = d.ads?.ACTIVE || 0;
+  return `${first.charAt(0).toUpperCase()}${first.slice(1)} ${on ? `${plural(on, "ad")} delivering.` : "No ads are delivering."}`;
+}
 
 function render(d) {
-  const attention = d.attention.length
-    ? `<ul class="attention" aria-label="Needs you">${d.attention.map((a) => `<li class="${a.level}">${icon(ATT_ICON[a.kind] || "alarm")}<span>${esc(a.text)}</span>${a.href ? `<a class="btn" href="${esc(a.href)}">${esc(a.action || "Open")}</a>` : ""}</li>`).join("")}</ul>`
-    : `<p class="all-clear">${icon("spark")}<span>Nothing needs you right now.</span></p>`;
-
-  const call = d.call.length
-    ? `<ol>${d.call.map((l) => {
-        const mins = (Date.now() - new Date(l.created_time).getTime()) / 60000;
-        return `<li>
-          <span class="initials ${mins < 5 ? "fresh" : ""}" aria-hidden="true">${esc(initials(l.full_name))}</span>
-          <div class="who"><a class="who-link" href="/leads.html#lead=${l.id}"><b>${esc(l.full_name || "Unnamed")}</b></a>
-            <span><em>${esc(l.business_type || "No business given")}</em>${l.ad_name ? `<span class="via">via ${entityLink("ad", l.ad_id, shortAd(l.ad_name))}</span>` : ""}</span></div>
-          ${leadClock(l.created_time)}
-          ${l.phone ? `<a class="btn btn-call" href="tel:${esc(l.phone)}">${icon("phone")}Call</a>` : `<a class="btn btn-call" href="/leads.html#lead=${l.id}">Open</a>`}
-          ${l.email ? `<a class="btn mail" href="mailto:${esc(l.email)}" aria-label="Email ${esc(l.full_name || "")}">${icon("mail")}</a>` : ""}
-        </li>`;
-      }).join("")}</ol>`
-    : '<p class="empty-call">Everyone has been contacted. New leads appear here the moment they arrive.</p>';
-  const st = d.stages || {};
-  const callCard = `<section class="panel call" aria-labelledby="h-call">
-    <div class="card-head"><h2 id="h-call">Call these first</h2><span class="hint">${d.waiting ? `${plural(d.waiting, "new lead")}, longest wait on top` : "no one waiting"}</span><a class="more" href="/leads.html">All leads</a></div>
-    ${call}
-    <div class="call-foot"><span><b>${st.contacted || 0}</b> contacted</span><span><b>${st.qualified || 0}</b> qualified</span><span><b>${st.won || 0}</b> won</span><span class="muted">this week</span>
-      <span class="advice">Call within 5 minutes: far more of them book</span></div>
-  </section>`;
+  $("today-lede").textContent = lede(d);
+  const fyi = d.fyi_unread ? `${plural(d.fyi_unread, "new note")} for your information, like approvals and changes made in Ads Manager.` : "Approvals, changes made in Ads Manager and other notes for your information stay in the Inbox.";
+  const queueCard = `<section class="panel tq" aria-label="What needs you, most urgent first">${queueHtml(d)}
+    <p class="tq-foot">${fyi} <a href="/inbox.html?box=fyi">Open the Inbox</a></p></section>`;
 
   const budget = d.daily_budget_cents;
   const spentPct = budget ? Math.min(d.today.spend_cents / budget, 1) * 100 : 0;
   const y = d.yesterday;
-  const moneyCard = `<section class="panel money" aria-labelledby="h-money">
-    <h2 id="h-money">Money</h2>
-    <div>
-      <div class="row-top"><span>Spent today</span><small>${d.today.as_of ? `as of ${new Date(d.today.as_of * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}</small></div>
-      <div class="big"><b>${money(d.today.spend_cents, { exact: true })}</b>${budget ? `<span>of ${money(budget)} a day</span>` : ""}</div>
-      ${budget ? `<div class="bar ink"><i data-w="${spentPct.toFixed(1)}"></i></div>` : ""}
-      <p class="note-line">${plural(d.today.leads, "lead")} so far. Today keeps filling in; Meta reports late.</p>
-    </div>
-    <dl>
-      <div><dt>Yesterday</dt><dd class="v">${y ? money(y.spend_cents, { exact: true }) : "—"}</dd><dd class="s">${y ? plural(y.leads, "lead") : "no data yet"}</dd></div>
-      <div><dt>Cost per lead</dt><dd class="v">${per(d.week.spend_cents, d.week.leads)}</dd><dd class="s">last 7 days, ${plural(d.week.leads, "lead")}</dd></div>
+  const asOf = d.today.as_of ? `as of ${new Date(d.today.as_of * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
+  const moneyCard = `<section class="panel td-sec" aria-labelledby="h-money">
+    <div class="td-sec-h"><h2 id="h-money">Money</h2><small>${asOf}</small></div>
+    <p class="td-big"><b>${money(d.today.spend_cents, { exact: true })}</b><span>spent today${budget ? ` of ${money(budget)} a day` : ""}</span></p>
+    ${budget ? `<div class="bar ink"><i data-w="${spentPct.toFixed(1)}"></i></div>` : ""}
+    <p class="td-note">${plural(d.today.leads, "lead")} so far. Today keeps filling in; Meta reports late.</p>
+    <dl class="td-stats">
+      <div><dt>Yesterday</dt><dd>${y ? `${money(y.spend_cents, { exact: true })} · ${plural(y.leads, "lead")}` : "no data yet"}</dd></div>
+      <div><dt>Leads, last 7 days</dt><dd>${d.week.leads ?? 0}</dd></div>
+      <div><dt>Cost per lead</dt><dd>${per(d.week.spend_cents, d.week.leads)}</dd></div>
     </dl>
     <a class="btn" href="/performance.html">See all results</a>
   </section>`;
 
+  const st = d.stages || {};
+  const leadsCard = `<section class="panel td-sec" aria-labelledby="h-week">
+    <div class="td-sec-h"><h2 id="h-week">Leads this week</h2><a class="more" href="/leads.html">All leads</a></div>
+    <dl class="td-stats"><div><dt>Contacted</dt><dd>${st.contacted || 0}</dd></div><div><dt>Qualified</dt><dd>${st.qualified || 0}</dd></div><div><dt>Won</dt><dd>${st.won || 0}</dd></div></dl>
+    <p class="td-note">Call within 5 minutes: far more of them book.</p>
+  </section>`;
+
   const strip = d.ad_strip || [];
   const best = strip.reduce((b, a) => (a.leads > (b ? b.leads : 0) ? a : b), null);
-  const onCount = strip.filter((a) => a.status === "ACTIVE").length;
-  const adsCard = `<section class="panel strip" aria-labelledby="h-ads">
-    <div class="card-head"><h2 id="h-ads">Ads</h2><span class="on-count">${onCount} on</span><a class="more" href="/ads.html">Manage</a></div>
-    ${strip.length ? `<ul class="thumbs">${strip.slice(0, 5).map((a) => `<li><a href="/ad.html?id=${esc(a.id)}">
-        <div class="t ${a.status === "ACTIVE" ? "" : "off"} ${best && best.id === a.id ? "best" : ""}">${a.thumbnail_url ? `<img src="${esc(a.thumbnail_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}<span>${esc(shortAd(a.name))}</span></div>
-        <p class="${best && best.id === a.id ? "best" : ""}">${plural(a.leads, "lead")}</p><small>${money(a.spend_cents, { exact: true })}</small></a></li>`).join("")}</ul>
-      <p class="judge">Last 7 complete days. Judge an ad after it has spent about twice your target cost per lead.</p>`
-      : '<p class="muted flush">No ads synced yet.</p>'}
+  const inReview = (d.ads?.IN_PROCESS || 0) + (d.ads?.PENDING_REVIEW || 0);
+  const adsCard = `<section class="panel td-sec" aria-labelledby="h-ads">
+    <div class="td-sec-h"><h2 id="h-ads">Ads</h2><span class="on-count">${d.ads?.ACTIVE || 0} on</span>${inReview ? `<span class="pill warn">${inReview} in review</span>` : ""}<a class="more" href="/ads.html">Manage</a></div>
+    ${strip.length ? `<ul class="td-onair">${strip.slice(0, 5).map((a) => `<li><a href="/ad.html?id=${esc(a.id)}" aria-label="${esc(a.name)}: ${plural(a.leads, "lead")}, ${money(a.spend_cents, { exact: true })}">
+        <span class="t ${a.status === "ACTIVE" ? "" : "off"} ${best && best.id === a.id ? "best" : ""}">${a.thumbnail_url ? `<img src="${esc(a.thumbnail_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}<span>${esc(shortAd(a.name))}</span></span>
+        <b>${plural(a.leads, "lead")}</b><small>${money(a.spend_cents, { exact: true })}</small></a></li>`).join("")}</ul>
+      <p class="td-note">Last 7 complete days. Judge an ad after it has spent about twice your target cost per lead.</p>`
+      : '<p class="td-note">No ads synced yet.</p>'}
   </section>`;
 
   let claudeCard = "";
@@ -80,40 +132,32 @@ function render(d) {
     const mac = d.bridge.online ? '<span class="mac-dot on">Mac connected</span>' : `<span class="mac-dot">${d.bridge.has_key ? "Mac offline" : "Mac not set up"}</span>`;
     const lastDone = d.desk.find((t) => t.status === "done" && t.summary);
     const pend = d.pending_proposals || 0;
-    claudeCard = `<section class="panel claude-card" aria-labelledby="h-claude">
-      <div class="card-head">${icon("spark")}<h2 id="h-claude">Claude</h2>${mac}</div>
-      <p>${lastDone ? esc(lastDone.summary) : "Ask for a review, a polish audit or new ad ideas."}</p>
-      <a class="btn" href="/desk.html">${pend ? `Review ${plural(pend, "idea")}` : "Ask Claude"}</a>
+    claudeCard = `<section class="panel td-sec td-claude" aria-labelledby="h-claude">
+      <div class="td-sec-h">${icon("spark")}<h2 id="h-claude">Claude</h2>${mac}</div>
+      <p class="td-note">${lastDone ? esc(lastDone.summary) : "Ask for a review, a polish audit or new ad ideas."}</p>
+      <a class="btn btn-claude-outline" href="/desk.html">${pend ? `Open ${plural(pend, "suggestion")}` : "Ask Claude"}</a>
     </section>`;
   }
 
   const LEVEL = { campaign: "campaign", adset: "ad set", ad: "ad", study: "A/B test", form: "lead form", account: "account" };
   const changes = d.changes.length
-    ? `<ul class="chg-list">${d.changes.slice(0, 4).map((c) => {
+    ? `<ul class="chg-list">${d.changes.slice(0, 6).map((c) => {
         const [cls, ic, what] = changeWords(c, LEVEL);
         return `<li class="ic ${cls}">${icon(ic)}<span>${what}${c.ok ? "" : ' <b class="bad-text">(Meta refused)</b>'}<small>${esc(when(c.created_at))}${c.user_name ? `, ${esc(c.user_name)}` : ""}</small></span></li>`;
       }).join("")}</ul>`
-    : '<p class="muted flush">No changes made from the dashboard yet.</p>';
-  // Today → Inbox: the latest unread (Meta's approvals and rejections, leads, Claude, money), then what you changed.
-  const inReview = (d.ads?.IN_PROCESS || 0) + (d.ads?.PENDING_REVIEW || 0);
-  const changesCard = `<section class="panel changes-card" aria-labelledby="h-changes"><div class="card-head"><h2 id="h-changes">Inbox</h2>
-      ${inReview ? `<span class="pill warn">${inReview} in review</span>` : ""}<a class="more" href="/inbox.html">Open Inbox</a></div>
-    <ul class="today-inbox" id="today-inbox"><li>${skeleton()}</li></ul>
-    <details class="today-changes"><summary>Changes made from the console</summary>${changes}</details></section>`;
+    : '<p class="td-note">No changes made from the dashboard yet.</p>';
+  const changesCard = `<details class="panel td-sec today-changes"><summary>Changes made from the console</summary>${changes}</details>`;
 
   const adviceCard = d.bridge ? `<section class="panel advice-card" aria-labelledby="h-advice" id="advice"><div class="card-head"><h2 id="h-advice">Meta's advice</h2></div><p class="muted flush">Reading from Meta…</p></section>` : "";
-  $("home").innerHTML = `${attention}<div class="today">${callCard}${moneyCard}${adsCard}${claudeCard}${changesCard}${adviceCard}</div>`;
-  if (adviceCard) loadAdvice();
-  api("/api/inbox?filter=unread").then((ib) => {
-    const el = $("today-inbox");
-    if (!el) return;
-    const tone = { bad: "bad", warn: "warn", ok: "ok", lead: "ok", claude: "claude" };
-    const live = ib.items.filter((i) => !i.resolved);
-    el.innerHTML = live.length ? live.slice(0, 5).map((i) => `<li><a href="${esc(i.href || "/inbox.html")}"><span class="tone-dot ${tone[i.level] || ""}" aria-hidden="true"></span><span><b>${esc(i.title)}</b><small>${esc(when(i.at))}</small></span></a></li>`).join("")
-      + (live.length > 5 ? `<li class="muted small">${live.length - 5} more in the Inbox</li>` : "")
-      : '<li class="muted">Nothing new. Approvals, rejections and new leads show up here.</li>';
-  }).catch(() => { const el = $("today-inbox"); if (el) el.innerHTML = ""; });
-  if (!claudeCard) $("home").querySelector(".changes-card").classList.add("wide");
+  const keepAdvice = $("advice");  // a refresh keeps what Meta said instead of reading it again
+  const changesOpen = $("home").querySelector(".today-changes")?.open;
+  $("home").innerHTML = `<div class="td-layout"><div class="td-main">${queueCard}${adviceCard}</div>
+    <aside class="td-side" aria-label="The day at a glance">${moneyCard}${leadsCard}${adsCard}${claudeCard}${changesCard}</aside></div>`;
+  if (adviceCard) {
+    if (keepAdvice && keepAdvice.dataset.loaded) $("advice").replaceWith(keepAdvice);
+    else loadAdvice();
+  }
+  if (changesOpen) $("home").querySelector(".today-changes").open = true;
   $("home").querySelectorAll("[data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
 }
 
@@ -189,8 +233,8 @@ function adviceHtml(a) {
     }).join("")}</ul>` : '<p class="muted flush">No suggestions from Meta right now.</p>';
   const bm = a.benchmarks;
   const bench = bm ? `<div class="bench"><h3>How you compare</h3>${bm.summary ? `<p class="flush">${esc(bm.summary)}</p>` : ""}
-      <table class="table middle"><thead><tr><th></th><th class="num">You</th><th class="num">Similar advertisers</th><th></th></tr></thead>
-      <tbody>${bm.items.map((i) => `<tr><th scope="row">${esc(i.label)}</th><td class="num">${esc(i.ours)}</td><td class="num">${esc(i.peers)}</td><td class="muted small">${esc(i.note)}</td></tr>`).join("")}</tbody></table>
+      <table class="table middle"><thead><tr><th></th><th class="num">You</th><th class="num">Similar advertisers</th><th class="bench-note"></th></tr></thead>
+      <tbody>${bm.items.map((i) => `<tr><th scope="row">${esc(i.label)}</th><td class="num">${esc(i.ours)}</td><td class="num">${esc(i.peers)}${i.note ? `<small class="bench-note-under">${esc(i.note)}</small>` : ""}</td><td class="muted small bench-note">${esc(i.note)}</td></tr>`).join("")}</tbody></table>
       <p class="muted small flush">From Claude's Monday summary, ${esc(bm.as_of)}.</p></div>`
     : '<p class="muted small flush bench-empty">Benchmarks against similar advertisers come with Claude\'s Monday summary (Claude → Schedules).</p>';
   return `<div class="card-head"><h2 id="h-advice">Meta's advice</h2>${score}<span class="spacer"></span>
@@ -215,12 +259,19 @@ function fixButton(r) {
 async function loadAdvice(fresh = false) {
   const box = document.getElementById("advice");
   if (!box) return;
-  try { box.innerHTML = adviceHtml(await api(`/api/advice${fresh ? "?fresh=1" : ""}`)); }
+  try { box.innerHTML = adviceHtml(await api(`/api/advice${fresh ? "?fresh=1" : ""}`)); box.dataset.loaded = "1"; }
   catch (err) { box.innerHTML = `<div class="card-head"><h2>Meta's advice</h2></div><p class="muted flush">${esc(err.message)}</p>`; }
 }
 
 document.addEventListener("click", async (e) => {
   if (e.target.closest("#advice-fresh")) { loadAdvice(true); return; }
+  // A decision opens the Accept sheet: Meta read fresh, money items never ticked for you, one by one.
+  const acc = e.target.closest("[data-accept], [data-accept-all]");
+  if (acc) {
+    const ids = (acc.dataset.accept || acc.dataset.acceptAll).split(",").map(Number);
+    acceptSheet(ids, load);
+    return;
+  }
   const fix = e.target.closest("[data-fix]");
   if (fix) {
     const yes = await confirmDialog({

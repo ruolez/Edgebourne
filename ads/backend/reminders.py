@@ -17,14 +17,16 @@ import mailer
 import notify
 import replies
 import settings_store
+import today
 
-STEPS = (("5m", timedelta(minutes=5)), ("1h", timedelta(hours=1)))
+STEPS = (("5m", timedelta(minutes=today.FRESH_MINUTES)), ("1h", timedelta(minutes=today.LATE_MINUTES)))
 TOO_OLD = timedelta(hours=24)
 DIGEST_HOUR = 8
 
 
 def untouched(lead):
-    return lead["status"] == "new" and not lead["is_test"] and not lead["first_contacted_at"]
+    """The rule Today and Leads use (today.waiting): New, not a test, nobody called, emailed or moved it."""
+    return today.waiting(lead)
 
 
 def due(lead, now):

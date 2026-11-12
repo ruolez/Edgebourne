@@ -1,4 +1,4 @@
-"""Inbox API: GET the feed (filter=unread|all, kind=status|leads|claude|money|system|all), POST read marks."""
+"""Inbox API: GET the feed (box=need|fyi|all, filter=unread|all, kind=status|leads|claude|money|system|all), POST read marks."""
 from flask import Blueprint, jsonify, request
 
 import inbox
@@ -15,7 +15,10 @@ def feed():
     items = inbox.items_for(user)
     filt = request.args.get("filter", "all")
     kind = request.args.get("kind", "all")
-    return jsonify({"items": inbox.pick(items, filt, kind)[:200], "counts": inbox.counts(items)})
+    box = request.args.get("box", "all")
+    box = box if box in inbox.BOXES else "all"
+    return jsonify({"items": inbox.pick(items, filt, kind, box)[:200], "counts": inbox.counts(items),
+                    "kinds": inbox.kinds(inbox.pick(items, filt, "all", box))})
 
 
 @bp.post("/read")
@@ -24,7 +27,7 @@ def read():
     user = current_user()
     body = request.get_json(silent=True) or {}
     if body.get("all"):
-        keys = [i["key"] for i in inbox.pick(inbox.items_for(user), "unread", body.get("kind") or "all")]
+        keys = [i["key"] for i in inbox.pick(inbox.items_for(user), "unread", body.get("kind") or "all", body.get("box") or "all")]
     else:
         keys = [str(k) for k in (body.get("keys") or []) if isinstance(k, (str, int))][:500]
         if not keys:

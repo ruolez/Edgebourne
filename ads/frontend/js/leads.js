@@ -1,5 +1,5 @@
 import { api, startLoad } from "./api.js";
-import { boot, entityLink, esc, fieldError, icon, onRefresh, phoneDisplay, rememberList, setNewCount, shortWait, toast, waited, when, showLoadError } from "./ui.js";
+import { boot, entityLink, esc, fieldError, icon, leadClock, onRefresh, phoneDisplay, rememberList, setNewCount, toast, when, showLoadError } from "./ui.js";
 import { closeLayer, openLayer } from "./urlstate.js";
 
 const STAGES = [
@@ -14,12 +14,8 @@ const FILTERS = [{ id: "open", label: "Open" }, ...STAGES, { id: "all", label: "
 const state = { loaded: false, me: null, filter: "open", q: "", tests: false, leads: [], counts: {}, selected: null, seen: new Set() };
 const $ = (id) => document.getElementById(id);
 
-// Fresh = under an hour, late = over a day. Only new leads are "waiting".
-function clockClass(lead, now = Date.now()) {
-  if (lead.status !== "new") return "done";
-  const mins = (now - new Date(lead.created_time).getTime()) / 60000;
-  return mins < 60 ? "fresh" : mins > 1440 ? "late" : "";
-}
+// What "filtered" means here: anything other than open leads of every campaign, no search, no test leads.
+const filtered = () => state.filter !== "open" || Boolean(state.q) || state.tests || ["campaign", "ad"].some((k) => new URLSearchParams(location.search).get(k));
 
 function renderFilters() {
   const c = state.counts;
@@ -47,9 +43,8 @@ function renderResponse(r) {
 
 function rowHtml(lead) {
   const isNew = lead.status === "new";
-  const clock = isNew
-    ? `<span class="clock ${clockClass(lead)}"><b>${shortWait(lead.created_time)}</b><small>waiting</small></span>`
-    : `<span class="clock done"><b>${shortWait(lead.created_time)}</b><small>ago</small></span>`;
+  // One urgency rule with Today and the reminders (the server's today.urgency).
+  const clock = leadClock(lead);
   return `<li><button type="button" class="lead-row${state.seen.has(lead.id) ? "" : " arrived"}" data-id="${lead.id}" ${state.selected === lead.id ? 'aria-current="true"' : ""}>
     ${clock}
     <span class="who">
@@ -62,10 +57,10 @@ function rowHtml(lead) {
 
 function renderList() {
   const list = $("list");
+  $("clear-filters").hidden = !filtered();
   if (!state.leads.length) {
-    const filtered = state.filter !== "open" || state.q;
-    list.innerHTML = `<li class="empty">${filtered
-      ? "<h3>Nothing matches</h3><p>Try another stage or clear the search.</p>"
+    list.innerHTML = `<li class="empty">${filtered()
+      ? '<h3>Nothing matches</h3><p>Try another stage or search, or start again from every open lead.</p><button type="button" class="btn" data-clear-filters>Clear filters</button>'
       : `<h3>No leads yet</h3><p>When someone fills in one of the ad's lead forms, they show up here within a minute${state.me.role === "admin" ? " and you get an email" : ""}.</p>${state.me.role === "admin" ? '<a class="btn" href="/settings.html">Check the Meta connection</a>' : ""}`}</li>`;
   } else {
     list.innerHTML = state.leads.map(rowHtml).join("");
@@ -112,15 +107,14 @@ async function load({ quiet = false } = {}) {
 }
 
 function detailHtml(lead) {
-  const isNew = lead.status === "new";
-  const w = waited(lead.created_time);
-  const clock = `<span class="clock ${clockClass(lead)}"><b>${w.text}</b><small>${isNew ? "waiting for a call" : "since they asked"}</small></span>`;
+  const clock = leadClock(lead, { long: true });
   const CONTACT = new Set(["full_name", "first_name", "last_name", "email", "work_email", "phone_number", "phone"]);
   const answers = (lead.answers || []).filter((a) => !CONTACT.has(String(a.name).toLowerCase())).map((a) =>
     `<dt>${esc(prettyQuestion(a.name))}</dt><dd>${esc((a.values || []).join(", ") || "—")}</dd>`).join("");
   const owners = [`<option value="">Nobody yet</option>`, ...lead.assignable.map((u) =>
     `<option value="${u.id}" ${u.id === lead.owner_id ? "selected" : ""}>${esc(u.name)}</option>`)].join("");
-  const history = lead.history.map((h) => `<li>${when(h.at)}: ${esc(describe(h))}</li>`).join("");
+  // Newest first, each line a sentence (the server's lead_history.describe).
+  const history = lead.history.map((h) => `<li><time>${esc(when(h.at))}</time><span>${esc(h.text)}</span></li>`).join("");
   return `
     <button type="button" class="btn btn-quiet back-link" id="back">${icon("back")} All leads</button>
     <div class="detail-top">
@@ -162,7 +156,7 @@ function detailHtml(lead) {
       <textarea class="input" id="note" name="body" placeholder="What did you learn on the call?"></textarea>
       <div><button class="btn btn-primary" type="submit">Add note</button></div>
     </form>
-    ${history ? `<h3 class="section-title">History</h3><ul class="history">${history}</ul>` : ""}`;
+    ${history ? `<h3 class="section-title">History</h3><ol class="history">${history}</ol>` : ""}`;
 }
 
 function replyForm(lead) {
@@ -252,17 +246,6 @@ function prettyQuestion(key) {
   return map[k] || k.charAt(0).toUpperCase() + k.slice(1) + (String(key).endsWith("?") ? "?" : "");
 }
 
-function describe(h) {
-  const who = h.who || (h.actor === "meta" ? "Meta" : "System");
-  if (h.action === "lead.received") return "Arrived from Meta";
-  if (h.action === "lead.status") return `${who} moved it from ${h.details.from} to ${h.details.to}`;
-  if (h.action === "lead.owner") return `${who} changed the owner`;
-  if (h.action === "lead.email_failed") return "The alert email couldn't be sent";
-  if (h.action === "lead.reply") return `${who} emailed them: ${h.details.subject}`;
-  if (h.action === "lead.reply_auto") return `Automatic reply sent: ${h.details.subject}`;
-  return h.action;
-}
-
 // On a phone the lead covers the list, so opening one is a step Back undoes; side by side it's just the selection.
 const covers = () => matchMedia("(max-width: 960px)").matches;
 const listUrl = () => location.pathname + location.search;
@@ -331,14 +314,37 @@ function followMetaStages(id, tries = 0) {
   }, 3000 * (tries + 1));
 }
 
+const stageLabel = (id) => (STAGES.find((s) => s.id === id) || { label: id }).label;
+
 async function patch(id, body) {
   try {
     const lead = await api(`/api/leads/${id}`, { method: "PATCH", body });
-    renderDetail(lead, { keep: true });
+    if (state.selected === id) renderDetail(lead, { keep: true });
     if ((lead.meta_stages || []).some((r) => r.status === "pending")) followMetaStages(id);
-    if (body.status) toast(`Moved to ${STAGES.find((s) => s.id === body.status).label}`);
+    // A stage move can be put back for a few minutes: the toast's Undo (same person, while it's still the last move).
+    if (body.status) toast(`Moved to ${stageLabel(body.status)}`, "", lead.undo ? { undo: () => undoMove(id, lead.undo.event_id) } : {});
     load({ quiet: true });
   } catch (err) { toast(err.message, "bad"); }
+}
+
+async function undoMove(id, eventId) {
+  try {
+    const lead = await api(`/api/leads/${id}/events/${eventId}/undo`, { method: "POST" });
+    if (state.selected === id) renderDetail(lead, { keep: true });
+    const sent = (lead.undone?.meta_has || []).map(stageLabel);
+    toast(`Back to ${stageLabel(lead.status)}${sent.length ? `. Meta already has ${sent.join(", ")}` : ""}`);
+    load({ quiet: true });
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+function clearFilters() {
+  state.filter = "open"; state.q = ""; state.tests = false; state.selected = null;
+  $("q").value = ""; $("tests").checked = false;
+  const u = new URL(location.href);
+  u.searchParams.delete("campaign"); u.searchParams.delete("ad");
+  history.replaceState(null, "", u.pathname + u.search);
+  rememberList(u.pathname + u.search);
+  load();
 }
 
 function showEmptyDetail() {
@@ -356,6 +362,8 @@ async function main() {
     load();
   });
   $("tests").addEventListener("change", (e) => { state.tests = e.target.checked; load(); });
+  $("clear-filters").addEventListener("click", clearFilters);
+  $("list").addEventListener("click", (e) => { if (e.target.closest("[data-clear-filters]")) clearFilters(); });
   $("source").addEventListener("change", (e) => {
     const u = new URL(location.href);
     u.searchParams.delete("campaign"); u.searchParams.delete("ad");

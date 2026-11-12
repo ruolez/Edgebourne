@@ -76,20 +76,22 @@ def enabled():
 
 
 def enqueue(lead_id, stage, changed_at=None):
-    """Queue the stage (and any earlier ones Meta hasn't had) for one lead. Test leads never go."""
+    """Queue the stage (and any earlier ones Meta hasn't had) for one lead; returns the stages queued. Test leads never go."""
     lead = db.query("SELECT meta_lead_id, created_time, is_test FROM leads WHERE id = %s", (lead_id,), one=True)
     if not lead or lead["is_test"]:
         return 0
     sent = {r["stage"] for r in db.query("SELECT stage FROM crm_events WHERE lead_id = %s", (lead_id,))}
     at = event_time_for(changed_at or datetime.now(timezone.utc), lead["created_time"])
-    stages = stages_to_send(stage, sent)
-    for s in stages:
-        db.execute(
+    queued = []
+    for s in stages_to_send(stage, sent):
+        row = db.execute(
             """INSERT INTO crm_events (lead_id, meta_lead_id, stage, event_time)
-               VALUES (%s, %s, %s, %s) ON CONFLICT (lead_id, stage) DO NOTHING""",
-            (lead_id, lead["meta_lead_id"], s, at),
+               VALUES (%s, %s, %s, %s) ON CONFLICT (lead_id, stage) DO NOTHING RETURNING stage""",
+            (lead_id, lead["meta_lead_id"], s, at), returning=True,
         )
-    return len(stages)
+        if row:
+            queued.append(row["stage"])
+    return queued
 
 
 def _post(events, test_code=None):

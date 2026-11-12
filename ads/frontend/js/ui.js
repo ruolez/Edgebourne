@@ -61,6 +61,9 @@ export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&a
 // Toasts sit in the top layer (a manual popover, shown again on every message), so one raised while a
 // dialog is open shows above the dialog instead of behind its backdrop.
 let toastTimer;
+let toastMs = 3000;
+const hideToast = (el) => { el.hidden = true; topLayer(el, false); };
+const armToast = (el) => { clearTimeout(toastTimer); toastTimer = setTimeout(() => hideToast(el), toastMs); };
 const topLayer = (el, on) => {
   if (!el.popover) return;
   try {
@@ -68,13 +71,19 @@ const topLayer = (el, on) => {
     if (on) el.showPopover();
   } catch (e) { /* not connected yet */ }
 };
-export function toast(message, kind = "") {
+export function toast(message, kind = "", { undo = null, ms = 0 } = {}) {
   let el = document.querySelector(".toast");
   if (!el) {
     el = document.createElement("div");
     el.className = "toast";
     el.setAttribute("role", kind === "bad" ? "alert" : "status");
     if ("showPopover" in el) el.popover = "manual";
+    // The toast waits while the pointer or keyboard is on it, so its Undo can be reached in time.
+    const hold = () => clearTimeout(toastTimer);
+    el.addEventListener("pointerenter", hold);
+    el.addEventListener("focusin", hold);
+    el.addEventListener("pointerleave", () => { if (!el.hidden && !el.contains(document.activeElement)) armToast(el); });
+    el.addEventListener("focusout", (e) => { if (!el.hidden && !el.contains(e.relatedTarget) && !el.matches(":hover")) armToast(el); });
     document.body.appendChild(el);
   }
   // An open modal dialog makes everything outside it inert, so screen readers would never hear the toast:
@@ -93,12 +102,21 @@ export function toast(message, kind = "") {
     }
   }
   el.textContent = message;
+  // An Undo in the toast: one tap puts the change back (the server keeps its own window and rules).
+  if (undo) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "toast-act";
+    b.textContent = "Undo";
+    b.addEventListener("click", () => { clearTimeout(toastTimer); hideToast(el); undo(); }, { once: true });
+    el.append(" ", b);
+  }
   el.className = "toast " + kind;
   el.setAttribute("role", kind === "bad" ? "alert" : "status");
   el.hidden = false;
   topLayer(el, true);
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; topLayer(el, false); }, kind === "bad" ? 6000 : 3000);
+  toastMs = ms || (undo ? 8000 : kind === "bad" ? 6000 : 3000);
+  armToast(el);
 }
 
 // Tablists: arrow keys (Home / End) move between the tabs and open the one reached; only the chosen tab
@@ -163,6 +181,15 @@ export function shortWait(iso, now = Date.now()) {
   if (mins < 60) return `${mins}m`;
   if (mins < 48 * 60) return `${Math.floor(mins / 60)}h`;
   return `${Math.floor(mins / 1440)}d`;
+}
+// The lead clock. How urgent a lead is comes from the server (today.urgency, the rule Today, Leads and the
+// reminders share): fresh under 5 minutes, warm under an hour, late after that, done once someone reached them.
+export function leadClock(lead, { long = false } = {}) {
+  const u = lead.urgency || "done";
+  const waiting = u !== "done";
+  const text = long ? waited(lead.created_time).text : shortWait(lead.created_time);
+  const label = waiting ? (long ? "waiting for a call" : "waiting") : (long ? "since they asked" : "ago");
+  return `<span class="clock ${u}"><b>${text}</b><small>${label}</small></span>`;
 }
 export function when(iso) {
   if (!iso) return "";
@@ -272,7 +299,7 @@ async function frameStatus() {
       el.hidden = !st.proposals;
       el.innerHTML = st.proposals ? `<span aria-hidden="true">${st.proposals}</span><span class="sr-only">, ${st.proposals} ${st.proposals === 1 ? "suggestion" : "suggestions"} from Claude waiting</span>` : "";
     });
-    document.querySelectorAll("[data-inbox-count]").forEach((el) => { el.hidden = !st.inbox_unread; el.textContent = st.inbox_unread > 99 ? "99+" : st.inbox_unread || ""; });
+    setInboxCount(st.inbox_need ?? st.inbox_unread);
     const cap = st.cap;
     const card = document.getElementById("cap-card");
     if (card && cap && cap.limit_cents) {
@@ -751,6 +778,10 @@ function startClaudeNow(top) {
   document.addEventListener("visibilitychange", () => { if (!document.hidden) paintClaudeNow(); });
 }
 
+// The Inbox badge counts what needs you and is new (Needs action, unread); FYI never raises it.
+export function setInboxCount(n) {
+  document.querySelectorAll("[data-inbox-count]").forEach((el) => { el.hidden = !n; el.textContent = n > 99 ? "99+" : n || ""; });
+}
 export function setNewCount(n) {
   document.querySelectorAll("[data-new-count]").forEach((el) => {
     el.hidden = !n;

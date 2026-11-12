@@ -399,7 +399,7 @@ admin_proposals = c.get(f"/api/ads/ad/{two['ad']}").get_json().get("proposals")
 for url in (f"/api/proposals/{two['proposal']}", f"/api/proposals/{two['proposal']}/check", f"/api/proposals/{two['proposal']}/preview"):
     if cc.get(url).status_code != 404:
         tenant.append(f"a client reads {url}")
-if cc_proposals != [] or not admin_proposals or "Claude has" in cc.get("/api/home").get_data(as_text=True) \
+if cc_proposals != [] or not admin_proposals or re.search(r'Claude suggests|"proposal_id": [0-9]', cc.get("/api/home").get_data(as_text=True)) \
         or re.search(r'"pending_proposals": [1-9]', json.dumps(cc.get("/api/ads").get_json())):
     tenant.append(f"a client sees Claude's proposals ({len(cc_proposals or [])}) or the admin doesn't ({len(admin_proposals or [])})")
 # Failed Telegram deliveries are console-wide: only the owner sees them.

@@ -135,9 +135,19 @@ def _run(sql, params, fetch):
             conn.close()
 
 
+class NothingChanged(Exception):
+    """A required step of run_in_transaction returned no rows; the whole transaction was rolled back."""
+
+    def __init__(self, step):
+        super().__init__(f"step {step} changed nothing")
+        self.step = step
+
+
 def run_in_transaction(steps):
     """Run several statements on one connection in one transaction (e.g. SELECT … FOR UPDATE, then an
-    upsert). steps = [(sql, params)]; returns each step's rows (None when it returns nothing)."""
+    upsert). steps = [(sql, params)] or [(sql, params, True)] for a step that must return a row, or the
+    whole transaction rolls back with NothingChanged(step index). Returns each step's rows (None when it
+    returns nothing)."""
     if account_ctx.seeing_all():
         conn, owned = _owner_conn()
     else:
@@ -149,9 +159,11 @@ def run_in_transaction(steps):
     try:
         out = []
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            for sql, params in steps:
+            for n, (sql, params, *required) in enumerate(steps):
                 cur.execute(sql, params)
                 out.append(cur.fetchall() if cur.description is not None else None)
+                if required and required[0] and not out[-1]:
+                    raise NothingChanged(n)
         conn.commit()
         return out
     except Exception:

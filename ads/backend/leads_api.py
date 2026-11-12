@@ -1,12 +1,16 @@
+from datetime import datetime, timezone
+
 from flask import Blueprint, jsonify, request
 
 import crm_events
 import db
 import jobs
+import lead_history
 import leads
 import mailer
 import reminders
 import replies
+import today
 from auth import current_user, login_required, visible_campaign_ids
 from util import api_error, log_activity
 
@@ -66,6 +70,9 @@ def list_leads():
         f"WHERE {' AND '.join(clauses)} ORDER BY l.created_time DESC LIMIT 500",
         params,
     )
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        r["urgency"] = today.urgency(r, now)  # the same rule as Today and the reminders
     counts = db.query(
         f"SELECT l.status, COUNT(*) AS n FROM leads l WHERE {where} AND NOT l.is_test GROUP BY l.status",
         _scope(user)[1],
@@ -90,21 +97,31 @@ def get_lead(lead_id):
         "LEFT JOIN users u ON u.id = n.user_id WHERE n.lead_id = %s ORDER BY n.created_at",
         (lead_id,),
     )
-    lead["history"] = db.query(
-        "SELECT a.at, a.action, a.details, a.actor, u.name AS who FROM activity a "
-        "LEFT JOIN users u ON u.id = a.user_id WHERE a.subject = %s AND a.action LIKE 'lead.%%' "
-        "ORDER BY a.at",
-        (str(lead_id),),
-    )
+    rows = _history_rows(lead_id)
+    owners = [r["details"].get("owner_id") for r in rows if r["action"] == "lead.owner" and r["details"].get("owner_id")]
+    names = {u["id"]: u["name"] for u in db.query("SELECT id, name FROM users WHERE id = ANY(%s)", (owners,))} if owners else {}
+    lead["history"] = [{"id": r["id"], "at": r["at"], "action": r["action"], "who": r["who"], "text": lead_history.describe(r, names)}
+                       for r in reversed(rows)]  # newest first
+    lead["urgency"] = today.urgency(lead, datetime.now(timezone.utc))
     lead["assignable"] = leads.staff_for(lead["campaign_id"])
     lead["meta_stages"] = crm_events.for_lead(lead_id) if crm_events.enabled() else None
     lead["replies"] = replies.for_lead(lead_id)
     return jsonify(lead)
 
 
+def _history_rows(lead_id):
+    return db.query(
+        "SELECT a.id, a.at, a.action, a.details, a.actor, a.user_id, u.name AS who FROM activity a "
+        "LEFT JOIN users u ON u.id = a.user_id WHERE a.subject = %s AND a.action LIKE 'lead.%%' "
+        "ORDER BY a.at, a.id",
+        (str(lead_id),),
+    )
+
+
 def _set_status(lead, status):
+    """Move the stage. Returns the history line's id (what Undo names), or None when nothing moved."""
     if status == lead["status"]:
-        return
+        return None
     db.execute(
         """UPDATE leads SET status = %s, status_changed_at = now(),
                first_contacted_at = COALESCE(first_contacted_at,
@@ -112,9 +129,14 @@ def _set_status(lead, status):
            WHERE id = %s""",
         (status, status, lead["id"]),
     )
-    log_activity("lead.status", subject=str(lead["id"]), details={"from": lead["status"], "to": status})
-    if crm_events.enqueue(lead["id"], status):
+    queued = crm_events.enqueue(lead["id"], status)
+    before = lead.get("status_changed_at")
+    event_id = log_activity("lead.status", subject=str(lead["id"]), details={
+        "from": lead["status"], "to": status, "changed_before": before.isoformat() if before else None,
+        "first_contact": lead.get("first_contacted_at") is None and status != "new", "crm": queued})
+    if queued:
         jobs.wake()
+    return event_id
 
 
 @bp.patch("/<int:lead_id>")
@@ -127,18 +149,68 @@ def update_lead(lead_id):
     data = request.get_json(silent=True) or {}
     if user["role"] == "client" and set(data) - {"status"}:
         return api_error("Clients can move a lead's stage, nothing else", 403)
+    moved = None
     if "status" in data:
         status = data["status"]
         if status not in STATUSES:
             return api_error("Pick one of: " + ", ".join(STATUSES), 400)
-        _set_status(lead, status)
+        moved = _set_status(lead, status)
     if "owner_id" in data:
         owner = data["owner_id"]
-        if owner is not None and owner not in {u["id"] for u in leads.staff_for(lead["campaign_id"])}:
+        staff = {u["id"]: u["name"] for u in leads.staff_for(lead["campaign_id"])}
+        if owner is not None and owner not in staff:
             return api_error("Pick someone who works on this lead's campaign", 400)
         db.execute("UPDATE leads SET owner_id = %s WHERE id = %s", (owner, lead_id))
-        log_activity("lead.owner", subject=str(lead_id), details={"owner_id": owner})
-    return get_lead(lead_id)
+        log_activity("lead.owner", subject=str(lead_id), details={"owner_id": owner, "owner_name": staff.get(owner)})
+    out = get_lead(lead_id)
+    if moved:
+        body = out.get_json()
+        body["undo"] = {"event_id": moved, "minutes": lead_history.UNDO_MINUTES}
+        return jsonify(body)
+    return out
+
+
+@bp.post("/<int:lead_id>/events/<int:event_id>/undo")
+@login_required
+def undo_event(lead_id, event_id):
+    """Undo a stage move: the same person, within ten minutes, while it is still the last move. The stages it
+    queued for Meta are taken back only while still waiting; one already sent stays with Meta (no retraction)."""
+    user = current_user()
+    lead = _get_visible(lead_id, user)
+    if not lead:
+        return api_error("This lead doesn't exist or isn't in your campaigns", 404)
+    rows = _history_rows(lead_id)
+    event = next((r for r in rows if r["id"] == event_id), None)
+    if not event:
+        return api_error("That change isn't in this lead's history", 404)
+    latest = max((r["id"] for r in rows if r["action"] == "lead.status"), default=None)
+    plan = lead_history.undo_plan(event, latest, user["id"], datetime.now(timezone.utc))
+    if not plan["ok"]:
+        return api_error(plan["error"], plan["code"])
+    # One transaction: claim the line (two clicks or two tabs put it back once) and move the lead back only
+    # while it still sits where this move left it; a contact time from an email sent since stays.
+    try:
+        _, _, taken = db.run_in_transaction([
+            ("UPDATE activity SET details = details || '{\"undone\": true}'::jsonb "
+             "WHERE id = %s AND NOT (details ? 'undone') RETURNING id", (event_id,), True),
+            ("""UPDATE leads SET status = %s, status_changed_at = COALESCE(%s::timestamptz, status_changed_at),
+                   first_contacted_at = CASE WHEN %s THEN (SELECT MIN(r.sent_at) FROM lead_replies r
+                       WHERE r.lead_id = leads.id AND r.status = 'sent' AND NOT r.auto) ELSE first_contacted_at END
+                WHERE id = %s AND status = %s RETURNING id""",
+             (plan["status"], plan["status_changed_at"], plan["clear_first_contact"], lead_id, plan["to"]), True),
+            ("DELETE FROM crm_events WHERE lead_id = %s AND stage = ANY(%s) AND status = 'pending' RETURNING stage",
+             (lead_id, plan["crm"] or [])),
+        ])
+    except db.NothingChanged as exc:
+        if exc.step == 0:
+            return api_error("That move was already undone", 409)
+        return api_error("It has moved again since: move it back by hand", 409)
+    gone = {r["stage"] for r in taken or []}
+    kept = [s for s in plan["crm"] if s not in gone]
+    log_activity("lead.status_undone", subject=str(lead_id), details={"from": plan["to"], "to": plan["status"], "event_id": event_id})
+    body = get_lead(lead_id).get_json()
+    body["undone"] = {"to": plan["status"], "meta_has": [s for s in kept if s != "new"]}
+    return jsonify(body)
 
 
 @bp.post("/<int:lead_id>/notes")

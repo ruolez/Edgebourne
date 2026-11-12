@@ -615,8 +615,8 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   for (let i = 0; i < 40 && !alertMsg; i++) { await page.waitForTimeout(1000); alertMsg = tgSent().slice(tgBeforeAlert).find((m) => /QA rejected ad/.test(m.text)); }
   check('a rejected ad raises an alert on Telegram', Boolean(alertMsg), alertMsg ? alertMsg.text.split('\n')[0] : 'none');
   await page.goto(BASE + '/home.html');
-  await page.waitForSelector('.attention');
-  check('the alert shows on Today', /Meta stopped “QA rejected ad”/.test(await page.textContent('.attention')));
+  await page.waitForSelector('#tq-problems');
+  check('the alert shows on Today under Fix', /Meta stopped “QA rejected ad”/.test(await page.textContent('.tq-group[aria-labelledby="tq-problems"]')));
   runAlerts();
   await page.waitForTimeout(32000);
   check('the same alert is not sent twice', tgSent().slice(tgBeforeAlert).filter((m) => /QA rejected ad/.test(m.text)).length === 1);
@@ -1860,6 +1860,9 @@ with account_ctx.all_accounts():
   await cp.waitForSelector('.r-head');
   check("a client opens their own account's report, without the share button", /Burdanova QA/.test(await cp.textContent('.r-head')) && await cp.isHidden('#share'));
   check("a client's report links no form or test", (await cp.locator('#report a[href^="/forms.html"], #report a[href^="/experiments.html"]').count()) === 0);
+  const clientToday = await cp.evaluate(async () => (await fetch('/api/home')).json());
+  check("a client's Today lists only ad status and leads: no suggestions, money or upkeep", clientToday.queue.every((r) => ['status', 'leads'].includes(r.category) && !r.proposal_id),
+    clientToday.queue.map((r) => r.category).join());
   await cctx.close();
 
   // Client reports: the five parts, a share link without sign-in, the print layout, the scheduled email.
@@ -2369,35 +2372,84 @@ print(','.join(left))
   await page.waitForSelector('[data-sub="schedules"][aria-current="page"]');
   check('⌘K → "Claude: Schedules" opens Claude on its Schedules view', /#schedules$/.test(page.url()));
   await palette('Inbox: Money');
-  await Promise.all([page.waitForURL('**/inbox.html?show=money'), page.keyboard.press('Enter')]);
-  await page.waitForSelector('#ib-filters [data-f="money"][aria-selected="true"]');
-  check('⌘K → "Inbox: Money" opens the Inbox on the Money filter', /show=money/.test(page.url()));
+  await Promise.all([page.waitForURL('**/inbox.html?box=all&kind=money'), page.keyboard.press('Enter')]);
+  await page.waitForSelector('#ib-filters [data-f="money"][aria-pressed="true"]');
+  check('⌘K → "Inbox: Money" opens the Inbox on the Money filter', /kind=money/.test(page.url()) && (await page.getAttribute('#ib-box [aria-selected="true"]', 'data-box')) === 'all');
+  await page.goto(BASE + '/inbox.html?show=money');
+  await page.waitForSelector('#ib-filters [data-f="money"][aria-pressed="true"]');
+  check('an older Inbox link (?show=money) still lands on Money', (await page.getAttribute('#ib-box [aria-selected="true"]', 'data-box')) === 'all');
+  // 9.4 Inbox triage: Needs action first, FYI for the rest; the badge counts what needs you and is new.
   await page.goto(BASE + '/inbox.html');
   await page.waitForSelector('.ib-item, .ib-none');
-  check('the Inbox page lists items with read state and filters', (await page.locator('#ib-filters [data-f]').count()) === 7 && (await page.locator('.ib-item').count()) > 0);
+  check('the Inbox opens on Needs action, with For your information and All beside it, and filters by kind',
+    (await page.locator('#ib-box [role="tab"]').count()) === 3 && (await page.getAttribute('#ib-box [aria-selected="true"]', 'data-box')) === 'need'
+    && (await page.locator('#ib-filters [data-f]').count()) === 6 && (await page.locator('#ib-filters [data-unread]').count()) === 1 && (await page.locator('.ib-item').count()) > 0);
+  // Raised straight into the table: no message goes out for these two.
+  const triage = ['qa-triage-ad', 'qa-triage-ad2'].map((ent, i) => py(`import db,uuid;r=db.execute(\\"INSERT INTO alerts (rule, dedupe_key, level, title, lines, entity_id, campaign_id, href, kind, resolved_at) VALUES ('ad_rejected', %s, 'bad', %s, '[]', %s, '120252638288040312', '/ads.html', 'condition', ${i ? 'NULL' : 'now()'}) RETURNING id\\", ('qa-'+uuid.uuid4().hex, '${i ? 'QA still rejected' : 'QA fixed since'}', '${ent}'), returning=True);print(r['id'])`));
+  const needList = await getJson('/api/inbox?box=need');
+  const fyiList = await getJson('/api/inbox?box=fyi');
+  const frame = await getJson('/api/refresh');
+  check('a problem fixed since sits in For your information and leaves the needs-action count; an open one needs action',
+    needList.items.some((i) => i.key === `alert:${triage[1]}`) && !needList.items.some((i) => i.key === `alert:${triage[0]}`) && fyiList.items.some((i) => i.key === `alert:${triage[0]}`)
+    && needList.items.every((i) => i.need) && fyiList.items.every((i) => !i.need), triage.join());
+  await page.reload();
+  await page.waitForSelector('.ib-item');
+  await page.waitForTimeout(600);
+  check('the Inbox badge and the Needs action tab count the same: what needs you and is new, not every unread note', frame.inbox_need === needList.counts.need_unread
+    && frame.inbox_unread === needList.counts.unread && (await page.textContent('.rail [data-inbox-count]')).trim() === String(frame.inbox_need || '')
+    && ((await page.locator('#ib-box [data-box="need"] .n').count()) ? (await page.textContent('#ib-box [data-box="need"] .n')).trim() : '') === String(frame.inbox_need || ''),
+    `${frame.inbox_need} / ${frame.inbox_unread} / ${await page.textContent('.rail [data-inbox-count]')}`);
+  // E only marks read: the item under the keyboard loses its dot, nothing opens, nothing is decided.
+  const unreadRows = page.locator('#ib-list .ib-item.unread');
+  const firstOpen = (await page.textContent('#ib-detail h2')).trim();
+  const urlBefore = page.url();
+  const eKey = await unreadRows.nth(1).getAttribute('data-key');
+  await unreadRows.nth(1).focus();
+  await page.keyboard.press('e');
+  await page.waitForFunction((k) => !document.querySelector(`#ib-list [data-key="${k}"]`)?.classList.contains('unread'), eKey);
+  const eRead = (await getJson('/api/inbox?box=need')).items.find((i) => i.key === eKey);
+  check('E marks the item read and does nothing else', eRead && !eRead.unread && page.url() === urlBefore
+    && (await page.textContent('#ib-detail h2')).trim() === firstOpen, `${eKey} ${firstOpen}`);
+  // A suggestion in the Inbox is accepted through the Accept sheet only.
+  let claudeItems = (await getJson('/api/inbox?box=need&kind=claude')).items;
+  if (!claudeItems.length) {
+    py(`import db;db.execute(\\"INSERT INTO desk_proposals (task_id, kind, title, status) SELECT id, 'other', 'QA inbox suggestion', 'pending' FROM desk_tasks ORDER BY id DESC LIMIT 1\\")`);
+    claudeItems = (await getJson('/api/inbox?box=need&kind=claude')).items;
+  }
+  await page.goto(BASE + `/inbox.html?box=need&kind=claude#item=${encodeURIComponent(claudeItems[0].key)}`);
+  await page.waitForSelector('#ib-detail [data-accept]');
+  check('a suggestion in the Inbox has no bare accept button, only Review and accept', (await page.locator('#ib-detail button', { hasText: /^Accept$/ }).count()) === 0
+    && /Review and accept/.test(await page.textContent('#ib-detail [data-accept]')));
+  await page.click('#ib-detail [data-accept]');
+  await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
+  check('Review and accept opens the Accept sheet on Cancel', (await page.evaluate(() => document.activeElement.id)) === 'cd-cancel');
+  await page.click('dialog.accept-sheet #cd-cancel');
+  await page.waitForSelector('dialog.accept-sheet', { state: 'detached' });
+  check('cancelling the sheet leaves the suggestion waiting', (await getJson('/api/inbox?box=need&kind=claude')).items.some((i) => i.key === claudeItems[0].key));
   // 9.3a: an item about a campaign, ad set or ad names it with a link, and the open item is in the URL.
   const navAlert = py(`import alerts;r=alerts.raise_found([{'rule':'changed_outside','key':'qa-nav-subject-'+__import__('uuid').uuid4().hex,'level':'info','title':'QA changed outside','lines':['Budget changed in Ads Manager'],'entity_id':'120252638288040312','campaign_id':'120252638288040312','href':'/campaign.html?id=120252638288040312','kind':'event'}]);print(r[0][0])`);
-  await page.goto(BASE + `/inbox.html?show=all#item=alert%3A${navAlert}`);
+  await page.goto(BASE + `/inbox.html#item=alert%3A${navAlert}`);
   await page.waitForSelector('#ib-detail .ib-about a.ent-link');
-  check('an Inbox item opened by its address names its campaign with a link to it', (await page.getAttribute('#ib-detail .ib-about a.ent-link', 'href')) === '/campaign.html?id=120252638288040312'
-    && /QA changed outside/.test(await page.textContent('#ib-detail h2')), navAlert);
+  check('an Inbox item opened by its address names its campaign with a link to it, even when it is for your information', (await page.getAttribute('#ib-detail .ib-about a.ent-link', 'href')) === '/campaign.html?id=120252638288040312'
+    && /QA changed outside/.test(await page.textContent('#ib-detail h2')) && /For your information/.test(await page.textContent('#ib-detail .ib-kicker')), navAlert);
   // The item named by the address only counts on arrival: picking a filter, opening an item and refreshing keep the filter.
-  await page.click('#ib-filters [data-f="unread"]');
-  await page.waitForSelector('#ib-filters [data-f="unread"][aria-selected="true"]');
+  await page.click('#ib-filters [data-unread]');
+  await page.waitForSelector('#ib-filters [data-unread][aria-pressed="true"]');
   await page.waitForSelector('.ib-item, .ib-none');
   const ibPicked = (await page.locator('.ib-item').count()) ? await page.locator('.ib-item').first().getAttribute('data-key') : null;
   if (ibPicked) { await page.locator('.ib-item').first().click(); await page.waitForFunction(() => /item=/.test(location.hash)); }
   const ibTitle = ibPicked ? (await page.textContent('#ib-detail h2')).trim() : '';
   await Promise.all([page.waitForResponse((r) => /\/api\/inbox\?/.test(r.url())), page.click('.topline [data-refresh]')]);
   await page.waitForTimeout(400);
-  const ibAfter = await page.evaluate(() => ({ sel: document.querySelector('#ib-filters [aria-selected="true"]')?.dataset.f, show: new URLSearchParams(location.search).get('show'),
+  const ibAfter = await page.evaluate(() => ({ on: document.querySelector('#ib-filters [data-unread]')?.getAttribute('aria-pressed'), unread: new URLSearchParams(location.search).get('unread'),
     title: document.querySelector('#ib-detail h2')?.textContent.trim() || '' }));
-  check('in Unread, opening an item and refreshing keep Unread selected and the item on screen', ibPicked && ibAfter.sel === 'unread' && ibAfter.show === 'unread' && ibAfter.title === ibTitle,
+  check('with Unread only, opening an item and refreshing keep Unread only and the item on screen', ibPicked && ibAfter.on === 'true' && ibAfter.unread === '1' && ibAfter.title === ibTitle,
     JSON.stringify({ ibPicked, ibTitle, ...ibAfter }));
   await page.click('#ib-filters [data-f="leads"]');
   await page.waitForTimeout(400);
-  const ibLeads = await page.evaluate(() => ({ sel: document.querySelector('#ib-filters [aria-selected="true"]')?.dataset.f, show: new URLSearchParams(location.search).get('show'), hash: location.hash }));
-  check('picking another filter after an item was open keeps that filter and drops the item from the address', ibLeads.sel === 'leads' && ibLeads.show === 'leads' && !/item=/.test(ibLeads.hash), JSON.stringify(ibLeads));
+  const ibLeads = await page.evaluate(() => ({ sel: document.querySelector('#ib-filters [data-f][aria-pressed="true"]')?.dataset.f, kind: new URLSearchParams(location.search).get('kind'), hash: location.hash }));
+  check('picking another filter after an item was open keeps that filter and drops the item from the address', ibLeads.sel === 'leads' && ibLeads.kind === 'leads' && !/item=/.test(ibLeads.hash), JSON.stringify(ibLeads));
+  py(`import db;db.execute(\\"DELETE FROM alerts WHERE entity_id IN ('qa-triage-ad', 'qa-triage-ad2')\\")`);
   // 8.6 Ads manager: select → bulk bar (Cancel changes nothing, confirm turns off), peek with the timeline, level in the URL,
   // a saved view from the toolbar, campaign and ad set pages with breadcrumbs.
   await page.goto(BASE + '/ads.html?view=delivering');
@@ -2550,9 +2602,9 @@ print(','.join(left))
   check('an older New ad link (?from=<ad>) still starts from that ad', (await page.inputValue('#template')) === NAV_AD, await page.inputValue('#template'));
   await page.goto(BASE + '/home.html');
   await page.waitForSelector('.today-changes');
-  const viaAll = await page.locator('.call .via').count();
+  const viaAll = await page.locator('.tq-lead .tq-b p', { hasText: ' · from ' }).count();
   check('Today links the ad each lead came from and the things changed from the console',
-    (await page.locator('.today-changes a.ent-link').count()) > 0 && (await page.locator('.call .via a.ent-link[href^="/ad.html?id="]').count()) === viaAll, String(viaAll));
+    (await page.locator('.today-changes a.ent-link').count()) > 0 && viaAll > 0 && (await page.locator('.tq-lead .tq-b p a.ent-link[href^="/ad.html?id="]').count()) === viaAll, String(viaAll));
   // Back closes the quick look and stays on Ads.
   await page.goto(BASE + '/ads.html?range=7');
   await page.evaluate(() => localStorage.setItem('ebads-range', '7'));
@@ -2644,9 +2696,49 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   await page.waitForTimeout(600);
   const leadAds = await page.evaluate(async (a) => (await (await fetch(`/api/leads?ad=${a}`)).json()).leads.map((l) => l.ad_name), adOpt.slice(2));
   check('Leads filter to one ad and keep it in the URL', leadAds.length > 0 && new Set(leadAds).size === 1);
+  check('a filtered Leads list offers Clear filters', await page.isVisible('#clear-filters'));
+  await page.click('#clear-filters');
+  await page.waitForFunction(() => !/[?&](ad|campaign)=/.test(location.search) && document.getElementById('clear-filters').hidden);
+  check('Clear filters goes back to every open lead', (await page.inputValue('#source')) === '' && (await page.getAttribute('#filters [data-f="open"]', 'aria-pressed')) === 'true');
+  await page.fill('#q', 'zz-nobody-by-this-name');
+  await page.waitForSelector('#list [data-clear-filters]');
+  check('a search that finds nobody says so and offers Clear filters', /Nothing matches/.test(await page.textContent('#list')));
+  await page.click('#list [data-clear-filters]');
+  await page.waitForSelector('#list .lead-row');
+  check('…which brings the leads back and empties the search', (await page.inputValue('#q')) === '' && (await page.locator('#list .lead-row').count()) > 0);
+  // 9.4 Today: one ranked queue made of the Inbox's Needs action, leads first, never its FYI.
   await page.goto(BASE + '/home.html');
-  await page.waitForSelector('#today-inbox li');
-  check('Today shows the latest from the Inbox', (await page.locator('#today-inbox li').count()) > 0);
+  await page.waitForSelector('.tq-group, .tq-clear');
+  const homeData = await getJson('/api/home');
+  const ORDER = ['call', 'problems', 'follow', 'decide', 'money', 'system', 'later'];
+  const drawn = await page.$$eval('.tq-group', (g) => g.map((x) => x.getAttribute('aria-labelledby').replace('tq-', '')));
+  check('Today is one queue in a fixed order (call, fix, decide, money, keep it running) with no Inbox list of its own',
+    drawn.length > 1 && drawn.every((g, i) => i === 0 || ORDER.indexOf(g) > ORDER.indexOf(drawn[i - 1])) && (await page.locator('#today-inbox, .attention').count()) === 0, drawn.join());
+  const needKeys = (await getJson('/api/inbox?box=need')).items.map((i) => i.key);
+  const fyiKeys = (await getJson('/api/inbox?box=fyi')).items.map((i) => i.key);
+  const fromInbox = homeData.queue.filter((r) => /^(alert|proposal):/.test(r.key));
+  check('Today lists what needs action and nothing that is only for your information', fromInbox.length > 0 && fromInbox.every((r) => needKeys.includes(r.key))
+    && homeData.queue.every((r) => !fyiKeys.includes(r.key)) && new Set(homeData.queue.map((r) => r.key)).size === homeData.queue.length, fromInbox.map((r) => r.key).join());
+  const openLeads = (await getJson('/api/leads?status=open')).leads;
+  const callRows = homeData.queue.filter((r) => r.group === 'call');
+  check('Today and Leads use one urgency rule for every waiting lead', callRows.length > 0
+    && callRows.every((r) => openLeads.find((l) => `lead:${l.id}` === r.key)?.urgency === r.level)
+    && (await page.$$eval('.tq-lead .clock', (c) => c.map((x) => x.className))).every((c, i) => c === `clock ${callRows[i].level}`), callRows.map((r) => r.level).join());
+  check('the first hour comes first, then the longest wait', callRows.every((r, i) => i === 0 || (callRows[i - 1].bucket < r.bucket)
+    || (callRows[i - 1].bucket === r.bucket && new Date(callRows[i - 1].at) <= new Date(r.at))), callRows.map((r) => `${r.bucket}`).join());
+  if (!(await page.locator('.tq-group[aria-labelledby="tq-decide"] [data-accept]').count())) {
+    py(`import db;db.execute(\\"INSERT INTO desk_proposals (task_id, kind, title, status) SELECT id, 'other', 'QA today suggestion', 'pending' FROM desk_tasks ORDER BY id DESC LIMIT 1\\")`);
+    await page.reload();
+    await page.waitForSelector('.tq-group[aria-labelledby="tq-decide"] [data-accept]');
+  }
+  const decideId = await page.getAttribute('.tq-group[aria-labelledby="tq-decide"] [data-accept]', 'data-accept');
+  await page.click('.tq-group[aria-labelledby="tq-decide"] [data-accept]');
+  await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
+  check('a decision on Today opens the Accept sheet, starting on Cancel', (await page.evaluate(() => document.activeElement.id)) === 'cd-cancel');
+  await page.click('dialog.accept-sheet #cd-cancel');
+  await page.waitForSelector('dialog.accept-sheet', { state: 'detached' });
+  check('cancelling it decides nothing', (await getJson('/api/home')).queue.some((r) => String(r.proposal_id) === decideId), decideId);
+  check('Today ends with a way to the Inbox for the rest', /\/inbox\.html\?box=fyi/.test(await page.getAttribute('.tq-foot a', 'href')));
   // Phase 9.1: what used to break.
   const seen91 = errors.length;
   await page.goto(BASE + '/ads.html');
@@ -2680,6 +2772,42 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   await Promise.all([page.waitForResponse((r) => r.request().method() === 'PATCH' && /api\/leads\//.test(r.url())), page.click('#stages [aria-pressed="true"]')]);
   await page.waitForTimeout(250);
   check('moving a lead keeps the note being typed', (await page.inputValue('#note')) === 'half a thought');
+  // 9.4 Leads: a stage move can be put back from the toast, and the history says what happened in sentences.
+  const undoLead = leadIds[1];
+  const undoFrom = (await getJson(`/api/leads/${undoLead}`)).status;
+  const undoTo = undoFrom === 'won' ? 'lost' : 'won';
+  const [undoMoveRes] = await Promise.all([page.waitForResponse((r) => r.request().method() === 'PATCH' && r.url().endsWith(`/api/leads/${undoLead}`)), page.click(`#stages [data-stage="${undoTo}"]`)]);
+  const undoMoved = await undoMoveRes.json();
+  await page.waitForSelector('.toast .toast-act');
+  check('a stage move says so with an Undo', /Moved to (Won|Lost)/.test(await page.textContent('.toast')) && undoMoved.undo && undoMoved.undo.minutes === 10, JSON.stringify(undoMoved.undo));
+  // The toast waits while the keyboard is on its Undo (8 s otherwise), so it can be reached in time.
+  await page.focus('.toast .toast-act');
+  await page.waitForTimeout(8600);
+  check('the Undo toast stays while the keyboard is on it', await page.isVisible('.toast .toast-act'));
+  const [undoPost] = await Promise.all([page.waitForResponse((r) => /\/events\/\d+\/undo$/.test(r.url())), page.click('.toast .toast-act')]);
+  await page.waitForFunction((b) => document.querySelector(`#stages [data-stage="${b}"]`)?.getAttribute('aria-pressed') === 'true', undoFrom);
+  const undoBody = await undoPost.json();
+  const undoLabel = { won: 'Won', lost: 'Lost' }[undoTo];
+  check('Undo puts the stage back', undoPost.status() === 200 && undoBody.status === undoFrom, `${undoPost.status()} ${undoBody.status}`);
+  check('the history reads newest first, in sentences, and marks the move undone', new RegExp(`^Eugene undid the move to ${undoLabel}$`).test(undoBody.history[0].text)
+    && new RegExp(`moved it from \\w+ to ${undoLabel} \\(undone\\)$`).test(undoBody.history[1].text) && /undid the move/.test(await page.textContent('#detail ol.history li:first-child')),
+    undoBody.history.slice(0, 2).map((h) => h.text).join(' | '));
+  const undoCrmLeft = Number(py(`import db;print(db.query(\\"SELECT COUNT(*) AS n FROM crm_events WHERE lead_id = %s AND stage = %s\\", (${undoLead}, '${undoTo}'), one=True)['n'])`));
+  check('Undo takes back a stage still waiting to go to Meta (one already sent stays, and the toast says so)', undoCrmLeft === 0 || (undoBody.undone.meta_has || []).includes(undoTo), `${undoCrmLeft} ${JSON.stringify(undoBody.undone)}`);
+  const undoTwice = await page.evaluate(async ([id, ev]) => (await fetch(`/api/leads/${id}/events/${ev}/undo`, { method: 'POST', headers: { 'X-Requested-With': 'ebads' } })).status, [undoLead, undoMoved.undo.event_id]);
+  check('the same move cannot be undone twice', undoTwice === 409, String(undoTwice));
+  // Moved out of New, then emailed: Undo puts the stage back but the lead stays reached (not waiting again).
+  {
+    const before = JSON.parse(py(`import db,json;r=db.query(\\"SELECT status, first_contacted_at FROM leads WHERE id = %s\\", (${undoLead},), one=True);print(json.dumps({'status': r['status'], 'fc': r['first_contacted_at'].isoformat() if r['first_contacted_at'] else None}))`));
+    py(`import db;db.execute(\\"UPDATE leads SET status = 'new', first_contacted_at = NULL WHERE id = %s\\", (${undoLead},))`);
+    const moved = await page.evaluate(async (id) => (await (await fetch(`/api/leads/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ebads' }, body: JSON.stringify({ status: 'contacted' }) })).json()), undoLead);
+    const reply = py(`import db;r=db.execute(\\"INSERT INTO lead_replies (lead_id, to_email, subject, body, status, sent_at) VALUES (%s, 'qa@example.com', 'QA reply', 'x', 'sent', now()) RETURNING id\\", (${undoLead},), returning=True);print(r['id'])`);
+    const back = await page.evaluate(async ([id, ev]) => { const r = await fetch(`/api/leads/${id}/events/${ev}/undo`, { method: 'POST', headers: { 'X-Requested-With': 'ebads' } }); return { code: r.status, body: await r.json() }; }, [undoLead, moved.undo && moved.undo.event_id]);
+    const listed = (await getJson('/api/leads')).leads?.find((l) => String(l.id) === String(undoLead));
+    check('Undo after an email sent since keeps the lead reached: back in New but not waiting for a call', back.code === 200 && back.body.status === 'new' && Boolean(back.body.first_contacted_at)
+      && back.body.urgency === 'done' && (!listed || listed.urgency === 'done'), JSON.stringify({ code: back.code, status: back.body.status, fc: back.body.first_contacted_at, u: back.body.urgency, lu: listed && listed.urgency }));
+    py(`import db;db.execute(\\"DELETE FROM lead_replies WHERE id = %s\\", (${reply},));db.execute(\\"UPDATE leads SET status = %s, first_contacted_at = %s WHERE id = %s\\", ('${before.status}', ${before.fc ? `'${before.fc}'` : 'None'}, ${undoLead}))`);
+  }
   await page.goto(BASE + '/desk.html#list');
   await page.waitForSelector('#cv[data-state]');
   await page.waitForTimeout(400);
@@ -2726,6 +2854,35 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
       await page.waitForSelector('#team-table tbody tr');
     }
   }
+  {
+    // A teammate sees suggestions about their campaigns in the Inbox, with Review and accept but no link to the Claude page (admins only).
+    const mateProp = py(`
+from werkzeug.security import generate_password_hash
+import db, account_ctx
+with account_ctx.all_accounts():
+    u = db.query(\\"SELECT id FROM users WHERE email = 'qa-teammate@example.com'\\", one=True)['id']
+    db.execute(\\"UPDATE users SET is_active = TRUE, must_change_password = FALSE, password_hash = %s WHERE id = %s\\", (generate_password_hash('mate-pass-123'), u))
+    db.execute(\\"INSERT INTO campaign_members (campaign_id, user_id, account_id) VALUES ('120252638288040312', %s, 1) ON CONFLICT DO NOTHING\\", (u,))
+    r = db.execute(\\"INSERT INTO desk_proposals (task_id, kind, title, status, entity_type, entity_id, entity_name, account_id) SELECT id, 'other', 'QA teammate suggestion', 'pending', 'campaign', '120252638288040312', 'Edge Bourne campaign', 1 FROM desk_tasks WHERE account_id = 1 ORDER BY id DESC LIMIT 1 RETURNING id\\", returning=True)
+    print(r['id'])`);
+    const mctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+    const mp = await mctx.newPage();
+    mp.on('pageerror', (e) => errors.push('teammate page: ' + e.message));
+    await mp.goto(BASE + '/login.html');
+    await mp.fill('#email', 'qa-teammate@example.com'); await mp.fill('#password', 'mate-pass-123');
+    await Promise.all([mp.waitForURL('**/home.html**'), mp.click('button[type=submit]')]);
+    await mp.goto(BASE + `/inbox.html?box=need&kind=claude#item=proposal%3A${mateProp}`);
+    await mp.waitForSelector('#ib-detail [data-accept]');
+    check("a teammate's suggestion in the Inbox offers Review and accept and no link to the Claude page", /Review and accept/.test(await mp.textContent('#ib-detail [data-accept]'))
+      && (await mp.locator('#ib-detail a[href^="/desk.html"]').count()) === 0, mateProp);
+    await mctx.close();
+    py(`
+import db, account_ctx
+with account_ctx.all_accounts():
+    db.execute(\\"UPDATE desk_proposals SET status = 'declined' WHERE id = %s\\", (${mateProp},))
+    db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users WHERE email = 'qa-teammate@example.com')\\")
+    db.execute(\\"UPDATE users SET is_active = FALSE WHERE email = 'qa-teammate@example.com'\\")`);
+  }
   await page.evaluate(() => { const b = document.createElement('button'); b.id = 'qa-danger'; b.className = 'btn btn-danger'; b.textContent = 'Delete'; document.querySelector('.content').prepend(b); });
   await page.hover('#qa-danger');
   const dangerHover = await page.$eval('#qa-danger', (b) => { const c = getComputedStyle(b); return [c.color, c.backgroundColor]; });
@@ -2743,7 +2900,7 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   check('a page that fails to load says so and offers Try again', /didn't load/i.test(await page.textContent('#home')));
   await page.unroute('**/api/home');
   await page.click('#home [data-retry]');
-  await page.waitForSelector('#today-inbox li');
+  await page.waitForSelector('.tq-group, .tq-clear');
   check('Try again loads the page', !/didn't load/i.test(await page.textContent('#home')) && (await page.locator('#home [data-retry]').count()) === 0);
   // Today's minute timer and the frame's catch-up with Meta fire on the same tick: one /api/home, not two.
   const clockCtx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
@@ -2761,7 +2918,7 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
     return route.fulfill({ json: { ...status, updated_at: pulledAgain ? pulledAt + 300 : pulledAt } });
   });
   await Promise.all([clockPage.waitForResponse((r) => /\/api\/refresh$/.test(r.url())), clockPage.goto(BASE + '/home.html')]);
-  await clockPage.waitForSelector('#today-inbox li');
+  await clockPage.waitForSelector('.tq-group, .tq-clear');
   let homeLoads = 0;
   clockPage.on('request', (r) => { if (/\/api\/home$/.test(r.url())) homeLoads += 1; });
   pulledAgain = true;
@@ -2845,18 +3002,18 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   await page.keyboard.press('End');
   await page.waitForFunction(() => /tab=history/.test(location.hash));
   check('End jumps to the last tab', (await page.evaluate(() => document.activeElement.dataset.tab)) === 'history');
-  // Inbox draws its filter tabs again after each switch: focus follows to the new copy.
+  // Inbox draws its box tabs again after each switch: focus follows to the new copy.
   await page.goto(BASE + '/inbox.html');
-  await page.waitForSelector('#ib-filters [role="tab"]');
+  await page.waitForSelector('#ib-box [role="tab"]');
   await page.waitForTimeout(800);
-  const ibFrom = await page.getAttribute('#ib-filters [role="tab"][aria-selected="true"]', 'data-f');
-  await page.focus('#ib-filters [role="tab"][aria-selected="true"]');
+  const ibFrom = await page.getAttribute('#ib-box [role="tab"][aria-selected="true"]', 'data-box');
+  await page.focus('#ib-box [role="tab"][aria-selected="true"]');
   await page.keyboard.press('ArrowRight');
-  await page.waitForFunction((f) => document.querySelector('#ib-filters [aria-selected="true"]')?.dataset.f !== f, ibFrom);
+  await page.waitForFunction((f) => document.querySelector('#ib-box [aria-selected="true"]')?.dataset.box !== f, ibFrom);
   await page.waitForTimeout(600);
-  const ib = await page.evaluate(() => ({ focus: document.activeElement.dataset.f, sel: document.querySelector('#ib-filters [aria-selected="true"]').dataset.f,
-    panel: document.getElementById('ib-panel').getAttribute('aria-labelledby') === document.querySelector('#ib-filters [aria-selected="true"]').id }));
-  check('Inbox filters work as tabs: → switches, focus stays on the chosen tab after the list redraws, the list names it', ib.focus === ib.sel && ib.sel !== ibFrom && ib.panel, `${ibFrom} → ${JSON.stringify(ib)}`);
+  const ib = await page.evaluate(() => ({ focus: document.activeElement.dataset.box, sel: document.querySelector('#ib-box [aria-selected="true"]').dataset.box,
+    panel: document.getElementById('ib-panel').getAttribute('aria-labelledby') === document.querySelector('#ib-box [aria-selected="true"]').id }));
+  check('Inbox boxes (Needs action, For your information, All) work as tabs: → switches, focus stays on the chosen tab after the list redraws, the list names it', ib.focus === ib.sel && ib.sel !== ibFrom && ib.panel, `${ibFrom} → ${JSON.stringify(ib)}`);
   // Money dialogs start on Cancel; Escape gives focus back to the switch that opened them.
   await page.goto(BASE + '/ads.html');
   const sw = '[data-toggle="ad:120252672229400312"]';
@@ -2988,7 +3145,7 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   await phonePage.goBack();
   await phonePage.waitForFunction(() => !document.getElementById('layout').classList.contains('showing-detail'));
   check('on a phone Back closes the lead and stays on Leads with its filter', /\/leads\.html\?ad=/.test(phonePage.url()) && !/#lead=/.test(phonePage.url()), phonePage.url());
-  await phonePage.goto(BASE + '/inbox.html?show=all');
+  await phonePage.goto(BASE + '/inbox.html?box=all');
   await phonePage.waitForSelector('.ib-item');
   await phonePage.locator('.ib-item').first().click();
   await phonePage.waitForSelector('#ib-panel.showing-detail #ib-detail h2');
@@ -2996,7 +3153,7 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   check('on a phone an Inbox item opens over the list with a way back', /#item=/.test(ibOpen) && await phonePage.isVisible('#ib-detail [data-ib-back]') && await phonePage.isHidden('#ib-list'), ibOpen);
   await phonePage.goBack();
   await phonePage.waitForFunction(() => !document.getElementById('ib-panel').classList.contains('showing-detail'));
-  check('on a phone Back closes the Inbox item and shows the list', /\/inbox\.html\?show=all$/.test(phonePage.url()) && await phonePage.isVisible('.ib-item'), phonePage.url());
+  check('on a phone Back closes the Inbox item and shows the list', /\/inbox\.html\?box=all$/.test(phonePage.url()) && await phonePage.isVisible('.ib-item'), phonePage.url());
   await phonePage.locator('.ib-item').first().click();
   await phonePage.waitForSelector('#ib-panel.showing-detail [data-ib-back]');
   await phonePage.click('#ib-detail [data-ib-back]');
@@ -3136,6 +3293,13 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   }
   check('no field on a phone is small enough to make iOS zoom', zoomers.length === 0, zoomers.join(' | '));
   check('on a 320px phone nothing runs past the edge', spilling.length === 0, spilling.join(' | '));
+  await narrow.goto(BASE + '/leads.html');
+  await narrow.waitForSelector('.lead-row');
+  await narrow.click('.lead-row');
+  await narrow.waitForSelector('#stages');
+  const leadFit = await narrow.evaluate(() => ['#detail', '#detail .detail-top', '#detail .reach', '#stages', ...[...document.querySelectorAll('#stages button')].map((_, i) => `#stages button:nth-child(${i + 1})`)]
+    .map((sel) => [sel, Math.round(document.querySelector(sel)?.getBoundingClientRect().right || 0)]).filter(([, r]) => r > innerWidth + 1));
+  check('on a 320px phone the lead detail and every stage button fit on screen', leadFit.length === 0, JSON.stringify(leadFit));
   await narrow.goto(BASE + '/desk.html#new');
   await narrow.waitForSelector('#cv-seeds:not([hidden])');
   await narrow.waitForTimeout(300);
