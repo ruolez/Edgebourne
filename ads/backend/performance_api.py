@@ -61,6 +61,21 @@ def campaign_choices(user, start, end):
             ORDER BY spend_cents DESC, c.name""", [start, end] + params)]
 
 
+def window_totals(user, start, end, campaign_id=None):
+    """Spend, impressions, link clicks and Meta's leads over the window, for the campaigns the person can see
+    (Results' totals and the All accounts rows)."""
+    where, params = _scope_sql(user, "d.campaign_id")
+    if campaign_id:
+        where, params = f"({where}) AND d.campaign_id = %s", params + [campaign_id]
+    row = db.query(
+        f"""SELECT COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
+                   COALESCE(SUM(link_clicks),0) AS link_clicks, COALESCE(SUM(leads),0) AS leads
+            FROM ad_daily d WHERE day BETWEEN %s AND %s AND {where}""",
+        [start, end] + params, one=True,
+    )
+    return {k: int(v) for k, v in row.items()}
+
+
 def overview_data(user, days, campaign_id=None, span=None):
     """Everything the Performance page shows; also the AI desk's snapshot. `campaign_id`
     narrows it to one campaign the person can see; `span` gives explicit windows, for months."""
@@ -69,12 +84,7 @@ def overview_data(user, days, campaign_id=None, span=None):
     if campaign_id:
         where, params = f"({where}) AND d.campaign_id = %s", params + [campaign_id]
 
-    totals = db.query(
-        f"""SELECT COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
-                   COALESCE(SUM(link_clicks),0) AS link_clicks, COALESCE(SUM(leads),0) AS leads
-            FROM ad_daily d WHERE day BETWEEN %s AND %s AND {where}""",
-        [start, end] + params, one=True,
-    )
+    totals = window_totals(user, start, end, campaign_id)
     by_day = db.query(
         f"""SELECT day, SUM(spend_cents) AS spend_cents, SUM(leads) AS leads, SUM(impressions) AS impressions
             FROM ad_daily d WHERE day BETWEEN %s AND %s AND {where} GROUP BY day ORDER BY day""",

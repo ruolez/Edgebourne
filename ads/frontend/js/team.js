@@ -46,6 +46,7 @@ function openDialog(member) {
   form.name.disabled = form.email.disabled = Boolean(member);
   form.role.querySelectorAll("[data-owner-only]").forEach((o) => { o.hidden = o.disabled = !data.owner; });
   form.role.value = member ? member.access : "member";
+  $("m-client-note").hidden = form.role.value !== "client";
   const chosen = new Set(member ? member.campaign_ids : []);
   $("m-campaigns").innerHTML = data.campaigns.length
     ? data.campaigns.map((c) => `<label class="check"><input type="checkbox" name="campaign" value="${esc(c.id)}" ${chosen.has(c.id) ? "checked" : ""}> ${esc(c.name)}</label>`).join("")
@@ -81,6 +82,7 @@ me = await boot({ page: "team", admin: true });
 if (me) {
   $("add-btn").addEventListener("click", () => openDialog(null));
   $("m-cancel").addEventListener("click", () => $("member-dialog").close());
+  $("m-role").addEventListener("change", (e) => { $("m-client-note").hidden = e.target.value !== "client"; });
   $("member-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const form = e.target;

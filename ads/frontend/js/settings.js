@@ -99,6 +99,7 @@ function renderMeta() {
   if (!inherit.hidden) $("meta-form").querySelector('[data-hint="meta_system_token"]').textContent = "Not set for this account.";
   $("app-state").innerHTML = m.meta_app_id && m.meta_app_secret.set && m.meta_verify_token.set ? '<span class="pill ok">Set</span>' : '<span class="pill warn">Not complete</span>';
   const ready = m.meta_ad_account_id && m.meta_page_id && (m.meta_system_token.set || !s.account.own_token);
+  $("meta-next").hidden = !(m.meta_ad_account_id && !m.meta_page_id);
   $("meta-state").innerHTML = s.page_subscribed ? '<span class="pill ok">Receiving leads</span>'
     : ready ? '<span class="pill warn">Saved, not receiving leads yet</span>' : '<span class="pill">Not connected</span>';
   $("graph-default").textContent = `Leave blank for ${s.graph_version_default}.`;
@@ -456,7 +457,8 @@ async function renderConsole() {
   });
   try {
     const r = await api("/api/accounts/all");
-    $("acct-list").innerHTML = r.items.map((a) => `<li class="${a.archived ? "muted" : ""}"><b>${esc(a.name)}</b>${a.archived ? ' <span class="pill">Closed</span>' : a.id === s.account.id ? ' <span class="pill ok">Open now</span>' : ""}
+    $("acp-overview").hidden = r.items.filter((a) => !a.archived).length < 2;
+    $("acct-list").innerHTML = r.items.map((a) => `<li class="${a.archived ? "muted" : ""}"><span class="acct-who"><b>${esc(a.name)}</b><small class="muted">${a.ad_account_id ? `act_${esc(a.ad_account_id)} · ${esc(a.currency || "")}` : "Not connected to Meta yet"}</small></span>${a.archived ? ' <span class="pill">Closed</span>' : a.id === s.account.id ? ' <span class="pill ok">Open now</span>' : ""}
       <span class="spacer"></span><button class="btn btn-quiet btn-small" type="button" data-acct-rename="${a.id}" data-name="${esc(a.name)}">Rename</button>
       ${a.id === 1 ? "" : `<button class="btn ${a.archived ? "btn-quiet" : "btn-danger-text"} btn-small" type="button" data-acct-close="${a.id}" data-name="${esc(a.name)}" data-archived="${a.archived ? "1" : ""}">${a.archived ? "Reopen" : "Close"}</button>`}</li>`).join("");
   } catch (err) { $("acct-list").innerHTML = `<li class="muted">${esc(err.message)}</li>`; }
@@ -535,6 +537,7 @@ if (me) {
     catch (err) { if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; } throw err; }
     saved(e.target); toast("Targets saved"); renderTargets(); renderAlerts();
   }); });
+  $("acp-open").addEventListener("click", async () => { const { openPicker } = await import("./acpicker.js"); openPicker(); });
   $("acct-list").addEventListener("click", async (e) => {
     const ren = e.target.closest("[data-acct-rename]");
     const close = e.target.closest("[data-acct-close]");

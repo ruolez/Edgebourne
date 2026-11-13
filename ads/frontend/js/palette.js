@@ -36,6 +36,7 @@ const PAGES = [
   P("Settings", "/settings.html", "admin", "settings", "preferences configuration setup options"),
   P("Team", "/team.html", "admin", "team", "users people members invite logins", "Settings"),
   P("Your account", "/account.html", "all", "user", "profile password notifications push phone sign in"),
+  P("All accounts", "/accounts.html", "multi", "grid", "overview both accounts every business clients side by side compare accounts"),
 ];
 const T = (title, href, who, icon_, keys = "") => ({ type: "tab", title, href, who, icon: icon_, sub: "Tab", keys });
 const TABS = [
@@ -98,7 +99,8 @@ const VIEW_PAGE = { ads: ["/ads.html", "Ads"], leads: ["/leads.html", "Leads"], 
 function allowed(who, me) {
   const role = me && me.role;
   return who === "all" || (who === "staff" && role !== "client") || (who === "admin" && role === "admin")
-    || (who === "owner" && role === "admin" && me.owner) || (who === "report" && (role === "admin" || role === "client"));
+    || (who === "owner" && role === "admin" && me.owner) || (who === "report" && (role === "admin" || role === "client"))
+    || (who === "multi" && me && me.owner && (me.accounts || []).length > 1);
 }
 
 // This page's own tabs (an ad's Overview · Polish · Audience…, the Inbox filters): a click away.

@@ -361,12 +361,21 @@ function accountSwitch(me, where) {
     return `<div class="acct acct-${where}"><span class="acct-only">${esc(me.account.name)}</span>
       <button type="button" class="link-btn small" data-acct-add>+ Add an account</button></div>`;
   }
+  // FU-A: All accounts first (the overview), then each account; on the overview itself it is the one chosen.
+  const all = frame.page === "accounts";
   return `<div class="acct acct-${where}"><label class="sr-only" for="acct-${where}">Ad account</label>
-    <select class="input acct-select" id="acct-${where}" data-acct>${list.map((a) => `<option value="${a.id}" ${a.id === me.account.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}
+    <select class="input acct-select" id="acct-${where}" data-acct><option value="all" ${all ? "selected" : ""}>All accounts</option>${list.map((a) => `<option value="${a.id}" ${!all && a.id === me.account.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}
       <option value="new">+ Add an account…</option></select></div>`;
 }
 
+// Adding goes through the ad account picker (FU-A); its "Add without Meta for now" comes back to the name-only add.
 async function addAccount() {
+  const { openPicker } = await import("./acpicker.js");
+  await openPicker();
+  return false;
+}
+
+export async function addAccountByName() {
   const name = await confirmDialog({ title: "Add an ad account", confirm: "Add",
     body: "<p>A business whose Meta ads this console will run (for example a client). Its ads, leads, results and Claude's work stay separate from the others.</p>",
     field: { label: "Business name", value: "", validate: (v) => (v.trim() ? null : "Give it a name") } });
@@ -383,7 +392,9 @@ document.addEventListener("change", async (e) => {
   if (!sel) return;
   try {
     if (sel.value === "new") { if (!(await addAccount())) sel.value = sel.querySelector("[selected]")?.value || sel.options[0].value; return; }
+    if (sel.value === "all") { location.href = "/accounts.html"; return; }
     await api("/api/accounts/switch", { method: "POST", body: { id: Number(sel.value) } });
+    if (frame.page === "accounts") { location.href = "/home.html"; return; }
     location.reload();
   } catch (err) { toast(err.message, "bad"); }
 });
@@ -398,13 +409,13 @@ const PAGE_SECTION = {
   ads: "ads", ad: "ads", "new-ad": "ads", "new-adset": "ads", "new-campaign": "ads", forms: "ads", campaign: "ads", adset: "ads",
   gallery: "creative", ideas: "creative", research: "creative",
   performance: "insights", compare: "insights", experiments: "insights", report: "insights",
-  desk: "claude", settings: "settings", team: "settings", account: "account",
+  desk: "claude", settings: "settings", team: "settings", account: "account", accounts: "accounts",
 };
 const PAGE_TITLE = {
   home: "Today", inbox: "Inbox", leads: "Leads", ads: "Ads", ad: "Ad", "new-ad": "New ad", "new-adset": "New ad set",
   "new-campaign": "New campaign", forms: "Lead forms", campaign: "Campaign", adset: "Ad set", gallery: "Gallery", ideas: "Ideas", performance: "Results",
   compare: "Compare", experiments: "Tests", report: "Reports", desk: "Claude", research: "Research", settings: "Settings",
-  team: "Team", account: "Your account",
+  team: "Team", account: "Your account", accounts: "All accounts",
 };
 const SECTIONS = {
   today: { href: "/home.html", label: "Today", icon: "sun" },
@@ -666,7 +677,9 @@ export async function boot({ page, admin = false }) {
   document.body.prepend(skip);
   const line = document.createElement("div");
   line.className = "topline";
-  line.innerHTML = `<nav class="crumbs" aria-label="Breadcrumb"></nav><span class="grow"></span>${refreshButton()}`;
+  // With more than one account, every page names the one it shows before its breadcrumbs (not on All accounts).
+  const acctCrumb = showAcct && page !== "accounts" ? `<span class="crumb-acct">${esc(me.account.name)}</span>` : "";
+  line.innerHTML = `${acctCrumb}<nav class="crumbs" aria-label="Breadcrumb"></nav><span class="grow"></span>${refreshButton()}`;
   main.prepend(line);
   const canSee = (who) => who === "all" || isAdmin || (who === "report" && me.role === "client");
   const tabsFor = (SUBNAV[section] || []).filter(([, , who]) => canSee(who));
@@ -685,7 +698,7 @@ export async function boot({ page, admin = false }) {
   const top = document.createElement("header");
   top.className = "topbar";
   top.innerHTML = `<a class="crumb-up" href="${SECTIONS[section]?.href || "/home.html"}" aria-label="Back" hidden>${icon("back")}</a>
-    <a class="brand" href="/home.html"><img src="/img/favicon.svg" alt="Edge Bourne"><span>${esc(PAGE_TITLE[page] || "Edge Bourne Ads")}${showAcct ? `<small class="top-acct">${esc(me.account.name)}</small>` : ""}</span></a>
+    <a class="brand" href="/home.html"><img src="/img/favicon.svg" alt="Edge Bourne"><span>${esc(PAGE_TITLE[page] || "Edge Bourne Ads")}${showAcct && page !== "accounts" ? `<small class="top-acct">${esc(me.account.name)}</small>` : ""}</span></a>
     <button type="button" class="icon-btn" data-palette aria-label="Search">${icon("search")}</button>
     <button type="button" class="icon-btn" data-refresh aria-label="Refresh">${icon("refresh")}</button>
     <a class="icon-btn" href="/account.html" aria-label="Your account"><span class="avatar">${esc(initials)}</span></a>`;
@@ -733,6 +746,8 @@ export async function boot({ page, admin = false }) {
   shortcuts(isAdmin);
 
   banners(me);
+  // A message written just before the page moved on (an account added, then opened): said here, once.
+  try { const said = sessionStorage.getItem("ebads-toast"); if (said) { sessionStorage.removeItem("ebads-toast"); toast(said, "", { ms: 6000 }); } } catch (e) { /* storage off */ }
   catchUp();
   setInterval(paintUpdated, 30000);
   setInterval(catchUp, 60000);

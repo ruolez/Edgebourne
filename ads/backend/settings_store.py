@@ -32,6 +32,8 @@ ACCOUNT_KEYS = {
     # D1 numbers check: per account, so one account's night or check never stands in for another's.
     "numbers_check", "insights_unified_attribution", "last_full_sync", "numbers_last_night", "numbers_off_runs",
     "numbers_last_check_at", "numbers_night_try", "numbers_window",
+    # FU-A: "picker" when the ad account was picked from Meta's list (Settings → Accounts → Add ad account).
+    "meta_ad_account_via",
 }
 INHERITED = {"meta_system_token"}
 
@@ -86,12 +88,22 @@ def account_values(key, rows):
     return out
 
 
+HOLDER_ROWS_SQL = "SELECT key, value FROM settings WHERE key = %s OR key LIKE %s"
+UPSERT_SQL = """INSERT INTO settings (key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()"""
+
+
 def meta_holders(key):
     """[(account id, closed, value)] in account order: every account's value of a Meta id such as
     the Page or the ad account, account 1's built-in default included."""
     with account_ctx.all_accounts():
-        rows = db.query("SELECT key, value FROM settings WHERE key = %s OR key LIKE %s", (key, f"{key}@%"))
+        rows = db.query(HOLDER_ROWS_SQL, (key, f"{key}@%"))
         accounts = db.query("SELECT id, archived_at IS NOT NULL AS closed FROM accounts ORDER BY id")
+    return holders_from(key, rows, accounts)
+
+
+def holders_from(key, rows, accounts):
+    """meta_holders from rows already read (inside a transaction, where db.query may not run)."""
     values = account_values(key, rows)
     return [(a["id"], a["closed"], values[a["id"]]) for a in accounts if a["id"] in values]
 
@@ -102,11 +114,7 @@ def set(key, value, account_id=None):  # noqa: A001 - mirrors the store's vocabu
         db.execute("DELETE FROM settings WHERE key = %s", (name,))
         return
     stored = _encrypt(value) if key in SECRET_KEYS and value else value
-    db.execute(
-        """INSERT INTO settings (key, value) VALUES (%s, %s)
-           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()""",
-        (name, stored),
-    )
+    db.execute(UPSERT_SQL, (name, stored))
 
 
 def mask(value):

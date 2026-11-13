@@ -75,7 +75,142 @@ for i, (name, (title, body)) in enumerate(TEXTS.items()):
                 "created_time": (TODAY - timedelta(days=9)).isoformat() + "T13:30:00-0800"}
 
 
+# FU-A: ad accounts other than Edge Bourne's that the console's key reaches (me/adaccounts and the business's lists).
+# Masha Fontana Studio has its own campaign, ad set, two ads and daily results; the other two only exist as list rows.
+OTHER_ACCOUNTS = {
+    "2223334445556667": {"name": "Masha Fontana Studio", "currency": "USD", "timezone_name": "America/Chicago", "account_status": 1,
+                         "business": {"id": "3334445556667778", "name": "Masha Braverman"}},
+    "4445556667778889": {"name": "Tokyo Test KK", "currency": "JPY", "timezone_name": "Asia/Tokyo", "account_status": 1},
+    "5556667778889990": {"name": "Old Shop", "currency": "USD", "timezone_name": "America/New_York", "account_status": 101},
+    # Reached only by OWN_KEY_TOKEN, an account's own System User key (QA: the picker reads with the owner's key, never this one).
+    "6667778889990001": {"name": "Own Key Only Shop", "currency": "USD", "timezone_name": "America/Chicago", "account_status": 1},
+}
+OWN_KEY_TOKEN = "fake-own-key-qa"
+REACH = {"hidden": set(), "refuse_business": False}  # /fake/_adaccounts: hide accounts from every list, refuse the business lists
+MASHA = "2223334445556667"
+OTHER_CAMPAIGNS = {"120252799000000001": {"id": "120252799000000001", "name": "Masha - Extensions - Leads", "status": "ACTIVE",
+                                          "effective_status": "ACTIVE", "objective": "OUTCOME_LEADS", "daily_budget": "1500",
+                                          "bid_strategy": "LOWEST_COST_WITHOUT_CAP", "account": MASHA,
+                                          "start_time": f"{(TODAY - timedelta(days=10)).isoformat()}T09:00:00-0600"}}
+OTHER_ADSETS = {"120252799000000002": {"id": "120252799000000002", "name": "Fontana women 25-55 - Instant form", "campaign_id": "120252799000000001",
+                                       "status": "ACTIVE", "effective_status": "ACTIVE", "optimization_goal": "LEAD_GENERATION", "account": MASHA,
+                                       "learning_stage_info": {"status": "LEARNING"}, "billing_event": "IMPRESSIONS",
+                                       "targeting": {"age_min": 25, "age_max": 55, "geo_locations": {"countries": ["US"]}},
+                                       "destination_type": "ON_AD", "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+                                       "start_time": f"{(TODAY - timedelta(days=10)).isoformat()}T09:00:00-0600"}}
+OTHER_ADS = {}
+for _n, (_aid, _name, _title) in enumerate((("120252799000000003", "M1 - Before and after", "Hair that looks like yours, only more"),
+                                            ("120252799000000004", "M2 - Free consult", "Book a free extensions consult"))):
+    _cid = str(next(ids))
+    CREATIVES[_cid] = {"id": _cid, "object_type": "PHOTO", "title": _title, "body": "Tape-in and K-tip extensions in Fontana.",
+                       "call_to_action_type": "LEARN_MORE", "image_url": f"/dev-media/N{_n + 1}.jpg", "thumbnail_url": f"/dev-media/N{_n + 1}.jpg"}
+    OTHER_ADS[_aid] = {"id": _aid, "name": _name, "campaign_id": "120252799000000001", "adset_id": "120252799000000002", "status": "ACTIVE",
+                       "effective_status": "ACTIVE", "creative_id": _cid, "account": MASHA,
+                       "created_time": (TODAY - timedelta(days=9)).isoformat() + "T10:00:00-0600"}
+
+
+def other_ad_view(ad):
+    cr = CREATIVES[ad["creative_id"]]
+    return {**{k: v for k, v in ad.items() if k not in ("creative_id", "account")}, "configured_status": ad["status"],
+            "creative": {k: cr.get(k) for k in ("id", "object_type", "title", "body", "call_to_action_type", "image_url", "thumbnail_url") if cr.get(k)}}
+
+
+def other_rows(acct):
+    """Masha's daily results: 10 days back and today, per ad (spend and leads unlike Edge Bourne's)."""
+    rows, rng = [], random.Random(11)
+    for d in range(10, -1, -1):
+        day = (TODAY - timedelta(days=d)).isoformat()
+        for ad in (x for x in OTHER_ADS.values() if x["account"] == acct):
+            spend = round(rng.uniform(6.0, 9.5), 2)
+            imps = int(spend * rng.uniform(55, 80))
+            leads = rng.choice([0, 1, 1, 2, 3])
+            acts = [{"action_type": "onsite_conversion.lead_grouped", "value": str(leads)}] if leads else []
+            rows.append({"date_start": day, "date_stop": day, "ad_id": ad["id"], "ad_name": ad["name"], "adset_id": ad["adset_id"],
+                         "campaign_id": ad["campaign_id"], "spend": str(spend), "impressions": str(imps), "reach": str(int(imps * .8)),
+                         "inline_link_clicks": str(int(imps * .015)), "clicks": str(int(imps * .03)), "actions": acts})
+    return rows
+
+
+def adaccount_row(acct):
+    base = (OTHER_ACCOUNTS[acct] if acct in OTHER_ACCOUNTS else
+            {"name": "Edge Bourne Consulting", "currency": "USD", "timezone_name": "America/Los_Angeles", "account_status": 1,
+             "business": {"id": BUSINESS, "name": "Edge Bourne"}})
+    return {"id": f"act_{acct}", "account_id": acct, **base}
+
+
+def reachable_list(accts):
+    return jsonify({"data": [adaccount_row(x) for x in accts if x not in REACH["hidden"]]})
+
+
+@app.route("/fake/_adaccounts")
+def fake_adaccounts():
+    """QA: ?hide=<id> hides an ad account from every list, ?refuse_business=1 makes the business lists refuse, ?clear=1 resets."""
+    if request.args.get("clear"):
+        REACH["hidden"].clear()
+        REACH["refuse_business"] = False
+    if request.args.get("hide"):
+        REACH["hidden"].add(request.args["hide"])
+    if "refuse_business" in request.args:
+        REACH["refuse_business"] = request.args["refuse_business"] == "1"
+    return jsonify({"hidden": sorted(REACH["hidden"]), "refuse_business": REACH["refuse_business"]})
+
+
+def other_account_get(acct, parts, a):
+    """GET on act_<one of OTHER_ACCOUNTS> and its edges."""
+    if len(parts) == 1:
+        return jsonify({**OTHER_ACCOUNTS[acct], "id": f"act_{acct}", "account_id": acct, "spend_cap": "0", "amount_spent": "0"})
+    edge = parts[1]
+    mine = lambda d: [x for x in d.values() if x.get("account") == acct and listed(x)]  # noqa: E731
+    if edge == "campaigns":
+        return jsonify({"data": [{k: v for k, v in c.items() if k != "account"} for c in mine(OTHER_CAMPAIGNS)]})
+    if edge == "adsets":
+        return jsonify({"data": [{k: v for k, v in s.items() if k != "account"} for s in mine(OTHER_ADSETS)]})
+    if edge == "ads":
+        return jsonify({"data": [other_ad_view(x) for x in mine(OTHER_ADS)]})
+    if edge == "insights":
+        rows = other_rows(acct)
+        tr = json.loads(a.get("time_range") or "{}")
+        if a.get("date_preset") == "today":
+            rows = [r for r in rows if r["date_start"] == TODAY.isoformat()]
+        elif tr:
+            rows = [r for r in rows if tr.get("since", "") <= r["date_start"] <= tr.get("until", "9999")]
+        level = a.get("level", "ad")
+        if "reach" in (a.get("fields") or "") and "spend" not in (a.get("fields") or ""):
+            key = {"ad": "ad_id", "adset": "adset_id", "campaign": "campaign_id", "account": "account_id"}[level]
+            people = {}
+            for r in rows:
+                ident = acct if level == "account" else r[key]
+                people[ident] = people.get(ident, 0) + int(r["reach"])
+            return jsonify({"data": [{key: k, "reach": str(int(v * .62))} for k, v in people.items()]})
+        if level == "account":
+            by = {}
+            for r in rows:
+                d = by.setdefault(r["date_start"], {"spend": 0.0, "impressions": 0, "leads": 0})
+                d["spend"] += float(r["spend"])
+                d["impressions"] += int(r["impressions"])
+                d["leads"] += sum(int(x["value"]) for x in r["actions"])
+            return jsonify({"data": [{"date_start": k, "date_stop": k, "spend": f"{v['spend']:.2f}", "impressions": str(v["impressions"]),
+                                      "actions": [{"action_type": "onsite_conversion.lead_grouped", "value": str(v["leads"])}] if v["leads"] else []}
+                                     for k, v in sorted(by.items())]})
+        if level == "campaign":
+            by = {}
+            for r in rows:
+                d = by.setdefault(r["campaign_id"], {"spend": 0.0, "leads": 0})
+                d["spend"] += float(r["spend"])
+                d["leads"] += sum(int(x["value"]) for x in r["actions"])
+            return jsonify({"data": [{"campaign_id": k, "spend": f"{v['spend']:.2f}",
+                                      "actions": [{"action_type": "onsite_conversion.lead_grouped", "value": str(v["leads"])}]} for k, v in by.items()]})
+        return jsonify({"data": rows})
+    return jsonify({"data": []})  # activities, recommendations, adimages, advideos…: nothing yet
+
+
 def by_id(oid):
+    if oid in OTHER_CAMPAIGNS:
+        return OTHER_CAMPAIGNS[oid]
+    if oid in OTHER_ADSETS:
+        return OTHER_ADSETS[oid]
+    if oid in OTHER_ADS:
+        return OTHER_ADS[oid]
     if oid == CAMPAIGN["id"]:
         return CAMPAIGN
     if oid == ADSET["id"]:
@@ -603,7 +738,7 @@ def graph_ids():
         obj = by_id(oid)
         if obj is None:
             return jsonify({"error": {"message": f"Object {oid} does not exist (fake)", "code": 100}}), 400
-        out[oid] = ad_view(obj) if oid in ADS else obj
+        out[oid] = ad_view(obj) if oid in ADS else other_ad_view(obj) if oid in OTHER_ADS else obj
     return jsonify(out)
 
 
@@ -627,6 +762,18 @@ def graph(path):
     if request.method == "GET":
         if parts == ["me"]:
             return jsonify({"id": "1", "name": "ads-console (fake)"})
+        if parts == ["me", "adaccounts"]:
+            extra = ["6667778889990001"] if a.get("access_token") == OWN_KEY_TOKEN else []
+            return reachable_list([ACCOUNT, MASHA, "4445556667778889", *extra])
+        if len(parts) == 2 and parts[1] in ("owned_ad_accounts", "client_ad_accounts"):
+            if REACH["refuse_business"]:
+                return jsonify({"error": {"message": "(#200) Requires business_management permission to manage the object (fake)",
+                                          "code": 200, "type": "OAuthException"}}), 403
+            if parts[0] != BUSINESS:
+                return jsonify({"data": []})
+            return reachable_list([ACCOUNT] if parts[1] == "owned_ad_accounts" else ["5556667778889990"])
+        if parts and parts[0].startswith("act_") and parts[0][4:] in OTHER_ACCOUNTS:
+            return other_account_get(parts[0][4:], parts, a)
         if parts == [act]:
             return jsonify({"name": "Edge Bourne Consulting", "currency": "USD", "timezone_name": "America/Los_Angeles",
                             "spend_cap": "15000", "amount_spent": "4120", "account_status": 1,
@@ -761,7 +908,9 @@ def graph(path):
                 return jsonify({**obj, "thumbnails": {"data": [{"uri": obj["picture"], "is_preferred": True, "width": 1080}]}})
             if parts[0] in ADS:
                 return jsonify({**obj, "creative": {"id": obj["creative_id"]}})
-            return jsonify(obj)
+            if parts[0] in OTHER_ADS:
+                return jsonify(other_ad_view(obj))
+            return jsonify({k: v for k, v in obj.items() if k != "account"})
     else:
         if parts == [act, "adimages"]:
             f = request.files.get("filename")

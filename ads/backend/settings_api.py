@@ -66,7 +66,9 @@ def get_settings():
     return jsonify({
         "account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current()),
                     "own_token": bool(settings_store.own("meta_system_token")),
-                    "clients_update_leads": accounts_api.clients_update_leads()},
+                    "clients_update_leads": accounts_api.clients_update_leads(),
+                    "ad_account_id": settings_store.get("meta_ad_account_id") if accounts_api.connected() else None,
+                    "via": settings_store.get("meta_ad_account_via") or "typed"},
         "owner": is_owner(me), "console_editable": console_editable(me),
         "targets": targets.view(),
         "meta": _section(META_FIELDS),
@@ -179,6 +181,7 @@ def save_meta():
         if problem:
             return api_error(problem, 400, field="meta_ad_account_id")
         data["meta_ad_account_id"] = acct_id
+        settings_store.set("meta_ad_account_via", None)  # typed by hand from now on
     changed = _save(META_FIELDS, data)
     log_activity("settings.meta", details={"changed": changed})
     return get_settings()

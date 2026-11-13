@@ -266,6 +266,51 @@ acct_admin_limits = {
 }
 import meta_client
 
+# FU-A: the ad account picker is the owner's alone; All accounts shows a non-owner their own account only.
+with account_ctx.all_accounts():
+    n_accounts = db.query("SELECT COUNT(*) AS n FROM accounts", one=True)["n"]
+session_for(c, admin["id"], 1)
+owner_view = c.get("/api/accounts/overview?range=30").get_json() or {}
+acct1_row = next((r for r in owner_view.get("rows") or [] if r["id"] == 1), {})
+session_for(cc, client["id"])
+client_view = cc.get("/api/accounts/overview?range=30")
+client_body = client_view.get_data(as_text=True)
+with account_ctx.all_accounts():
+    active_names = {r["id"]: r["name"] for r in db.query("SELECT id, name FROM accounts WHERE archived_at IS NULL")}
+fua = {"reachable_owner": c.get("/api/accounts/reachable").status_code}
+session_for(c, admin["id"], A2)
+fua["reachable_switched_owner"] = c.get("/api/accounts/reachable").status_code
+session_for(c, admin["id"], 1)
+fua.update({
+    "reachable_account_admin": ac.get("/api/accounts/reachable").status_code,
+    "reachable_client": cc.get("/api/accounts/reachable").status_code,
+    "from_meta_account_admin": ac.post("/api/accounts/from-meta", json={"ad_account_id": "2223334445556667"}).status_code,
+    # Account 1's built-in ad account (config.META_DEFAULTS, usually not stored as a row) is taken.
+    "from_meta_taken": c.post("/api/accounts/from-meta", json={"ad_account_id": __import__("config").META_DEFAULTS["meta_ad_account_id"]}).status_code,
+    "owner_rows_named": sorted((r["id"], r["name"]) for r in owner_view.get("rows") or []) == sorted(active_names.items()),
+    "client_rows": [r["id"] for r in (client_view.get_json() or {}).get("rows") or []],
+    "client_sees_account1": [m for m in ["Edge Bourne", f'"spend_cents":{acct1_row.get("spend_cents")},', *ACCT1_MARKS] if m in client_body],
+    "client_cap": [r.get("cap") for r in (client_view.get_json() or {}).get("rows") or []],
+})
+# The picker lists and binds with the owner's key even when the open account has a key of its own: an account added
+# from it inherits the owner's key, so an ad account only the other key reaches is neither listed nor bound.
+import settings_store
+kept_token = settings_store.own("meta_system_token", account_id=A2)
+settings_store.set("meta_system_token", "fake-own-key-qa", account_id=A2)
+with account_ctx.all_accounts():
+    db.execute("DELETE FROM meta_cache WHERE key = 'adaccounts:reachable'")
+session_for(c, admin["id"], A2)
+own_key_list = c.get("/api/accounts/reachable").get_json() or {}
+fua["own_key_listed"] = [i["id"] for i in own_key_list.get("items") or [] if i["id"] == "6667778889990001"]
+fua["own_key_bind"] = c.post("/api/accounts/from-meta", json={"ad_account_id": "6667778889990001"}).status_code
+settings_store.set("meta_system_token", kept_token, account_id=A2)
+with account_ctx.all_accounts():
+    db.execute("DELETE FROM meta_cache WHERE key = 'adaccounts:reachable'")
+session_for(c, admin["id"], 1)
+with account_ctx.all_accounts():
+    fua["accounts_added"] = db.query("SELECT COUNT(*) AS n FROM accounts", one=True)["n"] - n_accounts
+session_for(c, admin["id"], 1)
+
 
 def account1_state():
     """What account-2 writes aimed at account 1 must leave alone, read in account 1 (and on Meta)."""
@@ -490,5 +535,5 @@ out.update({"leaks": l1 + l2 + l2b + l3, "routes_checked": [n1, n2, n3], "admin_
             "app_role_bypasses_rls": app_role_bypasses,
             "resync_thread_account": seen, "account2_assignments_seen_from_1": members_seen_from_1,
             "csrf_without_header": csrf_status, "routes_showing_own_mark": shown, "routes_crashed": crashed,
-            "tenant_problems": tenant})
+            "tenant_problems": tenant, "second_account": fua})
 print(json.dumps(out))

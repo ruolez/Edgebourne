@@ -2211,13 +2211,276 @@ print(a[0][1] if a else '-', b[0][1] if b else '-')"`).trim();
   await page.selectOption('#acct-rail', '1');
   await page.waitForFunction(() => /One simple system/.test(document.getElementById('cr-all')?.textContent || ''));
   check('and back', /One simple system/.test(await page.textContent('#cr-all')) && !/ACCT2MARK/.test(await page.textContent('#cr-all')));
+  // "+ Add an account…" opens the ad account picker (FU-A); its help keeps the name-only add for an account without Meta yet.
+  sh(`docker exec -w /app edgebourne-ads-backend python -c "import db, account_ctx\nwith account_ctx.all_accounts(): db.execute(\\"UPDATE accounts SET archived_at = now() WHERE name = 'QA Studio' AND archived_at IS NULL\\")"`);  // a stopped run's
   await page.selectOption('#acct-rail', 'new');
-  await page.waitForSelector('dialog.confirm');
+  await page.waitForSelector('dialog.acp .acp-row, dialog.acp #acp-none');
+  if (!(await page.$eval('#acp-help', (d) => d.open))) await page.click('#acp-help summary');
+  await page.click('dialog.acp [data-acp-plain]');
+  await page.waitForSelector('dialog.confirm:not(.acp) #cd-input');
   await page.fill('#cd-input', 'QA Studio');
-  await Promise.all([page.waitForURL('**/settings.html**'), page.click('dialog.confirm #cd-ok')]);
+  await Promise.all([page.waitForURL('**/settings.html**'), page.click('dialog.confirm:not(.acp) #cd-ok')]);
   await page.waitForSelector('#acct-rail');
   check('adding an account opens Settings on it, ready to connect its Meta account', /QA Studio/.test(await page.textContent('#acct-rail option:checked')));
   await page.evaluate(() => fetch('/api/accounts/switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 1 }) }));
+
+  // FU-A: a second ad account picked from what the console's Meta key reaches, kept apart, and every account side by side.
+  {
+    const MASHA = '2223334445556667';
+    const py = (code) => require('child_process').execSync('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', { input: code }).toString();
+    const fakeReach = (q) => sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/fake/_adaccounts?${q}').read().decode())"`);
+    const forgetReach = () => py("import db, account_ctx\nwith account_ctx.all_accounts():\n    db.execute(\"DELETE FROM meta_cache WHERE key = 'adaccounts:reachable'\")\n");
+    // QA's own Masha account goes completely (rows, settings, its client sign-in): Meta ids are unique across accounts, so a
+    // closed account that kept Masha's campaign rows would refuse them to the next run's new account.
+    const freeMasha = () => py(`import db, account_ctx
+with account_ctx.all_accounts():
+    ids = {int(r['key'].split('@')[1]) for r in db.query("SELECT key FROM settings WHERE key LIKE 'meta_ad_account_id@%' AND value = '${MASHA}'")}
+    ids |= {r['account_id'] for r in db.query("SELECT account_id FROM campaigns WHERE id = '120252799000000001' AND account_id <> 1")}
+    ids |= {r['id'] for r in db.query("SELECT id FROM accounts WHERE name = 'Masha Fontana Studio'")}
+    tables = [r['t'] for r in db.query("SELECT c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'account_id' AND NOT a.attisdropped WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relname <> 'users'")]
+    for acct in ids:
+        left = list(tables)
+        for _ in range(len(tables) + 1):
+            for t in list(left):
+                try:
+                    db.execute(f"DELETE FROM {t} WHERE account_id = %s", (acct,))
+                    left.remove(t)
+                except Exception:
+                    pass
+        db.execute("DELETE FROM settings WHERE key LIKE %s", (f"%@{acct}",))
+        try:
+            db.execute("DELETE FROM users WHERE account_id = %s", (acct,))
+            db.execute("DELETE FROM accounts WHERE id = %s", (acct,))
+        except Exception:
+            db.execute("UPDATE accounts SET archived_at = COALESCE(archived_at, now()) WHERE id = %s", (acct,))
+`);
+    const call = (method, url, body, p = page) => p.evaluate(async ([m, u, b]) => {
+      const r = await fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b === undefined ? undefined : JSON.stringify(b) });
+      let j = null; try { j = await r.json(); } catch (e) { /* not JSON */ }
+      return { status: r.status, body: j };
+    }, [method, url, body]);
+    // The refusals below are the point of their checks: they go through a copy of the owner's sign-in whose console isn't
+    // watched, so each isn't logged as a failed load while the console stays a gate for every other page of this block.
+    const refusals = async (calls) => {
+      const qp = await (await browser.newContext({ storageState: await page.context().storageState() })).newPage();
+      await qp.goto(BASE + '/404.html');
+      const out = [];
+      for (const [m, u, b] of calls) out.push(await call(m, u, b, qp));
+      await qp.context().close();
+      return out;
+    };
+    const switchTo = (id) => call('POST', '/api/accounts/switch', { id });
+    freeMasha();  // a run that stopped half-way left it bound
+    fakeReach('clear=1');
+    forgetReach();
+    await openSettings('accounts-panel');
+    await page.click('#acp-open');
+    await page.waitForSelector('dialog.acp .acp-row');
+    const rows = await page.$$eval('dialog.acp .acp-row', (els) => els.map((li) => ({ name: li.querySelector('.acp-name').textContent, off: li.querySelector('input').disabled,
+      text: li.textContent.replace(/\s+/g, ' ') })));
+    const row = (n) => rows.find((r) => r.name.startsWith(n)) || { off: false, text: '' };
+    check('Add ad account lists every ad account the key reaches: assigned to the console and shared with the Business',
+      rows.length === 4 && ['Edge Bourne', 'Masha Fontana Studio', 'Old Shop', 'Tokyo Test KK'].every((n) => rows.some((r) => r.name.startsWith(n))), JSON.stringify(rows.map((r) => r.name)));
+    check("the one already in the console can't be picked and says where it is", row('Edge Bourne').off && /Already in the console as Edge Bourne/.test(row('Edge Bourne').text));
+    check("one in a currency without cents can't be picked and says why", row('Tokyo').off && /JPY/.test(row('Tokyo').text) && /without cents/.test(row('Tokyo').text));
+    check("a closed ad account can't be picked", row('Old Shop').off && /Closed/.test(row('Old Shop').text));
+    check('Add this account waits until a usable ad account is picked', await page.isDisabled('dialog.acp #cd-ok'));
+    const before = (await call('GET', '/api/accounts/all')).body.items.length;
+    await page.click(`dialog.acp .acp-row:has(input[value="${MASHA}"]) label`);
+    const filled = await page.inputValue('#acp-name');
+    const ceilingNote = await page.textContent('#acp-ceiling');
+    await Promise.all([page.waitForURL('**/settings.html#meta'), page.click('dialog.acp #cd-ok')]);
+    await page.waitForSelector('#meta[data-section]:not([hidden])');
+    await page.waitForFunction((id) => document.getElementById('meta_ad_account_id')?.value === id, MASHA);
+    const made = await page.evaluate(() => ({ acct: document.querySelector('#acct-rail option:checked')?.textContent, next: !document.getElementById('meta-next').hidden,
+      toast: document.querySelector('.toast')?.textContent || '' }));
+    check('picking Masha fills its name; adding it opens its own Meta connection with the ad account filled and the Page still to pick',
+      filled === 'Masha Fontana Studio' && made.acct === 'Masha Fontana Studio' && made.next && /Masha Fontana Studio added/.test(made.toast)
+      && /highest daily budget of \$100\b/.test(ceilingNote), JSON.stringify({ filled, ceilingNote, ...made }));
+    const masha = (await call('GET', '/api/auth/me')).body.account.id;
+    const [lied, unknown, twice] = await refusals([['POST', '/api/accounts/from-meta', { ad_account_id: '1025971549903293' }],
+      ['POST', '/api/accounts/from-meta', { ad_account_id: '9999999999' }], ['POST', '/api/accounts/from-meta', { ad_account_id: MASHA }]]);
+    const after = (await call('GET', '/api/accounts/all')).body.items.length;
+    check("the server refuses Edge Bourne's own ad account, whatever the browser sends, and makes no account", lied.status === 409 && after === before + 1, `${lied.status} ${before}→${after}`);
+    check("an ad account the key doesn't reach is refused", unknown.status === 404 && /isn't reachable/.test(unknown.body.error), JSON.stringify(unknown));
+    check('the same ad account twice is refused', twice.status === 409 && /Already in the console as Masha Fontana Studio/.test(twice.body.error), JSON.stringify(twice));
+    const synced = await call('POST', '/api/performance/sync');
+    await page.goto(BASE + '/performance.html?range=7');
+    await page.waitForSelector('#c-spend svg');
+    const mashaResults = await page.innerText('main');
+    await switchTo(1);
+    await page.goto(BASE + '/performance.html?range=7');
+    await page.waitForSelector('#c-spend svg');
+    const ebResults = await page.innerText('main');
+    check("each account's Results show only its own campaigns", synced.status === 200 && /M1 - Before and after/.test(mashaResults) && !/One simple system|N3 - Same work twice/.test(mashaResults)
+      && /One simple system/.test(ebResults) && !/M1 - Before and after/.test(ebResults), `${synced.status}`);
+    // All accounts: one row per open account, each Spent the same as that account's own Results for the dates.
+    const spentIn = async (id) => { await switchTo(id); return (await call('GET', '/api/performance?range=7')).body.totals.spend_cents; };
+    const own = { 1: await spentIn(1), [masha]: await spentIn(masha) };
+    await switchTo(1);
+    const open = (await call('GET', '/api/accounts')).body.items;
+    await page.goto(BASE + '/accounts.html?range=7');
+    await page.waitForSelector('tr.ovw-row');
+    const ovw = await page.$$eval('tr.ovw-row', (trs) => trs.map((t) => ({ id: Number(t.dataset.id), name: t.querySelector('.ovw-open').textContent, spent: Number(t.querySelector('.ovw-spend').dataset.cents) })));
+    check('All accounts has a row per open account, and each Spent matches that account\'s Results', ovw.length === open.length && ovw.every((r) => open.some((a) => a.id === r.id && a.name === r.name))
+      && ovw.find((r) => r.id === 1)?.spent === own[1] && ovw.find((r) => r.id === masha)?.spent === own[masha] && own[masha] > 0, JSON.stringify({ ovw, own }));
+    check('All accounts is the first choice of the switcher, chosen on the page', (await page.inputValue('#acct-rail')) === 'all' && (await page.textContent('#acct-rail option:first-child')) === 'All accounts');
+    // Keyboard: the rows are one Tab stop, ↓ ↑ move between them, Enter opens the one in focus; each row says what it opens.
+    await page.focus('tr.ovw-row');
+    await page.keyboard.press('ArrowDown');
+    const keyDown = await page.evaluate(() => { const rs = [...document.querySelectorAll('tr.ovw-row')];
+      return { at: rs.indexOf(document.activeElement), stops: rs.filter((r) => r.tabIndex === 0).length, label: rs[1]?.getAttribute('aria-label'), name: rs[1]?.querySelector('.ovw-open').textContent,
+        keys: document.getElementById(rs[1]?.getAttribute('aria-describedby') || 'none')?.textContent || '' }; });
+    await page.keyboard.press('ArrowUp');
+    const keyUp = await page.evaluate(() => [...document.querySelectorAll('tr.ovw-row')].indexOf(document.activeElement));
+    await Promise.all([page.waitForURL('**/home.html**'), page.keyboard.press('Enter')]);
+    await page.waitForSelector('#acct-rail');
+    const keyOpened = await page.textContent('#acct-rail option:checked');
+    check('on All accounts ↓ and ↑ move between rows (one Tab stop), each row is labelled "Open <name>", and Enter opens that account',
+      keyDown.at === 1 && keyDown.stops === 1 && keyDown.label === `Open ${keyDown.name}` && /Press Enter/.test(keyDown.keys) && keyUp === 0 && keyOpened === ovw[0].name,
+      JSON.stringify({ keyDown, keyUp, keyOpened }));
+    await switchTo(1);
+    await page.goto(BASE + '/accounts.html?range=7');
+    await page.waitForSelector('tr.ovw-row');
+    await page.selectOption('#range-pick', '14');
+    await page.waitForFunction(() => /range=14/.test(location.search));
+    const shared = await page.evaluate(() => localStorage.getItem('ebads-range'));
+    await Promise.all([page.waitForURL('**/home.html**'), page.click(`tr.ovw-row[data-id="${masha}"] .ovw-open`)]);
+    await page.waitForSelector('#acct-rail');
+    check('a row opens Today in that account; the dates picked there are the shared ones', (await page.textContent('#acct-rail option:checked')) === 'Masha Fontana Studio' && shared === '14', shared);
+    await page.evaluate(() => localStorage.setItem('ebads-range', '7'));
+    // Back on Edge Bourne: nothing reachable left to add, then the business list refused.
+    await switchTo(1);
+    for (const id of [MASHA, '4445556667778889', '5556667778889990']) fakeReach(`hide=${id}`);
+    await openSettings('accounts-panel');
+    await page.click('#acp-open');
+    await page.waitForSelector('dialog.acp .acp-row');
+    await page.click('#acp-again');
+    await page.waitForFunction(() => document.querySelectorAll('dialog.acp .acp-row').length === 1);
+    const help = await page.evaluate(() => ({ open: document.getElementById('acp-help').open, text: document.getElementById('acp-help').textContent, none: !!document.getElementById('acp-none') }));
+    check('with nothing left to add, the picker opens the three steps that make another ad account appear, naming the System User',
+      help.open && help.none && /Request access to an ad account/.test(help.text) && /ads-console \(fake\)/.test(help.text), JSON.stringify(help).slice(0, 200));
+    await page.click('dialog.acp #cd-cancel');
+    fakeReach('clear=1&refuse_business=1');
+    forgetReach();
+    await page.click('#acp-open');
+    await page.waitForSelector('dialog.acp .acp-row');
+    const partial = await page.evaluate(() => ({ line: document.getElementById('acp-partial')?.textContent || '', names: [...document.querySelectorAll('dialog.acp .acp-name')].map((b) => b.textContent) }));
+    check("when the Business's own lists are refused, the picker says so and shows the assigned ones", /couldn't be read/.test(partial.line) && !partial.names.includes('Old Shop') && partial.names.length === 3, JSON.stringify(partial));
+    await page.click('dialog.acp #cd-cancel');
+    fakeReach('clear=1');
+    forgetReach();
+    // An admin of Edge Bourne's account only, and a read-only client of Masha's: no picker, one account each.
+    py(`from werkzeug.security import generate_password_hash
+import db
+pw = generate_password_hash('fua-pass-123')
+for email, role, acct in (('acctadmin-qa@edgebourne.test', 'admin', 1), ('client-qa@masha.test', 'client', ${masha})):
+    if db.query("SELECT 1 FROM users WHERE email = %s", (email,), one=True):
+        db.execute("UPDATE users SET role = %s, account_id = %s, password_hash = %s, must_change_password = FALSE, is_active = TRUE WHERE email = %s", (role, acct, pw, email))
+    else:
+        db.execute("INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, %s, %s)", (email, email.split('@')[0], pw, role, acct))
+`);
+    const signIn = async (email, viewport = { width: 1360, height: 900 }) => {
+      const p = await (await browser.newContext({ viewport })).newPage();
+      p.on('pageerror', (e) => errors.push(`${email}: ${e.message}`));
+      await p.goto(BASE + '/login.html');
+      await p.fill('#email', email);
+      await p.fill('#password', 'fua-pass-123');
+      await Promise.all([p.waitForURL('**/home.html**'), p.click('button[type=submit]')]);
+      return p;
+    };
+    const ap = await signIn('acctadmin-qa@edgebourne.test');
+    await ap.goto(BASE + '/settings.html#accounts-panel');
+    await ap.waitForSelector('#meta[data-section]:not([hidden])');
+    const apReach = await call('GET', '/api/accounts/reachable', undefined, ap);
+    await ap.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
+    await ap.waitForSelector('dialog.palette[open]');
+    await ap.keyboard.type('All accounts');
+    await ap.waitForTimeout(400);
+    const apPal = await ap.$$eval('dialog.palette .pal-t', (els) => els.map((e) => e.textContent));
+    check("an admin of one account gets no ad account picker and no All accounts in the switcher or ⌘K",
+      await ap.isHidden('#acp-open') && apReach.status === 403 && (await ap.locator('#acct-rail').count()) === 0 && !apPal.includes('All accounts'), `${apReach.status} ${apPal.join()}`);
+    await ap.context().close();
+    const mp = await signIn('client-qa@masha.test');
+    await mp.goto(BASE + '/accounts.html');
+    await mp.waitForSelector('tr.ovw-row');
+    const mv = await mp.evaluate(() => ({ rows: [...document.querySelectorAll('tr.ovw-row')].map((t) => t.querySelector('.ovw-open').textContent), head: document.querySelector('.ovw-table thead').textContent,
+      text: document.getElementById('ovw').textContent, rail: document.querySelector('.rail .acct-name')?.textContent, select: !!document.querySelector('#acct-rail') }));
+    check("a client of Masha's account sees only that account, with no spending limit, and the sidebar names it without a switcher",
+      mv.rows.join() === 'Masha Fontana Studio' && !/Spending limit/.test(mv.head) && !/Edge Bourne/.test(mv.text) && mv.rail === 'Masha Fontana Studio' && !mv.select, JSON.stringify(mv).slice(0, 300));
+    await mp.context().close();
+    // Phones: the picker's rows wrap inside the dialog; each account is one card big enough to tap.
+    const phoneFit = [];
+    for (const width of [390, 320]) {
+      const pp = await (await browser.newContext({ viewport: { width, height: 760 }, isMobile: true, hasTouch: true, storageState: await page.context().storageState() })).newPage();
+      await pp.goto(BASE + '/accounts.html');
+      await pp.waitForSelector('.ovw-card');
+      const cards = await pp.evaluate(() => [...document.querySelectorAll('.ovw-card')].map((c) => { const n = c.querySelector('.ovw-card-name'), r = n.getBoundingClientRect();
+        return { h: Math.round(c.getBoundingClientRect().height), w: Math.round(r.width), lines: Math.round(r.height / (parseFloat(getComputedStyle(n).lineHeight) || 20)), right: Math.round(c.getBoundingClientRect().right) }; }));
+      const wide = await pp.evaluate(() => document.documentElement.scrollWidth);
+      // An unconnected account's card links to its Meta connection, and what needs him to its Inbox, as 44px links beside the card.
+      const links = await pp.evaluate(async (w) => {
+        const d = await (await fetch('/api/accounts/overview')).json();
+        const linkOf = (id, re) => [...(document.querySelector(`.ovw-card[data-id="${id}"]`)?.closest('.ovw-item').querySelectorAll('.ovw-card-link') || [])].find((a) => re.test(a.getAttribute('href')));
+        const fits = (a) => a && a.getBoundingClientRect().height >= 44 && a.getBoundingClientRect().right <= w;
+        const off = d.rows.filter((r) => !r.connected), need = d.rows.filter((r) => r.needs_you);
+        return { off: off.length, offOk: off.every((r) => fits(linkOf(r.id, new RegExp(`acct=${r.id}#meta`)))),
+          need: need.length, needOk: need.every((r) => fits(linkOf(r.id, new RegExp(`inbox\\.html\\?acct=${r.id}&box=need`)))) };
+      }, width);
+      if (!links.off || !links.offOk || !links.needOk) phoneFit.push(`${width}px card links: ${JSON.stringify(links)}`);
+      await pp.goto(BASE + '/settings.html#accounts-panel');
+      await pp.waitForSelector('#acp-open');
+      await pp.click('#acp-open');
+      await pp.waitForSelector('dialog.acp .acp-row');
+      await pp.click('dialog.acp .acp-row:not(.is-blocked) label').catch(() => {});
+      const dlg = await pp.evaluate(() => { const f = document.querySelector('dialog.acp form'), n = document.getElementById('acp-name');
+        return { over: f.scrollWidth - f.clientWidth, font: n ? getComputedStyle(n).fontSize : null }; });
+      const bad = cards.filter((c) => c.h < 44 || c.w < 80 || c.lines > 2 || c.right > width);
+      if (bad.length || wide > width || dlg.over > 0 || dlg.font !== '16px') phoneFit.push(`${width}px: ${JSON.stringify({ bad, wide, dlg })}`);
+      await pp.context().close();
+    }
+    check('on 390 and 320px phones All accounts is one tappable card per account, with Connect and Needs you links, and the picker fits with a 16px name field',
+      phoneFit.length === 0, phoneFit.join(' | '));
+    // Team: choosing Client in the invite form says what a client sees (the other business's owner gets this sign-in).
+    await page.goto(BASE + '/team.html');
+    await page.click('#add-btn');
+    await page.waitForSelector('#member-dialog[open]');
+    const noteAt = async (role) => { await page.selectOption('#m-role', role); return page.isVisible('#m-client-note'); };
+    const clientNote = { client: await noteAt('client'), text: await page.textContent('#m-client-note'), member: await noteAt('member') };
+    await page.click('#m-cancel');
+    check("Team's invite form explains a client sign-in only when Client is chosen", clientNote.client && !clientNote.member && /see this account only/.test(clientNote.text), JSON.stringify(clientNote));
+    const blockable = () => page.evaluate(() => [...document.querySelectorAll('[class], [id]')].flatMap((e) => [...(typeof e.className === 'string' ? e.className.split(/\s+/) : []), e.id])
+      .filter((n) => /^(ad|ads|adset|adsets|advert|advertisement|sponsor|sponsored|banner|promo|promoted)([-_]|$)/i.test(n)));
+    await page.goto(BASE + '/accounts.html');
+    await page.waitForSelector('tr.ovw-row');
+    const risky = await blockable();
+    await openSettings('accounts-panel');
+    await page.click('#acp-open');
+    await page.waitForSelector('dialog.acp .acp-row');
+    risky.push(...await blockable());
+    await page.click('dialog.acp #cd-cancel');
+    check('the leak test: the picker is the owner\'s alone, binding refuses a taken ad account, a client of another account sees one row with nothing of account 1',
+      leak.second_account.reachable_owner === 200 && leak.second_account.reachable_switched_owner === 200 && leak.second_account.reachable_account_admin === 403
+      && leak.second_account.reachable_client === 403 && leak.second_account.from_meta_account_admin === 403 && leak.second_account.from_meta_taken === 409
+      && leak.second_account.accounts_added === 0 && leak.second_account.owner_rows_named && leak.second_account.client_rows.join() === String(leak.account2)
+      && leak.second_account.client_sees_account1.length === 0 && leak.second_account.client_cap.every((c) => c === null)
+      && leak.second_account.own_key_listed.length === 0 && leak.second_account.own_key_bind === 404, JSON.stringify(leak.second_account));
+    // Ready for the next run: Masha's account closed and its ad account free again.
+    await call('PATCH', `/api/accounts/${masha}`, { archived: true });
+    freeMasha();
+    // The account-1 admin made for these checks has a known password: it goes too.
+    py(`import db
+try:
+    db.execute("DELETE FROM users WHERE email = 'acctadmin-qa@edgebourne.test'")
+except Exception:
+    db.execute("UPDATE users SET is_active = FALSE, password_hash = 'x' WHERE email = 'acctadmin-qa@edgebourne.test'")
+`);
+    const adminLeft = py(`import db
+print(db.query("SELECT COUNT(*) AS n FROM users WHERE email = 'acctadmin-qa@edgebourne.test' AND is_active", one=True)["n"])`).trim();
+    check("the account admin these checks made can't sign in after them", adminLeft === '0', adminLeft);
+    await switchTo(1);
+    check('no class or id on All accounts or the picker an ad blocker would hide', risky.length === 0, risky.join());
+  }
   sh(`docker exec -w /app edgebourne-ads-backend python -c "
 from werkzeug.security import generate_password_hash
 import db
@@ -2799,7 +3062,7 @@ print('{}')`);
   // An ads console is full of them, so no class or id may start with ad- / ads- / adset / advert / sponsor / banner / promo.
   const risky = [];
   const riskyFiles = [];
-  for (const p of ['home.html', 'inbox.html', 'ads.html', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312',
+  for (const p of ['home.html', 'inbox.html', 'accounts.html', 'ads.html', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312',
     'compare.html?ids=120252672232030312,120252672233160312', 'ad.html?id=120252672229400312', 'performance.html', 'new-campaign.html', 'new-ad.html', 'new-adset.html', 'desk.html']) {
     await page.goto(BASE + '/' + p);
     riskyFiles.push(...(await page.evaluate(() => performance.getEntriesByType('resource').map((r) => new URL(r.name).pathname)

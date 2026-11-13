@@ -43,6 +43,7 @@
               <button class="btn" type="button" id="meta-connect">Start receiving leads</button>
               <button class="btn" type="button" id="meta-sync">Sync campaigns and recent leads</button>
             </div>
+            <p class="note" id="meta-next" hidden>Next: pick its Page, so its leads arrive.</p>
             <div class="note" id="sync-note" hidden></div>
             <div id="meta-result"></div>
             <details class="tech" id="meta-adv"><summary>Advanced <small>Instant status updates</small></summary>
@@ -226,8 +227,12 @@
           </form>
         </section>
         <section class="panel" id="accounts-panel" data-section hidden>
-          <div class="panel-head"><h2>Accounts</h2><p>Every business this console runs ads for.</p></div>
-          <div class="panel-body stack tight"><ul class="acct-list" id="acct-list"></ul></div>
+          <div class="panel-head"><h2>Accounts</h2><p>Every business this console runs ads for. Each one keeps its own leads, ads, results, Claude and settings.</p></div>
+          <div class="panel-body stack tight">
+            <div class="row"><button class="btn btn-primary" type="button" id="acp-open">Add ad account</button><a class="btn btn-quiet" href="/accounts.html" id="acp-overview" hidden>See all accounts side by side</a></div>
+            <ul class="acct-list" id="acct-list"></ul>
+            <p class="muted small">Someone whose ads you run can look at their own account: invite them in <a href="/team.html">Team</a> as a <b>Client</b>. Clients see that account only and can't change anything.</p>
+          </div>
         </section>
         </div>
         </div>

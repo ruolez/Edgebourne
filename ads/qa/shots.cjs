@@ -33,7 +33,7 @@ const BASE = process.env.BASE || 'http://ads.localhost:8090';
         await page.waitForSelector('#stages');
         await page.screenshot({ path: `${OUT}/lead-detail-${tag}-${scheme}.png`, fullPage: true });
       }
-      for (const p of ['home', 'inbox', 'ads', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312', 'compare.html?ids=120252672232030312,120252672233160312,120252672230740312', 'compare.html#pick', 'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=polish', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video', 'ad.html?id=120252672230740312#tab=comments', 'ad.html?id=120252672230740312#tab=history', 'ads.html?level=adset', 'new-ad', 'new-adset.html?campaign=120252638288040312', 'gallery', 'gallery.html?view=launched', 'ideas', 'research', 'research.html#tab=search', 'research.html#tab=watched', 'research.html#tab=past', 'desk', 'desk.html#ads', 'desk.html#schedules', 'performance', 'experiments', 'report', 'forms', 'new-campaign', 'team', 'settings', 'account', 'offline', 'missing-page.html',
+      for (const p of ['home', 'inbox', 'ads', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312', 'compare.html?ids=120252672232030312,120252672233160312,120252672230740312', 'compare.html#pick', 'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=polish', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video', 'ad.html?id=120252672230740312#tab=comments', 'ad.html?id=120252672230740312#tab=history', 'ads.html?level=adset', 'new-ad', 'new-adset.html?campaign=120252638288040312', 'gallery', 'gallery.html?view=launched', 'ideas', 'research', 'research.html#tab=search', 'research.html#tab=watched', 'research.html#tab=past', 'desk', 'desk.html#ads', 'desk.html#schedules', 'performance', 'experiments', 'report', 'forms', 'new-campaign', 'team', 'settings', 'account', 'accounts', 'offline', 'missing-page.html',
         'inbox.html?box=fyi', 'inbox.html?box=all', 'gallery.html?view=tired', 'leads.html?due=today',
         ...['targets', 'alerts', 'reports-panel', 'replies', 'lead-quality', 'tracking', 'crm', 'ab', 'activity-panel', 'meta-app', 'auto', 'telegram', 'email', 'accounts-panel'].map((s) => `settings.html#${s}`)]) {
         await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
@@ -43,6 +43,15 @@ const BASE = process.env.BASE || 'http://ads.localhost:8090';
         const variant = (p.match(/(?:#tab=|#|level=|view=|box=|due=)([\w-]+)/) || ['', ''])[1];
         await page.screenshot({ path: `${OUT}/${p.split('.')[0]}${variant ? '-' + variant : ''}-${tag}-${scheme}.png`, fullPage: true });
       }
+      // FU-A: the ad account picker (Settings → Accounts → Add ad account).
+      await page.goto(`${BASE}/settings.html#accounts-panel`);
+      await page.reload();
+      await page.waitForSelector('#acp-open');
+      await page.click('#acp-open');
+      await page.waitForSelector('dialog.acp .acp-row, dialog.acp #acp-none');
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${OUT}/acp-picker-${tag}-${scheme}.png` });
+      await page.keyboard.press('Escape');
       // The command menu, the shortcuts and (phones) the More sheet and the bulk bar.
       await page.goto(`${BASE}/home.html`);
       await page.waitForTimeout(600);

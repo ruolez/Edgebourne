@@ -1,13 +1,18 @@
 """Ad accounts in one console (roadmap 7.1): which one a request works on, the list, adding one,
-renaming, switching. Admins see every account; members and clients only their own."""
+renaming, switching. Admins see every account; members and clients only their own. FU-A: adding one
+picked from the ad accounts the console's Meta key reaches, and All accounts side by side."""
 import re
+import time
+from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request, session
 
 import account_ctx
+import adaccounts
 import db
+import meta_client
 import settings_store
-from auth import current_user, is_owner, login_required, owner_required
+from auth import current_user, is_owner, login_required, owner_required, visible_campaign_ids
 from util import api_error, log_activity
 
 bp = Blueprint("accounts", __name__, url_prefix="/api/accounts")
@@ -130,17 +135,198 @@ def create():
         return api_error("Give the account a name (the business it advertises)", 400, field="name")
     if name_taken(name):
         return api_error("Another account already has that name", 409, field="name")
-    with account_ctx.all_accounts():
-        new = db.execute("INSERT INTO accounts (name) VALUES (%s) RETURNING id", (name,), returning=True)["id"]
-        # Claude's regular checks and the first-reply template, ready to use (schedules off).
-        db.execute("""INSERT INTO desk_schedules (account_id, name, about, kind, prompt, rule, enabled, position)
-                      SELECT %s, name, about, kind, prompt, rule, FALSE, position FROM desk_schedules WHERE account_id = 1""", (new,))
-        # The first-reply template, with this business's name instead of Edge Bourne's (check the wording).
-        db.execute("""INSERT INTO reply_templates (account_id, name, subject, body, position)
-                      SELECT %s, name, replace(subject, 'Edge Bourne', %s), replace(body, 'Edge Bourne', %s), position
-                      FROM reply_templates WHERE account_id = 1 ORDER BY position LIMIT 1""", (new, name, name))
+    with account_ctx.all_accounts(), db.transaction() as cur:
+        cur.execute("INSERT INTO accounts (name) VALUES (%s) RETURNING id", (name,))
+        new = cur.fetchone()["id"]
+        _seed_new_account(cur, new, name)
     log_activity("account.created", subject=str(new), details={"name": name})
     return _with_choice(jsonify({"id": new, "name": name}), new), 201
+
+
+def _seed_new_account(cur, new, name):
+    """Claude's regular checks (switched off) and the first-reply template, ready to use in a new account."""
+    cur.execute("""INSERT INTO desk_schedules (account_id, name, about, kind, prompt, rule, enabled, position)
+                   SELECT %s, name, about, kind, prompt, rule, FALSE, position FROM desk_schedules WHERE account_id = 1""", (new,))
+    # The first-reply template, with this business's name instead of Edge Bourne's (check the wording).
+    cur.execute("""INSERT INTO reply_templates (account_id, name, subject, body, position)
+                   SELECT %s, name, replace(subject, 'Edge Bourne', %s), replace(body, 'Edge Bourne', %s), position
+                   FROM reply_templates WHERE account_id = 1 ORDER BY position LIMIT 1""", (new, name, name))
+
+
+# ---------------------------------------------------------------- FU-A: add an ad account picked from Meta's list
+
+REACH_FIELDS = "account_id,name,currency,account_status,timezone_name,business{id,name}"
+REACH_KEY = "adaccounts:reachable"
+REACH_TTL = 60
+FRESH_EVERY = 10  # seconds between two "Look again" reads
+_fresh_at = {}
+
+
+def _read_reach():
+    """Meta's lists of ad accounts, read now with the owner's key (account 1's: run inside account_ctx.use(DEFAULT))."""
+    reads = [("me/adaccounts", {"fields": REACH_FIELDS, "limit": 100})]
+    business = settings_store.get("meta_business_id")
+    if business:
+        reads += [(f"{business}/{edge}", {"fields": REACH_FIELDS, "limit": 100}) for edge in ("owned_ad_accounts", "client_ad_accounts")]
+    got = meta_client.read_many(reads)
+    if isinstance(got[0], meta_client.MetaError):
+        raise got[0]
+    sources, partial = {"assigned": got[0]}, []
+    for via, rows in zip(("owned", "client"), got[1:]):
+        if isinstance(rows, meta_client.MetaError):
+            partial.append(via)  # the System User may lack Business management: the assigned list still counts
+        else:
+            sources[via] = rows
+    try:
+        who = meta_client.get("me", fields="name", timeout=meta_client.READ_TIMEOUT).get("name")
+    except meta_client.MetaError:
+        who = None
+    return {"sources": sources, "partial": partial, "system_user": who,
+            "read_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+
+
+def reachable(force=False):
+    """Every ad account the owner's Meta key reaches, with the console account holding each and why one can't be
+    added. Always read with account 1's key and Business, whichever account is open: an account added from this
+    list has no key of its own and inherits that one (settings_store.INHERITED), so listing and binding must use
+    the key the new account will read with. Meta's answer is kept a minute under account 1 (meta_cache)."""
+    import account_info
+    import insights_api
+    import money_rules
+    with account_ctx.use(account_ctx.DEFAULT):
+        if force:
+            raw = _read_reach()
+            insights_api.store(REACH_KEY, raw)
+        else:
+            raw = insights_api.cached(REACH_KEY, REACH_TTL, _read_reach)
+    with account_ctx.all_accounts():
+        names = {r["id"]: r["name"] for r in db.query("SELECT id, name FROM accounts")}
+    items = adaccounts.mark_used(adaccounts.merge(raw["sources"]), settings_store.meta_holders("meta_ad_account_id"), names)
+    for i in items:
+        i["blocked"] = adaccounts.blocked(i, account_info.currency_problem)
+    return {"items": items, "partial": raw.get("partial") or [], "system_user": raw.get("system_user"),
+            "read_at": raw.get("read_at"), "default_max_daily_cents": money_rules.MAX_DAILY_DEFAULT}
+
+
+@bp.get("/reachable")
+@owner_required
+def reachable_listing():
+    now = time.time()  # one list for every account (the owner's key), so one "Look again" pace too
+    force = request.args.get("fresh") == "1" and now - _fresh_at.get(account_ctx.DEFAULT, 0) >= FRESH_EVERY
+    if force:
+        _fresh_at[account_ctx.DEFAULT] = now
+    try:
+        return jsonify(reachable(force=force))
+    except meta_client.MetaError as exc:
+        return api_error(str(exc), 400)
+
+
+class _Refused(Exception):
+    pass
+
+
+@bp.post("/from-meta")
+@owner_required
+def create_from_meta():
+    """A console account bound to an ad account the key reaches. The id is checked against a fresh read of Meta's
+    lists (never the browser's word) and, under a lock, against every account that already holds it."""
+    import account_info
+    import jobs
+    data = request.get_json(silent=True) or {}
+    digits = adaccounts.act_digits(data.get("ad_account_id"))
+    if not digits:
+        return api_error("Pick an ad account from the list", 400, field="ad_account_id")
+    try:
+        reach = reachable(force=True)
+    except meta_client.MetaError as exc:
+        return api_error(str(exc), 400)
+    item = next((i for i in reach["items"] if i["id"] == digits), None)
+    if not item:
+        return api_error("This ad account isn't reachable with the console's Meta key any more. Look again.", 404, field="ad_account_id")
+    if item["blocked"]:
+        return api_error(item["blocked"], 409, field="ad_account_id")
+    name = " ".join(str(data.get("name") or "").split())[:120] or adaccounts.default_name(item)
+    if name_taken(name):
+        return api_error("Another account already has that name", 409, field="name")
+    key = "meta_ad_account_id"
+    try:
+        with account_ctx.all_accounts(), db.transaction() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"adaccount:{digits}",))
+            cur.execute(settings_store.HOLDER_ROWS_SQL, (key, f"{key}@%"))
+            rows = cur.fetchall()
+            cur.execute("SELECT id, name, archived_at IS NOT NULL AS closed FROM accounts ORDER BY id")
+            accounts = cur.fetchall()
+            held = adaccounts.mark_used([item], settings_store.holders_from(key, rows, accounts), {a["id"]: a["name"] for a in accounts})[0]
+            again = adaccounts.blocked(held, account_info.currency_problem)
+            if again:
+                raise _Refused(again)
+            cur.execute("INSERT INTO accounts (name) VALUES (%s) RETURNING id", (name,))
+            new = cur.fetchone()["id"]
+            _seed_new_account(cur, new, name)
+            for k, v in ((key, digits), ("meta_business_id", item.get("business_id")), ("meta_ad_account_via", "picker")):
+                if v:
+                    cur.execute(settings_store.UPSERT_SQL, (settings_store.stored_key(k, new), str(v)))
+    except _Refused as exc:
+        return api_error(str(exc), 409, field="ad_account_id")
+    details = {"name": name, "ad_account_id": digits, "via": "picker"}
+    with account_ctx.use(new):
+        log_activity("account.created", subject=str(new), details=details)
+    log_activity("account.added_from_meta", subject=str(new), details=details)
+    jobs.wake()  # the worker's next pass reads its time zone, currency and first results
+    return _with_choice(jsonify({"id": new, "name": name, "ad_account_id": digits}), new), 201
+
+
+# ---------------------------------------------------------------- FU-A: All accounts side by side
+
+def connected():
+    """The open account has an ad account (account 1 counts its built-in one)."""
+    if account_ctx.current() == account_ctx.DEFAULT:
+        return bool(settings_store.get("meta_ad_account_id"))
+    return bool(settings_store.own("meta_ad_account_id"))
+
+
+def overview_row(user, account):
+    """One account's figures over the shared range, read from stored data in that account (row-level security)."""
+    import account_info
+    import inbox
+    import lead_quality as lq
+    import numbers_check
+    import performance_api
+    import ranges
+    key, start, end = performance_api.window_args(request.args)
+    t = performance_api.window_totals(user, start, end)
+    ids = visible_campaign_ids(user)
+    scope, params = (lambda t: "TRUE", []) if ids is None else (lambda t: f"{t}.campaign_id = ANY(%s)", [ids])
+    received = db.query(f"""SELECT COUNT(*) AS n FROM leads l WHERE {lq.counted()}
+                            AND (l.created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {scope('l')}""",
+                        [account_info.tz_name(), start, end] + params, one=True)["n"]
+    delivering = db.query(f"SELECT COUNT(*) AS n FROM ads a WHERE a.effective_status = 'ACTIVE' AND {scope('a')}", params, one=True)["n"]
+    admin = user["role"] == "admin"
+    cap = performance_api.cap_snapshot() if admin else None
+    source = numbers_check.source(user, start, end, meta_leads=t["leads"], received=received, scoped=ids is not None)
+    return {"id": account["id"], "name": account["name"], "currency": account_info.currency(), "tz": account_info.tz_name(),
+            "connected": connected(), "spend_cents": t["spend_cents"], "leads": t["leads"], "received": int(received),
+            "cpl_cents": round(t["spend_cents"] / t["leads"]) if t["leads"] else None, "delivering": int(delivering),
+            "needs_you": inbox.counts(inbox.items_for(user))["need"],
+            "suggestions": db.query("SELECT COUNT(*) AS n FROM desk_proposals WHERE status = 'pending'", one=True)["n"] if admin else None,
+            "cap": {"limit_cents": cap["limit_cents"], "spent_cents": cap["spent_cents"]} if cap else None,
+            "synced_at": settings_store.get("last_performance_sync"), "behind": bool(source["meta"]["behind"]), "source": source,
+            "range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "label": ranges.label(start, end)}}
+
+
+@bp.get("/overview")
+@login_required
+def overview():
+    """All accounts: the owner sees every open account, everyone else only their own (one row)."""
+    user = current_user()
+    accounts = active_accounts() if is_owner(user) else [{"id": account_ctx.current(), "name": name_of(account_ctx.current())}]
+    rows = []
+    for a in accounts:
+        with account_ctx.use(a["id"]):
+            rows.append(overview_row(user, a))
+    here = next((r for r in rows if r["id"] == account_ctx.current()), rows[0])
+    return jsonify({"range": here["range"], "rows": rows, "own_days": len({r["tz"] for r in rows}) > 1, "current": account_ctx.current(),
+                    **adaccounts.overview_totals(rows)})
 
 
 @bp.patch("/<int:account_id>")
@@ -180,9 +366,17 @@ def name_taken(name, except_id=None):
 @owner_required
 def all_accounts_listing():
     """Settings → Accounts: every account with its state, closed ones included."""
+    import account_info
     with account_ctx.all_accounts():
         rows = db.query("SELECT id, name, created_at, archived_at FROM accounts ORDER BY archived_at IS NOT NULL, id")
-    return jsonify({"items": [{"id": r["id"], "name": r["name"], "archived": r["archived_at"] is not None} for r in rows]})
+    held = {acct: adaccounts.act_digits(value) for acct, _, value in settings_store.meta_holders("meta_ad_account_id")}
+    out = []
+    for r in rows:
+        ad = held.get(r["id"])
+        with account_ctx.use(r["id"]):
+            currency = account_info.currency() if ad else None
+        out.append({"id": r["id"], "name": r["name"], "archived": r["archived_at"] is not None, "ad_account_id": ad, "currency": currency})
+    return jsonify({"items": out})
 
 
 @bp.post("/switch")

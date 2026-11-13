@@ -75,6 +75,8 @@ kbd {
 .crumbs a:hover { color: var(--ink); }
 .crumbs [aria-current] { color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch; }
 .crumbs .sep { color: var(--line-strong); }
+.crumb-acct { color: var(--ink-2); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 24ch; flex: none; }
+.crumb-acct::after { content: "/"; color: var(--line-strong); font-weight: 400; margin-left: 12px; }
 .topline .grow { flex: 1; }
 .topline .refresh {
   display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 8px; border: 0; border-radius: var(--radius-s);

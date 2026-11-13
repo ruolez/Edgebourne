@@ -4,7 +4,7 @@ Unit key: `FU-A-second-account` · Asked by Eugene 2026-11-12 · Meta: **read-on
 
 > **Architect resolutions (2026-11-12), applied below:**
 > - "Separate + overview" (Eugene's answer): every Meta ad account is its own console account (the 7.1 accounts with row-level security and the switcher), plus one new page, **All accounts**, that puts the accounts side by side. Nothing is ever summed across currencies.
-> - The picker lists what the **System User key the open account uses** can reach. Eugene was added to the other ad account **as a person**, so that key can't see it yet: the empty state explains the three Business Settings steps in plain words. The per-account own token (Settings → Meta connection) stays as the fallback.
+> - The picker lists what the **owner's System User key (account 1's)** can reach, whichever account is open (changed at review, 2026-11-13: a new account inherits that key, so listing with another account's own key could bind an ad account the new account can't read). Eugene was added to the other ad account **as a person**, so that key can't see it yet: the empty state explains the three Business Settings steps in plain words. The per-account own token (Settings → Meta connection) stays as the fallback.
 > - Picking an ad account creates a new console account bound to it. **Owner only**, and the existing refusals stay: an ad account another account already holds (`settings_api.used_elsewhere`, account 1's built-in `config.META_DEFAULTS` included), a zero-decimal currency (`account_info.currency_problem`).
 > - The other ad account's owner gets a **read-only client sign-in** through Team (7.2, unchanged). No new role.
 > - Build order: FU-A, FU-B, FU-C, FU-D. FU-A adds **no migration** (accounts, settings and RLS already exist). Its overview reads the shared date range, so once FU-C lands it includes today with no change here.
@@ -90,7 +90,7 @@ def default_name(item: dict) -> str
 FIELDS = "account_id,name,currency,account_status,timezone_name,business{id,name}"
 
 def reachable(force=False) -> dict
-    # Read with the token the OPEN account uses (meta_client.system_token(): its own or account 1's inherited one).
+    # Read with account 1's token (inside account_ctx.use(DEFAULT)), the one the new account inherits.
     # 1. me/adaccounts (paged, limit 100)                       -> "assigned"
     # 2. if settings_store.get("meta_business_id"): <biz>/owned_ad_accounts and <biz>/client_ad_accounts -> "owned", "client"
     #    (a refusal of 2. is recorded as `partial`, never fatal: the System User may lack business_management)
