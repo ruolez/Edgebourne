@@ -51,6 +51,44 @@ READ_TOOLS = [
     "ads_experiment_abtest_get_test", "ads_experiment_lift_get_test", "ads_experiment_check_eligibility",
     "ads_pixel_event_read", "ads_pixel_parameter_read",
 ]
+# FU-D: every other tool the meta-ads server lists (2026-11-13), catalog reads included (lead ads don't use them).
+# Denied by name in full runs, on top of not being allowed: only Accept on the console writes to Meta.
+META_WRITE_TOOLS = [
+    "ads_activate_entity", "ads_boost_ig_post", "ads_catalog_create", "ads_catalog_create_feed_rule",
+    "ads_catalog_create_product_feed", "ads_catalog_create_product_feed_upload_session",
+    "ads_catalog_create_product_set", "ads_catalog_delete_product", "ads_catalog_event_source_connect",
+    "ads_catalog_event_source_disconnect", "ads_catalog_event_source_get", "ads_catalog_event_source_get_catalogs",
+    "ads_catalog_event_source_get_health", "ads_catalog_event_source_get_recommendations",
+    "ads_catalog_get_businesses", "ads_catalog_get_data_sources", "ads_catalog_get_diagnostics",
+    "ads_catalog_get_dynamic_ads_health", "ads_catalog_get_feed_rules", "ads_catalog_get_product_feed_upload_sessions",
+    "ads_catalog_list_catalogs", "ads_catalog_list_dpa_eligible_catalogs", "ads_catalog_list_partner_integrations",
+    "ads_catalog_list_product_feeds", "ads_catalog_list_product_sets", "ads_catalog_list_products",
+    "ads_catalog_product_create", "ads_catalog_product_feed_delete", "ads_catalog_product_feed_delete_rule",
+    "ads_catalog_product_set_delete", "ads_catalog_update_catalog", "ads_catalog_update_feed_rule",
+    "ads_catalog_update_product", "ads_catalog_update_product_feed", "ads_catalog_update_product_set", "ads_create_ad",
+    "ads_create_ad_set", "ads_create_campaign", "ads_create_creative", "ads_create_custom_audience",
+    "ads_creative_create_image_variations", "ads_creative_delete", "ads_creative_update",
+    "ads_creative_update_image_elements", "ads_creative_upload_local_image", "ads_creative_upload_media",
+    "ads_delete_custom_audience", "ads_delete_local_ad_image", "ads_experiment_abtest_create_test",
+    "ads_experiment_abtest_update_test", "ads_experiment_lift_create_test", "ads_finalize_local_ad_image_upload",
+    "ads_log_ui_interaction", "ads_pixel_event_create", "ads_pixel_event_delete", "ads_pixel_event_update",
+    "ads_pixel_parameter_create", "ads_pixel_parameter_delete", "ads_pixel_parameter_update",
+    "ads_update_custom_audience", "ads_update_entity", "offer_report",
+]
+META_PREFIXES = ("meta-ads", "claude_ai_Meta_Ads")
+# FU-D: a full-access run (the owner's own typed request in his own account, unlocked on the console with his password)
+# gets the terminal's tools. It still runs in dontAsk mode, so every `ask` rule in ~/.claude/settings.json and the
+# meta-ads guard hook's prompts are denied, and the Meta write tools are denied by name. Files are written only in the
+# workspace (Edit rules cover Write), and Bash runs inside Claude Code's own OS sandbox (full_settings).
+FULL_TOOLS = ["Bash", "Read", "Glob", "Grep", "WebFetch", "WebSearch", "Skill", "ToolSearch", "Task", "TodoWrite"]
+# Eugene's other servers, allowed whole. Not Playwright or Claude in Chrome: MCP servers run outside the Bash sandbox
+# and a browser reaches Meta's sites (security review).
+FULL_MCP_SERVERS = ("brave-search",)
+FULL_DENIED_SERVERS = ("playwright", "claude-in-chrome")
+# Meta's and Anthropic's hosts: never from a full run's Bash (no host is allowed anyway) or WebFetch.
+META_DOMAINS = ["facebook.com", "*.facebook.com", "graph.facebook.com", "mcp.facebook.com", "*.facebook.net", "*.fbcdn.net",
+                "instagram.com", "*.instagram.com"]
+CLAUDE_DOMAINS = ["anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai", "claude.com", "*.claude.com"]
 
 
 WEB_KINDS = ("question", "review", "research", "creative")  # runs that read the web; render runs don't need it
@@ -60,12 +98,16 @@ READ_ONLY_KINDS = ("question", "review", "research", "creative", "polish", "diag
 RENDER_KINDS = ("render", "advice")  # these also render video on this Mac (node, ffmpeg, files under creatives/)
 
 
-def allowed_tools(skill_dir, workdir, kind="question", web=False):
+def allowed_tools(skill_dir, workdir, kind="question", web=False, access="sandbox"):
     """Read-only by default. Permission paths: `//abs/path` is absolute, a bare path is
     relative to the working directory (`/path` would mean relative to a settings file).
     Files are read only in the workspace and ~/.claude/skills (Read rules also cover Glob and
     Grep there), never elsewhere on the Mac (audit A3-4). The web only for a reading run an
-    owner asked for (`web`): text from teammates or clients never meets WebFetch (A3-7)."""
+    owner asked for (`web`): text from teammates or clients never meets WebFetch (A3-7).
+    access "full" (FU-D, decided by the server at claim): the terminal's tools and Meta's read tools."""
+    if access == "full":
+        return (FULL_TOOLS + [f"Edit(/{workdir}/**)"] + [f"mcp__{s}" for s in FULL_MCP_SERVERS]
+                + [f"mcp__{p}__{n}" for n in READ_TOOLS for p in META_PREFIXES])
     def files(rel):
         return [f"Edit({rel}/**)", f"Edit(/{workdir}/{rel}/**)"]
     tools = [f"Read(/{workdir}/**)", f"Read(/{os.path.dirname(skill_dir)}/**)", "ToolSearch", "Skill",
@@ -94,14 +136,69 @@ def allowed_tools(skill_dir, workdir, kind="question", web=False):
     return tools
 
 
-def denied_tools(workdir, home, private=()):
+def denied_tools(workdir, home, private=(), access="sandbox"):
     """Secrets stay unreadable even inside the allowed folders (the workspace keeps the Meta CLI
     token in .env), and so do `private` workspace paths (see private_paths). Deny rules win over
-    allow rules and also apply to Glob and Grep."""
-    return (["Read(**/.env)", "Read(**/.env.*)", f"Read(/{workdir}/.env)", f"Read(/{workdir}/.env.*)",
-             f"Read(/{home}/.config/**)", f"Read(/{home}/.ssh/**)", f"Read(/{home}/.aws/**)",
-             f"Read(/{home}/.gnupg/**)", f"Read(/{home}/Library/Keychains/**)"]
-            + [f"Read(/{workdir}/{p})" for p in private])
+    allow rules and also apply to Glob and Grep. A full run (FU-D) also may not write to Meta by any
+    road (MCP write tools, the `meta` CLI), touch the Keychain or LaunchAgents, or edit Claude's own
+    settings, hooks or this skill. These rules guard the obvious paths; Bash reaches past file rules
+    (README "Claude on the Mac")."""
+    base = ["Read(**/.env)", "Read(**/.env.*)", f"Read(/{workdir}/.env)", f"Read(/{workdir}/.env.*)",
+            f"Read(/{home}/.config/**)", f"Read(/{home}/.ssh/**)", f"Read(/{home}/.aws/**)",
+            f"Read(/{home}/.gnupg/**)", f"Read(/{home}/Library/Keychains/**)"]
+    if access != "full":
+        return base + [f"Read(/{workdir}/{p})" for p in private]
+    return (base + [f"mcp__{p}__{n}" for n in META_WRITE_TOOLS for p in META_PREFIXES]
+            + [f"mcp__{s}" for s in FULL_DENIED_SERVERS]
+            + [f"WebFetch(domain:{d})" for d in META_DOMAINS]
+            + ["Bash(meta:*)", "Bash(security:*)", "Bash(launchctl:*)", "Bash(claude:*)",
+               f"Read(/{home}/.claude/.credentials.json)", f"Read(/{home}/.claude.json)",
+               f"Edit(/{home}/.claude/settings.json)", f"Edit(/{home}/.claude/settings.local.json)",
+               f"Edit(/{home}/.claude/hooks/**)", f"Edit(/{home}/.claude/skills/ads-desk/**)",
+               f"Edit(/{home}/Library/LaunchAgents/**)"])
+
+
+def full_settings(workdir, home, skill_dir):
+    """`--settings` for a full run: Bash inside Claude Code's OS sandbox (macOS Seatbelt). Tool names don't stop a
+    script (`python3 x.py` that reads a token and posts to Meta), the sandbox does: no network at all (dontAsk refuses
+    every host not allowed, and Meta's and Anthropic's are denied by name as well), no reads of the Keychain files,
+    Claude's credentials, ~/.ssh, ~/.config or the workspace .env, the Claude token unset, writes only in the workspace
+    and the temp folder (the sandbox's default), and no way to retry outside it. Only `desk` runs outside: a fixed
+    script that checks its own paths and talks to the console. If the sandbox can't start, the run doesn't either."""
+    return {"sandbox": {
+        "enabled": True,
+        "failIfUnavailable": True,
+        "allowUnsandboxedCommands": False,
+        "autoAllowBashIfSandboxed": True,
+        "excludedCommands": [f"{skill_dir}/desk *", "~/.claude/skills/ads-desk/desk *"],
+        "network": {"allowedDomains": [], "deniedDomains": META_DOMAINS + CLAUDE_DOMAINS, "allowLocalBinding": False},
+        "filesystem": {"denyRead": [f"{home}/Library/Keychains", f"{home}/.claude/.credentials.json", f"{home}/.claude.json",
+                                    f"{home}/.ssh", f"{home}/.aws", f"{home}/.gnupg", f"{home}/.config", f"{home}/.netrc",
+                                    f"{workdir}/.env"]},
+        "credentials": {"envVars": [{"name": n, "mode": "deny"} for n in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")]},
+    }}
+
+
+def run_access(task, confirm):
+    """"full" only when the claim answer says so for a request claimed with a pass AND a fresh read of the
+    request with that pass (`confirm`) says so too; anything else is the sandbox (FU-D: the server decides)."""
+    return "full" if task.get("claim_token") and task.get("access") == "full" and confirm == "full" else "sandbox"
+
+
+def claude_command(cfg, task, access, home, briefs):
+    """The headless run's command line. The sandbox is byte for byte what it was before full access existed."""
+    kind = task.get("kind")
+    render = kind in ("render", "advice")
+    skill_dir = os.path.join(home, ".claude", "skills", "ads-desk")
+    full = access == "full"
+    tools = allowed_tools(skill_dir, cfg["workdir"], kind, web=task.get("from_owner") is True, access=access)
+    denied = denied_tools(cfg["workdir"], home, [] if full else private_paths(task, briefs), access=access)
+    return [cfg["claude"], "-p", f"/ads-desk run {task['id']}",
+            "--permission-mode", "dontAsk",
+            "--allowedTools", ",".join(tools),
+            "--disallowedTools", ",".join(denied),
+            "--max-turns", "200" if full else "300" if kind == "advice" else "200" if render else "80"] + (
+        ["--settings", json.dumps(full_settings(cfg["workdir"], home, skill_dir))] if full else [])
 
 
 def squash(name):
@@ -168,8 +265,8 @@ def end_process(proc):
         pass
 
 
-def task_state(cfg, token, task_id, claim):
-    """The request's status on the dashboard; "gone" when it is no longer this run's (requeued after a
+def read_task(cfg, token, task_id, claim):
+    """The request as the dashboard has it now; "gone" when it is no longer this run's (requeued after a
     lost answer, or deleted); None when the dashboard can't be reached."""
     try:
         _, current = desk.call("GET", f"/api/agent/tasks/{task_id}", cfg=cfg, token=token, claim=claim)
@@ -177,7 +274,13 @@ def task_state(cfg, token, task_id, claim):
         return "gone" if exc.status in (403, 404, 409) else None
     except (urllib.error.URLError, OSError, ValueError):
         return None
-    return current["status"] if current else "gone"
+    return current or "gone"
+
+
+def task_state(cfg, token, task_id, claim):
+    """The request's status on the dashboard ("gone" / None as read_task)."""
+    current = read_task(cfg, token, task_id, claim)
+    return current["status"] if isinstance(current, dict) else current
 
 
 def ends_run(state):
@@ -210,18 +313,14 @@ def session_args(cfg, task):
 def run_task(cfg, token, task):
     task_id = task["id"]
     claim = task.get("claim_token")  # this run's pass: only it can use the task from now on
-    log(f"task {task_id} ({task['kind']}): starting Claude")
+    # FU-D: full access only when the claim answer says so and a fresh read with this run's pass agrees.
+    confirm = read_task(cfg, token, task_id, claim) if claim and task.get("access") == "full" else None
+    access = run_access(task, confirm.get("access") if isinstance(confirm, dict) else None)
+    log(f"task {task_id} ({task['kind']}{', full access' if access == 'full' else ''}): starting Claude")
     post_status(cfg, token, task_id, claim, status="running", progress="Claude is starting on your Mac")
     out_path = os.path.join(LOG_DIR, f"task-{task_id}.log")
-    skill_dir = os.path.expanduser("~/.claude/skills/ads-desk")
-    render = task.get("kind") in ("render", "advice")  # long runs: they render video on this Mac
-    tools = allowed_tools(skill_dir, cfg["workdir"], task.get("kind"), web=task.get("from_owner") is True)
-    cmd = [cfg["claude"], "-p", f"/ads-desk run {task_id}",
-           "--permission-mode", "dontAsk",
-           "--allowedTools", ",".join(tools),
-           "--disallowedTools", ",".join(denied_tools(cfg["workdir"], os.path.expanduser("~"),
-                                                     private_paths(task, workspace_briefs(cfg["workdir"])))),
-           "--max-turns", "300" if task.get("kind") == "advice" else "200" if render else "80"]
+    render = task.get("kind") in ("render", "advice") or access == "full"  # long runs: they render video on this Mac
+    cmd = claude_command(cfg, task, access, os.path.expanduser("~"), workspace_briefs(cfg["workdir"]))
     session = session_args(cfg, task)
     env = dict(os.environ)
     env["DESK_ACCOUNT"] = str(task.get("account_id") or 1)  # the task's ad account (agency mode)

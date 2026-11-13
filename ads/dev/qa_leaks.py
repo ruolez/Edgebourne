@@ -69,11 +69,15 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
     db.execute("UPDATE activity SET at = now() WHERE id = %s", (activity["id"],))  # History lists the latest 200 only
     once("inbox_reads", {"user_id": admin_id, "item_key": f"{mark}read", "account_id": acct}, "item_key")
     swipe = once("swipes", {"page_name": f"{mark} rival", "body": f"{mark} rival words", "source": "manual", "account_id": acct}, "page_name")
+    # FU-D: a preview Claude attached (its name shows in the Claude page's list; its bytes only through its own route).
+    png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+    preview = once("desk_attachments", {"task_id": task, "kind": "image", "mime": "image/png", "name": f"{mark}preview.png", "caption": f"{mark} preview",
+                                        "size_bytes": len(png), "sha256": "0" * 64, "width": 1, "height": 1, "body": png, "account_id": acct}, "name")
     # D1: a numbers check that stopped (its words show in Settings → Numbers vs Ads Manager's recent checks).
     once("numbers_runs", {"kind": "check", "start_day": "2026-10-01", "end_day": "2026-10-02", "finished_at": "2026-10-03T04:10:00Z", "ok": False,
                           "error": f"{mark} run", "account_id": acct}, "error")
     return {"proposal": proposal["id"], "view": view["id"], "build": build["id"], "swipe": swipe["id"], "alert": problem["id"],
-            "change": change["id"]}
+            "change": change["id"], "attachment": preview["id"]}
 
 with account_ctx.all_accounts():
     acct = db.query("SELECT id FROM accounts WHERE name = 'Burdanova QA'", one=True)
@@ -122,7 +126,7 @@ with account_ctx.all_accounts():
             for t, col in (("desk_proposals", "title"), ("desk_reports", "title"), ("status_events", "new_value"), ("meta_changes", "new_value"),
                            ("ad_versions", "label"), ("saved_views", "name"), ("campaign_builds", "client_key"), ("alerts", "dedupe_key"),
                            ("lead_notes", "body"), ("lead_replies", "subject"), ("activity", "subject"), ("inbox_reads", "item_key"),
-                           ("desk_tasks", "prompt"), ("swipes", "page_name"), ("numbers_runs", "error")):
+                           ("desk_attachments", "name"), ("desk_tasks", "prompt"), ("swipes", "page_name"), ("numbers_runs", "error")):
                 db.execute(f"DELETE FROM {t} WHERE account_id = 1 AND {col} LIKE %s", (MARK1 + "%",))
             db.execute("DELETE FROM lead_events WHERE account_id = 1 AND details->>'ad' LIKE %s", (MARK1 + "%",))
     drop_mark1()
@@ -160,7 +164,7 @@ def fill(rule, other):
         v = {"ad_id": other["ad"], "adset_id": other["adset"], "campaign_id": other["campaign"], "entity_id": other["ad"], "level": "ad",
              "lead_id": other["lead"], "task_id": other["task"], "exp_id": other.get("exp", 1), "id": other["lead"],
              "proposal_id": other["proposal"], "build_id": other["build"], "view_id": other["view"], "number": 900,
-             "change_id": other["change"]}.get(name, "1")
+             "change_id": other["change"], "att_id": other["attachment"]}.get(name, "1")
         url = re.sub(r"<(?:[a-z]+:)?" + name + ">", str(v), url)
     return url
 
@@ -185,7 +189,8 @@ def walk(client, forbidden, other, label, own=None):
         url = fill(rule, other) + (QUERY[rule.rule](other) if rule.rule in QUERY else "")
         r = client.get(url)
         checked += 1
-        body = r.get_data(as_text=True)
+        # A preview's bytes (FU-D) aren't text; its name travels in Content-Disposition, so headers are read too.
+        body = r.get_data().decode("utf-8", "replace") + str(r.headers)
         if rule.rule == "/api/search":  # the command menu's search, asked for each forbidden name (and its own)
             body += "".join(client.get(f"{url}?q={quote(m)}").get_data(as_text=True) for m in [*forbidden, own or ""] if len(m) >= 2)
         for mark in forbidden:
@@ -207,6 +212,8 @@ def session_for(client, user_id, account=None):
     with client.session_transaction() as s:
         s["user_id"] = user_id
         s["sk"] = _keys[user_id]
+        # A password change (QA's FU-D block changes the owner's to the same one) bumps session_version.
+        s["sv"] = db.query("SELECT session_version FROM users WHERE id = %s", (user_id,), one=True)["session_version"]
     client.set_cookie("ebads_account", str(account or 1))
 
 
@@ -376,6 +383,8 @@ for method, url, body in (("POST", f"/api/ads/ad/{one['ad']}/status", {"status":
                           ("POST", f"/api/desk/tasks/{one['task']}/reply", {"prompt": "x"}),
                           ("POST", f"/api/desk/tasks/{one['task']}/again", {}),
                           ("POST", f"/api/desk/tasks/{one['task']}/clear", {}),
+                          ("POST", f"/api/desk/attachments/{one['attachment']}/draft", {}),
+                          ("POST", f"/api/desk/tasks/{one['task']}/reply", {"prompt": "x", "about_attachment": one["attachment"]}),
                           ("PATCH", f"/api/experiments/{one['exp']}", {"name": "x"}),
                           ("POST", f"/api/builds/{one['build']}/resume", {}),
                           ("POST", f"/api/builds/{one['build']}/publish", {}),
@@ -547,8 +556,21 @@ fub = {"approve_from_2": ac.post(f"/api/proposals/{limit_pid}/approve", json={"f
 with account_ctx.use(1):
     fub["status_in_1"] = db.query("SELECT status FROM desk_proposals WHERE id = %s", (limit_pid,), one=True)["status"]
     db.execute("DELETE FROM desk_proposals WHERE id = %s", (limit_pid,))
+# FU-D: a preview is read only in its own account; clients and teammates never reach the Claude page's routes.
+session_for(c, admin["id"], A2)
+session_for(ac, acct_admin["id"], 1)
+session_for(mc, member["id"])
+session_for(cc, client["id"])
+fud = {"switched_owner_reads_account1": c.get(f"/api/desk/attachments/{one['attachment']}").status_code,
+       "account2_admin_reads_account1": ac.get(f"/api/desk/attachments/{one['attachment']}").status_code,
+       "account2_admin_reads_own": ac.get(f"/api/desk/attachments/{two['attachment']}").status_code,
+       "client_reads_own": cc.get(f"/api/desk/attachments/{two['attachment']}").status_code,
+       "member_reads_own": mc.get(f"/api/desk/attachments/{two['attachment']}").status_code,
+       "client_turns_on": cc.post("/api/auth/full-access", json={"password": "x"}).status_code,
+       "account2_admin_turns_on": ac.post("/api/auth/full-access", json={"password": "x"}).status_code,
+       "desk_lists_account1_preview": MARK1 + "preview" in c.get("/api/desk").get_data(as_text=True)}
 session_for(c, admin["id"], 1)
-out.update({"leaks": l1 + l2 + l2b + l3, "routes_checked": [n1, n2, n3], "admin_sees_account2_on_account2": sees_own,
+out.update({"leaks": l1 + l2 + l2b + l3, "full_access": fud, "routes_checked": [n1, n2, n3], "admin_sees_account2_on_account2": sees_own,
             "client_sees_own_leads": client_sees_own, "client_switch_status": switch, "client_stays_on_own_account": still,
             "client_writes_not_refused": writes,
             "member_and_account_admin_routes": [n4, n5], "leaks_member_and_account_admin": l4 + l5,

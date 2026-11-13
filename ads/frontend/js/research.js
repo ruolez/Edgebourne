@@ -227,7 +227,8 @@ if (me) {
     if (!prompt) { $("prompt").focus(); return; }
     btn.disabled = true;
     try {
-      await api("/api/desk/tasks", { method: "POST", body: { kind: "research", prompt } });
+      // origin "research": this page shows no full access bar, so its questions keep the read-only tools (FU-D).
+      await api("/api/desk/tasks", { method: "POST", body: { kind: "research", prompt, origin: "research" } });
       $("prompt").value = "";
       toast("Sent to Claude. Its report will show in Past research");
       lastJson = "";

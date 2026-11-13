@@ -10,7 +10,8 @@ Unit key: `FU-D-full-access-chat` · Asked by Eugene 2026-11-12 · Meta: **no ne
 > - Full = the terminal's tools: Bash, Read/Write/Edit, Glob/Grep, WebFetch/WebSearch, Skill, ToolSearch, Task, the meta-ads MCP **read** tools and Eugene's other MCP servers. It still runs in `dontAsk` mode, so `~/.claude/settings.json` ask rules and the meta-ads guard hook keep **denying** budget, status, publish, delete and targeting writes. Meta write tools are also listed in `--disallowedTools`. Neither file is changed.
 > - Renders made in a conversation come back **into that conversation** as image or video attachments (`desk attach`, a new subcommand next to `desk upload`, stored by the console), with **Upload as draft** (the existing media upload, then New ad with it picked, created switched off) and **Change it** (a reply about that preview).
 > - Bridge **desk 3.0**. Not installed by this step.
-> - Migration **043** (the next free number when built; FU-A, FU-B and FU-C add none).
+> - Migration **043** (the next free number when built; FU-A, FU-B and FU-C add none). *Built as **044**: FU-B took 043.*
+> - *After the security review (2026-11-13): full access works only in the owner's own account (Edge Bourne); a full run's Bash runs inside Claude Code's OS sandbox (`bridge.full_settings`, no network, no Keychain or credentials, the Claude token unset) and the Playwright / Chrome servers are left out; nobody else can reset the flagged owner's password, and a temporary password never unlocks; the flag follows `ADMIN_EMAIL`. The "Sign out everywhere" control named below doesn't exist: the notice and Your account say to change the password, which signs out the other devices and ends full access.*
 
 ## Goal
 

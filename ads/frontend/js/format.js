@@ -37,6 +37,8 @@ export const zoneCity = () => (acctZone() || "").split("/").pop().replace(/_/g, 
 const inZone = (opts) => ({ ...opts, timeZone: acctZone() });
 // "2:41 PM" (+ " PST" when the browser's zone differs).
 export const clock = (iso) => { const d = new Date(iso); return d.toLocaleTimeString(undefined, inZone({ hour: "numeric", minute: "2-digit" })) + zoneTag(d); };
+// "9:40 PM PDT": always with the account's zone, for a deadline read on a phone set elsewhere (full access's end).
+export const clockZone = (iso) => { const d = new Date(iso); const z = shortZone(d); return d.toLocaleTimeString(undefined, inZone({ hour: "numeric", minute: "2-digit" })) + (z ? ` ${z}` : ""); };
 // The account's calendar day of a moment, "YYYY-MM-DD" (Today / Yesterday grouping, the booking dialog's day).
 export const acctDay = (d = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: acctZone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 export const acctHour = (d = new Date()) => Number(new Intl.DateTimeFormat("en-US", { timeZone: acctZone(), hour: "numeric", hourCycle: "h23" }).format(d)) % 24;

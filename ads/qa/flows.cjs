@@ -1201,8 +1201,9 @@ with account_ctx.use(1):
   macSeen(3600);
   // The Mac's side against the database: passes, lost and silent runs, the line across accounts.
   const states = JSON.parse(sh('docker cp dev/qa_desk_states.py edgebourne-ads-backend:/app/qa_desk_states.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_desk_states.py; docker exec edgebourne-ads-backend rm -f /app/qa_desk_states.py').trim().split('\n').pop());
-  check('a Claude run reaches only its own request and account; lost, silent and stopped runs end right; Run next is first across accounts; mentions stored; 304 when unchanged; a helper before 2.0 takes only the owners\' requests',
-    states.failed.length === 0 && states.passed === 23, JSON.stringify(states));
+  check('a Claude run reaches only its own request and account; lost, silent and stopped runs end right; Run next is first across accounts; mentions stored; 304 when unchanged; a helper before 2.0 takes only the owners\' requests; '
+    + 'FU-D: full access only for the owner\'s own typed, unlocked requests in his own account on desk 3.0 (locked, signed out, another account, someone else in the thread, automatic runs, a link\'s words, the Research page, a requeued claim, a forged body, an old helper: usual tools), previews only with the pass, typed and capped, five wrong passwords block even sent at once, nobody else resets him, a temporary password never unlocks',
+    states.failed.length === 0 && states.passed === 46, JSON.stringify(states));
   }
 
   // Tests (experiments): set one up, read the verdict, finish it; Claude's suggested test becomes one on approval.
@@ -2200,6 +2201,9 @@ print(a[0][1] if a else '-', b[0][1] if b else '-')"`).trim();
       '/api/proposals/<int:proposal_id>', '/api/leads/<int:lead_id>', '/api/ads/ad/<ad_id>/tags', '/api/experiments/<int:exp_id>', '/api/builds/<int:build_id>'] };
   const unmarked = Object.entries(markShown).flatMap(([who, routes]) => routes.filter((r) => !(leak.routes_showing_own_mark[who] || []).includes(r)).map((r) => `${who}: ${r}`));
   check('the leak walk has marked rows to find in Inbox, Claude, saved views, builds, History and the timeline', unmarked.length === 0, unmarked.join(' | '));
+  check('FU-D: a Claude preview is read only in its own account; clients, teammates and account admins can\'t turn full access on',
+    JSON.stringify(leak.full_access) === JSON.stringify({ switched_owner_reads_account1: 404, account2_admin_reads_account1: 404, account2_admin_reads_own: 200, client_reads_own: 403,
+      member_reads_own: 403, client_turns_on: 403, account2_admin_turns_on: 403, desk_lists_account1_preview: false }), JSON.stringify(leak.full_access));
   check('every table that holds account data is limited to its account by the database (row-level security)',
     leak.tables_without_isolation.length === 0 && leak.app_role_bypasses_rls === false && leak.isolated_tables >= 28, `${leak.isolated_tables} tables; missing: ${leak.tables_without_isolation.join()}`);
   await page.goto(BASE + '/ads.html');
@@ -7380,6 +7384,276 @@ else:
     }
     fake('/fake/_today?clear=1');
     readAgo(null);
+  }
+
+  // FU-D: full access for the owner's own conversations (Eugene: "Only me, with a re-check"). The password turns it on for this
+  // sign-in only; the server decides at claim time (QA plays the Mac against the real database); previews come back into the chat.
+  {
+    const fudSeen = errors.length;
+    const py = (code) => require('child_process').execSync('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', { input: code }).toString();
+    const sql = (q) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "${q}"`).trim();
+    sh('docker cp dev/media/preview.png edgebourne-ads-backend:/tmp/qa-preview.png && docker cp dev/media/preview.mp4 edgebourne-ads-backend:/tmp/qa-preview.mp4');
+    sql('UPDATE user_sessions SET full_until = NULL, full_fails = 0, full_fail_at = NULL WHERE user_id = 1');
+    // The Mac: claims the request (put first in line) with a helper of `version`, attaches previews with the run's pass, finishes it.
+    const mac = (tid, { version = '3.0', attach = [], gif = false } = {}) => JSON.parse(py(`import json, account_ctx, db, desk_api, settings_store
+from app import create_app
+app = create_app(run_migrations=False)
+KEY = 'qa-fud-mac'
+KEPT = ('agent_key_hash', 'bridge_version', 'bridge_last_seen', 'bridge_host')
+old = {k: settings_store.get(k) for k in KEPT}
+settings_store.set('agent_key_hash', desk_api.key_hash(KEY))
+out = {}
+try:
+    c = app.test_client()
+    with account_ctx.all_accounts():
+        db.execute("UPDATE desk_tasks SET queue_rank = (SELECT COALESCE(MIN(queue_rank), 0) - 1 FROM desk_tasks WHERE status = 'queued') WHERE id = %s", (${tid},))
+    H = {'Authorization': 'Bearer ' + KEY, 'X-Bridge-Host': 'qa', 'X-Bridge-Version': '${version}'}
+    got = c.get('/api/agent/wait?timeout=0', headers=H).get_json() or {}
+    R = {**H, 'X-Desk-Claim': got.get('claim_token') or ''}
+    out.update(id=got.get('id'), access=got.get('access'), attached=[])
+    for path, name, cap in ${JSON.stringify(attach)}:
+        with open(path, 'rb') as fh:
+            r = c.post('/api/agent/tasks/${tid}/attachments', headers=R, data={'file': (fh, name), 'caption': cap}, content_type='multipart/form-data')
+        out['attached'].append([r.status_code, (r.get_json() or {}).get('id'), (r.get_json() or {}).get('error')])
+    if ${gif ? 'True' : 'False'}:
+        import io
+        r = c.post('/api/agent/tasks/${tid}/attachments', headers=R, data={'file': (io.BytesIO(b'GIF89a' + bytes(64)), 'x.png')}, content_type='multipart/form-data')
+        out['gif'] = [r.status_code, (r.get_json() or {}).get('error')]
+    c.post('/api/agent/tasks/${tid}/report', headers=R, json={'title': 'Preview', 'body': 'Here is the 4:5 static and a 9:16 cut.'})
+    c.post('/api/agent/tasks/${tid}/status', headers=R, json={'status': 'done', 'summary': 'Made two previews.'})
+finally:
+    for k, v in old.items():
+        settings_store.set(k, v)
+print(json.dumps(out))
+`).trim().split('\n').pop());
+    const call = (method, url, body, p = page) => p.evaluate(async ([m, u, b]) => {
+      const r = await fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b === undefined ? undefined : JSON.stringify(b) });
+      let j = null; try { j = await r.json(); } catch (e) { /* not JSON */ }
+      return { status: r.status, body: j };
+    }, [method, url, body]);
+    // Turning on full access shares nginx's sign-in rate limit (10 a minute): one such request every 6.5 s never trips it.
+    let zoneAt = 0;
+    const paced = async () => { const wait = zoneAt + 6500 - Date.now(); if (wait > 0) await page.waitForTimeout(wait); zoneAt = Date.now(); };
+    const qaTasks = "SELECT id FROM desk_tasks WHERE prompt LIKE 'QA FU-D:%' OR thread_id IN (SELECT id FROM desk_tasks WHERE prompt LIKE 'QA FU-D:%')";
+    const dropTasks = () => sql(`DELETE FROM desk_reports WHERE task_id IN (${qaTasks}); DELETE FROM desk_proposals WHERE task_id IN (${qaTasks}); DELETE FROM desk_tasks WHERE id IN (${qaTasks})`);
+    dropTasks();
+    const openDesk = async (hash = 'new', p = page) => { await p.goto(`${BASE}/desk.html#${hash}`); await p.reload(); await p.waitForSelector('#fa-bar:not([hidden])'); };
+    const unlockDialog = async (password) => {
+      await page.click('#fa-bar [data-fa-on]');
+      await page.waitForSelector('dialog.confirm.fa-dialog #cd-input');
+      await page.fill('#cd-input', password);
+      await paced();
+      await page.click('dialog.confirm #cd-ok');
+    };
+    const sendAsk = async (text) => {
+      await page.fill('#prompt', text);
+      await page.click('#cv-btns button[type=submit]');
+      await page.waitForFunction(() => /^#r\/\d+$/.test(location.hash));
+      return Number((await page.evaluate(() => location.hash)).split('/')[1]);
+    };
+    const turn = async (tid) => { await openDesk(`r/${tid}`); await page.waitForSelector(`.cv-turn[data-turn="${tid}"] .cv-lead`); return page.locator(`.cv-turn[data-turn="${tid}"]`); };
+
+    // 1. Off: a quiet line with Turn on full access.
+    await openDesk();
+    const offText = await page.textContent('#fa-bar');
+    check('FU-D: on the Claude page the owner sees "Claude runs with read-only tools on your Mac. Turn on full access"', /read-only tools on your Mac/.test(offText)
+      && (await page.locator('#fa-bar [data-fa-on]').count()) === 1 && !(await page.$('#fa-bar.fa-on')), offText);
+    // 2. A wrong password: the error under the field, nothing turned on (refusal).
+    await unlockDialog('not-the-password');
+    await page.waitForSelector('dialog.confirm #cd-err:not([hidden])');
+    const wrong = await page.textContent('dialog.confirm #cd-err');
+    const pwType = await page.getAttribute('dialog.confirm #cd-input', 'type');
+    const pwAuto = await page.getAttribute('dialog.confirm #cd-input', 'autocomplete');
+    const dialogText = await page.textContent('dialog.confirm');
+    await page.screenshot({ path: `${OUT}/fud-dialog.png` });
+    check('FU-D: a wrong password shows "That password isn\'t right" under the field and turns nothing on', wrong === "That password isn't right" && pwType === 'password'
+      && pwAuto === 'current-password' && /Meta changes still wait for your Accept/.test(dialogText) && sql('SELECT count(*) FROM user_sessions WHERE user_id = 1 AND full_until IS NOT NULL') === '0', wrong);
+    // 3. The right one: the amber bar, the rail's dot, /me, and a notice by email.
+    const notesBefore = Number(sql("SELECT count(*) FROM notifications WHERE user_id = 1 AND title = 'Full access to your Mac was turned on'"));
+    await page.fill('#cd-input', 'localdev-pass-123');
+    await paced();
+    await page.click('dialog.confirm #cd-ok');
+    await page.waitForSelector('#fa-bar.fa-on');
+    const onText = await page.textContent('#fa-bar');
+    const meOn = (await call('GET', '/api/auth/me')).body.full_access;
+    const notes = sql("SELECT channel || ':' || (lines->>0) FROM notifications WHERE user_id = 1 AND title = 'Full access to your Mac was turned on' ORDER BY id DESC LIMIT 1");
+    check('FU-D: the right password turns it on: "Full access on · until …", an amber dot by Claude in the sidebar, /me says on, and an email says from where',
+      /Full access on · until \d{1,2}:\d{2}\s?(AM|PM)/.test(onText) && /Lock now/.test(onText) && await page.isVisible('.rail [data-fa-dot]') && meOn.on === true && meOn.allowed === true
+      && Number(sql("SELECT count(*) FROM notifications WHERE user_id = 1 AND title = 'Full access to your Mac was turned on'")) === notesBefore + 1
+      && /^email:Full access to your Mac was turned on from Chrome on Mac at \d{1,2}:\d{2} (AM|PM)\./.test(notes), `${onText} | ${notes}`);
+    // Only in the owner's own account: in another account the bar says so and his requests there keep the usual tools.
+    await call('POST', '/api/accounts/switch', { id: 2 });
+    await openDesk();
+    const awayText = await page.textContent('#fa-bar');
+    const awayTask = await call('POST', '/api/desk/tasks', { kind: 'question', prompt: 'QA FU-D: asked in another account' });
+    const awayMarked = sql(`SELECT count(*) FROM desk_tasks WHERE id = ${awayTask.body.id} AND full_session IS NOT NULL`);
+    await call('POST', `/api/desk/tasks/${awayTask.body.id}/cancel`, {});
+    await call('POST', '/api/accounts/switch', { id: 1 });
+    check('FU-D: in another account the bar stays on but says "Only in Edge Bourne: requests in Burdanova QA keep the read-only tools", and a request there isn\'t marked',
+      /Full access on · until/.test(awayText) && /Only in Edge Bourne: requests in Burdanova QA keep the read-only tools\./.test(awayText) && awayMarked === '0', `${awayText} | ${awayMarked}`);
+    // The Research page (no bar there) and words from a link (Tests' "Make more like this") never run with full access.
+    await page.goto(`${BASE}/research.html#tab=search`);
+    await page.waitForSelector('#ask-form #prompt');
+    await page.fill('#ask-form #prompt', 'QA FU-D: research typed on the Research page');
+    await page.click('#ask-form button[type=submit]');
+    await page.waitForFunction(() => /Sent to Claude/.test(document.body.textContent));
+    await openDesk('new');
+    await page.goto(`${BASE}/desk.html?kind=creative&ask=${encodeURIComponent('QA FU-D: more like the test an admin named')}`);
+    await page.waitForFunction(() => document.querySelector('#prompt') && /more like the test/.test(document.querySelector('#prompt').value));
+    await page.click('#cv-btns button[type=submit]');
+    await page.waitForFunction(() => /^#r\/\d+$/.test(location.hash));
+    const origins = sql("SELECT string_agg(kind || ':' || (options::text) || ':' || (full_session IS NULL), ',' ORDER BY id) FROM desk_tasks WHERE prompt IN ('QA FU-D: research typed on the Research page', 'QA FU-D: more like the test an admin named')");
+    sql("UPDATE desk_tasks SET status = 'cancelled' WHERE prompt IN ('QA FU-D: research typed on the Research page', 'QA FU-D: more like the test an admin named') AND status = 'queued'");
+    check('FU-D: a question sent from Research and words filled in from a link stay on the usual tools (never marked for full access)',
+      origins === 'research:{"research_page": true}:true,creative:{"prefill": true}:true', origins);
+    await openDesk();
+    // 4. A request typed now runs with full access; the Mac's previews come back into the turn (13).
+    const t1 = await sendAsk('QA FU-D: design a 4:5 static and show me a preview');
+    const m1 = mac(t1, { attach: [['/tmp/qa-preview.png', 'n2-static.png', '4:5 static, version A'], ['/tmp/qa-preview.mp4', 'n2-reel.mp4', '9:16 motion, version A']], gif: true });
+    const turn1 = await turn(t1);
+    await page.waitForSelector(`.cv-turn[data-turn="${t1}"] .att-list video`);
+    await page.waitForFunction((id) => { const i = document.querySelector(`.cv-turn[data-turn="${id}"] .att-list img`); return i && i.complete && i.naturalWidth > 0; }, t1);
+    const ranFull = await turn1.locator('.fa-tag').textContent().catch(() => '');
+    const srcs = await page.$$eval(`.cv-turn[data-turn="${t1}"] .att-media`, (els) => els.map((e) => [e.tagName, e.getAttribute('src'), e.style.aspectRatio]));
+    const range = await page.evaluate(async (u) => { const r = await fetch(u, { headers: { Range: 'bytes=0-1' } }); return [r.status, r.headers.get('Content-Type'), (await r.arrayBuffer()).byteLength]; }, srcs[1] && srcs[1][1]);
+    check('FU-D: a request typed with full access on runs with full access ("Ran with full access")', m1.id === t1 && m1.access === 'full' && ranFull === 'Ran with full access', JSON.stringify(m1));
+    check('FU-D: the previews Claude attached show in the turn: an image and a video from /api/desk/attachments/<id>, shaped from their size; the video answers a Range request with 206',
+      m1.attached.every((a) => a[0] === 201) && srcs.length === 2 && srcs[0][0] === 'IMG' && srcs[1][0] === 'VIDEO' && srcs.every((x) => /^\/api\/desk\/attachments\/\d+$/.test(x[1]))
+      && srcs[0][2] === '432 / 540' && srcs[1][2] === '360 / 640' && range[0] === 206 && range[1] === 'video/mp4' && range[2] === 2, `${JSON.stringify(srcs)} ${JSON.stringify(range)}`);
+    check('FU-D: a GIF (named .png) is refused: "Only JPG, PNG, WebP images or MP4 videos"', m1.gif[0] === 400 && m1.gif[1] === 'Only JPG, PNG, WebP images or MP4 videos', JSON.stringify(m1.gif));
+    await page.screenshot({ path: `${OUT}/fud-previews.png`, fullPage: true });
+    // 15. Change it: the reply box starts "About this preview" and the reply carries the preview.
+    await turn1.locator('.att-item').nth(1).locator('[data-att-change]').click();
+    const box = await page.inputValue('#prompt');
+    const chip = await page.textContent('#cv-chip');
+    await page.fill('#prompt', `${box}make the headline bigger`);
+    await page.click('#cv-btns button[type=submit]');
+    await page.waitForFunction((id) => document.querySelectorAll('.cv-turn').length >= 2 && [...document.querySelectorAll('.cv-you')].some((e) => /About this preview: 9:16 motion, version A/.test(e.textContent)), t1);
+    const replies = (await call('GET', '/api/desk')).body.tasks.filter((t) => t.thread_id === t1);
+    const reply = replies[0] || {};
+    check('FU-D: Change it starts the reply with "About this preview (…)" and the sent reply names that preview', box === 'About this preview (9:16 motion, version A): '
+      && /About this preview: 9:16 motion, version A/.test(chip) && reply.options && reply.options.about_attachment && reply.options.about_attachment.id === m1.attached[1][1], JSON.stringify(reply.options));
+    if (reply.id) await call('POST', `/api/desk/tasks/${reply.id}/cancel`, {});
+    // 14. Upload as draft → New ad with the picture picked (in Meta's library), created switched off.
+    await openDesk(`r/${t1}`);
+    await page.waitForSelector(`.cv-turn[data-turn="${t1}"] [data-att-draft]`);
+    await page.locator(`.cv-turn[data-turn="${t1}"] [data-att-draft]`).first().click();
+    await page.waitForSelector('dialog.confirm #cd-ok');
+    const draftAsk = await page.textContent('dialog.confirm');
+    await Promise.all([page.waitForURL('**/new-ad.html?media=image:**'), page.click('dialog.confirm #cd-ok')]);
+    await page.waitForSelector('#library .media-item[aria-pressed="true"]');
+    const hash = new URL(page.url()).searchParams.get('media').split(':')[1];
+    const lib = (await call('GET', '/api/media')).body.items;
+    check('FU-D: Upload as draft asks first, uploads the preview to the media library and opens New ad with it picked',
+      /created switched off; nothing spends until you turn it on/.test(draftAsk) && lib.some((i) => i.kind === 'image' && i.hash === hash) && /^#?$/.test(new URL(page.url()).hash)
+      && new URL(page.url()).searchParams.get('from') === `/desk.html#r/${t1}` && /Claude's picture|n2-static/.test(await page.textContent('#chosen')), page.url());
+    await page.fill('#name', 'QA FU-D preview ad');
+    await Promise.all([page.waitForURL('**/ad.html?id=**'), page.click('#create')]);
+    const newAd = new URL(page.url()).searchParams.get('id');
+    check('FU-D: the new ad from Claude\'s preview is created switched off', metaObj(newAd).status === 'PAUSED', JSON.stringify(metaObj(newAd)));
+    await openDesk(`r/${t1}`);
+    await page.waitForSelector(`.cv-turn[data-turn="${t1}"] .att-acts a[href^="/new-ad.html?media=image:${hash}"]`);
+    check('FU-D: once uploaded the button reads "Uploaded · Open New ad"', /Uploaded · Open New ad/.test(await page.textContent(`.cv-turn[data-turn="${t1}"] .att-acts`)));
+    // 5. Lock now: back off; the next request runs with the usual tools, with no note (it was never meant to be full).
+    await page.click('#fa-bar [data-fa-lock]');
+    await page.waitForSelector('#fa-bar:not(.fa-on) [data-fa-on]');
+    const dotHidden = await page.isHidden('.rail [data-fa-dot]');
+    await page.goto(`${BASE}/desk.html#new`);
+    const t2 = await sendAsk('QA FU-D: a question after Lock now');
+    const m2 = mac(t2);
+    const turn2 = await turn(t2);
+    check('FU-D: Lock now turns it off (dot gone); the next request runs with "the usual tools" and no note', dotHidden && m2.access === 'sandbox'
+      && (await turn2.locator('.fa-ran').textContent()) === 'Ran with the usual tools' && (await turn2.locator('.fa-why').count()) === 0, JSON.stringify(m2));
+    // 6. Typed while on, locked before the Mac took it: the turn says so.
+    await page.goto(`${BASE}/desk.html#new`);
+    await page.waitForSelector('#fa-bar [data-fa-on]');
+    await unlockDialog('localdev-pass-123');
+    await page.waitForSelector('#fa-bar.fa-on');
+    const t3 = await sendAsk('QA FU-D: locked before the Mac picks it up');
+    await page.click('#fa-bar [data-fa-lock]');
+    await page.waitForSelector('#fa-bar:not(.fa-on)');
+    const m3 = mac(t3);
+    const turn3 = await turn(t3);
+    check('FU-D: locked after asking but before the Mac took it: "Full access was locked before your Mac picked this up." (refusal)', m3.access === 'sandbox'
+      && (await turn3.locator('.fa-why').textContent()) === 'Full access was locked before your Mac picked this up.', JSON.stringify(m3));
+    // 7. Five wrong passwords (counted on the server) block even the right one, with the time to wait (refusal).
+    sql('UPDATE user_sessions SET full_fails = 5, full_fail_at = now() WHERE user_id = 1');
+    await openDesk();
+    await unlockDialog('localdev-pass-123');
+    await page.waitForSelector('dialog.confirm #cd-err:not([hidden])');
+    const blocked = await page.textContent('dialog.confirm #cd-err');
+    await page.click('dialog.confirm #cd-cancel');
+    check('FU-D: after five wrong passwords even the right one waits: "Too many wrong passwords. Try again after …"', /^Too many wrong passwords\. Try again after \d{1,2}:\d{2} (AM|PM)\.$/.test(blocked)
+      && !(await page.$('#fa-bar.fa-on')), blocked);
+    sql('UPDATE user_sessions SET full_fails = 0, full_fail_at = NULL WHERE user_id = 1');
+    // 8. An account admin: no bar, no dot, and the route refuses (refusal).
+    py(`import db\nfrom werkzeug.security import generate_password_hash\ndb.execute("UPDATE users SET password_hash = %s, must_change_password = FALSE, is_active = TRUE WHERE email = 'admin-qa@burdanova.test'", (generate_password_hash('fud-admin-pass-1'),))`);
+    const actx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+    const ap = await actx.newPage();
+    ap.on('pageerror', (e) => errors.push(`account admin: ${e.message}`));
+    await ap.goto(BASE + '/login.html');
+    await ap.fill('#email', 'admin-qa@burdanova.test');
+    await ap.fill('#password', 'fud-admin-pass-1');
+    await paced();
+    await Promise.all([ap.waitForURL('**/home.html**'), ap.click('button[type=submit]')]);
+    await ap.goto(`${BASE}/desk.html#new`);
+    await ap.waitForSelector('#prompt');
+    await ap.waitForTimeout(400);
+    await paced();
+    const apPost = await call('POST', '/api/auth/full-access', { password: 'fud-admin-pass-1' }, ap);
+    check('FU-D: an account admin sees no full access bar or dot, and turning it on is refused (403) even with the right password', await ap.isHidden('#fa-bar')
+      && (await ap.locator('[data-fa-dot]').count()) === 0 && apPost.status === 403 && (await call('GET', '/api/auth/me', undefined, ap)).body.full_access === undefined, JSON.stringify(apPost));
+    await actx.close();
+    // 17. Phones (390 and 320): the password field is 16px, Lock now 44px, previews within the width with their buttons stacked at 320.
+    for (const w of [390, 320]) {
+      const pctx = await browser.newContext({ viewport: { width: w, height: 800 }, isMobile: true, hasTouch: true, storageState: await page.context().storageState() });
+      const pp = await pctx.newPage();
+      await openDesk('new', pp);
+      await pp.click('#fa-bar [data-fa-on]');
+      await pp.waitForSelector('dialog.confirm.fa-dialog #cd-input');
+      const pw = await pp.$eval('dialog.confirm #cd-input', (e) => [getComputedStyle(e).fontSize, Math.round(e.getBoundingClientRect().height)]);
+      const onBtn = await pp.$eval('dialog.confirm #cd-ok', (e) => Math.round(e.getBoundingClientRect().height));
+      await pp.fill('#cd-input', 'localdev-pass-123');
+      await paced();
+      await pp.click('dialog.confirm #cd-ok');
+      await pp.waitForSelector('#fa-bar.fa-on');
+      const lock = await pp.$eval('#fa-bar [data-fa-lock]', (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.height), Math.round(r.right)]; });
+      await openDesk(`r/${t1}`, pp);
+      await pp.waitForSelector(`.cv-turn[data-turn="${t1}"] .att-list img`);
+      const fit = await pp.evaluate((id) => {
+        const items = [...document.querySelectorAll(`.cv-turn[data-turn="${id}"] .att-item`)];
+        const btns = items.flatMap((f) => [...f.querySelectorAll('.att-acts .btn')]).map((b) => b.getBoundingClientRect());
+        return { vw: innerWidth, sideways: document.documentElement.scrollWidth - innerWidth, right: Math.max(...items.map((f) => f.getBoundingClientRect().right)),
+          btnH: Math.min(...btns.map((r) => Math.round(r.height))), lefts: new Set(btns.map((r) => Math.round(r.left))).size, widths: btns.map((r) => Math.round(r.width)) };
+      }, t1);
+      await pp.screenshot({ path: `${OUT}/fud-phone-${w}.png`, fullPage: true });
+      check(`FU-D: on a ${w}px phone the password field is 16px, Turn on and Lock now are 44px, previews stay within the screen${w === 320 ? ' and their buttons stack' : ''}`,
+        pw[0] === '16px' && pw[1] >= 44 && onBtn >= 44 && lock[0] >= 44 && lock[1] <= w && fit.sideways <= 0 && fit.right <= fit.vw && fit.btnH >= 44 && (w !== 320 || fit.lefts === 1),
+        JSON.stringify({ pw, onBtn, lock, fit }));
+      await call('DELETE', '/api/auth/full-access', undefined, pp);
+      await pctx.close();
+    }
+    // 11. Signing out ends it: signed back in, it is off.
+    await call('POST', '/api/auth/logout', {});
+    await page.goto(BASE + '/login.html');
+    await page.fill('#email', 'eugene@edgebourne.com');
+    await page.fill('#password', 'localdev-pass-123');
+    await paced();
+    await Promise.all([page.waitForURL('**/home.html**'), page.click('button[type=submit]')]);
+    await openDesk();
+    check('FU-D: after signing out and back in, full access is off (refusal)', !(await page.$('#fa-bar.fa-on')) && (await call('GET', '/api/auth/me')).body.full_access.on === false);
+    // 12. A password change ends it too (changed to the same password here).
+    await unlockDialog('localdev-pass-123');
+    await page.waitForSelector('#fa-bar.fa-on');
+    const changed = await call('POST', '/api/auth/password', { current: 'localdev-pass-123', new: 'localdev-pass-123' });
+    check('FU-D: changing the password ends full access', changed.status === 200 && (await call('GET', '/api/auth/me')).body.full_access.on === false
+      && sql('SELECT count(*) FROM user_sessions WHERE user_id = 1 AND full_until IS NOT NULL') === '0', JSON.stringify(changed));
+    // 18. The ad-blocker guard sweep covers fa-, att- and attach.js (guards.cjs runs over every page later in the file's own sweep).
+    const blockerHits = await page.evaluate(() => [...document.querySelectorAll('[class], [id]')].filter((e) => /(^|\s)(ad-|ads-|adset|sponsor|banner|promo)/i.test(`${e.className} ${e.id}`)).length);
+    check('FU-D: no class or id on the Claude page starts with an ad-blocker word', blockerHits === 0, String(blockerHits));
+    dropTasks();
+    // The refusals above log their 400 / 403 / 429 on purpose.
+    for (let i = errors.length - 1; i >= fudSeen; i--) if (/status of (400|403|429)/.test(errors[i])) errors.splice(i, 1);
   }
 
   await browser.close();

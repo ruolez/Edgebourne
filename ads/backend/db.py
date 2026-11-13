@@ -269,6 +269,23 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENC
 """
 
 
+def settle_full_access(cur):
+    """FU-D: the one person who may turn on full access is the console's owner named by ADMIN_EMAIL (Eugene), never
+    just whoever has the lowest id (migration 044's first guess could be a bootstrap or developer login). When that
+    email is an active admin of every account, the flag moves to him alone; otherwise it stays as it is. The holder
+    is logged at every start, so the Update's log says who it is."""
+    email = (config.ADMIN_EMAIL or "").strip().lower()
+    cur.execute("""SELECT id FROM users WHERE lower(email) = %s AND role = 'admin' AND account_id IS NULL AND is_active""", (email,))
+    named = cur.fetchone()
+    if named:
+        cur.execute("UPDATE users SET full_access_allowed = (id = %s) WHERE full_access_allowed OR id = %s", (named[0], named[0]))
+    else:
+        log.warning("full access: ADMIN_EMAIL %s isn't an active admin of every account; the flag stays where it is", email or "(empty)")
+    cur.execute("SELECT id, email FROM users WHERE full_access_allowed ORDER BY id")
+    holders = cur.fetchall()
+    log.warning("full access may be turned on by: %s", ", ".join(f"#{i} {e}" for i, e in holders) or "nobody")
+
+
 def run_migrations():
     ensure_database()
     conn = connect()
@@ -292,14 +309,16 @@ def run_migrations():
             cur.execute("SELECT COUNT(*) FROM users")
             if cur.fetchone()[0] == 0:
                 if config.ADMIN_INITIAL_PASSWORD:
+                    # The first owner of a new install is the one who may turn on full access (FU-D, migration 044).
                     cur.execute(
-                        """INSERT INTO users (email, name, password_hash, role, must_change_password)
-                           VALUES (%s, %s, %s, 'admin', TRUE)""",
+                        """INSERT INTO users (email, name, password_hash, role, must_change_password, full_access_allowed)
+                           VALUES (%s, %s, %s, 'admin', TRUE, TRUE)""",
                         (config.ADMIN_EMAIL.lower(), config.ADMIN_NAME,
                          generate_password_hash(config.ADMIN_INITIAL_PASSWORD)),
                     )
                 else:
                     log.warning("no users yet and ADMIN_INITIAL_PASSWORD is empty: first admin not created")
+            settle_full_access(cur)
             cur.execute("SELECT pg_advisory_unlock(424242)")
         conn.commit()
     finally:

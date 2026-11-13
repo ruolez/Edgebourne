@@ -1,5 +1,6 @@
 """Bridge unit tests (host Python, stdlib only): cd ads/bridge && python3 -m unittest test_bridge"""
 import importlib.machinery
+import json
 import os
 import tempfile
 import unittest
@@ -186,6 +187,230 @@ class LogAppliedTests(unittest.TestCase):
     def test_nothing_new_nothing_written(self):
         logged = "".join(f"[desk #{i}]" for i in (31, 32, 35))
         self.assertEqual((desk.applied_log_lines(self.HISTORY, logged), desk.applied_log_lines([], ""), desk.applied_log_lines(None, "")), ([], [], []))
+
+
+# FU-D: the meta-ads MCP server's tools as of 2026-11-13 (update by hand when Meta adds tools; the check below then
+# makes the new one land on one side, read or write, on purpose).
+META_ADS_TOOLS = """ads_account_get_activity_logs ads_activate_entity ads_boost_ig_post ads_catalog_create ads_catalog_create_feed_rule
+ads_catalog_create_product_feed ads_catalog_create_product_feed_upload_session ads_catalog_create_product_set ads_catalog_delete_product
+ads_catalog_event_source_connect ads_catalog_event_source_disconnect ads_catalog_event_source_get ads_catalog_event_source_get_catalogs
+ads_catalog_event_source_get_health ads_catalog_event_source_get_recommendations ads_catalog_get_businesses ads_catalog_get_data_sources
+ads_catalog_get_diagnostics ads_catalog_get_dynamic_ads_health ads_catalog_get_feed_rules ads_catalog_get_product_feed_upload_sessions
+ads_catalog_list_catalogs ads_catalog_list_dpa_eligible_catalogs ads_catalog_list_partner_integrations ads_catalog_list_product_feeds
+ads_catalog_list_product_sets ads_catalog_list_products ads_catalog_product_create ads_catalog_product_feed_delete
+ads_catalog_product_feed_delete_rule ads_catalog_product_set_delete ads_catalog_update_catalog ads_catalog_update_feed_rule
+ads_catalog_update_product ads_catalog_update_product_feed ads_catalog_update_product_set ads_create_ad ads_create_ad_set
+ads_create_campaign ads_create_creative ads_create_custom_audience ads_creative_create_image_variations ads_creative_delete
+ads_creative_update ads_creative_update_image_elements ads_creative_upload_local_image ads_creative_upload_media
+ads_delete_custom_audience ads_delete_local_ad_image ads_experiment_abtest_create_test ads_experiment_abtest_get_test
+ads_experiment_abtest_update_test ads_experiment_check_eligibility ads_experiment_lift_create_test ads_experiment_lift_get_test
+ads_experiment_list_tests ads_finalize_local_ad_image_upload ads_get_ad_account_custom_audiences ads_get_ad_account_pages
+ads_get_ad_accounts ads_get_ad_entities ads_get_ad_images ads_get_ad_preview ads_get_ad_preview_screenshot ads_get_ad_videos
+ads_get_async_result ads_get_creative_ads ads_get_creatives ads_get_custom_audience ads_get_custom_audience_adsets
+ads_get_customconversions ads_get_dataset_details ads_get_dataset_quality ads_get_dataset_stats ads_get_datasets ads_get_errors
+ads_get_field_context ads_get_help_article ads_get_ig_accounts ads_get_ig_media ads_get_opportunity_score ads_get_pages_for_business
+ads_get_user_pages ads_insights_advertiser_context ads_insights_anomaly_signal ads_insights_auction_ranking_benchmarks
+ads_insights_industry_benchmark ads_insights_performance_trend ads_insights_performance_vs_peers ads_library_search
+ads_log_ui_interaction ads_pixel_event_create ads_pixel_event_delete ads_pixel_event_read ads_pixel_event_update
+ads_pixel_parameter_create ads_pixel_parameter_delete ads_pixel_parameter_read ads_pixel_parameter_update ads_update_custom_audience
+ads_update_entity offer_report""".split()
+FROZEN_READS = """ads_get_ad_accounts ads_get_ad_entities ads_get_ad_preview ads_get_ad_preview_screenshot ads_get_ad_images ads_get_ad_videos
+ads_get_creatives ads_get_creative_ads ads_get_ad_account_pages ads_get_pages_for_business ads_get_user_pages ads_get_ig_accounts
+ads_get_ig_media ads_get_errors ads_get_field_context ads_get_help_article ads_get_opportunity_score ads_get_async_result ads_get_datasets
+ads_get_dataset_details ads_get_dataset_quality ads_get_dataset_stats ads_get_customconversions ads_get_ad_account_custom_audiences
+ads_get_custom_audience ads_get_custom_audience_adsets ads_insights_advertiser_context ads_insights_anomaly_signal
+ads_insights_auction_ranking_benchmarks ads_insights_industry_benchmark ads_insights_performance_trend ads_insights_performance_vs_peers
+ads_library_search ads_account_get_activity_logs ads_experiment_list_tests ads_experiment_abtest_get_test ads_experiment_lift_get_test
+ads_experiment_check_eligibility ads_pixel_event_read ads_pixel_parameter_read""".split()
+
+
+def frozen_sandbox(kind, web):
+    """Today's sandbox per kind, written out by hand (2026-11-13): full access must never change it."""
+    out = [f"Read(/{WORKDIR}/**)", f"Read(/{HOME}/.claude/skills/**)", "ToolSearch", "Skill", f"Bash({SKILL}/desk:*)",
+           "Bash(~/.claude/skills/ads-desk/desk:*)"]
+    if web and kind in ("question", "review", "research", "creative"):
+        out += ["WebSearch", "WebFetch"]
+    out += ["Edit(reports/desk/**)", f"Edit(/{WORKDIR}/reports/desk/**)"]
+    out += [t for n in FROZEN_READS for t in (f"mcp__meta-ads__{n}", f"mcp__claude_ai_Meta_Ads__{n}")]
+    if kind in ("render", "advice"):
+        out += ["Bash(ffmpeg:*)", "Bash(ffprobe:*)", "Bash(mkdir:*)", "Bash(ls:*)", "Edit(creatives/**)", f"Edit(/{WORKDIR}/creatives/**)",
+                "Bash(node:*)", "Bash(cp:*)", "Bash(sips:*)", "Bash(shasum:*)", "Bash(cd:*)", "Edit(reports/log.md)",
+                f"Edit(/{WORKDIR}/reports/log.md)"]
+    return out
+
+
+class FullAccessTests(unittest.TestCase):
+    """FU-D: the owner's own typed requests, unlocked on the console, run with the terminal's tools; everything else
+    keeps the sandbox exactly. Meta writes stay out either way (only Accept on the console writes)."""
+    KINDS = ["question", "review", "research", "creative", "polish", "diagnose", "render", "advice", "some_new_kind"]
+
+    def full(self, kind="question"):
+        return bridge.allowed_tools(SKILL, WORKDIR, kind, web=True, access="full")
+
+    def test_the_sandbox_is_unchanged_for_every_kind(self):
+        got = {(k, w): bridge.allowed_tools(SKILL, WORKDIR, k, web=w, access="sandbox") for k in self.KINDS for w in (True, False)}
+        default = {(k, w): bridge.allowed_tools(SKILL, WORKDIR, k, web=w) for k in self.KINDS for w in (True, False)}
+        self.assertEqual((got, default), ({key: frozen_sandbox(*key) for key in got}, {key: frozen_sandbox(*key) for key in got}))
+
+    def test_an_unknown_access_word_is_the_sandbox(self):
+        self.assertEqual(bridge.allowed_tools(SKILL, WORKDIR, "question", web=True, access="FULL"), frozen_sandbox("question", True))
+
+    def test_full_has_the_terminals_tools_and_meta_reads(self):
+        got = self.full()
+        self.assertEqual([t in got for t in ("Bash", "Read", "WebFetch", "WebSearch", "Skill", "Task", "mcp__brave-search",
+                                             "mcp__meta-ads__ads_get_ad_entities", f"Edit(/{WORKDIR}/**)")], [True] * 9)
+
+    def test_full_writes_files_only_in_the_workspace_and_has_no_browser_server(self):
+        # A Write to ~/.zshrc or a LaunchAgent would run later outside every rule; the Playwright and Chrome servers
+        # run outside the Bash sandbox and browse anywhere, Meta included (security review).
+        got = self.full()
+        self.assertEqual([t for t in got if t.split("(")[0] in ("Edit", "Write", "NotebookEdit") or t.startswith(("mcp__playwright", "mcp__claude-in-chrome"))],
+                         [f"Edit(/{WORKDIR}/**)"])
+
+    def test_full_lists_no_meta_write_tool(self):
+        names = {t.split("__")[-1] for t in self.full() if t.startswith(("mcp__meta-ads__", "mcp__claude_ai_Meta_Ads__"))}
+        self.assertEqual((names & set(bridge.META_WRITE_TOOLS), names - set(bridge.READ_TOOLS)), (set(), set()))
+
+    def test_meta_reads_and_writes_cover_every_tool_and_never_overlap(self):
+        self.assertEqual((sorted(set(bridge.READ_TOOLS) | set(bridge.META_WRITE_TOOLS)), set(bridge.READ_TOOLS) & set(bridge.META_WRITE_TOOLS),
+                          sorted(bridge.READ_TOOLS)), (sorted(META_ADS_TOOLS), set(), sorted(FROZEN_READS)))
+
+    def test_full_denies_meta_writes_the_meta_cli_the_keychain_and_claudes_own_settings(self):
+        denied = bridge.denied_tools(WORKDIR, HOME, access="full")
+        writes = [f"mcp__{p}__{n}" for n in bridge.META_WRITE_TOOLS for p in ("meta-ads", "claude_ai_Meta_Ads")]
+        must = writes + ["Bash(meta:*)", "Bash(security:*)", "Bash(launchctl:*)", "Bash(claude:*)", f"Edit(/{HOME}/.claude/settings.json)",
+                         f"Edit(/{HOME}/.claude/settings.local.json)", f"Edit(/{HOME}/.claude/hooks/**)", f"Edit(/{HOME}/.claude/skills/ads-desk/**)",
+                         f"Edit(/{HOME}/Library/LaunchAgents/**)", "Read(**/.env)", f"Read(/{HOME}/.ssh/**)", f"Read(/{HOME}/.claude/.credentials.json)",
+                         f"Read(/{HOME}/.claude.json)", "mcp__playwright", "mcp__claude-in-chrome", "WebFetch(domain:facebook.com)",
+                         "WebFetch(domain:*.facebook.com)", "WebFetch(domain:graph.facebook.com)", "WebFetch(domain:mcp.facebook.com)"]
+        self.assertEqual([m for m in must if m not in denied], [])
+
+    def test_full_runs_bash_in_claude_codes_sandbox_with_no_way_to_meta(self):
+        """Tool names don't stop a script: a full run's Bash runs in Claude Code's own OS sandbox, with no network
+        (dontAsk refuses every host not allowed; Meta's hosts are denied by name too), no Keychain or credentials, and
+        the Claude token unset; only `desk` (a fixed script that checks its own paths) runs outside it."""
+        got = bridge.full_settings(WORKDIR, HOME, SKILL)["sandbox"]
+        self.assertEqual((got["enabled"], got["failIfUnavailable"], got["allowUnsandboxedCommands"], got["network"]["allowedDomains"],
+                          [d for d in ("graph.facebook.com", "mcp.facebook.com", "*.facebook.com", "facebook.com", "*.facebook.net",
+                                       "*.anthropic.com", "claude.ai") if d not in got["network"]["deniedDomains"]],
+                          [p for p in (f"{HOME}/Library/Keychains", f"{HOME}/.claude/.credentials.json", f"{HOME}/.claude.json", f"{HOME}/.ssh",
+                                       f"{HOME}/.config", f"{WORKDIR}/.env") if p not in got["filesystem"]["denyRead"]],
+                          sorted(e["name"] for e in got["credentials"]["envVars"] if e["mode"] == "deny"),
+                          got["excludedCommands"]),
+                         (True, True, False, [], [], [], ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"],
+                          [f"{SKILL}/desk *", "~/.claude/skills/ads-desk/desk *"]))
+
+    def test_the_sandboxs_deny_list_is_unchanged(self):
+        self.assertEqual(bridge.denied_tools(WORKDIR, HOME, ["state/**"], access="sandbox"), bridge.denied_tools(WORKDIR, HOME, ["state/**"]))
+
+    def test_a_full_run_only_when_the_claim_answer_and_a_fresh_read_with_the_pass_both_say_so(self):
+        cases = [({"access": "full"}, "full"), ({"claim_token": "p", "access": "full"}, "sandbox"),
+                 ({"claim_token": "p", "access": "sandbox"}, "full"), ({"claim_token": "p", "access": "full"}, None),
+                 ({"claim_token": "p", "access": "full"}, "full"), ({"claim_token": "", "access": "full"}, "full")]
+        self.assertEqual([bridge.run_access(t, c) for t, c in cases], ["sandbox", "sandbox", "sandbox", "sandbox", "full", "sandbox"])
+
+    def test_a_full_run_still_runs_in_dont_ask_mode(self):
+        cmd = bridge.claude_command({"claude": "/usr/local/bin/claude", "workdir": WORKDIR}, {"id": 41, "kind": "creative"}, "full", HOME, [])
+        self.assertEqual((cmd[cmd.index("--permission-mode") + 1], "bypassPermissions" in " ".join(cmd), "--dangerously-skip-permissions" in cmd,
+                          cmd[cmd.index("--max-turns") + 1], "Bash" in cmd[cmd.index("--allowedTools") + 1].split(","),
+                          json.loads(cmd[cmd.index("--settings") + 1]) == bridge.full_settings(WORKDIR, HOME, SKILL)),
+                         ("dontAsk", False, False, "200", True, True))
+
+    def test_a_sandboxed_command_line_is_as_before(self):
+        cmd = bridge.claude_command({"claude": "/usr/local/bin/claude", "workdir": WORKDIR}, {"id": 41, "kind": "question", "from_owner": True,
+                                                                                          "account_id": 1}, "sandbox", HOME, [])
+        self.assertEqual(cmd, ["/usr/local/bin/claude", "-p", "/ads-desk run 41", "--permission-mode", "dontAsk",
+                               "--allowedTools", ",".join(frozen_sandbox("question", True)),
+                               "--disallowedTools", ",".join(bridge.denied_tools(WORKDIR, HOME)), "--max-turns", "80"])
+
+
+class AttachInputTests(unittest.TestCase):
+    """`desk attach`: only a JPG, PNG, WebP or MP4 the request made itself (its own `creatives/<date>-desk-<id>/` or
+    `-desk-task<id>/` folder, or its frames under reports/desk/tmp), by its real path, under its size. Any other
+    folder of the shared workspace (another client's creatives) is refused, so a run can't show it to its account."""
+    ID = 41
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = os.path.realpath(self.tmp.name)
+        self.work = os.path.join(root, "work")
+        self.ssh = os.path.join(root, ".ssh")
+        for d in ("creatives/2026-11-13-desk-41/out", "creatives/2026-11-12-desk-task41", "creatives/2026-11-07-burdanova",
+                  "creatives/2026-11-13-desk-410", "reports/desk/tmp/task41-frames", "reports/desk/tmp/task4-frames", "state"):
+            os.makedirs(os.path.join(self.work, d))
+        os.makedirs(self.ssh)
+        files = {"creatives/2026-11-13-desk-41/out/a.png": 1000, "creatives/2026-11-12-desk-task41/b.mp4": 1000,
+                 "reports/desk/tmp/task41-frames/frame-001.jpg": 1000, "creatives/2026-11-13-desk-41/c.gif": 100,
+                 "creatives/2026-11-13-desk-41/big.mp4": 61 * 1024 * 1024, "creatives/2026-11-13-desk-41/big.png": 10 * 1024 * 1024 + 1,
+                 "creatives/2026-11-07-burdanova/card.png": 1000, "creatives/2026-11-13-desk-410/x.png": 1000,
+                 "reports/desk/tmp/task4-frames/frame-001.jpg": 1000, "creatives/loose.png": 1000, "state/shot.png": 1000}
+        for rel, size in files.items():
+            with open(os.path.join(self.work, rel), "wb") as fh:
+                fh.truncate(size)
+        with open(os.path.join(self.ssh, "id.png"), "wb") as fh:
+            fh.truncate(100)
+        os.symlink(os.path.join(self.ssh, "id.png"), os.path.join(self.work, "creatives", "2026-11-13-desk-41", "key.png"))
+        os.symlink(os.path.join(self.work, "creatives", "2026-11-07-burdanova", "card.png"),
+                   os.path.join(self.work, "creatives", "2026-11-13-desk-41", "theirs.png"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def check(self, rel, task_id=ID):
+        try:
+            return desk.attach_input(self.work, os.path.join(self.work, rel), task_id)
+        except ValueError:
+            return None
+
+    def test_previews_the_request_made_itself(self):
+        own = ["creatives/2026-11-13-desk-41/out/a.png", "creatives/2026-11-12-desk-task41/b.mp4", "reports/desk/tmp/task41-frames/frame-001.jpg"]
+        self.assertEqual([self.check(p) for p in own], [(os.path.join(self.work, own[0]), "image/png"), (os.path.join(self.work, own[1]), "video/mp4"),
+                                                       (os.path.join(self.work, own[2]), "image/jpeg")])
+
+    def test_outside_a_gif_or_too_big_is_refused(self):
+        self.assertEqual([self.check(p) for p in ("creatives/2026-11-13-desk-41/key.png", "../.ssh/id.png", "creatives/2026-11-13-desk-41/c.gif",
+                                                  "creatives/2026-11-13-desk-41/big.mp4", "creatives/2026-11-13-desk-41/big.png",
+                                                  "creatives/2026-11-13-desk-41/missing.png")], [None] * 6)
+
+    def test_another_folder_of_the_shared_workspace_is_refused(self):
+        self.assertEqual([self.check(p) for p in ("creatives/2026-11-07-burdanova/card.png", "creatives/2026-11-13-desk-41/theirs.png",
+                                                  "creatives/2026-11-13-desk-410/x.png", "reports/desk/tmp/task4-frames/frame-001.jpg",
+                                                  "creatives/loose.png", "state/shot.png")], [None] * 6)
+
+    def test_another_requests_folder_is_refused(self):
+        self.assertEqual(self.check("creatives/2026-11-13-desk-41/out/a.png", task_id=4), None)
+
+
+class ReadBodyTests(unittest.TestCase):
+    """`--file` for report / propose / scorecard / swipe / benchmarks: `desk` runs outside Claude's sandbox, so it reads
+    only files in the workspace (never .env), or a run could post ~/.ssh into a report."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = os.path.realpath(self.tmp.name)
+        self.work = os.path.join(root, "work")
+        os.makedirs(os.path.join(self.work, "reports", "desk", "tmp"))
+        for rel, text in {"work/reports/desk/tmp/task41-report.md": "hello", "work/.env": "ACCESS_TOKEN=x", "secret.txt": "key"}.items():
+            with open(os.path.join(root, rel), "w") as fh:
+                fh.write(text)
+        os.symlink(os.path.join(root, "secret.txt"), os.path.join(self.work, "reports", "desk", "tmp", "link.md"))
+        self.root = root
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def read(self, path):
+        try:
+            return desk.read_body(path, self.work)
+        except ValueError:
+            return None
+
+    def test_a_file_in_the_workspace(self):
+        self.assertEqual(self.read(os.path.join(self.work, "reports/desk/tmp/task41-report.md")), "hello")
+
+    def test_outside_the_workspace_a_link_out_or_env_is_refused(self):
+        self.assertEqual([self.read(os.path.join(self.root, "secret.txt")), self.read(os.path.join(self.work, "reports/desk/tmp/link.md")),
+                          self.read(os.path.join(self.work, ".env"))], [None] * 3)
 
 
 if __name__ == "__main__":

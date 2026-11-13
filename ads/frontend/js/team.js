@@ -23,7 +23,7 @@ function render() {
         <td data-label="Last signed in">${m.last_login_at ? when(m.last_login_at) : '<span class="muted">Never</span>'}</td>
         <td class="tm-acts"><div class="row">
           ${m.access === "admin" && !data.owner ? "" : `<button class="btn" data-edit="${m.id}" aria-label="Edit ${esc(m.name)}">Edit</button>`}
-          ${m.id === me.id || (m.access === "admin" && !data.owner) ? "" : `<button class="btn btn-quiet" data-reset="${m.id}">Reset password</button>
+          ${m.id === me.id || m.keeps_own || (m.access === "admin" && !data.owner) ? "" : `<button class="btn btn-quiet" data-reset="${m.id}">Reset password</button>
           <button class="btn btn-quiet ${m.is_active ? "btn-danger" : ""}" data-active="${m.id}">${m.is_active ? "Deactivate" : "Reactivate"}</button>`}
         </div></td>
       </tr>`).join("")}</tbody>`;

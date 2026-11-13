@@ -34,7 +34,7 @@ export async function askForBrief(ids, as = "brief") {
     if (sent === false) return false;
     text = sent.trim();
     try {
-      const task = await api("/api/desk/tasks", { method: "POST", body: { kind: "creative", prompt: text } });
+      const task = await api("/api/desk/tasks", { method: "POST", body: { kind: "creative", prompt: text, origin: "brief" } });
       location.href = `/desk.html#r/${task.id}`;
       return true;
     } catch (err) {

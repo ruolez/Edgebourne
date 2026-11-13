@@ -50,7 +50,7 @@ WAIT_MAX = 25
 TASK_COLS = """t.id, t.kind, t.prompt, t.campaign_id, c.name AS campaign_name, t.status, t.progress,
                t.summary, t.error, t.created_at, t.claimed_at, t.finished_at, t.updated_at,
                u.name AS created_by_name, t.options, t.scorecard, t.archived_at, t.seen_at, t.queue_rank,
-               t.thread_id, t.steps, t.swipe_ids, t.mentions"""
+               t.thread_id, t.steps, t.swipe_ids, t.mentions, t.access, t.access_note"""
 TASK_FROM = "desk_tasks t LEFT JOIN campaigns c ON c.id = t.campaign_id LEFT JOIN users u ON u.id = t.created_by"
 
 
@@ -133,7 +133,8 @@ def _expire_stale():
     # Claimed, but the Mac never said it started: the answer to its long poll was lost on the way.
     # Back in line (at its old place), with a new pass when it is claimed again.
     db.execute(
-        f"""UPDATE desk_tasks SET status = 'queued', claimed_at = NULL, claim_hash = NULL, progress = NULL, updated_at = now()
+        f"""UPDATE desk_tasks SET status = 'queued', claimed_at = NULL, claim_hash = NULL, progress = NULL, updated_at = now(),
+                   access = 'sandbox', access_note = NULL
             WHERE status = 'claimed' AND claimed_at < now() - interval '{REQUEUE_MINUTES} minutes'"""
     )
     db.execute(
@@ -165,9 +166,17 @@ def tasks_with_results(where="TRUE", params=(), limit=50):
     checks = change_checks_db.proposal_checks(proposals)
     for p in proposals:
         p["check"] = checks.get(p["id"])
+    # FU-D: the previews Claude attached (never their bytes; GET /api/desk/attachments/<id> serves those).
+    previews = db.query("""SELECT id, task_id, kind, name, caption, width, height, duration_ms, body IS NULL AS pruned, meta_ref
+                           FROM desk_attachments WHERE task_id = ANY(%s) ORDER BY id""", (ids,))
+    for a in previews:
+        ref = a.pop("meta_ref")
+        a["drafted"] = bool(ref)
+        a["next"] = draft_next(ref, a["task_id"]) if ref else None
     for t in tasks:
         t["reports"] = [r for r in reports if r["task_id"] == t["id"]]
         t["proposals"] = [p for p in proposals if p["task_id"] == t["id"]]
+        t["attachments"] = [a for a in previews if a["task_id"] == t["id"]]
     return tasks
 
 
@@ -291,9 +300,15 @@ def create_task():
         return api_error(f"Keep it under {MAX_PROMPT} characters", 400, field="prompt")
     if campaign_id and not db.query("SELECT 1 FROM campaigns WHERE id = %s", (campaign_id,), one=True):
         return api_error("That campaign isn't synced yet", 400, field="campaign_id")
+    # Where the words came from (FU-D): a brief drafted from competitors' ads, a composer filled from a link, or the
+    # Research page (no full access bar there). Each keeps the request on the usual tools; a body can only take full
+    # access away, never give it.
+    origin = ORIGINS.get(data.get("origin"))
+    options = {origin: True} if origin else {}
+    user = current_user()
     task = db.execute(
-        "INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by) VALUES (%s, %s, %s, %s) RETURNING id",
-        (kind, prompt, campaign_id, current_user()["id"]), returning=True,
+        "INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options, full_session) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (kind, prompt, campaign_id, user["id"], json.dumps(options), full_session_for(user, kind, options)), returning=True,
     )
     log_activity("desk.task_created", subject=str(task["id"]), details={"kind": kind})
     return jsonify(tasks_with_results("t.id = %s", [task["id"]], 1)[0]), 201
@@ -377,6 +392,23 @@ def stop_run(task_id):
 
 
 THREAD_SQL = "COALESCE(thread_id, id)"
+ORIGINS = {"brief": "brief", "prefill": "prefill", "research": "research_page"}  # request body origin → options key
+
+
+def _whole(value):
+    """A positive whole number from a request body (an int or its digits), else None. Never a bool."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    return value if isinstance(value, int) and value > 0 else None
+
+
+def clean_reply(data):
+    """A reply's body: the words, what it is about (a suggestion, or a preview for "Change it", FU-D) and Stop first.
+    Anything else (an `access`, `full` or `options` field) is dropped: who may get full access is the server's call."""
+    return {"prompt": str(data.get("prompt") or "").strip(), "about_proposal": _whole(data.get("about_proposal")),
+            "about_attachment": _whole(data.get("about_attachment")), "stop_first": bool(data.get("stop_first"))}
 
 
 @bp.post("/tasks/<int:task_id>/reply")
@@ -384,8 +416,8 @@ THREAD_SQL = "COALESCE(thread_id, id)"
 def reply(task_id):
     """A follow-up in the same conversation. It runs next, right after whatever is running now,
     and continues the Claude session of the last turn."""
-    data = request.get_json(silent=True) or {}
-    prompt = (data.get("prompt") or "").strip()
+    data = clean_reply(request.get_json(silent=True) or {})
+    prompt = data["prompt"]
     if not prompt:
         return api_error("Write what you'd like Claude to do", 400, field="prompt")
     if len(prompt) > MAX_PROMPT:
@@ -402,7 +434,14 @@ def reply(task_id):
         stop_run(last["id"])
     old = last["options"] or {}
     options = {**{k: old[k] for k in ("ad_id", "ad_name") if old.get(k)}, "reply": True}
-    about = data.get("about_proposal")
+    if data["about_attachment"] is not None:
+        # "Change it" under a preview (FU-D): the reply names the preview it is about.
+        seen = db.query(f"""SELECT a.id, COALESCE(a.caption, a.name) AS title FROM desk_attachments a JOIN desk_tasks t ON t.id = a.task_id
+                            WHERE a.id = %s AND COALESCE(t.thread_id, t.id) = %s""", (data["about_attachment"], root), one=True)
+        if not seen:
+            return api_error("That preview isn't in this conversation", 404)
+        options["about_attachment"] = {"id": seen["id"], "title": seen["title"]}
+    about = data["about_proposal"]
     if about is not None:
         sent = db.execute(
             f"""UPDATE desk_proposals SET status = 'revised', decided_by = %s, decided_at = now()
@@ -412,7 +451,9 @@ def reply(task_id):
         if not sent:
             return api_error("That suggestion was already decided", 409)
         options["about"] = {"id": sent["id"], "title": sent["title"]}
-    task_id_new = queue_reply(root, last["kind"], last["campaign_id"], prompt, options, current_user()["id"])
+    user = current_user()
+    task_id_new = queue_reply(root, last["kind"], last["campaign_id"], prompt, options, user["id"],
+                              full_session_for(user, last["kind"], options))
     task = {"id": task_id_new}
     log_activity("desk.task_created", subject=str(task["id"]), details={"kind": last["kind"], "reply_to": root})
     return jsonify(tasks_with_results("t.id = %s", [task["id"]], 1)[0]), 201
@@ -426,14 +467,27 @@ def front_rank():
         return db.query("SELECT COALESCE(MIN(queue_rank), 0) - 1 AS r FROM desk_tasks WHERE status = 'queued'", one=True)["r"]
 
 
-def queue_reply(root, kind, campaign_id, prompt, options, user_id):
+def full_session_for(user, kind, options, swipe_ids=()):
+    """FU-D: this sign-in's key (hashed) when the request may run with full access, else None. Decided here from the
+    person, the sign-in's unlock and where the request came from; the claim decides again (claim_access)."""
+    import auth
+    import full_access as fa
+    key = auth.session_key_hash()
+    if not key or not fa.flagged_owner(user):
+        return None
+    import account_ctx
+    row = db.query("SELECT user_id, full_until FROM user_sessions WHERE key_hash = %s", (key,), one=True)
+    return key if fa.request_full(user, row, kind, options, list(swipe_ids), db.now(), account_ctx.current()) else None
+
+
+def queue_reply(root, kind, campaign_id, prompt, options, user_id, full_session=None):
     """Adds a run to a conversation. It goes to the front of the line, behind anything else
     already waiting in the same conversation, so its messages stay in the order they were sent."""
     task = db.execute(
-        f"""INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options, thread_id, queue_rank)
+        f"""INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options, thread_id, queue_rank, full_session)
             VALUES (%s, %s, %s, %s, %s, %s,
-                    COALESCE((SELECT MAX(queue_rank) FROM desk_tasks WHERE status = 'queued' AND {THREAD_SQL} = %s), %s)) RETURNING id""",
-        (kind, prompt, campaign_id, user_id, json.dumps(options), root, root, front_rank()), returning=True)
+                    COALESCE((SELECT MAX(queue_rank) FROM desk_tasks WHERE status = 'queued' AND {THREAD_SQL} = %s), %s), %s) RETURNING id""",
+        (kind, prompt, campaign_id, user_id, json.dumps(options), root, root, front_rank(), full_session), returning=True)
     db.execute(f"""UPDATE desk_tasks SET archived_at = NULL WHERE {THREAD_SQL} = %s
                    AND NOT EXISTS (SELECT 1 FROM desk_tasks o WHERE COALESCE(o.thread_id, o.id) = %s AND o.archived_at IS NULL AND o.id <> %s)""",
                (root, root, task["id"]))
@@ -612,12 +666,15 @@ def mark_seen(task_id):
 @bp.post("/tasks/<int:task_id>/again")
 @admin_required
 def ask_again(task_id):
-    old = db.query("SELECT kind, prompt, campaign_id, options, COALESCE(thread_id, id) AS root FROM desk_tasks WHERE id = %s", (task_id,), one=True)
+    old = db.query("SELECT kind, prompt, campaign_id, options, created_by, COALESCE(thread_id, id) AS root FROM desk_tasks WHERE id = %s", (task_id,), one=True)
     if not old:
         return api_error("Task not found", 404)
+    user = current_user()
+    # Try again runs the same words: with full access only when they were this person's own (FU-D).
+    full = full_session_for(user, old["kind"], old["options"] or {}) if old["created_by"] == user["id"] else None
     task = db.execute(
-        "INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options, thread_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-        (old["kind"], old["prompt"], old["campaign_id"], current_user()["id"], json.dumps(old["options"] or {}), old["root"]), returning=True,
+        "INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options, thread_id, full_session) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (old["kind"], old["prompt"], old["campaign_id"], user["id"], json.dumps(old["options"] or {}), old["root"], full), returning=True,
     )
     db.execute(f"UPDATE desk_tasks SET archived_at = NULL WHERE {THREAD_SQL} = %s AND id = %s", (old["root"], task_id))
     log_activity("desk.task_created", subject=str(task["id"]), details={"kind": old["kind"], "again_of": task_id})
@@ -743,15 +800,43 @@ def claim_next():
     with account_ctx.all_accounts():
         row = db.execute(
             f"""UPDATE desk_tasks SET status = 'claimed', claimed_at = now(), updated_at = now(),
-                      progress = 'Picked up by the Mac', claim_hash = %s
+                      progress = 'Picked up by the Mac', claim_hash = %s, access = 'sandbox', access_note = NULL
                WHERE id = (SELECT id FROM desk_tasks q WHERE status = 'queued'{claim_skip(version)}
                            ORDER BY queue_rank, id LIMIT 1 FOR UPDATE OF q SKIP LOCKED)
-               RETURNING id, account_id""",
+               RETURNING id, account_id, kind, options, created_by, full_session, COALESCE(thread_id, id) AS root""",
             (token and key_hash(token),), returning=True,
         )
     if row:
         row["claim_token"] = token
+        if row.pop("full_session"):
+            decide_access(row, version)
     return row
+
+
+def decide_access(row, version):
+    """FU-D, at claim: full access only when everything still holds now (claim_access). Written on the task before
+    the claim's answer leaves, so the Mac reads it with the task; anything going wrong leaves the task sandboxed (every
+    claim, a requeued one too, starts at 'sandbox': only this function's own UPDATE raises it)."""
+    import account_ctx
+    import full_access as fa
+    try:
+        with account_ctx.all_accounts():
+            task = db.query("SELECT kind, options, created_by, full_session, account_id FROM desk_tasks WHERE id = %s", (row["id"],), one=True)
+            session = db.query("SELECT user_id, full_until FROM user_sessions WHERE key_hash = %s", (task["full_session"],), one=True)
+            writer = db.query("SELECT id, role, account_id, is_active, full_access_allowed FROM users WHERE id = %s", (task["created_by"],), one=True)
+            others = db.query("""SELECT 1 FROM desk_tasks WHERE COALESCE(thread_id, id) = %s AND created_by IS NOT NULL
+                                 AND created_by <> %s LIMIT 1""", (row["root"], task["created_by"]), one=True)
+            automatic = db.query("""SELECT 1 FROM desk_tasks WHERE COALESCE(thread_id, id) = %s
+                                    AND (created_by IS NULL OR options ?| %s OR kind <> ALL(%s)) LIMIT 1""",
+                                 (row["root"], list(fa.THREAD_AUTOMATIC), list(fa.FULL_KINDS)), one=True)
+            access, note = fa.claim_access(task, session, fa.flagged_owner(writer), bool(others), version, db.now(),
+                                           thread_automatic=bool(automatic))
+            db.execute("UPDATE desk_tasks SET access = %s, access_note = %s WHERE id = %s", (access, note, row["id"]))
+        if access == "full":
+            with account_ctx.use(row["account_id"]):
+                log_activity("desk.run_full", subject=str(row["id"]), actor="claude")
+    except Exception:  # noqa: BLE001 - the safe default (sandbox) stays
+        log.exception("desk task %s: couldn't decide its access; it runs with the usual tools", row["id"])
 
 
 def from_owner(root):
@@ -1243,3 +1328,116 @@ def agent_upload():
     media library (nothing is shown to anyone until an ad using it is approved and turned on)."""
     import ads_api
     return ads_api.upload_file(request.files.get("file"), actor="claude")
+
+
+# ---------------------------------------------------------------- FU-D: previews in the conversation
+
+def draft_next(ref, task_id):
+    """Where Upload as draft goes next: New ad with that media picked, Cancel back to the conversation."""
+    from urllib.parse import quote
+    media = f"image:{ref['hash']}" if ref.get("kind") == "image" else f"video:{ref['video_id']}"
+    return f"/new-ad.html?media={quote(media, safe=':')}&from={quote(f'/desk.html#r/{task_id}', safe='')}"
+
+
+@agent_bp.post("/tasks/<int:task_id>/attachments")
+@agent_required
+def add_attachment(task_id):
+    """`desk attach`: a preview Claude made, shown in this request's turn. Typed from its bytes, size-capped, kept in
+    the database (no files on the server) and pruned after 30 days or when the account passes 1 GB."""
+    import os
+    import attachments as att
+    f = request.files.get("file")
+    if not f:
+        return api_error("Send the preview as a file", 400)
+    if not _open_task(task_id):
+        return api_error("This task isn't open any more", 409)
+    data = f.stream.read(att.MAX_BYTES["video"] + 1)
+    mime = att.sniff(data[:att.HEAD])
+    if not mime:
+        return api_error(att.REFUSED, 400)
+    kind = att.MIMES[mime]
+    too = att.too_big(kind, len(data))
+    if too:
+        return api_error(too, 400)
+    if db.query("SELECT COUNT(*) AS n FROM desk_attachments WHERE task_id = %s", (task_id,), one=True)["n"] >= att.MAX_PER_TASK:
+        return api_error(f"An answer can show at most {att.MAX_PER_TASK} previews", 400)
+    name = os.path.basename(f.filename or "")[:120] or f"preview.{mime.split('/')[1]}"
+    caption = (request.form.get("caption") or "").strip()[:300] or None
+    size = att.measure(mime, data)
+    kept = db.query("SELECT id, size_bytes, created_at FROM desk_attachments WHERE body IS NOT NULL")
+    drop = att.to_prune(kept, len(data))
+    if drop:
+        db.execute("UPDATE desk_attachments SET body = NULL, pruned_at = now() WHERE id = ANY(%s)", (drop,))
+    row = db.execute(
+        """INSERT INTO desk_attachments (task_id, kind, mime, name, caption, size_bytes, sha256, width, height, duration_ms, body)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+        (task_id, kind, mime, name, caption, len(data), hashlib.sha256(data).hexdigest(), size["width"], size["height"],
+         size["duration_ms"], data), returning=True)
+    db.execute("UPDATE desk_tasks SET updated_at = now() WHERE id = %s", (task_id,))
+    return jsonify({"id": row["id"], "kind": kind, "mime": mime, **size}), 201
+
+
+def _attachment(att_id):
+    return db.query("""SELECT id, task_id, kind, mime, name, sha256, size_bytes, body, meta_ref, drafted_at
+                       FROM desk_attachments WHERE id = %s""", (att_id,), one=True)
+
+
+@bp.get("/attachments/<int:att_id>")
+@admin_required
+def attachment_file(att_id):
+    """The preview's bytes, same origin (the CSP holds), typed from the row, with Range requests (Safari's video)."""
+    from flask import Response
+    row = _attachment(att_id)
+    if not row:
+        return api_error("That preview doesn't exist", 404)
+    if row["body"] is None:
+        return api_error("Preview removed after 30 days", 410)
+    body = bytes(row["body"])
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", row["name"])[:80] or "preview"
+    resp = Response(body, mimetype=row["mime"])
+    resp.headers["Content-Disposition"] = f'inline; filename="{safe}"'
+    resp.headers["Cache-Control"] = "private, max-age=3600"
+    resp.keep_cache = True  # app.no_cache leaves this one cacheable
+    resp.set_etag(row["sha256"])
+    return resp.make_conditional(request, accept_ranges=True, complete_length=len(body))
+
+
+@bp.post("/attachments/<int:att_id>/draft")
+@admin_required
+def attachment_draft(att_id):
+    """Upload as draft: a person's tap puts the preview in the ad account's media library (logged like any upload),
+    then New ad opens with it picked; the ad is created switched off after its own confirmation."""
+    import os
+    import tempfile
+    import ads_api
+    row = _attachment(att_id)
+    if not row:
+        return api_error("That preview doesn't exist", 404)
+    if row["meta_ref"]:
+        return jsonify({"meta_ref": row["meta_ref"], "next": draft_next(row["meta_ref"], row["task_id"])})
+    if row["body"] is None:
+        return api_error("Preview removed after 30 days", 410)
+    if row["mime"] not in ads_api.IMAGE_TYPES | ads_api.VIDEO_TYPES:
+        return api_error("Meta's media library takes JPG or PNG images and MP4 videos. Ask Claude for a PNG of this preview.", 400)
+    taken = db.execute("""UPDATE desk_attachments SET drafted_at = now(), drafted_by = %s
+                          WHERE id = %s AND meta_ref IS NULL AND (drafted_at IS NULL OR drafted_at < now() - interval '15 minutes')
+                          RETURNING id""", (current_user()["id"], att_id), returning=True)
+    if not taken:
+        return api_error("This preview is being uploaded already. Give it a moment.", 409)
+    fd, path = tempfile.mkstemp(prefix="ebads-preview-")
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(bytes(row["body"]))
+        result, problem = ads_api.upload_path(path, row["name"], row["mime"])
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    if problem:
+        db.execute("UPDATE desk_attachments SET drafted_at = NULL, drafted_by = NULL WHERE id = %s", (att_id,))
+        return api_error(problem[0], problem[1])
+    ref = {"kind": "image", "hash": result["hash"]} if result["kind"] == "image" else {"kind": "video", "video_id": result["video_id"]}
+    db.execute("UPDATE desk_attachments SET meta_ref = %s, drafted_at = now() WHERE id = %s", (json.dumps(ref), att_id))
+    log_activity("desk.preview_uploaded", subject=str(row["task_id"]), details={"attachment": att_id, **ref})
+    return jsonify({"meta_ref": ref, "next": draft_next(ref, row["task_id"])}), 201

@@ -1,5 +1,7 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, editing, esc, keepFocus, onRefresh, previewSkeleton, refreshClaudeNow, toast } from "./ui.js";
+import { boot, confirmDialog, editing, esc, keepFocus, onRefresh, previewSkeleton, refreshClaudeNow, setFullAccessDot, toast } from "./ui.js";
+import { clockZone } from "./format.js";
+import { sizeAttachments } from "./attach.js";
 import { ACTIVE, wireTaskActions } from "./tasks.js";
 import { adsView, fillPreview, index, loadPreviews } from "./board.js";
 import { clock, decideHtml, decideKey, headHtml, liveTurn, listHtml, queuedTurn, threadTitle, turnHtml, turnKey, turnTitle } from "./conversation.js";
@@ -30,6 +32,9 @@ let selected = null;        // "new", "decide", a conversation id, or null for t
 let wantedTask = null;      // a run named in the address, until the data arrives
 let wantedProposal = null;
 let about = null;           // the suggestion the reply is about
+let aboutPreview = null;    // FU-D: the preview "Change it" is about ({id, title})
+let full = null;            // FU-D: this sign-in's full access ({allowed, on, until, home}), only for the owner who may turn it on
+let prefilled = false;      // the new-conversation box was filled from a link (?ask=…): words someone else may have written
 let stopSure = null;
 let stopTimer;
 let query = "";
@@ -197,6 +202,7 @@ function syncTurns(th) {
     el.id = `turn-${id}`;
     el.dataset.turn = id;
     el.innerHTML = turnHtml(t, th, data, ix, { openSecs });
+    sizeAttachments(el);
     if (old) old.replaceWith(el); else col.insertBefore(el, col.children[i] || null);
     turnKeys.set(id, key);
     loadPreviews(el);
@@ -243,9 +249,10 @@ function dockFoot(sel, th) {
   const live = th && th.state === "working";
   const hint = $("cv-hint");
   const btns = $("cv-btns");
-  $("prompt").placeholder = sel === "new" ? "Ask anything about your ads…" : about ? "What should Claude change about this?" : live ? "Add something for Claude…" : "Reply to Claude…";
-  $("cv-chip").hidden = !about;
+  $("prompt").placeholder = sel === "new" ? "Ask anything about your ads…" : about || aboutPreview ? "What should Claude change about this?" : live ? "Add something for Claude…" : "Reply to Claude…";
+  $("cv-chip").hidden = !about && !aboutPreview;
   if (about) $("cv-chip").innerHTML = `<span>About: ${esc(about.title)}</span><button type="button" data-unchip aria-label="Remove">×</button>`;
+  else if (aboutPreview) $("cv-chip").innerHTML = `<span>About this preview: ${esc(aboutPreview.title)}</span><button type="button" data-unchip aria-label="Remove">×</button>`;
   if (live && stopSure === th.id) {
     hint.textContent = "Stop Claude here? Nothing changes on your ads.";
     btns.innerHTML = `<button class="btn btn-small btn-quiet" type="button" data-keep>Keep going</button><button class="btn btn-small btn-danger" type="button" data-stop="${th.id}">Stop it</button>`;
@@ -373,6 +380,7 @@ function route() {
   saveDraft(before);
   readHash();
   about = null;
+  aboutPreview = null;
   stopSure = null;
   if (data) {
     if (view === "chat") { resolveAddress(); restoreDraft(); }
@@ -462,7 +470,9 @@ async function send({ stopFirst = false, stay = false } = {}) {
   $("cv-btns").querySelectorAll("button").forEach((b) => { b.disabled = true; });
   try {
     if (sel === "new") {
-      const t = await api("/api/desk/tasks", { method: "POST", body: { kind, prompt, campaign_id: $("campaign").value } });
+      // Words that came in a link (Tests' "Make more like this" quotes a name an admin wrote) never run with full access.
+      const t = await api("/api/desk/tasks", { method: "POST", body: { kind, prompt, campaign_id: $("campaign").value, origin: prefilled ? "prefill" : undefined } });
+      prefilled = false;
       $("prompt").value = "";
       drafts.delete("new");
       kind = "question";
@@ -482,10 +492,11 @@ async function send({ stopFirst = false, stay = false } = {}) {
     }
     const th = data.board.threads[sel];
     const lastTurn = th.turns.at(-1);
-    await api(`/api/desk/tasks/${lastTurn}/reply`, { method: "POST", body: { prompt, about_proposal: about ? about.id : undefined, stop_first: stopFirst } });
+    await api(`/api/desk/tasks/${lastTurn}/reply`, { method: "POST", body: { prompt, about_proposal: about ? about.id : undefined, about_attachment: aboutPreview ? aboutPreview.id : undefined, stop_first: stopFirst } });
     $("prompt").value = "";
     drafts.delete(sel);
     about = null;
+    aboutPreview = null;
     stopSure = null;
     fitPrompt();
     await load(true);
@@ -520,11 +531,16 @@ async function onClick(e) {
       await moved;
     }
     about = p;
+    aboutPreview = null;
     renderDock(th);
     $("prompt").focus();
     return;
   }
-  if (hit("data-unchip")) { about = null; renderDock(current()); return; }
+  if (hit("data-unchip")) { about = null; aboutPreview = null; renderDock(current()); return; }
+  if (hit("data-fa-on")) { turnOnFull(); return; }
+  if (hit("data-fa-lock")) { lockFull(); return; }
+  if ((el = hit("data-att-draft"))) { draftPreview(Number(el.dataset.attDraft), el); return; }
+  if ((el = hit("data-att-change"))) { changePreview(Number(el.dataset.attChange)); return; }
   if ((el = hit("data-view-cr"))) { previewCr(el.dataset.viewCr); return; }
   if ((el = hit("data-view-proposal"))) { previewProposal(Number(el.dataset.viewProposal), false); return; }
   if ((el = hit("data-compare"))) { previewProposal(Number(el.dataset.compare), true); return; }
@@ -581,6 +597,82 @@ function announceFinished() {
 
 function tick() {
   document.querySelectorAll("[data-since]").forEach((el) => { el.textContent = clock((Date.now() - Number(el.dataset.since)) / 1000); });
+  if (full && full.on && full.until && new Date(full.until) <= new Date()) { full = { ...full, on: false, until: null }; renderFull(); }
+}
+
+// ---------------------------------------------------------------- FU-D: full access for the owner's own requests
+
+// The line above the composer, on the new-conversation view and in every conversation. Only the owner who may
+// turn it on sees it; amber (careful), not violet (Claude). It works only in his own account (`home`): in another
+// account its admins read the answers and its own people write the Meta names a run reads.
+function renderFull() {
+  const bar = $("fa-bar");
+  if (!full || !full.allowed) { bar.hidden = true; bar.innerHTML = ""; return; }
+  const on = Boolean(full.on && full.until && new Date(full.until) > new Date());
+  const me = window.ebadsMe;
+  const home = full.home || { id: 1, name: "your own account" };
+  const away = me.account && me.account.id !== home.id;
+  const elsewhere = away ? `<span class="fa-shared">Only in ${esc(home.name)}: requests in ${esc(me.account.name)} keep the read-only tools.</span>` : "";
+  bar.hidden = false;
+  bar.classList.toggle("fa-on", on);
+  bar.innerHTML = on
+    ? `<span class="fa-text"><b>Full access on</b> · until ${esc(clockZone(full.until))}</span><button type="button" class="fa-btn" data-fa-lock>Lock now</button>${elsewhere}`
+    : `<span class="fa-text">Claude runs with read-only tools on your Mac.</span><button type="button" class="fa-btn" data-fa-on>Turn on full access</button>${elsewhere}`;
+  setFullAccessDot(on);
+}
+
+async function turnOnFull() {
+  const done = await confirmDialog({
+    title: "Full access for your own requests",
+    body: `<p>What you type here in ${esc((full.home && full.home.name) || "your own account")}, until you lock it or for 12 hours, runs on your Mac like Claude Code in your terminal: files, video rendering, the web, your skills. Meta changes still wait for your Accept. Requests from your team, clients, other accounts and automatic runs keep the read-only tools.</p>`,
+    field: { label: "Your password", type: "password", autocomplete: "current-password", validate: (v) => (v ? null : "Type your password") },
+    confirm: "Turn on", extra: "fa-dialog",
+    act: async (password) => {
+      try {
+        full = (await api("/api/auth/full-access", { method: "POST", body: { password } })).full_access;
+        renderFull();  // drawn now, even if the dialog was cancelled while the answer was on its way
+        return null;
+      } catch (err) { return err.status === 429 && !(err.body && err.body.error) ? "Too many tries. Wait a minute and try again." : err.message; }
+    },
+  });
+  if (done === false) return;
+  toast(`Full access is on until ${clockZone(full.until)}`);
+  $("prompt").focus();
+}
+
+async function lockFull() {
+  try {
+    full = (await api("/api/auth/full-access", { method: "DELETE" })).full_access;
+    renderFull();
+    toast("Locked. Claude is back to the read-only tools.");
+    const on = $("fa-bar").querySelector("[data-fa-on]");
+    if (on) on.focus();  // the button that had focus is gone; keep the keyboard where it was
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+async function draftPreview(id, btn) {
+  const yes = await confirmDialog({ title: "Upload as draft?", body: "<p>Upload this to the ad account's media library and start a new ad with it? The ad is created switched off; nothing spends until you turn it on.</p>", confirm: "Upload as draft" });
+  if (!yes) return;
+  btn.disabled = true;
+  btn.textContent = "Uploading…";
+  try {
+    const r = await api(`/api/desk/attachments/${id}/draft`, { method: "POST" });
+    location.href = r.next;
+  } catch (err) { toast(err.message, "bad"); btn.disabled = false; btn.textContent = "Upload as draft"; }
+}
+
+function changePreview(id) {
+  const a = data.tasks.flatMap((t) => t.attachments || []).find((x) => x.id === id);
+  if (!a) return;
+  aboutPreview = { id, title: a.caption || a.name };
+  about = null;
+  const lead = `About this preview (${aboutPreview.title}): `;
+  if (!$("prompt").value.startsWith(lead)) $("prompt").value = lead + $("prompt").value;
+  fitPrompt();
+  renderDock(current());
+  const p = $("prompt");
+  p.focus();
+  p.setSelectionRange(p.value.length, p.value.length);
 }
 
 async function load(force) {
@@ -603,12 +695,14 @@ async function load(force) {
 
 const me = await boot({ page: "desk", admin: true });
 if (me) {
+  full = me.full_access && me.full_access.allowed ? me.full_access : null;
+  renderFull();
   const q = new URLSearchParams(location.search);
   if (SEEDS[q.get("kind")]) kind = q.get("kind");
   readHash();
   if (q.get("ask") || q.get("kind")) {
     selected = "new";
-    if (q.get("ask") && q.get("ask") !== "1") $("prompt").value = q.get("ask");
+    if (q.get("ask") && q.get("ask") !== "1") { $("prompt").value = q.get("ask"); prefilled = true; }
   }
   if (q.get("campaign")) $("campaign").dataset.want = q.get("campaign");
   const main = document.querySelector(".main");

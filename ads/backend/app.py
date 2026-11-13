@@ -63,7 +63,8 @@ def create_app(run_migrations=True):
 
     @app.after_request
     def no_cache(response):
-        response.headers["Cache-Control"] = "no-store"
+        if not getattr(response, "keep_cache", False):  # a Claude preview (FU-D) is private and cacheable for an hour
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.get("/api/health")

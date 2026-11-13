@@ -6,6 +6,7 @@ import { acctDay, clock as acctClock, dayWords } from "./format.js";
 import { scorecardHtml } from "./tasks.js";
 import { RUN_WORDS, firstLine, proposalRow, suggestion, suggestionType } from "./board.js";
 import { adStatus, reportParts } from "./reading.js";
+import { attachmentKey, attachmentsHtml } from "./attach.js";
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const pendingIn = (t) => t.proposals.filter((p) => p.status === "pending");
@@ -159,6 +160,7 @@ function trail(t, live) {
 
 function asked(t) {
   const about = t.options && t.options.about;
+  const preview = t.options && t.options.about_attachment;
   const auto = (t.options && (t.options.schedule || t.options.accepted)) || ["polish", "render", "advice"].includes(t.kind);
   const long = t.prompt.length > 360 || (t.options && t.options.schedule);
   const body = long
@@ -167,7 +169,7 @@ function asked(t) {
   // A diagnosis shows the request as Eugene sent it, with the alert it came from (W1a).
   const alert = t.kind === "diagnose" && t.options && t.options.alert;
   const from = alert ? `<span class="cv-about">From an alert: ${alert.alert_id ? `<a href="/inbox.html#item=${encodeURIComponent(`alert:${alert.alert_id}`)}">${esc(alert.title)}</a>` : esc(alert.title)}</span>` : "";
-  return `<div class="cv-you ${auto ? "auto" : ""}">${about ? `<span class="cv-about">About: ${esc(about.title)}</span>` : ""}${from}${body}</div>`;
+  return `<div class="cv-you ${auto ? "auto" : ""}">${about ? `<span class="cv-about">About: ${esc(about.title)}</span>` : ""}${preview ? `<span class="cv-about">About this preview: ${esc(preview.title || "")}</span>` : ""}${from}${body}</div>`;
 }
 
 function adsIn(t, ix) {
@@ -237,7 +239,7 @@ function answer(t, th, data, ix, ctx) {
   const score = t.scorecard && t.scorecard.passes ? `<section class="cv-score">${scorecardHtml(t.scorecard)}</section>` : "";
   return `${t.summary ? `<p class="cv-lead">${esc(t.summary)}</p>` : ""}
     ${!t.summary && !t.reports.length ? '<p class="cv-note">No answer came back.</p>' : ""}
-    ${adsIn(t, ix)}${swipesIn(t)}${score}
+    ${attachmentsHtml(t)}${adsIn(t, ix)}${swipesIn(t)}${score}
     ${t.reports.map((r) => documentHtml(r, t, ctx, hasIdeas)).join("")}
     ${suggestionsHtml(t, ix)}`;
 }
@@ -250,16 +252,26 @@ export function turnHtml(t, th, data, ix, ctx) {
     ? `<details class="cv-steps"><summary>${plural(t.steps.length, "step")}</summary>${trail(t, false)}</details>` : "";
   const remove = finished && th.turns.length > 1 && !pendingIn(t).length && !th.cleared
     ? `<button class="cv-remove" type="button" data-clear-turn="${t.id}" aria-label="Remove this reply" title="Remove this reply">${icon("close")}</button>` : "";
+  const ran = ranWith(t);
   return `${asked(t)}
     <article class="cv-claude">
-      <header class="cv-who">${icon("spark")}<b>Claude</b>${duration ? `<span>· ${esc(duration)}</span>` : ""}${running ? `<span>· working ${running}</span>` : ""}${remove}</header>
-      ${stepsLink}
+      <header class="cv-who">${icon("spark")}<b>Claude</b>${duration ? `<span>· ${esc(duration)}</span>` : ""}${running ? `<span>· working ${running}</span>` : ""}${ran.tag}${remove}</header>
+      ${ran.note}${stepsLink}
       ${answer(t, th, data, ix, ctx)}
     </article>`;
 }
 
+// FU-D: how a turn ran, for the owner who can turn full access on (nobody else sees any of it). The Mac took it
+// (claimed_at) with full access, or with the usual tools: then the note says why when it was meant to be full.
+function ranWith(t) {
+  const me = window.ebadsMe;
+  if (!me || !me.full_access || !me.full_access.allowed || !t.claimed_at) return { tag: "", note: "" };
+  if (t.access === "full") return { tag: '<span class="fa-tag">Ran with full access</span>', note: "" };
+  return { tag: '<span class="fa-ran">Ran with the usual tools</span>', note: t.access_note ? `<p class="fa-why">${esc(t.access_note)}</p>` : "" };
+}
+
 export function turnKey(t, data) {
-  return JSON.stringify([t.status, t.progress, t.summary, t.error, t.mentions, (t.steps || []).length, (t.swipes || []).length, t.scorecard && t.scorecard.overall,
+  return JSON.stringify([t.status, t.progress, t.summary, t.error, t.mentions, t.access, t.access_note, attachmentKey(t), (t.steps || []).length, (t.swipes || []).length, t.scorecard && t.scorecard.overall,
     t.proposals.map((p) => [p.id, p.status, p.state]), t.reports.map((r) => r.id), data.board.queue.indexOf(t.id), data.board.working.length, data.bridge.online, data.bridge.status && data.bridge.status.state]);
 }
 

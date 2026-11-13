@@ -1118,31 +1118,42 @@ def _upload_video(path, size, name):
 def upload_file(f, actor=None):
     if not f or not f.filename:
         return api_error("Choose a file", 400)
-    kind = "image" if f.mimetype in IMAGE_TYPES else "video" if f.mimetype in VIDEO_TYPES else None
-    if not kind:
+    if f.mimetype not in IMAGE_TYPES | VIDEO_TYPES:
         return api_error("Use a JPG or PNG image, or an MP4 or MOV video", 400)
-    name = os.path.basename(f.filename)[:120]
     fd, path = tempfile.mkstemp(prefix="ebads-upload-")
     try:
         with os.fdopen(fd, "wb") as out:
             f.save(out)
-        size = os.path.getsize(path)
-        if size > (MAX_IMAGE if kind == "image" else MAX_VIDEO):
-            return api_error("That file is too big (images up to 30 MB, videos up to 250 MB)", 400)
-        if kind == "image":
-            with open(path, "rb") as fh:
-                out = meta_client.post(f"act_{_account()}/adimages", files={"filename": (name, fh, f.mimetype)}, timeout=120)
-            img = next(iter((out.get("images") or {}).values()), {})
-            result = {"kind": "image", "hash": img.get("hash"), "url": img.get("url"), "name": name}
-        else:
-            result = {"kind": "video", "video_id": _upload_video(path, size, name), "name": name, "ready": False}
-    except meta_client.MetaError as exc:
-        return api_error(f"Meta refused the upload: {exc}", 400)
+        result, problem = upload_path(path, os.path.basename(f.filename), f.mimetype, actor=actor)
     finally:
         try:
             os.remove(path)
         except OSError:
             pass
+    return api_error(*problem) if problem else (jsonify(result), 201)
+
+
+def upload_path(path, name, mime, actor=None):
+    """One file on disk into the ad account's media library: (result, None) or (None, (message, status)).
+    Logged like every upload (activity + meta_changes); the caller removes the file. Also used by Upload as draft
+    under a Claude preview (FU-D)."""
+    kind = "image" if mime in IMAGE_TYPES else "video" if mime in VIDEO_TYPES else None
+    if not kind:
+        return None, ("Use a JPG or PNG image, or an MP4 or MOV video", 400)
+    name = os.path.basename(name or "")[:120] or f"upload.{mime.split('/')[1]}"
+    try:
+        size = os.path.getsize(path)
+        if size > (MAX_IMAGE if kind == "image" else MAX_VIDEO):
+            return None, ("That file is too big (images up to 30 MB, videos up to 250 MB)", 400)
+        if kind == "image":
+            with open(path, "rb") as fh:
+                out = meta_client.post(f"act_{_account()}/adimages", files={"filename": (name, fh, mime)}, timeout=120)
+            img = next(iter((out.get("images") or {}).values()), {})
+            result = {"kind": "image", "hash": img.get("hash"), "url": img.get("url"), "name": name}
+        else:
+            result = {"kind": "video", "video_id": _upload_video(path, size, name), "name": name, "ready": False}
+    except meta_client.MetaError as exc:
+        return None, (f"Meta refused the upload: {exc}", 400)
     log_activity("meta.media_uploaded", subject=result.get("hash") or result.get("video_id"),
                  details={"kind": kind, "name": name}, actor=actor)
     try:
@@ -1151,7 +1162,7 @@ def upload_file(f, actor=None):
                "upload", None, f"{kind}: {name}", True, entity_id=result.get("hash") or result.get("video_id"))
     except Exception:  # noqa: BLE001 - the upload worked; the log line is extra
         log.info("upload not logged in meta_changes")
-    return jsonify(result), 201
+    return result, None
 
 
 @bp.post("/media/upload")

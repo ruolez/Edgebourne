@@ -6,7 +6,7 @@ from werkzeug.security import generate_password_hash
 
 import account_ctx
 import db
-from auth import admin_required, bump_sessions, current_user, is_owner
+from auth import admin_required, bump_sessions, current_user, end_full_access, is_owner
 from util import api_error, log_activity
 
 bp = Blueprint("team", __name__, url_prefix="/api/team")
@@ -21,7 +21,7 @@ def _role_of(u):
 
 def _members():
     users = db.query(
-        "SELECT id, email, name, role, account_id, is_active, notify_new_leads, last_login_at, created_at "
+        "SELECT id, email, name, role, account_id, is_active, notify_new_leads, last_login_at, created_at, full_access_allowed AS keeps_own "
         "FROM users WHERE (role = 'admin' AND account_id IS NULL) OR account_id = %s ORDER BY is_active DESC, role, name",
         (account_ctx.current(),)
     )
@@ -55,7 +55,13 @@ def list_team():
     campaigns = db.query(
         "SELECT id, name, effective_status FROM campaigns ORDER BY name"
     )
-    return jsonify({"members": _members(), "campaigns": campaigns, "owner": is_owner(current_user())})
+    owner = is_owner(current_user())
+    members = _members()
+    for m in members:  # only owners see who keeps his own sign-in (they are the only ones offered Reset on an owner)
+        keeps = m.pop("keeps_own")
+        if owner and keeps:
+            m["keeps_own"] = True
+    return jsonify({"members": members, "campaigns": campaigns, "owner": owner})
 
 
 @bp.post("")
@@ -108,6 +114,11 @@ def update(user_id):
     editor = current_user()
     if not _may_edit(editor, user):
         return api_error("This person belongs to another account (or is the console's owner)", 403)
+    # FU-D: the owner who may turn on full access keeps his own sign-in: nobody else resets his password, changes
+    # his access or deactivates him (a reset password let a second owner sign in as him and unlock, security review).
+    if user.get("full_access_allowed") and user_id != editor["id"] and (
+            ("role" in data and data["role"] != _role_of(user)) or "is_active" in data or data.get("reset_password")):
+        return api_error(f"Only {user['name']} can change {user['name']}'s password or access", 403)
     changes = {}
     if "role" in data and data["role"] in ROLES and data["role"] != _role_of(user):
         if user_id == session["user_id"]:
@@ -117,6 +128,7 @@ def update(user_id):
         role, account_id = _store_role(data["role"])
         db.execute("UPDATE users SET role = %s, account_id = %s, session_version = session_version + 1 WHERE id = %s",
                    (role, account_id, user_id))
+        end_full_access(user_id)
         changes["role"] = data["role"]
     if "is_active" in data:
         if user_id == session["user_id"] and not data["is_active"]:
@@ -132,6 +144,7 @@ def update(user_id):
             "UPDATE users SET password_hash = %s, must_change_password = TRUE, session_version = session_version + 1 WHERE id = %s",
             (generate_password_hash(temp), user_id),
         )
+        end_full_access(user_id)  # FU-D: an unlock never outlives the password it was made with
         log_activity("team.password_reset", subject=user["email"])
         return jsonify({"temporary_password": temp})
     log_activity("team.updated", subject=user["email"], details=changes)

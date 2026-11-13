@@ -21,6 +21,8 @@ by hand keeps the pass in ~/.config/ads-desk/claims.json for the later calls.
   desk propose <id> [--file F]           proposals JSON from F or stdin
   desk scorecard <id> [--file F]         polish results JSON from F or stdin
   desk upload <path>                     image/video into the ad account's media library (prints hash / video_id)
+  desk attach <id> <path> [--caption T]  show a preview (JPG/PNG/WebP up to 10 MB, MP4 up to 60 MB, from this request's
+                                         own folder creatives/<date>-desk-<id>/) in its answer on the Claude page (prints {"id": …})
   desk probe <video>                     duration, size, streams of a video in the workspace (JSON)
   desk frames <video> --task ID [--every S]
                                          frames every S seconds (default 1) + a contact sheet, into
@@ -43,7 +45,7 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSION = "2.7"
+VERSION = "3.0"
 # ADS_DESK_CONFIG points a test run at another dashboard (e.g. the local dev stack).
 CONFIG = os.environ.get("ADS_DESK_CONFIG") or os.path.expanduser("~/.config/ads-desk/config.json")
 SERVICE = "ads-desk"
@@ -131,19 +133,25 @@ def call(method, path, body=None, timeout=40, cfg=None, token=None, claim=None):
 def upload(cfg, token, path):
     """Multipart POST of one file to /api/agent/media/upload."""
     import mimetypes
-    import uuid
     ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
     if path.lower().endswith(".mov"):
         ctype = "video/quicktime"
+    return post_file(cfg, token, "/api/agent/media/upload", path, ctype)
+
+
+def post_file(cfg, token, api_path, path, ctype, fields=None):
+    """Multipart POST of one file (plus text fields) with the run's pass."""
+    import uuid
     boundary = uuid.uuid4().hex
     with open(path, "rb") as fh:
         data = fh.read()
+    parts = b"".join(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
+                     for k, v in (fields or {}).items() if v is not None)
     head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{os.path.basename(path)}\"\r\n"
             f"Content-Type: {ctype}\r\n\r\n").encode()
-    body = head + data + f"\r\n--{boundary}--\r\n".encode()
-    path = "/api/agent/media/upload"
-    req = urllib.request.Request(cfg["base_url"].rstrip("/") + path, data=body, method="POST",
-                                 headers={**headers(token, claim_for(path)), "Content-Type": f"multipart/form-data; boundary={boundary}"})
+    body = parts + head + data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(cfg["base_url"].rstrip("/") + api_path, data=body, method="POST",
+                                 headers={**headers(token, claim_for(api_path)), "Content-Type": f"multipart/form-data; boundary={boundary}"})
     try:
         with urllib.request.urlopen(req, timeout=900) as res:
             return json.loads(res.read())
@@ -169,6 +177,37 @@ def media_input(workdir, path):
     if not fmt or not os.path.isfile(real):
         raise ValueError(f"{path} isn't a video file ({', '.join(sorted(VIDEO_FORMATS))})")
     return real, fmt
+
+
+ATTACH_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".mp4": "video/mp4"}
+ATTACH_MAX = {"image": 10 * 1024 * 1024, "video": 60 * 1024 * 1024}
+
+
+def own_folder(rel, task_id):
+    """True when a workspace-relative path (its parts) sits in request <task_id>'s own folders: the render folder the
+    skill names (`creatives/<date>-desk-<id>/`, older runs `-desk-task<id>/`) or its frames (`reports/desk/tmp/task<id>-…/`)."""
+    if len(rel) >= 3 and rel[0] == "creatives" and re.search(rf"-desk-(task)?{int(task_id)}$", rel[1]):
+        return True
+    return len(rel) >= 5 and rel[:3] == ["reports", "desk", "tmp"] and rel[3].startswith(f"task{int(task_id)}-")
+
+
+def attach_input(workdir, path, task_id):
+    """The real path and type of a preview request <task_id> made itself, or ValueError (FU-D `desk attach`). The
+    workspace is shared by every business, so a run shows only its own renders, never another client's creatives
+    (security review). The console checks the bytes again."""
+    root = os.path.realpath(workdir or "")
+    real = os.path.realpath(path)
+    ctype = ATTACH_TYPES.get(os.path.splitext(real)[1].lower())
+    if not workdir or os.path.commonpath([root, real]) != root or real == root:
+        raise ValueError(f"{path} isn't inside the workspace ({root})")
+    if not own_folder(os.path.relpath(real, root).split(os.sep), task_id):
+        raise ValueError(f"{path} isn't in this request's own folder: render into creatives/<today>-desk-{int(task_id)}/ and attach from there")
+    if not ctype or not os.path.isfile(real):
+        raise ValueError(f"{path} isn't a preview file (JPG, PNG, WebP or MP4)")
+    kind = ctype.split("/")[0]
+    if os.path.getsize(real) > ATTACH_MAX[kind]:
+        raise ValueError(f"{path} is too big for a preview ({'images up to 10 MB' if kind == 'image' else 'videos up to 60 MB'})")
+    return real, ctype
 
 
 def media_head(tool, real, fmt):
@@ -200,11 +239,19 @@ def run_media(cmd):
     return out.stdout
 
 
-def read_body(path):
-    if path:
-        with open(path) as fh:
-            return fh.read()
-    return sys.stdin.read()
+def read_body(path, workdir):
+    """--file F (or stdin). `desk` runs outside Claude Code's sandbox in a full run, so F must be a file in the
+    workspace by its real path, and never a .env: a run can't post ~/.ssh or the Meta token into a report."""
+    if not path:
+        return sys.stdin.read()
+    root = os.path.realpath(workdir or "")
+    real = os.path.realpath(path)
+    if not workdir or os.path.commonpath([root, real]) != root or real == root:
+        raise ValueError(f"{path} isn't inside the workspace ({root}): write it under reports/desk/tmp/")
+    if os.path.basename(real).startswith(".env"):
+        raise ValueError(f"{path} can't be sent")
+    with open(real) as fh:
+        return fh.read()
 
 
 def save_local_copy(cfg, task_id, title, body):
@@ -273,6 +320,7 @@ def main(argv=None):
     sp = sub.add_parser("propose"); sp.add_argument("id", type=int); sp.add_argument("--file")
     sp = sub.add_parser("scorecard"); sp.add_argument("id", type=int); sp.add_argument("--file")
     sp = sub.add_parser("upload"); sp.add_argument("path")
+    sp = sub.add_parser("attach"); sp.add_argument("id", type=int); sp.add_argument("path"); sp.add_argument("--caption")
     sp = sub.add_parser("probe"); sp.add_argument("path")
     sp = sub.add_parser("frames"); sp.add_argument("path"); sp.add_argument("--task", type=int, required=True)
     sp.add_argument("--every", type=float, default=1.0)
@@ -283,6 +331,19 @@ def main(argv=None):
     sp = sub.add_parser("fail"); sp.add_argument("id", type=int); sp.add_argument("--error", required=True)
     a = p.parse_args(argv)
     cfg = config()
+    if a.cmd == "attach":
+        try:
+            real, ctype = attach_input(cfg.get("workdir"), a.path, a.id)
+        except ValueError as exc:
+            sys.exit(str(exc))
+        try:
+            print(json.dumps(post_file(cfg, key(cfg), f"/api/agent/tasks/{a.id}/attachments", real, ctype,
+                                       {"caption": (a.caption or "").strip()[:300] or None})))
+        except DeskError as exc:
+            sys.exit(f"Desk said no ({exc.status}): {exc}")
+        except (urllib.error.URLError, OSError) as exc:
+            sys.exit(f"Can't reach the dashboard: {exc}")
+        return
     if a.cmd in ("probe", "frames"):
         try:
             real, fmt = media_input(cfg.get("workdir"), a.path)
@@ -326,30 +387,33 @@ def main(argv=None):
             go("POST", f"/api/agent/tasks/{a.id}/status", {"status": "running", "progress": " ".join(a.text)})
             print("ok")
         elif a.cmd == "report":
-            body = read_body(a.file)
+            body = read_body(a.file, cfg.get("workdir"))
             go("POST", f"/api/agent/tasks/{a.id}/report", {"title": a.title, "body": body})
             local = save_local_copy(cfg, a.id, a.title, body)
             print("report posted" + (f" (copy: {local})" if local else ""))
         elif a.cmd == "propose":
-            raw = json.loads(read_body(a.file))
+            raw = json.loads(read_body(a.file, cfg.get("workdir")))
             items = raw["proposals"] if isinstance(raw, dict) else raw
             print(json.dumps(go("POST", f"/api/agent/tasks/{a.id}/proposals", {"proposals": items})[1]))
         elif a.cmd == "scorecard":
-            raw = json.loads(read_body(a.file))
+            raw = json.loads(read_body(a.file, cfg.get("workdir")))
             body = raw if isinstance(raw, dict) else {"passes": raw}
             print(json.dumps(go("POST", f"/api/agent/tasks/{a.id}/scorecard", body)[1]))
         elif a.cmd == "upload":
-            if not os.path.isfile(a.path):
+            root, real = os.path.realpath(cfg.get("workdir") or ""), os.path.realpath(a.path)
+            if not cfg.get("workdir") or os.path.commonpath([root, real]) != root or os.path.basename(real).startswith(".env"):
+                sys.exit(f"{a.path} isn't inside the workspace ({root}): render under creatives/ and upload from there")
+            if not os.path.isfile(real):
                 sys.exit(f"No file at {a.path}")
-            print(json.dumps(upload(cfg, token, a.path)))
+            print(json.dumps(upload(cfg, token, real)))
         elif a.cmd == "watched":
             print(json.dumps(go("GET", "/api/agent/watched")[1], indent=2))
         elif a.cmd == "swipe":
-            raw = json.loads(read_body(a.file))
+            raw = json.loads(read_body(a.file, cfg.get("workdir")))
             items = raw["swipes"] if isinstance(raw, dict) else raw
             print(json.dumps(go("POST", "/api/agent/swipes", {"swipes": items, "task_id": a.task})[1]))
         elif a.cmd == "benchmarks":
-            raw = json.loads(read_body(a.file))
+            raw = json.loads(read_body(a.file, cfg.get("workdir")))
             body = raw if isinstance(raw, dict) else {"items": raw}
             print(json.dumps(go("POST", "/api/agent/benchmarks", body)[1]))
         elif a.cmd == "done":
@@ -360,6 +424,8 @@ def main(argv=None):
             print("marked failed")
     except DeskError as exc:
         sys.exit(f"Desk said no ({exc.status}): {exc}")
+    except ValueError as exc:  # a --file outside the workspace (read_body); JSON errors are ValueErrors too
+        sys.exit(str(exc))
     except (urllib.error.URLError, OSError) as exc:
         sys.exit(f"Can't reach the dashboard: {exc}")
 

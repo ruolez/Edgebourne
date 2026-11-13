@@ -39,7 +39,8 @@ def current_user():
     key = session.get("sk")
     user = db.query(
         "SELECT u.id, u.email, u.name, u.role, u.account_id, u.must_change_password, u.notify_new_leads, u.notify_reminders, "
-        "u.notify_alerts, u.session_version, s.seen_at < now() - interval '1 hour' AS seen_long_ago "
+        "u.notify_alerts, u.session_version, u.is_active, u.full_access_allowed, s.full_until, "
+        "s.seen_at < now() - interval '1 hour' AS seen_long_ago "
         "FROM users u JOIN user_sessions s ON s.user_id = u.id AND s.key_hash = %s "
         f"WHERE u.id = %s AND u.is_active AND s.seen_at > now() - interval '{SESSION_IDLE}'",
         (_key_hash(key), uid), one=True,
@@ -53,6 +54,17 @@ def current_user():
     if user.pop("seen_long_ago"):
         db.execute("UPDATE user_sessions SET seen_at = now() WHERE key_hash = %s", (_key_hash(key),))
     return user
+
+
+def session_key_hash():
+    """This sign-in's user_sessions key (the cookie's key, hashed), or None."""
+    key = session.get("sk")
+    return _key_hash(key) if key else None
+
+
+def end_full_access(user_id):
+    """FU-D: every unlock of this person ends (password change or reset, deactivation, a role change)."""
+    db.execute("UPDATE user_sessions SET full_until = NULL WHERE user_id = %s AND full_until IS NOT NULL", (user_id,))
 
 
 def is_owner(user):
@@ -97,6 +109,7 @@ def owner_required(f):
 def bump_sessions(user_id):
     """Sign the person out everywhere (their next request needs a fresh sign-in)."""
     db.execute("UPDATE users SET session_version = session_version + 1 WHERE id = %s", (user_id,))
+    end_full_access(user_id)
 
 
 def visible_campaign_ids(user):
@@ -175,7 +188,7 @@ def me():
     user = current_user()
     accounts = accounts_api.active_accounts() if is_owner(user) else []
     import account_info
-    return jsonify({**_public(user), "owner": is_owner(user),
+    return jsonify({**_public(user), "owner": is_owner(user), **full_access_state(user),
                     "account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current()),
                                 "currency": account_info.currency(), "tz": account_info.tz_name(),
                                 "ad_account_id": __import__("settings_store").get("meta_ad_account_id"),
@@ -226,6 +239,7 @@ def change_password():
         (generate_password_hash(new), user["id"]),
     )
     session["sv"] = user["session_version"] + 1  # this browser stays in; every other one signs in again
+    end_full_access(user["id"])  # FU-D: full access needs the new password
     log_activity("auth.password_changed")
     return jsonify({"ok": True})
 
@@ -246,3 +260,113 @@ def update_me():
     if "name" in data and (data["name"] or "").strip():
         db.execute("UPDATE users SET name = %s WHERE id = %s", (data["name"].strip(), user["id"]))
     return jsonify(_public(current_user()))
+
+
+# ---------------------------------------------------------------- FU-D: full access for the owner's own requests
+
+def full_access_state(user):
+    """What /me says: the flagged owner gets {allowed, on, until, home}; another owner {allowed: false}; anyone else
+    nothing. `home` is the one account whose conversations can run with full access."""
+    import accounts_api
+    import full_access as fa
+    if not is_owner(user):
+        return {}
+    if not fa.flagged_owner(user):
+        return {"full_access": {"allowed": False}}
+    until = user.get("full_until")
+    on = fa.is_on(until, db.now())
+    return {"full_access": {"allowed": True, "on": on, "until": until.isoformat() if on else None,
+                            "home": {"id": fa.HOME_ACCOUNT, "name": accounts_api.name_of(fa.HOME_ACCOUNT)}}}
+
+
+def _notify_unlocked(user, device, at):
+    """A notice on every unlock, by email and push, so an unlock he didn't make doesn't go unseen."""
+    import account_info
+    import mailer
+    import notify
+    import push
+    from words import clock
+    title = "Full access to your Mac was turned on"
+    lines = [f"Full access to your Mac was turned on from {device} at {clock(at.astimezone(account_info.tz()))}.",
+             "Not you? Change your password in Your account: that signs out your other devices and ends full access."]
+    stamp = int(at.timestamp())
+    channels = (["email"] if mailer.configured() else []) + (["push"] if push.has_devices([user["id"]]) else [])
+    for channel in channels:
+        notify.queue(user["id"], channel, "security", title, lines, notify.link("/account.html"), "Your account",
+                     dedupe_key=f"full-access:{user['id']}:{stamp}:{channel}")
+
+
+@bp.post("/full-access")
+@login_required
+def full_access_on():
+    """Turn on full access for this sign-in, after the password again. Only the console's first owner, never with a
+    temporary password. Wrong tries are counted under a row lock on this sign-in, so tries sent at once still count
+    one by one (security review)."""
+    import full_access as fa
+    import account_info
+    from words import clock
+    user = current_user()
+    why = fa.may_unlock(user)
+    if why:
+        return api_error(why, 403)
+    key = session_key_hash()
+    password = (request.get_json(silent=True) or {}).get("password") or ""
+    agent = (request.headers.get("User-Agent") or "")[:300]
+    stored = db.query("SELECT password_hash FROM users WHERE id = %s", (user["id"],), one=True)
+    with db.transaction() as cur:
+        cur.execute("SELECT full_fails, full_fail_at, now() AS now FROM user_sessions WHERE key_hash = %s FOR UPDATE", (key,))
+        row = cur.fetchone()
+        if not row:
+            outcome = ("gone", None)
+        elif fa.fails_block(row["full_fails"], row["full_fail_at"], row["now"]):
+            outcome = ("blocked", fa.fails_block(row["full_fails"], row["full_fail_at"], row["now"]))
+        elif not password:
+            outcome = ("empty", None)
+        elif not check_password_hash(stored["password_hash"], password):
+            fails = fa.next_fails(row["full_fails"], row["full_fail_at"], row["now"])
+            cur.execute("UPDATE user_sessions SET full_fails = %s, full_fail_at = %s WHERE key_hash = %s", (fails, row["now"], key))
+            outcome = ("wrong", fails)
+        else:
+            until = fa.unlock_until(row["now"])
+            cur.execute("""UPDATE user_sessions SET full_until = %s, full_since = %s, full_fails = 0, full_fail_at = NULL, user_agent = %s
+                           WHERE key_hash = %s""", (until, row["now"], agent, key))
+            outcome = ("on", until)
+    what, value = outcome
+    now = row["now"] if row else None
+
+    def blocked_until(t):
+        return api_error(f"Too many wrong passwords. Try again after {clock(t.astimezone(account_info.tz()))}.", 429, field="password")
+
+    if what == "gone":
+        return api_error("Sign in to continue", 401)
+    if what == "blocked":
+        return blocked_until(value)
+    if what == "empty":
+        return api_error("Type your password", 400, field="password")
+    if what == "wrong":
+        log_activity("auth.full_access_refused", details={"tries": value})
+        if value >= fa.MAX_FAILS:
+            return blocked_until(now + fa.FAIL_WAIT)
+        return api_error("That password isn't right", 400, field="password")
+    device = fa.device_words(agent)
+    log_activity("auth.full_access_on", details={"until": value.isoformat(), "from": device})
+    try:
+        _notify_unlocked(user, device, now)
+    except Exception:  # noqa: BLE001 - the unlock stands; the activity line records it either way
+        import logging
+        logging.getLogger(__name__).exception("full access notice not queued")
+    return jsonify({"full_access": {**full_access_state({**user, "full_until": value})["full_access"]}})
+
+
+@bp.delete("/full-access")
+@login_required
+def full_access_off():
+    """Lock now: this sign-in goes back to the usual tools (a run already going finishes)."""
+    import full_access as fa
+    user = current_user()
+    why = fa.may_lock(user)
+    if why:
+        return api_error(why, 403)
+    db.execute("UPDATE user_sessions SET full_until = NULL WHERE key_hash = %s", (session_key_hash(),))
+    log_activity("auth.full_access_off")
+    return jsonify(full_access_state({**user, "full_until": None}))

@@ -109,7 +109,8 @@ function uploaded(m) {
   toast(m.kind === "video" ? "Uploaded. Meta is processing the video." : "Image uploaded");
 }
 
-async function loadLibrary() {
+// want: {kind, hash | video_id} to pick once the library is in (FU-D: Upload as draft under a Claude preview).
+async function loadLibrary(want = null) {
   try {
     const { items } = await api("/api/media");
     $("library").innerHTML = items.length ? items.map((m, i) => `
@@ -127,6 +128,10 @@ async function loadLibrary() {
       showChosen();
       pollVideo();
     };
+    if (want) {
+      const i = items.findIndex((m) => m.kind === want.kind && (want.kind === "image" ? m.hash === want.hash : m.video_id === want.video_id));
+      if (i >= 0) $("library").querySelector(`.media-item[data-i="${i}"]`).click();
+    }
   } catch (err) { $("library").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
@@ -191,6 +196,21 @@ else if (me) {
     $("template").addEventListener("change", () => { if (media && media.kind === "same") useSame(); });
     const q = new URLSearchParams(location.search);
     if (templateId) pickTab("same");
+    // ?media=image:<hash> | video:<id>: a Claude preview just uploaded (FU-D). Picked in the library tab; a video
+    // waits for Meta's processing as any upload does. Everything else (Create, its confirmation, created off) as usual.
+    const [mk, mid] = (q.get("media") || "").split(":");
+    const want = mk === "image" && /^[0-9a-f]{32}$/i.test(mid || "") ? { kind: "image", hash: mid }
+      : mk === "video" && /^\d+$/.test(mid || "") ? { kind: "video", video_id: mid } : null;
+    if (want) {
+      media = { ...want, name: `Claude's ${want.kind === "video" ? "video" : "picture"}`, ready: want.kind === "image" };
+      showChosen();
+      pollVideo();
+      document.querySelectorAll("#media-tabs button").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.tab === "library")));
+      $("tab-upload").hidden = true;
+      $("tab-same").hidden = true;
+      $("tab-library").hidden = false;
+      loadLibrary(want);
+    }
     if (q.get("proposal")) {
       try {
         const p = await api(`/api/proposals/${encodeURIComponent(q.get("proposal"))}`);

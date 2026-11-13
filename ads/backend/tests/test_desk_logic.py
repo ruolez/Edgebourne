@@ -203,3 +203,46 @@ class ProposalKindsMatchTheDatabaseTests(unittest.TestCase):
                 m = re.search(r"desk_proposals_kind_check\s+CHECK \(kind IN \(([^)]*)\)\)", f.read())
             latest = m.group(1) if m else latest
         self.assertEqual(sorted(re.findall(r"'([a-z_]+)'", latest)), sorted(desk_api.PROPOSAL_KINDS))
+
+
+class AttachmentSniffTests(unittest.TestCase):
+    """FU-D: a preview's type comes from its bytes, never from its name or the type the Mac says."""
+    PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + b"\x00" * 40
+    JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + b"\x00" * 40
+    WEBP = b"RIFF\x24\x00\x00\x00WEBPVP8X" + b"\x00" * 40
+    FTYP = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isommp41"
+
+    def test_the_four_kinds_it_takes(self):
+        import attachments
+        got = [attachments.sniff(b) for b in (self.PNG, self.JPEG, self.WEBP, self.FTYP + b"\x00\x00\x00\x08moov" + b"\x00" * 20,
+                                              self.FTYP + b"\x00\x00\x00\x08free" + b"\x00" * 20)]
+        self.assertEqual(got, ["image/png", "image/jpeg", "image/webp", "video/mp4", "video/mp4"])
+
+    def test_anything_else_is_refused(self):
+        import attachments
+        mov = b"\x00\x00\x00\x14ftypqt  \x00\x00\x02\x00qt  \x00\x00\x00\x08moov"
+        html_in_mp4 = self.FTYP + b"<!doctype html><script>alert(1)</script>"
+        cases = [b"GIF89a\x01\x00\x01\x00", b"<!doctype html><html>", b"<svg xmlns='http://www.w3.org/2000/svg'>", mov, html_in_mp4,
+                 b"RIFF\x24\x00\x00\x00WAVEfmt ", b"\x00\x00\x00\x18ftyp", b"", b"\x89PNG"]
+        self.assertEqual([attachments.sniff(b) for b in cases], [None] * len(cases))
+
+    def test_size_rule_per_kind(self):
+        import attachments
+        mb = 1024 * 1024
+        self.assertEqual([attachments.too_big("image", 10 * mb) is None, attachments.too_big("image", 10 * mb + 1) is None,
+                          attachments.too_big("video", 60 * mb) is None, attachments.too_big("video", 61 * mb) is None],
+                         [True, False, True, False])
+
+
+class CleanReplyTests(unittest.TestCase):
+    """A reply's body: the words, and what it is about (a suggestion or a preview) only as whole numbers."""
+
+    def test_about_a_preview_is_kept_only_as_an_int(self):
+        cases = [7, "7", " 12 ", True, False, 3.5, "x", None, [7], {"id": 7}, -1, 0]
+        self.assertEqual([desk_api.clean_reply({"prompt": "Change it", "about_attachment": c})["about_attachment"] for c in cases],
+                         [7, 7, 12, None, None, None, None, None, None, None, None, None])
+
+    def test_the_rest_of_the_reply(self):
+        self.assertEqual(desk_api.clean_reply({"prompt": "  Bigger headline  ", "about_proposal": "5", "stop_first": 1, "full": True,
+                                               "options": {"access": "full"}}),
+                         {"prompt": "Bigger headline", "about_proposal": 5, "about_attachment": None, "stop_first": True})

@@ -8,6 +8,8 @@ if (me) {
   document.getElementById("me-email").textContent = me.email;
   document.getElementById("me-role").textContent = me.owner ? "Admin of every account" : me.role === "admin" ? `Admin of ${me.account.name}`
     : me.role === "client" ? `Client of ${me.account.name}` : `Team member, ${me.account.name}`;
+  // FU-D: the owner who can turn on full access on the Claude page learns what ends it.
+  document.getElementById("fa-account").hidden = !(me.full_access && me.full_access.allowed);
   // The one place the theme is chosen (the command menu's Switch theme steps through the same three).
   const choice = document.getElementById("theme-choice");
   const mark = () => choice.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeChoice === currentTheme())));

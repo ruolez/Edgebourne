@@ -636,7 +636,9 @@ export async function boot({ page, admin = false }) {
     : b === "claude" ? '<span class="count claude" data-claude-count hidden></span>'
     : b === "inbox" ? '<span class="count" data-inbox-count hidden></span>' : "";
   const cur = (key) => key === section ? 'aria-current="page"' : "";
-  const link = (key) => { const l = SECTIONS[key]; return `<a href="${l.href}" ${cur(key)}>${icon(l.icon)}<span class="label">${l.label}</span>${badge(l.badge)}</a>`; };
+  // FU-D: an amber dot next to Claude while this sign-in has full access on (only the owner who may turn it on).
+  const faDot = me.full_access && me.full_access.allowed ? `<span class="fa-dot" data-fa-dot title="Full access on" ${me.full_access.on ? "" : "hidden"}><span class="sr-only">, full access on</span></span>` : "";
+  const link = (key) => { const l = SECTIONS[key]; return `<a href="${l.href}" ${cur(key)}>${icon(l.icon)}<span class="label">${l.label}</span>${key === "claude" ? faDot : ""}${badge(l.badge)}</a>`; };
   const initials = me.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -920,14 +922,16 @@ export function fieldErrors(form, errors, { focus = true } = {}) {
 // `choices` (W1a): {options: [{value, label, hint}], required, submitOnPick}. With submitOnPick a tap on an option
 // is the answer (no confirm button needed: pass confirm: null); otherwise it is picked and the confirm button sends
 // it, `required` being the message when nothing is picked. `extra` adds a class to the dialog.
-export function confirmDialog({ title, body = "", confirm = "Confirm", danger = false, claude = false, field = null, cancel = "Cancel", wide = false, confirmLabel = null, confirmDanger = null, choices = null, extra = "" }) {
+// act: an async check run on Confirm (a password the server must accept): it resolves null to close, or the words to
+// show under the field, and the dialog stays open with what was typed.
+export function confirmDialog({ title, body = "", confirm = "Confirm", danger = false, claude = false, field = null, cancel = "Cancel", wide = false, confirmLabel = null, confirmDanger = null, choices = null, extra = "", act = null }) {
   return new Promise((resolve) => {
     const dlg = document.createElement("dialog");
     dlg.className = ["confirm", wide ? "wide" : "", extra].filter(Boolean).join(" ");
     const lines = field && (field.rows || (field.multiline ? 4 : 0));
     const box = lines
       ? `<textarea class="input" id="cd-input" rows="${Number(lines) || 8}" autocomplete="off" aria-describedby="cd-hint">${esc(field.value ?? "")}</textarea>`
-      : field ? `<div class="affix">${field.prefix ? `<span>${esc(field.prefix)}</span>` : ""}<input class="input" id="cd-input" inputmode="${field.inputmode || "text"}" value="${esc(field.value ?? "")}" autocomplete="off" aria-describedby="cd-hint">${field.suffix ? `<span>${esc(field.suffix)}</span>` : ""}</div>` : "";
+      : field ? `<div class="affix">${field.prefix ? `<span>${esc(field.prefix)}</span>` : ""}<input class="input" id="cd-input" type="${field.type === "password" ? "password" : "text"}" inputmode="${field.inputmode || "text"}" value="${esc(field.value ?? "")}" autocomplete="${esc(field.autocomplete || "off")}" aria-describedby="cd-hint">${field.suffix ? `<span>${esc(field.suffix)}</span>` : ""}</div>` : "";
     // Choices come before the field: a Lost reason first, then "Anything to add?" (L2). choices.value preselects one.
     dlg.innerHTML = `<form method="dialog" novalidate>
       <h2>${esc(title)}</h2>
@@ -986,6 +990,18 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
         if (problem) { e.preventDefault(); err.textContent = problem; err.hidden = false; invalid(true); input.focus(); return; }
         result = choices ? { value: input.value, choice: picked } : input.value;
       } else result = choices ? picked ?? true : true;
+      if (act) {
+        e.preventDefault();
+        const value = result;
+        result = false;
+        okBtn.disabled = true;
+        Promise.resolve(act(value)).then((said) => {
+          okBtn.disabled = false;
+          if (!said) { result = value; dlg.close(); return; }
+          if (!input) { toast(said, "bad"); return; }
+          err.textContent = said; err.hidden = false; invalid(true); input.focus(); input.select();
+        });
+      }
     });
     dlg.addEventListener("close", () => { dlg.remove(); resolve(result); });
     dlg.showModal();
@@ -1046,4 +1062,10 @@ export function showPreviewFrame(box, p, { title, width, height }) {
   box.append(frame);
   frame.src = p.src;
   return frame;
+}
+
+// FU-D: the rail's amber dot follows Turn on / Lock now on the Claude page.
+export function setFullAccessDot(on) {
+  document.querySelectorAll("[data-fa-dot]").forEach((el) => { el.hidden = !on; });
+  if (window.ebadsMe && window.ebadsMe.full_access) window.ebadsMe.full_access.on = Boolean(on);
 }

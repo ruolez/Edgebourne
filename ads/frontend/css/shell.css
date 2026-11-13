@@ -44,6 +44,9 @@ kbd {
   background: var(--ink); color: var(--canvas); font: 600 var(--t-xs)/1 var(--font-num);
 }
 .count.claude { background: var(--violet); color: var(--on-violet); }
+/* FU-D: full access on for this sign-in (amber: careful). */
+.fa-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 0 2px var(--amber-soft); }
+.fa-dot[hidden] { display: none; }
 .count.bad { background: var(--bad); color: var(--on-bad); }
 .rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }
 .cap-card { background: var(--surface); border-radius: var(--radius-m); box-shadow: var(--shadow-1); padding: 10px 12px; text-decoration: none; color: var(--ink); display: block; }

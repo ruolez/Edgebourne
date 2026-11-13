@@ -12,6 +12,26 @@ const BASE = process.env.BASE || 'http://ads.localhost:8090';
   require('fs').mkdirSync(OUT, { recursive: true });
   const browser = await chromium.launch({ executablePath: EXE, headless: true });
   const errors = [];
+  // FU-D: a conversation that ran with full access and came back with an image and a video preview.
+  const sh = (cmd, input) => require('child_process').execSync(cmd, input ? { input } : {}).toString();
+  sh(`docker cp ${__dirname}/../dev/media/preview.png edgebourne-ads-backend:/tmp/qa-preview.png && docker cp ${__dirname}/../dev/media/preview.mp4 edgebourne-ads-backend:/tmp/qa-preview.mp4`);
+  const fudTask = Number(sh('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', `import hashlib, account_ctx, attachments, db
+with account_ctx.use(1):
+    t = db.execute("""INSERT INTO desk_tasks (kind, prompt, status, summary, created_by, claimed_at, finished_at, access)
+                      VALUES ('creative', 'Shots FU-D: design a 4:5 static for N2 with a bigger headline and show me a preview', 'done',
+                              'Two previews: the 4:5 static and a 9:16 motion cut. Tap Upload as draft to make one an ad (switched off), or Change it.',
+                              1, now() - interval '6 minutes', now(), 'full') RETURNING id""", returning=True)["id"]
+    db.execute("INSERT INTO desk_reports (task_id, title, body) VALUES (%s, 'Previews', 'Bigger headline (64 px), same layout and colours.')", (t,))
+    for path, name, cap in (('/tmp/qa-preview.png', 'n2-static.png', '4:5 static, version A'), ('/tmp/qa-preview.mp4', 'n2-reel.mp4', '9:16 motion, version A')):
+        data = open(path, 'rb').read()
+        mime = attachments.sniff(data[:attachments.HEAD])
+        m = attachments.measure(mime, data)
+        db.execute("""INSERT INTO desk_attachments (task_id, kind, mime, name, caption, size_bytes, sha256, width, height, duration_ms, body)
+                      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                   (t, attachments.MIMES[mime], mime, name, cap, len(data), hashlib.sha256(data).hexdigest(), m['width'], m['height'], m['duration_ms'], data))
+print(t)
+`).trim().split('\n').pop());
+  const fullAccess = (on) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "UPDATE user_sessions SET full_until = ${on ? "now() + interval '8 hours'" : 'NULL'} WHERE user_id = 1"`);
   for (const scheme of ['light', 'dark']) {
     for (const [vw, vh, tag] of [[1440, 900, 'desk'], [390, 844, 'phone']]) {
       const ctx = await browser.newContext({ viewport: { width: vw, height: vh }, colorScheme: scheme, deviceScaleFactor: 2 });
@@ -45,6 +65,18 @@ const BASE = process.env.BASE || 'http://ads.localhost:8090';
         const variant = (p.match(/(?:#tab=|#|level=|view=|box=|due=|range=)([\w-]+)/) || ['', ''])[1];
         await page.screenshot({ path: `${OUT}/${p.split('.')[0]}${variant ? '-' + variant : ''}-${tag}-${scheme}.png`, fullPage: true });
       }
+      // FU-D: full access on, and a conversation with an image and a video preview.
+      fullAccess(true);
+      await page.goto(`${BASE}/desk.html#new`);
+      await page.reload();
+      await page.waitForSelector('#fa-bar.fa-on');
+      await page.screenshot({ path: `${OUT}/fud-new-${tag}-${scheme}.png` });
+      await page.goto(`${BASE}/desk.html#r/${fudTask}`);
+      await page.reload();
+      await page.waitForSelector('.att-list video');
+      await page.waitForTimeout(900);
+      await page.screenshot({ path: `${OUT}/fud-conv-${tag}-${scheme}.png`, fullPage: true });
+      fullAccess(false);
       // FU-A: the ad account picker (Settings → Accounts → Add ad account).
       await page.goto(`${BASE}/settings.html#accounts-panel`);
       await page.reload();
@@ -83,5 +115,6 @@ const BASE = process.env.BASE || 'http://ads.localhost:8090';
     }
   }
   await browser.close();
+  sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "DELETE FROM desk_reports WHERE task_id = ${fudTask}; DELETE FROM desk_tasks WHERE id = ${fudTask}"`);
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');
 })();
