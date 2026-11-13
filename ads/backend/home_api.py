@@ -68,7 +68,8 @@ def queue(user, scope_ids):
     rows = []
     items = inbox.items_for(user)
     for i in items:
-        if not i["need"] or i["category"] == "leads":
+        # Leads to call come from followup.queue below; a lead-quality alert (W1b) is an alert and stays.
+        if not i["need"] or (i["category"] == "leads" and not i.get("alert_id")):
             continue
         rows.append({"key": i["key"], "category": i["category"], "rule": i["rule"], "level": i["level"],
                      "title": i["title"], "line": (i["lines"] or [""])[0], "href": i["href"], "at": i["at"],

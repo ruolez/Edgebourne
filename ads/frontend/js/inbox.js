@@ -102,7 +102,7 @@ function action(i) {
     return `<button type="button" class="btn btn-claude" data-accept="${i.proposal_id}">Review and accept</button>${talk}`;
   }
   if (!i.href) return alertButtons(i);
-  const label = i.category === "leads" ? "Open the lead" : /[?&#]tab=history/.test(i.href) ? "Open the history" : i.href.startsWith("/ad.html") ? "Open the ad"
+  const label = i.category === "leads" ? (i.alert_id ? "See the leads" : "Open the lead") : /[?&#]tab=history/.test(i.href) ? "Open the history" : i.href.startsWith("/ad.html") ? "Open the ad"
     : i.href.startsWith("/settings") ? "Open Settings" : "Open";
   // Diagnose with Claude, Got it… (snooze) and Done (an event that waits for a person) sit beside Open (admins).
   return `<a class="btn btn-primary" href="${esc(i.href)}">${label}</a>${alertButtons(i)}`;

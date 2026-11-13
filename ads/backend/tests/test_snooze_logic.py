@@ -49,6 +49,20 @@ class WorseTests(unittest.TestCase):
     def test_days_left_on_the_limit_wake_at_one(self):
         self.assertEqual([snooze.worse("cap_soon", 3, m, "warn", "warn") for m in (2, 1)], [False, True])
 
+    def test_qualified_share_must_drop_ten_points(self):
+        self.assertEqual([snooze.worse("qualified_low", 18, m, "warn", "warn") for m in (9, 8)], [False, True])
+
+    def test_a_qualified_share_under_ten_points_wakes_only_at_none(self):
+        self.assertEqual([snooze.worse("qualified_low", 5, m, "warn", "warn") for m in (1, 0)]
+                         + [snooze.worse("qualified_low", 0, 0, "warn", "warn")], [False, True, False])
+
+    def test_junk_share_must_rise_fifteen_points(self):
+        self.assertEqual([snooze.worse("junk_high", 33.3, m, "warn", "warn") for m in (48.2, 48.3)], [False, True])
+
+    def test_junk_near_the_top_wakes_when_every_lead_is_junk(self):
+        self.assertEqual([snooze.worse("junk_high", 90, m, "warn", "warn") for m in (99, 100)]
+                         + [snooze.worse("junk_high", 100, 100, "warn", "warn")], [False, True, False])
+
     def test_steps_of_the_other_rules(self):
         cases = [("no_delivery", 30, 77, 78), ("week_overspend", 14000, 17499, 17500), ("pace_over", 20, 34, 35), ("stale_data", 4, 27.9, 28)]
         self.assertEqual([(snooze.worse(r, b, below, "warn", "warn"), snooze.worse(r, b, at, "warn", "warn")) for r, b, below, at in cases],
@@ -110,6 +124,10 @@ class ChoicesTests(unittest.TestCase):
         cases = [alert(), alert(rule="spend_cap"), alert(rule="ad_rejected", level="bad")]
         self.assertEqual([snooze.choices(a) for a in cases], [self.BOTH] * 3)
 
+    def test_lead_quality_alerts_offer_three_days_or_until_worse(self):
+        cases = [alert(rule="qualified_low", measure=16.7), alert(rule="junk_high", measure=33.3)]
+        self.assertEqual([snooze.choices(a) for a in cases], [self.BOTH] * 2)
+
 
 class HintTests(unittest.TestCase):
     def test_spending_limit(self):
@@ -121,6 +139,21 @@ class HintTests(unittest.TestCase):
 
     def test_days_without_a_lead(self):
         self.assertEqual(snooze.worse_hint("no_leads", 3), "You'll hear again after 6 days without a lead.")
+
+    def test_qualified_share(self):
+        self.assertEqual([snooze.worse_hint("qualified_low", m) for m in (17, 16.7, 5, 0)],
+                         ["You'll hear again if it drops to 7%.", "You'll hear again if it drops to 6.7%.",
+                          "You'll hear again if none of them qualify.", "It ends by itself when leads qualify again."])
+
+    def test_junk_share(self):
+        self.assertEqual([snooze.worse_hint("junk_high", m) for m in (33, 33.3, 90)],
+                         ["You'll hear again if junk reaches 48%.", "You'll hear again if junk reaches 48.3%.",
+                          "You'll hear again if every lead looks like junk."])
+
+    def test_a_qualified_share_at_none_is_not_told_it_ends_twice(self):
+        now = datetime(2026, 11, 11, 10, 0, tzinfo=LA)
+        worse = snooze.offer(alert(rule="qualified_low", measure=0), now)[1]
+        self.assertEqual(worse["hint"], "No messages while it stays like this. It ends by itself when leads qualify again.")
 
     def test_an_alert_raised_before_figures_were_kept(self):
         self.assertEqual(snooze.worse_hint("cpl_high", None), "You'll hear again if it turns red.")
@@ -149,6 +182,13 @@ class WordsTests(unittest.TestCase):
         s = days_snooze(rule="spend_cap", baseline=SPEND_CAP_82)
         self.assertEqual([snooze.woke_line(s, "wake_worse", LA), snooze.woke_line(s, "wake_expired", LA)],
                          ["You snoozed this at 82% on Nov 10.", "You asked to be reminded on Nov 10."])
+
+    def test_wake_lines_of_the_lead_quality_alerts(self):
+        self.assertEqual([snooze.woke_line(days_snooze(rule="qualified_low", baseline=16.7), "wake_worse", LA),
+                          snooze.woke_line(days_snooze(rule="junk_high", baseline=33.3), "wake_worse", LA)],
+                         ["You snoozed this at 17% qualified on Nov 10.", "You snoozed this at 33% junk on Nov 10."])
+        self.assertEqual(snooze.woke_line(days_snooze(rule="qualified_low", baseline=12.5), "wake_worse", LA),
+                         "You snoozed this at 13% qualified on Nov 10.")
 
     def test_chip_words(self):
         self.assertEqual([snooze.snooze_words(days_snooze(), LA), snooze.snooze_words(days_snooze(mode="worse", until=None), LA)],

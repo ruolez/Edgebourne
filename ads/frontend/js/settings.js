@@ -265,6 +265,8 @@ const RULE_UI = [
   ["pace_over", "The month is heading over your monthly target (set it on Results)", [["percent", "by more than", "%"]]],
   ["cpl_high", "Leads cost too much (against the cost-per-lead target in Targets)", [["times", "alert above", "× the target"]]],
   ["no_leads", "No leads while the ads spend", [["days", "for", "days in a row"]]],
+  ["qualified_low", "Few leads qualify", [["percent", "below", "% qualified,"], ["min_leads", "with at least", "leads"]]],
+  ["junk_high", "Many leads look like junk", [["percent", "above", "%,"], ["min_leads", "with at least", "leads"]]],
   ["tracking", "Leads Meta counted aren't reaching the inbox", []],
   ["stale_data", "Meta stops answering", [["hours", "for", "hours"]]],
   ["events_quiet", "Lead stages stop reaching Meta's dataset (two days)", []],
@@ -282,6 +284,8 @@ function renderAlerts() {
     const hint = id === "cpl_high" ? `<small class="muted">${t.lead_cents ? `Target ${money(t.lead_cents, { exact: true })} per lead.`
       : t.lead_used_cents ? `No cost-per-lead target, so it uses ${money(t.lead_used_cents, { exact: true })} per qualified lead: any lead costing more than that misses the goal.`
         : "Off until a target is set in Targets."} <a href="#targets">Change</a></small>`
+      : id === "qualified_low" ? '<small class="muted">Over the 14 days that end 2 days ago, counting only leads someone has worked (past New, or Lost).</small>'
+      : id === "junk_high" ? '<small class="muted">Junk = marked Spam or fake, or fake-looking details and never contacted.</small>'
       : id === "outside_edit" ? '<small class="muted">A note when someone changes these in Ads Manager. It\'s marked as needing action when the change breaks a money rule. Turning it off stops the note only: changes are still recorded and the 3-day rule still holds.</small>' : "";
     return `<li><label class="check"><input type="checkbox" data-rule="${id}" data-key="on" ${r.on ? "checked" : ""}> ${esc(label)}</label>${inputs ? `<div class="al-fields">${inputs}</div>` : ""}${hint}</li>`;
   }).join("");

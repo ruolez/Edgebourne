@@ -7,12 +7,14 @@ live in Settings → Alerts (settings key `alert_rules`, merged over DEFAULTS).
 """
 import json
 import logging
+import math
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import account_info
 import config
 import db
+import lead_quality as lq
 import notify
 import settings_store
 import snooze
@@ -37,12 +39,18 @@ DEFAULTS = {
     "learning_limited": {"on": True},
     "changed_outside": {"on": True},
     "outside_edit": {"on": True},
+    # W1b: how the leads the team worked turned out, over the 14 days that end 2 days ago (newer leads had no fair chance).
+    "qualified_low": {"on": True, "percent": 20, "min_leads": 10},
+    "junk_high": {"on": True, "percent": 30, "min_leads": 10},
 }
 # Events that stay open until someone deals with them get a Done (00-PLAN C16); D3 adds change_result.
 DONE_OK = {"outside_edit"}
 # An outside budget change that broke a money rule closes by itself once the 3-day window has passed.
 OUTSIDE_EDIT_OPEN = timedelta(hours=72)
 MIN_IMPRESSIONS = 1000  # per 7-day window, before fatigue is judged
+QUALITY_DAYS, QUALITY_LAG = 14, 2  # the lead-quality window: 14 days ending 2 days ago
+QUALITY_AD_MIN = 5   # an ad is named on a lead-quality alert only with this many leads behind its rate
+JUNK_MIN = 3         # never call a campaign junky on fewer junk leads than this
 
 
 def rules_with(saved):
@@ -110,6 +118,69 @@ def _dry_streak(rows, today):
             break
         n += 1
     return n
+
+
+def lead_quality_groups(rows):
+    """{campaign id: {name, leads, worked, qualified, junk, by_ad}} from counted leads (lead_quality.counted()).
+    Worked = past New or Lost; qualified = the highest stage reached; junk = lead_quality.is_junk (the one rule)."""
+    out = {}
+    for r in rows:
+        figures = {"leads": 1, "worked": int(lq.is_worked(r)), "qualified": int(r.get("max_stage") in ("qualified", "won")),
+                   "junk": int(lq.is_junk(r))}
+        c = out.setdefault(r["campaign_id"], {"name": r.get("campaign_name") or r["campaign_id"], "leads": 0, "worked": 0,
+                                              "qualified": 0, "junk": 0, "_ads": {}})
+        ad = c["_ads"].setdefault(r.get("ad_id"), {"ad_id": r.get("ad_id"), "ad_name": r.get("ad_name"), "leads": 0,
+                                                   "worked": 0, "qualified": 0, "junk": 0})
+        for k, v in figures.items():
+            c[k] += v
+            ad[k] += v
+    for c in out.values():
+        ads = c.pop("_ads")
+        c["by_ad"] = sorted((a for key, a in ads.items() if key), key=lambda a: (-a["leads"], str(a["ad_name"] or a["ad_id"])))
+    return out
+
+
+def _share(n, d):
+    return n / d * 100
+
+
+def _whole(pct):
+    return math.floor(pct + 0.5)  # 12.5% reads 13%, as people round
+
+
+def _worst_ad(by_ad, size, bad, total):
+    """The ad with the worst rate among those with enough leads behind it, unless it is every lead of the campaign.
+    `bad(ad)` = the share that is bad for that ad (lower qualified, higher junk), bigger is worse."""
+    judged = [a for a in by_ad if (a.get(size) or 0) >= QUALITY_AD_MIN and (a.get(size) or 0) < total]
+    return max(judged, key=lambda a: (bad(a), a[size]), default=None)
+
+
+def _lead_quality_alerts(lq_snap, rules, add):
+    q, j = rules["qualified_low"], rules["junk_high"]
+    for cid, c in lq_snap.items():
+        href = f"/leads.html?campaign={cid}"
+        worked, qualified = c.get("worked") or 0, c.get("qualified") or 0
+        if q["on"] and worked and worked >= q["min_leads"] and _share(qualified, worked) < q["percent"]:
+            rate = _share(qualified, worked)
+            lines = [f"{qualified} of {worked} leads the team worked in the last {QUALITY_DAYS} days {'was' if qualified == 1 else 'were'} "
+                     f"qualified. You're alerted below {q['percent']}%."]
+            low = _worst_ad(c.get("by_ad") or [], "worked", lambda a: -_share(a["qualified"] or 0, a["worked"]), worked)
+            if low:
+                lines.append(f"Lowest: “{low['ad_name'] or low['ad_id']}”, {low['qualified'] or 0} of {low['worked']} qualified.")
+            lines.append("Cheap leads that don't qualify cost more than they look.")
+            add("qualified_low", cid, "warn", f"Only {_whole(rate)}% of leads from “{c['name']}” qualify", lines, cid, href,
+                measure=round(rate, 1))
+        leads, junk = c.get("leads") or 0, c.get("junk") or 0
+        if j["on"] and leads and leads >= j["min_leads"] and junk >= JUNK_MIN and _share(junk, leads) > j["percent"]:
+            rate = _share(junk, leads)
+            lines = [f"{junk} of {leads} leads in the last {QUALITY_DAYS} days look like junk "
+                     "(marked spam or fake, or fake-looking details and never contacted)."]
+            high = _worst_ad([a for a in c.get("by_ad") or [] if a.get("junk")], "leads", lambda a: _share(a["junk"], a["leads"]), leads)
+            if high:
+                lines.append(f"Highest: “{high['ad_name'] or high['ad_id']}”, {high['junk']} of {high['leads']} look like junk.")
+            # Every stage (spam is Lost, flagged junk is still New), junk only: the Leads list's junk filter.
+            add("junk_high", cid, "warn", f"{_whole(rate)}% of leads from “{c['name']}” look like junk", lines, cid,
+                f"{href}&status=all&junk=1", measure=round(rate, 1))
 
 
 def evaluate(snap, rules, today):
@@ -216,6 +287,8 @@ def evaluate(snap, rules, today):
         add("events_quiet", "account", "warn", "Meta stopped receiving lead stages",
             [t.get("headline") or "Nothing has reached the dataset for two days.", "See Settings → Tracking health."], None, "/settings.html#tracking")
 
+    _lead_quality_alerts(snap.get("lead_quality") or {}, rules, add)
+
     r = rules["stale_data"]
     age = snap.get("last_pull_age_h")
     if r["on"] and snap.get("connected") and age is not None and age > r["hours"]:
@@ -269,6 +342,13 @@ def snapshot(now):
         # Meta counts a repeat fill too, but never a form filled in without an ad (L2): repeats stay, organic goes.
         "SELECT (created_time AT TIME ZONE %s)::date AS day, COUNT(*) /* every fill */ AS n FROM leads WHERE NOT is_test AND NOT is_organic "
         "AND created_time > now() - interval '4 days' GROUP BY 1", (account_info.tz_name(),))}
+    # W1b: counted leads of the running campaigns from the 14 days that end 2 days ago, by the account's calendar.
+    start = datetime.combine(today - timedelta(days=QUALITY_DAYS + QUALITY_LAG), datetime.min.time(), tzinfo=tz)
+    end = datetime.combine(today - timedelta(days=QUALITY_LAG), datetime.min.time(), tzinfo=tz)
+    quality_rows = db.query(f"""SELECT l.campaign_id, c.name AS campaign_name, l.ad_id, l.ad_name, l.max_stage, l.status, l.lost_reason,
+                                       l.junk_flags, l.junk_dismissed
+                                FROM leads l JOIN campaigns c ON c.id = l.campaign_id AND c.effective_status = 'ACTIVE'
+                                WHERE {lq.counted()} AND l.created_time >= %s AND l.created_time < %s""", (start, end))
     updated = refresh_api.last_updated(settings_store.get("last_refresh_at"), settings_store.get("last_performance_sync"))
     return today, {
         # Different people per ad over the same 7 days, from Meta (daily reach can't be added up); None when quiet.
@@ -280,6 +360,7 @@ def snapshot(now):
         "currency": account_info.currency(),
         "pacing": pacing_data(None),
         "tracking": tracking_state(now),
+        "lead_quality": lead_quality_groups(quality_rows),
     }
 
 

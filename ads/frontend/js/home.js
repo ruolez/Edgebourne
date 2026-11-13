@@ -29,7 +29,7 @@ function actionLabel(r) {
   if (r.action) return r.action;
   const h = r.href || "";
   return h.startsWith("/ad.html") ? "Open the ad" : h.startsWith("/adset.html") ? "Open the ad set" : h.startsWith("/campaign.html") ? "Open the campaign"
-    : h.startsWith("/settings") ? "Open Settings" : "Open";
+    : h.startsWith("/settings") ? "Open Settings" : h.startsWith("/leads.html") ? "See the leads" : "Open";
 }
 
 // A Call button dials and then asks how it went (followup.armDial); without a phone number, the lead opens.

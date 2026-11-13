@@ -19,6 +19,9 @@ class CategoryTests(unittest.TestCase):
                                                        "fatigue", "changed_outside", "spend_cap", "cpl_high", "tracking")],
                          ["status", "status", "status", "status", "status", "status", "money", "money", "system"])
 
+    def test_lead_quality_alerts_are_about_leads(self):
+        self.assertEqual([inbox.category(r) for r in ("qualified_low", "junk_high")], ["leads", "leads"])
+
 
 class BuildTests(unittest.TestCase):
     def setUp(self):

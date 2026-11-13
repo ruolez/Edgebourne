@@ -16,6 +16,7 @@ LEVELS = {"info": 0, "ok": 0, "warn": 1, "bad": 2}
 # rule → (how its figure gets clearly worse, step). The figure is the alert's `measure`:
 #   plus: measure ≥ baseline + step · times: measure > baseline and ≥ baseline × step · up: measure > baseline
 #   bands: a higher band than the baseline's · down_to: measure ≤ step < baseline · level: the level only
+#   share_down / share_up: a percent that moved `step` points the wrong way (stopping at 0 / 100), and moved at all
 WORSE = {
     "ad_rejected": ("up", None),          # 1 = has issues, 2 = rejected
     "no_delivery": ("plus", 48),          # hours live, nobody has seen it
@@ -29,6 +30,8 @@ WORSE = {
     "stale_data": ("plus", 24),           # hours since Meta last answered
     "events_quiet": ("level", None),
     "tracking": ("level", None),          # Meta's leads in two days; "Remind me tomorrow" only
+    "qualified_low": ("share_down", 10),  # % of the worked leads that qualified
+    "junk_high": ("share_up", 15),        # % of the leads that look like junk
 }
 DAY_AT_MOST = {"tracking"}  # leads may be getting lost: one day at most, like a red money alert
 EPS = 1e-9
@@ -57,6 +60,10 @@ def worse(rule, baseline, measure, base_level, level):
         return _band(m, step) > _band(b, step)
     if how == "down_to":
         return m <= step + EPS < b
+    if how == "share_down":
+        return m < b - EPS and m <= max(b - step, 0) + EPS
+    if how == "share_up":
+        return m > b + EPS and m >= min(b + step, 100) - EPS
     return False
 
 
@@ -96,6 +103,22 @@ def _money(cents):
     return words.money(round(cents), whole=not round(cents) % 100)
 
 
+def _pct(value):
+    return f"{round(value, 1):g}%"
+
+
+def _qualified_hint(m):
+    if m <= EPS:
+        return "It ends by itself when leads qualify again."
+    step = WORSE["qualified_low"][1]
+    return "You'll hear again if none of them qualify." if m <= step + EPS else f"You'll hear again if it drops to {_pct(m - step)}."
+
+
+def _junk_hint(m):
+    step = WORSE["junk_high"][1]
+    return "You'll hear again if every lead looks like junk." if m + step >= 100 - EPS else f"You'll hear again if junk reaches {_pct(m + step)}."
+
+
 ENDS = {
     "events_quiet": "It ends by itself when lead stages reach Meta again.",
 }
@@ -121,6 +144,8 @@ def worse_hint(rule, measure, money=_money):
         "cpl_high": lambda: f"You'll hear again if a lead costs {money(m * 1.25)} or more.",
         "no_leads": lambda: f"You'll hear again after {int(m * 2)} days without a lead.",
         "stale_data": lambda: "You'll hear again if Meta is still silent a day from now.",
+        "qualified_low": lambda: _qualified_hint(m),
+        "junk_high": lambda: _junk_hint(m),
     }.get(rule, lambda: "You'll hear again if it turns red.")()
 
 
@@ -159,6 +184,8 @@ def measure_words(rule, m, money=_money):
         "cap_soon": lambda: f"{m:g} days left",
         "stale_data": lambda: f"{m:.0f} hours without Meta",
         "ad_rejected": lambda: "rejected" if m >= 2 else "has issues",
+        "qualified_low": lambda: f"{int(m + 0.5)}% qualified",  # rounded half up, as the alert's title
+        "junk_high": lambda: f"{int(m + 0.5)}% junk",
     }.get(rule, lambda: None)()
 
 

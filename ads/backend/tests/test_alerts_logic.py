@@ -185,6 +185,116 @@ class DryStreakTests(unittest.TestCase):
         self.assertEqual(rules_of(alerts.evaluate(snap(camp_days={"c1": rows}), RULES, TODAY)), [])
 
 
+def quality(worked=12, qualified=2, leads=None, junk=None, by_ad=None):
+    """One campaign's lead quality in the window, as alerts.snapshot gives it (W1b)."""
+    return {"c1": {"name": "Leads", "leads": worked if leads is None else leads, "worked": worked, "qualified": qualified,
+                   "junk": junk, "by_ad": by_ad or []}}
+
+
+def lq_alerts(lq, rules=RULES):
+    return [a for a in alerts.evaluate(snap(lead_quality=lq), rules, TODAY) if a["rule"] in ("qualified_low", "junk_high")]
+
+
+class QualifiedLowTests(unittest.TestCase):
+    """Few of the leads the team worked (14 days ending 2 days ago) reached Qualified (W1b)."""
+
+    def test_two_of_twelve_worked_fires_with_the_lowest_ad(self):
+        n3 = {"ad_id": "a3", "ad_name": "N3", "leads": 7, "worked": 7, "qualified": 0, "junk": None}
+        found = lq_alerts(quality(by_ad=[n3]))
+        self.assertEqual([(a["rule"], a["entity_id"], a["campaign_id"], a["level"], a["measure"], a["title"], a["lines"], a["href"]) for a in found],
+                         [("qualified_low", "c1", "c1", "warn", 16.7, "Only 17% of leads from “Leads” qualify",
+                           ["2 of 12 leads the team worked in the last 14 days were qualified. You're alerted below 20%.",
+                            "Lowest: “N3”, 0 of 7 qualified.", "Cheap leads that don't qualify cost more than they look."],
+                           "/leads.html?campaign=c1")])
+
+    def test_at_the_threshold_nothing(self):
+        self.assertEqual(lq_alerts(quality(qualified=3)), [])
+
+    def test_too_few_worked_leads_nothing(self):
+        self.assertEqual(lq_alerts(quality(worked=9, qualified=0)), [])
+
+    def test_one_qualified_is_said_in_the_singular(self):
+        self.assertEqual(lq_alerts(quality(qualified=1))[0]["lines"][0],
+                         "1 of 12 leads the team worked in the last 14 days was qualified. You're alerted below 20%.")
+
+    def test_a_half_percent_rounds_up_in_the_title(self):
+        found = lq_alerts(quality(worked=24, qualified=3))
+        self.assertEqual([(a["title"], a["measure"]) for a in found], [("Only 13% of leads from “Leads” qualify", 12.5)])
+
+    def test_the_lowest_ad_needs_five_worked_leads_and_is_not_named_when_it_is_every_lead(self):
+        small = {"ad_id": "a3", "ad_name": "N3", "leads": 4, "worked": 4, "qualified": 0, "junk": 0}
+        whole = {"ad_id": "a1", "ad_name": "N1", "leads": 12, "worked": 12, "qualified": 2, "junk": 0}
+        self.assertEqual([lq_alerts(quality(by_ad=[small]))[0]["lines"], lq_alerts(quality(by_ad=[whole]))[0]["lines"]],
+                         [["2 of 12 leads the team worked in the last 14 days were qualified. You're alerted below 20%.",
+                           "Cheap leads that don't qualify cost more than they look."]] * 2)
+
+    def test_the_lowest_rate_wins_over_the_most_leads(self):
+        n1 = {"ad_id": "a1", "ad_name": "N1", "leads": 6, "worked": 6, "qualified": 1, "junk": 0}
+        n2 = {"ad_id": "a2", "ad_name": "N2", "leads": 5, "worked": 5, "qualified": 0, "junk": 0}
+        self.assertEqual(lq_alerts(quality(worked=13, by_ad=[n1, n2]))[0]["lines"][1], "Lowest: “N2”, 0 of 5 qualified.")
+
+    def test_switched_off_and_own_thresholds(self):
+        off = alerts.rules_with({"qualified_low": {"on": False}})
+        stricter = alerts.rules_with({"qualified_low": {"percent": 30, "min_leads": 20}})
+        looser = alerts.rules_with({"qualified_low": {"percent": 30, "min_leads": 5}})
+        self.assertEqual([rules_of(lq_alerts(quality(qualified=3), r)) for r in (off, stricter, looser)], [[], [], ["qualified_low"]])
+
+
+class JunkHighTests(unittest.TestCase):
+    """Many counted leads in the window look like junk (lead_quality.is_junk, W1b)."""
+
+    def test_four_of_twelve_fires(self):
+        found = lq_alerts(quality(worked=6, qualified=3, leads=12, junk=4))
+        self.assertEqual([(a["rule"], a["entity_id"], a["level"], a["measure"], a["title"], a["lines"], a["href"]) for a in found],
+                         [("junk_high", "c1", "warn", 33.3, "33% of leads from “Leads” look like junk",
+                           ["4 of 12 leads in the last 14 days look like junk (marked spam or fake, or fake-looking details and never contacted)."],
+                           "/leads.html?campaign=c1&status=all&junk=1")])
+
+    def test_two_junk_leads_are_never_enough(self):
+        self.assertEqual(lq_alerts(quality(worked=6, qualified=3, leads=6, junk=2), alerts.rules_with({"junk_high": {"min_leads": 5}})), [])
+
+    def test_at_the_threshold_or_with_too_few_leads_nothing(self):
+        self.assertEqual([lq_alerts(quality(worked=6, qualified=3, leads=10, junk=3)), lq_alerts(quality(worked=5, qualified=3, leads=9, junk=4))],
+                         [[], []])
+
+    def test_the_ad_with_the_most_junk_is_named(self):
+        n3 = {"ad_id": "a3", "ad_name": "N3", "leads": 6, "worked": 2, "qualified": 1, "junk": 3}
+        n1 = {"ad_id": "a1", "ad_name": "N1", "leads": 6, "worked": 4, "qualified": 2, "junk": 1}
+        self.assertEqual(lq_alerts(quality(worked=6, qualified=3, leads=12, junk=4, by_ad=[n1, n3]))[0]["lines"][1],
+                         "Highest: “N3”, 3 of 6 look like junk.")
+
+
+class LeadQualityGroupTests(unittest.TestCase):
+    """The snapshot's rows grouped by campaign and ad: worked = past New or Lost, qualified = highest stage, junk = is_junk."""
+
+    def row(self, ad="a1", stage="new", status="new", reason=None, flags=(), dismissed=False):
+        return {"campaign_id": "c1", "campaign_name": "Leads", "ad_id": ad, "ad_name": {"a1": "N1", "a3": "N3"}.get(ad),
+                "max_stage": stage, "status": status, "lost_reason": reason, "junk_flags": list(flags), "junk_dismissed": dismissed}
+
+    def test_counts_by_campaign_and_ad(self):
+        rows = [self.row(stage="qualified", status="qualified"), self.row(stage="won", status="won"),
+                self.row(stage="contacted", status="contacted"), self.row(status="lost", reason="no_response"),
+                self.row(ad="a3"), self.row(ad="a3", status="lost", reason="spam"),
+                self.row(ad="a3", flags=["fake_phone"]), self.row(ad="a3", flags=["fake_phone"], dismissed=True),
+                self.row(ad=None, stage="qualified", status="lost", reason="price")]
+        self.assertEqual(alerts.lead_quality_groups(rows), {"c1": {
+            "name": "Leads", "leads": 9, "worked": 6, "qualified": 3, "junk": 2,
+            "by_ad": [{"ad_id": "a1", "ad_name": "N1", "leads": 4, "worked": 4, "qualified": 2, "junk": 0},
+                      {"ad_id": "a3", "ad_name": "N3", "leads": 4, "worked": 1, "qualified": 0, "junk": 2}]}})
+
+    def test_no_rows_no_campaigns(self):
+        self.assertEqual(alerts.lead_quality_groups([]), {})
+
+
+class LeadQualityDefaultsTests(unittest.TestCase):
+    def test_both_rules_are_on_with_the_spec_numbers_and_there_is_no_follow_up_rule(self):
+        self.assertEqual((RULES["qualified_low"], RULES["junk_high"], "followups_overdue" in alerts.DEFAULTS),
+                         ({"on": True, "percent": 20, "min_leads": 10}, {"on": True, "percent": 30, "min_leads": 10}, False))
+
+    def test_a_healthy_account_with_no_lead_quality_raises_nothing(self):
+        self.assertEqual(alerts.evaluate(snap(lead_quality={}), RULES, TODAY), [])
+
+
 class RulesWithTests(unittest.TestCase):
     def test_saved_values_override_defaults_and_unknown_keys_are_dropped(self):
         r = alerts.rules_with({"no_leads": {"days": 5}, "bogus": {"on": True}, "spend_cap": {"percent": "90"}})

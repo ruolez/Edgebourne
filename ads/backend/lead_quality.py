@@ -53,6 +53,13 @@ def contacted(a="l"):
     return f"{a}.max_stage <> 'new'"   # stage-based (00-PLAN C5): a call nobody answered is a try, not contact
 
 
+def junk(a="l"):
+    """The SQL twin of is_junk (the Leads list's junk filter): change both together."""
+    real = ",".join(f"'{r}'" for r in sorted(REAL_PERSON))
+    return (f"({a}.lost_reason = 'spam' OR (cardinality({a}.junk_flags) > 0 AND NOT {a}.junk_dismissed "
+            f"AND {a}.max_stage = 'new' AND COALESCE({a}.lost_reason, '') NOT IN ({real})))")
+
+
 # ---------------------------------------------------------------- highest stage
 
 def raise_max(current_max, new_status):
@@ -155,6 +162,11 @@ def flag_text(codes):
         return ""
     text = _and(parts)
     return text[0].upper() + text[1:] + "."
+
+
+def is_worked(lead):
+    """Someone worked it: it got past New, or was lost (W1b's qualified rate counts only these)."""
+    return lead.get("max_stage", "new") != "new" or lead.get("status") == "lost"
 
 
 def is_junk(lead):
@@ -365,12 +377,13 @@ def snapshot(leads):
             continue
         key = l.get("ad_id")
         r = rows.setdefault(key, {"ad_id": key, "ad_name": l.get("ad_name") or ("From the Page (no ad)" if not key else None),
-                                  "leads": 0, "repeats": 0, "junk": 0, "qualified": 0, "won": 0, "_l": [], "junk_flags": {}})
+                                  "leads": 0, "repeats": 0, "worked": 0, "junk": 0, "qualified": 0, "won": 0, "_l": [], "junk_flags": {}})
         r["ad_name"] = r["ad_name"] or l.get("ad_name")
         if l.get("repeat_of"):
             r["repeats"] += 1
             continue
         r["leads"] += 1
+        r["worked"] += int(is_worked(l))
         r["junk"] += int(is_junk(l))
         r["qualified"] += int(l.get("max_stage") in ("qualified", "won"))
         r["won"] += int(l.get("max_stage") == "won")
@@ -382,10 +395,11 @@ def snapshot(leads):
         r["lost"] = lost_counts(r.pop("_l"))
         r["junk_flags"] = r.pop("junk_flags")
         out.append(r)
-    totals = {k: sum(r[k] for r in out) for k in ("leads", "repeats", "junk", "qualified", "won")}
+    totals = {k: sum(r[k] for r in out) for k in ("leads", "repeats", "worked", "junk", "qualified", "won")}
     totals["lost"] = lost_counts(leads)
     return out, totals
 
 
 SNAPSHOT_NOTES = ("Qualified and won count the highest stage a lead reached. Repeats (the same email or phone within 90 days "
-                  "while the first lead is open) are counted once. Junk = marked spam, or flagged as looking fake and never contacted.")
+                  "while the first lead is open) are counted once. Worked = got past New, or was lost. "
+                  "Junk = marked spam, or flagged as looking fake and never contacted.")

@@ -7,13 +7,13 @@ import { armDial, askMeeting, askNext, boxHtml, chipHtml, logCall, resumePending
 const STAGES = Object.entries(STAGE_LABELS).map(([id, label]) => ({ id, label }));
 const FILTERS = [{ id: "open", label: "Open" }, ...STAGES, { id: "all", label: "All" }];
 
-const state = { loaded: false, me: null, filter: "open", q: "", tests: false, due: "", why: "", leads: [], counts: {}, whyCounts: null, selected: null, seen: new Set(), lead: null };
+const state = { loaded: false, me: null, filter: "open", q: "", tests: false, due: "", why: "", junk: false, leads: [], counts: {}, whyCounts: null, selected: null, seen: new Set(), lead: null };
 const $ = (id) => document.getElementById(id);
 
 // What "filtered" means here: anything other than open leads of every campaign, no search, no test leads.
 // Where a lead came from, kept in the URL: the picker offers campaigns and ads; an ad set or a form comes from a link.
 const SOURCE_KEYS = ["campaign", "adset", "ad", "form"];
-const filtered = () => state.filter !== "open" || Boolean(state.q) || state.tests || Boolean(state.due) || Boolean(state.why) || SOURCE_KEYS.some((k) => new URLSearchParams(location.search).get(k));
+const filtered = () => state.filter !== "open" || Boolean(state.q) || state.tests || Boolean(state.due) || Boolean(state.why) || state.junk || SOURCE_KEYS.some((k) => new URLSearchParams(location.search).get(k));
 const WHY_KEYS = [...Object.keys(LOST_REASONS), "none"];
 const DUE_KEYS = FOLLOW.due.map(([k]) => k).filter(Boolean);
 
@@ -40,6 +40,13 @@ function renderResponse(r) {
   if (r.calls) parts.push(`${plural(r.calls, "call")}, ${r.talked} talked to (${r.rate}%)`);
   el.textContent = `Last 30 days: ${parts.join(" · ")}`;
   el.hidden = false;
+}
+
+// Only the leads that look like junk (?junk=1, the "look like junk" alert's link): offered while there are any.
+function renderJunk(n) {
+  $("junk-wrap").hidden = !state.junk && !n;
+  $("junk-only").checked = state.junk;
+  $("junk-label").textContent = `Only junk (${n || 0})`;
 }
 
 // Why Lost leads were lost (L2): shown only on the Lost view, kept in the address (?why=), with a nudge for
@@ -138,6 +145,7 @@ async function load({ quiet = false } = {}) {
   if (state.tests) params.set("tests", "1");
   if (state.due) params.set("due", state.due);
   if (state.filter === "lost" && state.why) params.set("why", state.why);
+  if (state.junk) params.set("junk", "1");
   const src = new URLSearchParams(location.search);
   for (const k of SOURCE_KEYS) if (src.get(k)) params.set(k, src.get(k));
   const superseded = startLoad("leads");
@@ -152,6 +160,7 @@ async function load({ quiet = false } = {}) {
     state.newEverywhere = data.new_everywhere;
     renderResponse(data.response);
     renderFollow(data.follow || {});
+    renderJunk(data.junk);
     if (!state.loaded) { data.leads.forEach((l) => state.seen.add(l.id)); state.loaded = true; }
     renderFilters();
     renderWhy();
@@ -611,10 +620,10 @@ function wireQuality(lead) {
 }
 
 function clearFilters() {
-  state.filter = "open"; state.q = ""; state.tests = false; state.due = ""; state.why = ""; state.selected = null;
+  state.filter = "open"; state.q = ""; state.tests = false; state.due = ""; state.why = ""; state.junk = false; state.selected = null;
   $("q").value = ""; $("tests").checked = false;
   const u = new URL(location.href);
-  [...SOURCE_KEYS, "status", "due", "why"].forEach((k) => u.searchParams.delete(k));
+  [...SOURCE_KEYS, "status", "due", "why", "junk"].forEach((k) => u.searchParams.delete(k));
   history.replaceState(null, "", u.pathname + u.search);
   rememberList(u.pathname + u.search);
   load();
@@ -671,6 +680,18 @@ async function main() {
     load();
   });
   $("tests").addEventListener("change", (e) => { state.tests = e.target.checked; load(); });
+  state.junk = new URLSearchParams(location.search).get("junk") === "1";
+  $("junk-only").addEventListener("change", (e) => {
+    state.junk = e.target.checked;
+    const u = new URL(location.href);
+    if (state.junk) u.searchParams.set("junk", "1"); else u.searchParams.delete("junk");
+    // Junk marked spam is Lost: from Open the list widens to every stage, so it shows what the count says.
+    if (state.junk && state.filter === "open") { state.filter = "all"; u.searchParams.set("status", "all"); }
+    history.replaceState(null, "", u.pathname + u.search + u.hash);
+    rememberList(u.pathname + u.search);
+    state.selected = null;
+    load();
+  });
   $("clear-filters").addEventListener("click", clearFilters);
   $("list").addEventListener("click", (e) => { if (e.target.closest("[data-clear-filters]")) clearFilters(); });
   $("source").addEventListener("change", (e) => {

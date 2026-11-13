@@ -88,7 +88,7 @@ textarea.input { min-height: 84px; resize: vertical; }
 .login-form .input[aria-invalid="true"] { border-color: var(--bad); }
 .field .err { color: var(--bad-ink); font-size: var(--t-s); font-weight: 600; }
 .check { display: flex; gap: 10px; align-items: flex-start; font-weight: 600; }
-.check input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--ink); }
+.check input { flex: none; margin-top: 3px; width: 18px; height: 18px; accent-color: var(--ink); }
 
 .search { position: relative; }
 .search svg { position: absolute; left: 10px; top: 50%; width: 16px; height: 16px; transform: translateY(-50%); color: var(--ink-3); }

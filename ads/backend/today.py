@@ -51,7 +51,8 @@ def group_of(category, rule, level):
         return LEAD_GROUPS[rule]
     if rule in DECIDE_RULES:
         return "decide"
-    if category == "status" or (category == "system" and level == "bad"):
+    # A lead-quality alert (W1b) is a problem with the ads, not a lead to call.
+    if category in ("status", "leads") or (category == "system" and level == "bad"):
         return "problems"
     if category == "money":
         return "money"

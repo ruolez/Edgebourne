@@ -696,7 +696,13 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   // Alerts: rules in Settings; a rejected ad raises one alert (Telegram + Today), not twice, and it clears by itself.
   await openSettings('alerts');
   await page.waitForSelector('#al-rules li');
-  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 17);
+  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 19);
+  check('W1b: Settings lists the two lead-quality rules, on by default, with their numbers and what junk means',
+    /Few leads qualify/.test(await page.textContent('#al-rules')) && /counting only leads someone has worked \(past New, or Lost\)/.test(await page.textContent('#al-rules')) && /Many leads look like junk/.test(await page.textContent('#al-rules'))
+    && await page.isChecked('[data-rule="qualified_low"][data-key="on"]') && await page.isChecked('[data-rule="junk_high"][data-key="on"]')
+    && (await page.inputValue('[data-rule="qualified_low"][data-key="percent"]')) === '20' && (await page.inputValue('[data-rule="qualified_low"][data-key="min_leads"]')) === '10'
+    && (await page.inputValue('[data-rule="junk_high"][data-key="percent"]')) === '30' && (await page.inputValue('[data-rule="junk_high"][data-key="min_leads"]')) === '10'
+    && /Junk = marked Spam or fake, or fake-looking details and never contacted\./.test(await page.textContent('#al-rules')));
   check('Settings shows one section at a time, named in the list, the breadcrumb and the tab title', await page.evaluate(() =>
     [...document.querySelectorAll('[data-section]')].filter((x) => !x.hidden).map((x) => x.id).join() === 'alerts'
     && document.querySelector('.settings-nav [aria-current="page"]')?.dataset.set === 'alerts'
@@ -4566,6 +4572,154 @@ db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users
     // The QA alerts close, so later checks see the usual Inbox.
     py(`import db;db.execute(\\"UPDATE alerts SET resolved_at = now() WHERE (dedupe_key LIKE '%qa-w1-%' OR (rule = 'ad_rejected' AND entity_id = '${N4}')) AND resolved_at IS NULL\\")`);
     reset();
+  }
+  // W1b: lead-quality alerts. Of the leads the team worked (14 days ending 2 days ago) few qualify, or many look like junk:
+  // one alert per campaign in the Inbox's Leads and on Today, with Got it and Diagnose; it closes once that's no longer true.
+  {
+    const C = '120252638288040312';
+    const CAMP = 'Edge Bourne - Free intro call - Leads';
+    const N3 = '120252672230740312';
+    const PAUSED = 'qa-w1b-paused';
+    const runAlerts = () => sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "import alerts;print(alerts.run())"`);
+    // 24 worked leads on N3 (3 qualified, 17 contacted, 4 lost: no response) and 24 that look fake and nobody contacted, 5-13 days old.
+    // The share stays between 10% and 20% whichever demo leads are still in the window (they age out day by day).
+    // Leads that must not count, each worked and junk so it would move both figures: 1 day old, 17 days old, a test lead,
+    // a repeat; and 12 worked, unqualified leads on a paused campaign (it would raise its own alert if paused ones counted).
+    py(`import db
+db.execute(\\"DELETE FROM leads WHERE meta_lead_id LIKE 'qa-w1b-%'\\")
+db.execute(\\"INSERT INTO campaigns (id, name, status, effective_status) VALUES ('${PAUSED}', 'QA W1b paused', 'PAUSED', 'PAUSED') ON CONFLICT (id) DO UPDATE SET effective_status = 'PAUSED'\\")
+rows = [('qualified', 'qualified', None, [])] * 3 + [('contacted', 'contacted', None, [])] * 17 + [('new', 'lost', 'no_response', [])] * 4 + [('new', 'new', None, ['fake_phone'])] * 24
+ins = \\"INSERT INTO leads (meta_lead_id, created_time, full_name, campaign_id, campaign_name, ad_id, ad_name, status, max_stage, lost_reason, junk_flags, quality_checked, is_test, repeat_of) VALUES (%s, now() - make_interval(days => %s), %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s) RETURNING id\\"
+first = None
+for n, (stage, status, why, flags) in enumerate(rows):
+    lid = db.execute(ins, ('qa-w1b-%d' % n, 5 + n % 9, 'QA quality %d' % n, '${C}', '${CAMP}', '${N3}', 'N3 - Same work twice', status, stage, why, flags, False, None), returning=True)['id']
+    first = first or lid
+for name, days, test, rep in (('d-new', 1, False, None), ('d-old', 17, False, None), ('d-test', 8, True, None), ('d-repeat', 8, False, first)):
+    db.execute(ins, ('qa-w1b-' + name, days, 'QA quality ' + name, '${C}', '${CAMP}', '${N3}', 'N3 - Same work twice', 'lost', 'new', 'spam', [], False if not test else True, rep), returning=True)
+for n in range(12):
+    db.execute(ins, ('qa-w1b-p%d' % n, 6 + n % 5, 'QA paused %d' % n, '${PAUSED}', 'QA W1b paused', None, None, 'contacted', 'contacted', None, [], False, None), returning=True)`);
+    // The same figures counted another way: SQL over the account's calendar, not the alert's Python.
+    const want = JSON.parse(py(`import db, json, account_info
+r = db.query(\\"SELECT COUNT(*) AS leads, COUNT(*) FILTER (WHERE l.max_stage <> 'new' OR l.status = 'lost') AS worked, COUNT(*) FILTER (WHERE l.max_stage IN ('qualified', 'won')) AS qualified, COUNT(*) FILTER (WHERE l.lost_reason = 'spam' OR (cardinality(l.junk_flags) > 0 AND NOT l.junk_dismissed AND l.max_stage = 'new' AND (l.lost_reason IS NULL OR l.lost_reason NOT IN ('not_fit', 'too_small', 'price', 'went_elsewhere')))) AS junk FROM leads l WHERE NOT l.is_test AND l.repeat_of IS NULL AND l.campaign_id = %s AND (l.created_time AT TIME ZONE %s)::date BETWEEN (now() AT TIME ZONE %s)::date - 16 AND (now() AT TIME ZONE %s)::date - 3\\", ('${C}',) + (account_info.tz_name(),) * 3, one=True)
+print(json.dumps({k: int(v) for k, v in r.items()}))`));
+    const decoys = Number(py(`import db;print(db.query(\\"SELECT COUNT(*) AS n FROM leads WHERE meta_lead_id LIKE 'qa-w1b-d-%%'\\", one=True)['n'])`));
+    runAlerts();
+    const lqItems = (await getJson('/api/inbox?box=need&kind=leads')).items.filter((i) => ['qualified_low', 'junk_high'].includes(i.rule) && i.entity_id === C);
+    const ql = lqItems.find((i) => i.rule === 'qualified_low');
+    const jh = lqItems.find((i) => i.rule === 'junk_high');
+    const qPct = Math.round(want.qualified / want.worked * 1000) / 10;
+    const jPct = Math.round(want.junk / want.leads * 1000) / 10;
+    check('W1b: few qualified leads raise one alert on the campaign, in the Inbox under Leads, counted from the leads the team worked',
+      Boolean(ql) && ql.title === `Only ${Math.round(want.qualified / want.worked * 100)}% of leads from “${CAMP}” qualify`
+      && ql.lines[0] === `${want.qualified} of ${want.worked} leads the team worked in the last 14 days ${want.qualified === 1 ? 'was' : 'were'} qualified. You're alerted below 20%.`
+      && ql.lines[ql.lines.length - 1] === "Cheap leads that don't qualify cost more than they look." && ql.need && ql.href === `/leads.html?campaign=${C}`,
+      JSON.stringify([want, ql && ql.title, ql && ql.lines]));
+    check('W1b: many junk-looking leads raise "look like junk", counted over every counted lead (flagged junk is never worked)',
+      Boolean(jh) && jh.title === `${Math.round(want.junk / want.leads * 100)}% of leads from “${CAMP}” look like junk`
+      && jh.lines[0] === `${want.junk} of ${want.leads} leads in the last 14 days look like junk (marked spam or fake, or fake-looking details and never contacted).`
+      && jh.href === `/leads.html?campaign=${C}&status=all&junk=1`,
+      JSON.stringify([want, jh && jh.title, jh && jh.lines, jh && jh.href]));
+    const pausedAlerts = Number(py(`import db;print(db.query(\\"SELECT COUNT(*) AS n FROM alerts WHERE entity_id = '${PAUSED}' AND resolved_at IS NULL\\", one=True)['n'])`));
+    check('leads newer than 2 days, older than 16 days, test leads, repeats and paused campaigns are left out of both figures',
+      decoys === 4 && pausedAlerts === 0, JSON.stringify([decoys, pausedAlerts, want]));
+    const stored = JSON.parse(py(`import db, json;print(json.dumps([float(r['measure']) for r in db.query(\\"SELECT measure FROM alerts WHERE id = ANY(%s) ORDER BY rule DESC\\", ([${ql ? ql.alert_id : 0}, ${jh ? jh.alert_id : 0}],))]))`));
+    check('each keeps its share as the figure a snooze watches', JSON.stringify(stored) === JSON.stringify([qPct, jPct]), JSON.stringify([stored, qPct, jPct]));
+    await page.goto(`${BASE}/inbox.html?box=need&kind=leads#item=${encodeURIComponent(`alert:${ql.alert_id}`)}`);
+    await page.reload();
+    await page.waitForSelector('#ib-detail [data-al-snooze]');
+    check('the alert opens the campaign\'s leads, with Got it and Diagnose with Claude beside it',
+      (await page.textContent('#ib-detail a.btn-primary')).trim() === 'See the leads' && (await page.getAttribute('#ib-detail a.btn-primary', 'href')) === `/leads.html?campaign=${C}`
+      && await page.isVisible('#ib-detail [data-al-diag]'));
+    await page.click('#ib-detail [data-al-snooze]');
+    await page.waitForSelector('dialog.al-choice .cd-choice');
+    const lqGotIt = (await page.textContent('dialog.al-choice')).replace(/\s+/g, ' ');
+    // The server's rule: ten points lower, or "none of them" once that would be 0% or less.
+    const lqHint = qPct <= 10 ? "You'll hear again if none of them qualify." : `You'll hear again if it drops to ${Math.round((qPct - 10) * 10) / 10}%.`;
+    check('Got it on a lead-quality alert offers 3 days or until it gets worse, ten points lower',
+      (await page.locator('dialog.al-choice .cd-choice').count()) === 2 && lqGotIt.includes(lqHint), `${lqHint} | ${lqGotIt.slice(0, 260)}`);
+    await page.click('dialog.al-choice #cd-cancel');
+    const lqDraft = await getJson(`/api/diagnose/draft?alert_id=${ql.alert_id}`);
+    check('Diagnose uses the lead-quality checklist and names the campaign', lqDraft.playbook && lqDraft.playbook.label === 'lead quality' && lqDraft.prompt.includes(C),
+      JSON.stringify(lqDraft.playbook));
+    const lqHome = await getJson('/api/home');
+    await page.goto(BASE + '/home.html');
+    await page.waitForSelector(`.tq-row[data-key="alert:${ql.alert_id}"]`);
+    check('Today lists them with the problems to fix, not with the leads to call',
+      [ql, jh].every((i) => lqHome.queue.some((r) => r.key === `alert:${i.alert_id}` && r.group === 'problems'))
+      && /See the leads/.test(await page.textContent(`.tq-row[data-key="alert:${ql.alert_id}"] .tq-acts`)), JSON.stringify(lqHome.queue.map((r) => [r.key, r.group])).slice(0, 300));
+    await page.screenshot({ path: `${OUT}/flow-lead-quality-alerts.png` });
+    // "See the leads" on the junk alert: the campaign's leads that look like junk, at every stage (spam is Lost).
+    await page.goto(BASE + jh.href);
+    await page.waitForSelector('#junk-wrap:not([hidden]) #junk-only:checked');
+    await page.waitForSelector('#list .lead-row');
+    const camp = await getJson(`/api/leads?status=all&campaign=${C}`);
+    const junkOnly = await getJson(`/api/leads?status=all&junk=1&campaign=${C}`);
+    const junkIds = camp.leads.filter((l) => l.junk && !l.repeat_of).map((l) => l.id).sort((a, b) => a - b);
+    const shownRows = await page.locator('#list .lead-row').count();
+    const shownJunk = await page.locator('#list .lead-row .pill.warn', { hasText: 'Looks like junk' }).count();
+    check('the junk filter lists exactly the leads the junk rule marks (any stage, no repeats), with its count beside the box',
+      JSON.stringify(junkOnly.leads.map((l) => l.id).sort((a, b) => a - b)) === JSON.stringify(junkIds) && junkOnly.junk === junkIds.length
+      && junkIds.length >= 24 && shownRows === junkIds.length && shownJunk === junkIds.length
+      && (await page.textContent('#junk-label')).trim() === `Only junk (${junkIds.length})` && !(await page.isHidden('#clear-filters')),
+      JSON.stringify([junkIds.length, junkOnly.leads.length, junkOnly.junk, shownRows, shownJunk]));
+    await page.click('#junk-only');
+    const backToAll = await page.waitForFunction((n) => document.querySelectorAll('#list .lead-row').length > n, junkIds.length, { timeout: 8000 }).then(() => true, () => false);
+    check('unticking it shows the campaign\'s other leads again and drops junk from the address',
+      backToAll && !new URL(page.url()).searchParams.get('junk') && !(await page.isChecked('#junk-only')));
+    // Who sees them: a teammate on the campaign sees both, with no buttons and is refused; a client sees neither.
+    py(`import db
+from werkzeug.security import generate_password_hash as h
+for email, role in (('qa-w1-client@example.com', 'client'), ('qa-w1-mate@example.com', 'member')):
+    db.execute(\\"INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, %s, 1) ON CONFLICT (email) DO UPDATE SET is_active = TRUE, password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, account_id = 1, must_change_password = FALSE\\", (email, 'QA W1 ' + role, h('w1-pass-12345'), role))
+db.execute(\\"INSERT INTO campaign_members (campaign_id, user_id, account_id) SELECT '${C}', id, 1 FROM users WHERE email = 'qa-w1-mate@example.com' ON CONFLICT DO NOTHING\\")`);
+    for (const [email, who] of [['qa-w1-mate@example.com', 'mate'], ['qa-w1-client@example.com', 'client']]) {
+      const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+      const p = await ctx.newPage();
+      p.on('pageerror', (e) => errors.push(`${who} page: ${e.message}`));
+      await p.goto(BASE + '/login.html');
+      await p.fill('#email', email); await p.fill('#password', 'w1-pass-12345');
+      await Promise.all([p.waitForURL('**/home.html**'), p.click('button[type=submit]')]);
+      const res = await p.evaluate(async ([a]) => {
+        const lq = (items) => items.filter((i) => ['qualified_low', 'junk_high'].includes(i.rule)).map((i) => ({ key: i.key, actions: i.actions, diagnose: i.diagnose, group: i.group }));
+        return { inbox: lq((await (await fetch('/api/inbox?box=all')).json()).items), home: lq((await (await fetch('/api/home')).json()).queue || []),
+          snooze: (await fetch(`/api/alerts/${a}/snooze`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'worse' }) })).status };
+      }, [ql.alert_id]);
+      if (who === 'mate') {
+        await p.goto(`${BASE}/inbox.html?box=all#item=${encodeURIComponent(`alert:${ql.alert_id}`)}`);
+        await p.waitForSelector('#ib-detail h2');
+        check('a teammate on the campaign sees both lead-quality alerts, on Today too, with no Got it or Diagnose, and is refused',
+          res.inbox.length === 2 && res.inbox.every((i) => (i.actions || []).length === 0 && !i.diagnose) && res.home.length === 2 && res.snooze === 403
+          && (await p.locator('#ib-detail [data-al-snooze], #ib-detail [data-al-diag]').count()) === 0
+          && (await p.textContent('#ib-detail a.btn-primary')).trim() === 'See the leads', JSON.stringify(res));
+      } else {
+        await p.goto(`${BASE}/inbox.html?box=all`);
+        await p.waitForSelector('#ib-list');
+        check('a client sees no lead-quality alert in the Inbox or on Today', res.inbox.length === 0 && res.home.length === 0 && res.snooze === 403
+          && (await p.locator('#ib-list [data-key="alert:' + ql.alert_id + '"], #ib-list [data-key="alert:' + jh.alert_id + '"]').count()) === 0, JSON.stringify(res));
+      }
+      await ctx.close();
+    }
+    py(`import db
+db.execute(\\"UPDATE users SET is_active = FALSE WHERE email IN ('qa-w1-client@example.com', 'qa-w1-mate@example.com')\\")
+db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users WHERE email = 'qa-w1-mate@example.com')\\")`);
+    // Settings → Alerts on a phone: every rule's box is the same size, however long its label.
+    {
+      const sp = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await page.context().storageState() })).newPage();
+      sp.on('pageerror', (e) => errors.push('settings phone: ' + e.message));
+      await sp.goto(BASE + '/settings.html#alerts');
+      await sp.waitForSelector('#al-rules input[data-key="on"]');
+      const widths = await sp.evaluate(() => [...document.querySelectorAll('#al-rules input[data-key="on"]')].map((i) => Math.round(i.getBoundingClientRect().width)));
+      check('Settings → Alerts on a phone: every rule\'s tick box is 18px wide', widths.length === 19 && widths.every((w) => w === 18), JSON.stringify(widths));
+      await sp.context().close();
+    }
+    // Gone again: without those leads both alerts close by themselves at the next check.
+    py(`import db
+db.execute(\\"DELETE FROM leads WHERE meta_lead_id LIKE 'qa-w1b-%'\\")
+db.execute(\\"DELETE FROM campaigns WHERE id = '${PAUSED}'\\")`);
+    runAlerts();
+    const closed = JSON.parse(py(`import db, json;print(json.dumps([r['open'] for r in db.query('SELECT resolved_at IS NULL AS open FROM alerts WHERE id = ANY(%s)', ([${ql.alert_id}, ${jh.alert_id}],))]))`));
+    check('once the leads are better the lead-quality alerts close by themselves', closed.length === 2 && closed.every((o) => o === false)
+      && !(await getJson('/api/inbox?box=need&kind=leads')).items.some((i) => ['qualified_low', 'junk_high'].includes(i.rule)), JSON.stringify(closed));
   }
   // Phase 9.1: what used to break.
   const seen91 = errors.length;

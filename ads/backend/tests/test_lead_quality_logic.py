@@ -247,10 +247,15 @@ class SnapshotTest(unittest.TestCase):
         maria = {**lead("A", "qualified", "lost", "price", flags=["fake_phone"]), "full_name": "Maria Lopez", "email": "maria@lopezbakery.com",
                  "phone": "+16195557788", "lost_note": "went with a cheaper quote"}
         rows, totals = lq.snapshot([maria, lead("A", repeat_of=1)])
-        self.assertEqual(rows, [{"ad_id": "A", "ad_name": "Ad A", "leads": 1, "repeats": 1, "junk": 0, "qualified": 1, "won": 0,
+        self.assertEqual(rows, [{"ad_id": "A", "ad_name": "Ad A", "leads": 1, "repeats": 1, "worked": 1, "junk": 0, "qualified": 1, "won": 0,
                                  "lost": {"price": 1}, "junk_flags": {"fake_phone": 1}}])
-        self.assertEqual(totals, {"leads": 1, "repeats": 1, "junk": 0, "qualified": 1, "won": 0, "lost": {"price": 1}})
+        self.assertEqual(totals, {"leads": 1, "repeats": 1, "worked": 1, "junk": 0, "qualified": 1, "won": 0, "lost": {"price": 1}})
         self.assertNotRegex(repr((rows, totals)), "Maria|lopezbakery|5557788|cheaper")
+
+    def test_worked_is_past_new_or_lost_as_the_alert_counts_it(self):
+        leads = [lead("A"), lead("A", "contacted"), lead("A", "new", "lost", "no_response"), lead("A", "new", flags=["fake_phone"])]
+        rows, totals = lq.snapshot(leads)
+        self.assertEqual((rows[0]["worked"], totals["worked"], totals["leads"]), (2, 2, 4))
 
 
 class AlertWordsTest(unittest.TestCase):
@@ -282,6 +287,14 @@ class FragmentsTest(unittest.TestCase):
 
     def test_contacted_is_stage_based(self):
         self.assertNotIn("first_contacted_at", lq.contacted())
+
+    def test_junk_is_the_sql_twin_of_is_junk(self):
+        self.assertEqual(lq.junk("x"), "(x.lost_reason = 'spam' OR (cardinality(x.junk_flags) > 0 AND NOT x.junk_dismissed "
+                                       "AND x.max_stage = 'new' AND COALESCE(x.lost_reason, '') NOT IN "
+                                       "('not_fit','price','too_small','went_elsewhere')))")
+
+    def test_junk_sql_names_every_real_person_reason(self):
+        self.assertEqual([r for r in sorted(lq.REAL_PERSON) if f"'{r}'" not in lq.junk()], [])
 
 
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

@@ -41,7 +41,7 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSION = "2.3"
+VERSION = "2.4"
 # ADS_DESK_CONFIG points a test run at another dashboard (e.g. the local dev stack).
 CONFIG = os.environ.get("ADS_DESK_CONFIG") or os.path.expanduser("~/.config/ads-desk/config.json")
 SERVICE = "ads-desk"

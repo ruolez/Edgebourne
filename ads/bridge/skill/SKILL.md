@@ -87,7 +87,7 @@ A failed suggestion carries `failure`, the exact error: read it before explainin
    - `desk snapshot 7` (and 14/30 if the question spans longer): spend, leads, cost per lead,
      per-ad results, the spending limit, plus what Meta doesn't know: lead stages from the
      inbox (qualified/won), business types, speed to first contact, `lead_quality_by_ad`: per ad,
-     repeats, junk and why leads were lost (judge an ad's cost per qualified lead on these, never on
+     repeats, worked (past New, or Lost), junk and why leads were lost (judge an ad's cost per qualified lead on these, never on
      Meta's lead count alone; qualified/won count the highest stage a lead reached, a repeat counts
      once, `lead_quality_notes` says how), and `experiments`: the
      tests on the Tests page (running, or closed in the last 30 days) with each arm's numbers
@@ -354,8 +354,17 @@ and `ad_id` / `adset_id` / `campaign_id` with their `names`, `first_seen`, `open
 
 1. Load `options.playbook` (`~/.claude/skills/<name>/SKILL.md`) and the `meta-ads` router for anything it
    doesn't cover. `desk snapshot 14` for the numbers the console keeps (lead stages, budget changes).
-2. First check, with fresh read-only Meta calls on complete days, whether the alert still holds. If it
-   doesn't, say so in the first line of the report. A cleared alert (`open` false): explain what happened
+   For `qualified_low` / `junk_high` (lead quality) the alert's own figures are in the request's lines
+   (`options.alert.lines`): one campaign, the 14 account days that end 2 days ago, qualified out of the
+   leads someone *worked* (past New, or Lost), junk out of all leads. Treat those as the facts the
+   alert judged. `lead_quality_by_ad` and `lead_quality_totals` in the snapshot (counts only, never
+   names or contact details) cover every campaign through yesterday, so they won't match the alert:
+   use them to compare the ads (qualified / `worked`, `junk` / `leads`), never to re-judge the alert.
+   Compare the ads and the form's questions; the fix is usually the message, the form or the audience,
+   not the budget.
+2. First check, with fresh read-only Meta calls on complete days, whether the alert still holds (for
+   the two lead-quality rules: `open` says whether the console still sees it; the snapshot can't
+   recompute it). If it doesn't, say so in the first line of the report. A cleared alert (`open` false): explain what happened
    and whether it can come back.
 3. Report in three parts: **What's wrong** / **Why: the evidence** (numbers and days) / **What to do**.
    "Not enough data yet" is a valid answer (2× target cost per lead in spend, or 3 leads).

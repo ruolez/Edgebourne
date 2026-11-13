@@ -53,6 +53,9 @@ class LeadGroupTests(unittest.TestCase):
         rules = ["new_lead", "meeting_soon", "followup_overdue", "meeting_check", "followup_today"]
         self.assertEqual([today.group_of("leads", r, "warn") for r in rules], ["call", "call", "follow", "follow", "later"])
 
+    def test_lead_quality_alerts_are_problems_to_fix(self):
+        self.assertEqual([today.group_of("leads", r, "warn") for r in ("qualified_low", "junk_high")], ["problems", "problems"])
+
 
 class RankTests(unittest.TestCase):
     def setUp(self):

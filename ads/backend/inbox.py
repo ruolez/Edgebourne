@@ -17,6 +17,7 @@ CATEGORY = {
     "week_overspend": "money", "cpl_high": "money", "no_leads": "money",
     "tracking": "system", "events_quiet": "system", "stale_data": "system",
     "report_review": "system", "report_sent": "system",
+    "qualified_low": "leads", "junk_high": "leads",
 }
 CATEGORIES = ("status", "leads", "claude", "money", "system")
 DAYS = 30

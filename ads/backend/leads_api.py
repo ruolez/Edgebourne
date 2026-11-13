@@ -76,6 +76,9 @@ def list_leads():
         clauses.append("l.lost_reason IS NULL")
     if request.args.get("tests") != "1":
         clauses.append("NOT l.is_test")
+    junk_only = request.args.get("junk") == "1"
+    if junk_only:  # W1b: the leads a "look like junk" alert counted (any stage; repeats are folded into their first lead)
+        clauses += [lq.junk(), "l.repeat_of IS NULL"]
     source_clauses, source_params = leads.source_filter(request.args)
     clauses += source_clauses
     params += source_params
@@ -117,12 +120,15 @@ def list_leads():
     # A repeat is listed under All (muted) but counts in no stage: the All chip counts it so it adds up to the list.
     repeats = db.query(f"""SELECT COUNT(*) AS n FROM leads l WHERE {where} AND NOT l.is_test AND l.repeat_of IS NOT NULL AND {source_sql}""",
                        _scope(user)[1] + source_params, one=True)["n"]
+    junk = db.query(f"SELECT COUNT(*) AS n FROM leads l WHERE {where} AND {lq.counted()} AND {lq.junk()} AND {source_sql}",
+                    _scope(user)[1] + source_params, one=True)["n"]
     why_counts = None
     if status == "lost":
         why_counts = {r["k"]: int(r["n"]) for r in db.query(
             f"""SELECT COALESCE(l.lost_reason, 'none') AS k, COUNT(*) AS n FROM leads l
                 WHERE {where} AND {lq.counted()} AND l.status = 'lost' AND {source_sql} GROUP BY 1""", _scope(user)[1] + source_params)}
     return jsonify({"leads": rows, "counts": {r["status"]: r["n"] for r in counts}, "why_counts": why_counts, "repeats": int(repeats),
+                    "junk": int(junk),
                     "new_everywhere": next((r["everywhere"] for r in counts if r["status"] == "new"), 0), "sources": sources,
                     "narrowed": _narrowed(request.args, user), "response": reminders.stats(*_scope(user)),
                     "follow": follow_counts(user, now, tz)})
