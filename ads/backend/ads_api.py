@@ -509,11 +509,57 @@ def _sum(items):
     return {k: sum(i["m"].get(k, 0) for i in items) for k in keys}
 
 
-def window_from(args):
-    """(key, start, end) from ?range=7|14|30|mtd|lastmonth|custom&from=&to= (complete days only)."""
+def window_from(args, live=False):
+    """(key, start, end) from ?range=today|7|14|30|mtd|lastmonth|custom&from=&to=: complete days, or with live
+    (what a screen shows, FU-C) through today so far."""
     key = args.get("range", "7")
-    start, end = ranges.window(key, account_info.today(), args.get("from"), args.get("to"))
+    start, end = ranges.window(key, account_info.today(), args.get("from"), args.get("to"), live=live)
     return key, start, end
+
+
+def live_window(args, scope_ids=None, adset_id=None):
+    """A screen's window and how it compares (FU-C): (key, start, end, prev, settled, hours, live read). `prev` is the
+    window "vs before" uses (vs=prev), `settled` the complete days it is compared on when today is in the window,
+    `hours` yesterday up to this hour for Today. Today's rows are read from Meta first when the window has today."""
+    key, start, end = window_from(args, live=True)
+    today = account_info.today()
+    plan = ranges.compare_plan(key, start, end, today)
+    live = insights.read_today() if ranges.includes_today(start, end, today) else None
+    want = args.get("vs") == "prev"
+    prev = plan["before"] if want and plan["mode"] == "days" else None
+    settled = plan["now"] if want and plan["note"] else None
+    hours = None
+    if want and plan["mode"] == "hours":
+        rows = insights.yesterday_hours("adset" if adset_id else "campaign")
+        if rows is not None:
+            hour = account_info.local_now().hour
+            key_ = "adset_id" if adset_id else "campaign_id"
+            mine = [r for r in rows if (r.get(key_) == adset_id if adset_id else scope_ids is None or r.get(key_) in scope_ids)]
+            hours = {**ranges.same_hours(mine, hour), "by": ranges.by_hour_words(hour)}
+            if not adset_id:
+                # Each campaign's own, so the Ads page can compare one picked campaign by the hour too.
+                hours["campaigns"] = {cid: ranges.same_hours([r for r in mine if r.get("campaign_id") == cid], hour)
+                                      for cid in {r.get("campaign_id") for r in mine if r.get("campaign_id")}}
+        else:
+            hours = {"by": None}
+    return key, start, end, prev, settled, hours, live
+
+
+def compare_payload(out, start, end, prev, settled, hours):
+    """What the page needs to say how "vs before" was read (FU-C)."""
+    today = account_info.today()
+    out["range"]["label"] = ranges.label(start, end, today=today)
+    if hours is not None:
+        out["compare"] = {"mode": "hours", "by": hours.get("by")}
+        if hours.get("by"):
+            out["totals"]["prev"] = {k: hours[k] for k in ("spend_cents", "leads", "impressions", "link_clicks")}
+            out["totals"]["cmp"] = out["totals"]["m"]
+            if "campaigns" in hours:
+                out["hours_by_campaign"] = hours["campaigns"]
+    elif settled:
+        out["compare"] = {"mode": "days", "note": "complete days", "now_label": ranges.label(*settled)}
+    elif prev:
+        out["compare"] = {"mode": "days", "note": None}
 
 
 def _quality(aw, ap, start, end):
@@ -531,9 +577,12 @@ def _booked(aw, ap, start, end):
         [account_info.tz_name(), start, end] + ap)}
 
 
-def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, archived=False):
+def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, archived=False, settled=None, hours=False):
     """Campaign → ad set → ad with each level's results for the window (and the window before, when
-    prev=(start, end) is given), limited to what the person may see."""
+    prev=(start, end) is given), limited to what the person may see. settled (FU-C): the window's complete days
+    when it includes today; each level then also carries `cmp`, its results over them, which "vs before"
+    compares with `prev` (like with like). hours: Today, compared by the hour in the totals only, each row
+    marked `vs_note` so its "vs before" cell says why it is empty."""
     days = (end - start).days + 1
     cw, cp = _scope(user, "id")
     aw, ap = _scope(user, "campaign_id")
@@ -563,6 +612,8 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
     booked = _booked(xw, xp, start, end)
     if prev:
         metrics_prev, quality_prev, booked_prev = _metrics(xw, xp, *prev), _quality(xw, xp, *prev), _booked(xw, xp, *prev)
+    if settled:
+        metrics_cmp, quality_cmp, booked_cmp = _metrics(xw, xp, *settled), _quality(xw, xp, *settled), _booked(xw, xp, *settled)
     lifetime = {r["ad_id"]: int(r["impressions"]) for r in db.query(
         f"SELECT ad_id, SUM(impressions) AS impressions FROM ad_daily WHERE {xw} GROUP BY ad_id", xp)}
     pending = {} if user["role"] == "client" else {r["eid"]: int(r["n"]) for r in db.query(
@@ -575,6 +626,7 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
     days_list = [(start + timedelta(days=i)).isoformat() for i in range(days)]
     # The Delivery track: the last 14 complete days, whatever the window (audit A3-66, A3-132).
     today = account_info.today()
+    today_iso = today.isoformat()
     track_days = [today - timedelta(days=14 - i) for i in range(14)]
     delivered = {}
     for r in db.query(f"SELECT ad_id, day FROM ad_daily WHERE day BETWEEN %s AND %s AND spend_cents > 0 AND {xw}",
@@ -584,8 +636,13 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
         ad["m"] = {**metrics.get(ad["id"], {}), "qualified": quality.get(ad["id"], 0), "booked": booked.get(ad["id"], 0)}
         if prev:
             ad["prev"] = {**metrics_prev.get(ad["id"], {}), "qualified": quality_prev.get(ad["id"], 0), "booked": booked_prev.get(ad["id"], 0)}
+        if settled:
+            ad["cmp"] = {**metrics_cmp.get(ad["id"], {}), "qualified": quality_cmp.get(ad["id"], 0), "booked": booked_cmp.get(ad["id"], 0)}
+        if hours:
+            ad["vs_note"] = "hours"
         d = daily.get(ad["id"], {})
-        ad["spark"] = [{"day": k, "spend_cents": d.get(k, (0, 0))[0], "leads": d.get(k, (0, 0))[1]} for k in days_list]
+        ad["spark"] = [{"day": k, "spend_cents": d.get(k, (0, 0))[0], "leads": d.get(k, (0, 0))[1],
+                        **({"partial": True} if k == today_iso else {})} for k in days_list]
         ad["track"] = [{"day": t.isoformat(), "on": t in delivered.get(ad["id"], ())} for t in track_days]
         ad["lifetime_impressions"] = lifetime.get(ad["id"], 0)
         ad["pending_proposals"] = pending.get(ad["id"], 0)
@@ -593,7 +650,8 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
     every = db.query(f"SELECT id, adset_id, campaign_id FROM ads WHERE {xw}", xp)
     every_m = [{"adset_id": a["adset_id"], "campaign_id": a["campaign_id"],
                 "m": {**metrics.get(a["id"], {}), "qualified": quality.get(a["id"], 0), "booked": booked.get(a["id"], 0)},
-                "p": {**metrics_prev.get(a["id"], {}), "qualified": quality_prev.get(a["id"], 0), "booked": booked_prev.get(a["id"], 0)} if prev else {}}
+                "p": {**metrics_prev.get(a["id"], {}), "qualified": quality_prev.get(a["id"], 0), "booked": booked_prev.get(a["id"], 0)} if prev else {},
+                "c": {**metrics_cmp.get(a["id"], {}), "qualified": quality_cmp.get(a["id"], 0), "booked": booked_cmp.get(a["id"], 0)} if settled else {}}
                for a in every]
     for s in adsets:
         s["ads"] = [a for a in ads if a["adset_id"] == s["id"]]
@@ -601,6 +659,10 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
         s["m"] = _sum(mine)
         if prev:
             s["prev"] = _sum([{"m": a["p"]} for a in mine])
+        if settled:
+            s["cmp"] = _sum([{"m": a["c"]} for a in mine])
+        if hours:
+            s["vs_note"] = "hours"
         s["pending_proposals"] = pending.get(s["id"], 0)
     for c in campaigns:
         c["adsets"] = [s for s in adsets if s["campaign_id"] == c["id"]]
@@ -608,6 +670,10 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
         c["m"] = _sum(mine)
         if prev:
             c["prev"] = _sum([{"m": a["p"]} for a in mine])
+        if settled:
+            c["cmp"] = _sum([{"m": a["c"]} for a in mine])
+        if hours:
+            c["vs_note"] = "hours"
         c["pending_proposals"] = pending.get(c["id"], 0)
         c["can_control"] = can_touch(user, c["id"]) and user["role"] != "client"
     # The account's unique reach covers every campaign: only for people who see them all.
@@ -645,7 +711,8 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
     all_views = [views.get(a["id"], (0, 0)) for a in every]
     out = {"reach_total": reach_total,
            # Every ad in scope, listed or not (deleted versions spent real money): the page's header figures.
-           "totals": {"m": _sum(every_m), "prev": _sum([{"m": a["p"]} for a in every_m]) if prev else None},
+           "totals": {"m": _sum(every_m), "prev": _sum([{"m": a["p"]} for a in every_m]) if prev else None,
+                      "cmp": _sum([{"m": a["c"]} for a in every_m]) if settled else None},
            "today_total": {"impressions": sum(v[0] for v in all_views), "reach": (acct_today or {}).get("account")} if not campaign_id else None,
            "ever_total": {"impressions": sum(v[1] for v in all_views), "reach": (acct_ever or {}).get("account")} if not campaign_id else None,
            "prev_reach_total": (reach["account", "prev"] or {}).get("account") if prev and whole else None,
@@ -659,13 +726,13 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
 @bp.get("/ads")
 @login_required
 def tree():
-    key, start, end = window_from(request.args)
-    prev = ranges.previous(start, end, key) if request.args.get("vs") == "prev" else None
     user = current_user()
-    out = tree_data(user, start, end, prev=prev, archived=request.args.get("archived") == "1")
+    key, start, end, prev, settled, hours, live = live_window(request.args, visible_campaign_ids(user))
+    out = tree_data(user, start, end, prev=prev, archived=request.args.get("archived") == "1", settled=settled, hours=hours is not None)
     out["range"]["key"] = key
+    compare_payload(out, start, end, prev, settled, hours)
     import numbers_check
-    out["source"] = numbers_check.source(user, start, end, scoped=visible_campaign_ids(user) is not None)
+    out["source"] = numbers_check.source(user, start, end, scoped=visible_campaign_ids(user) is not None, live=live)
     return jsonify(out)
 
 
@@ -680,13 +747,22 @@ def ad_funnel(ad_id):
     return {k: int(v) for k, v in row.items()}
 
 
+def ad_window():
+    """The ad page's dates (?range=, last 30 days when none is given), through today so far (FU-C)."""
+    return ranges.window(request.args.get("range", "30"), account_info.today(), request.args.get("from"), request.args.get("to"), live=True)
+
+
 def _ad_series(ad_id):
-    """The ad's spend and leads per day over ?range= (the shared date range; last 30 days when none is given)."""
-    start, end = ranges.window(request.args.get("range", "30"), account_info.today(), request.args.get("from"), request.args.get("to"))
+    """The ad's spend and leads per day over ?range= (the shared date range); today's point is flagged partial."""
+    start, end = ad_window()
     rows = {r["day"].isoformat(): r for r in db.query(
         "SELECT day, spend_cents, impressions, link_clicks, leads FROM ad_daily WHERE ad_id = %s AND day BETWEEN %s AND %s",
         (ad_id, start, end))}
-    return ranges.daily_series(rows, start, end, ("spend_cents", "leads", "impressions", "link_clicks"))
+    return ranges.daily_series(rows, start, end, ("spend_cents", "leads", "impressions", "link_clicks"), today=account_info.today())
+
+
+def _ad_live(start, end):
+    return insights.read_today() if ranges.includes_today(start, end, account_info.today()) else None
 
 
 @bp.get("/ads/ad/<ad_id>/series")
@@ -695,9 +771,10 @@ def ad_series(ad_id):
     ad = db.query("SELECT id, campaign_id, adset_id FROM ads WHERE id = %s", (ad_id,), one=True)
     if not ad or not can_touch(current_user(), ad["campaign_id"]):
         return api_error("Ad not found", 404)
-    start, end = ranges.window(request.args.get("range", "30"), account_info.today(), request.args.get("from"), request.args.get("to"))
+    start, end = ad_window()
+    live = _ad_live(start, end)
     import numbers_check
-    return jsonify({"series": _ad_series(ad_id), "source": numbers_check.source(current_user(), start, end, scoped=True),
+    return jsonify({"series": _ad_series(ad_id), "source": numbers_check.source(current_user(), start, end, scoped=True, live=live),
                     **status_history.marks_payload(
         current_user(), status_history.marks_scope("ad", {"id": ad_id, "campaign_id": ad["campaign_id"], "adset_id": ad.get("adset_id")}),
         start, end)})
@@ -714,6 +791,8 @@ def ad_detail(ad_id):
                      WHERE a.id = %s""", (ad_id,), one=True)
     if not ad or not can_touch(user, ad["campaign_id"]):
         return api_error("Ad not found", 404)
+    win = ad_window()
+    live = _ad_live(*win)
     series = _ad_series(ad_id)
     totals = db.query("""SELECT COALESCE(SUM(spend_cents),0) AS spend_cents, COALESCE(SUM(impressions),0) AS impressions,
                                 COALESCE(SUM(reach),0) AS reach, COALESCE(SUM(link_clicks),0) AS link_clicks,
@@ -774,11 +853,9 @@ def ad_detail(ad_id):
                     "history": timeline.merge(status_rows, changes, proposals, money=account_info.money, subject=ad_id,
                                               names={ad["adset_id"]: ad.get("adset_name"), ad["campaign_id"]: ad.get("campaign_name")},
                                               checks=change_checks_db.summary_for([c["id"] for c in changes], client=user["role"] == "client")),
-                    **status_history.marks_payload(user, status_history.marks_scope("ad", ad), *ranges.window(
-                        request.args.get("range", "30"), account_info.today(), request.args.get("from"), request.args.get("to"))),
+                    **status_history.marks_payload(user, status_history.marks_scope("ad", ad), *win),
                     "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS],
-                    "source": __import__("numbers_check").source(user, *ranges.window(
-                        request.args.get("range", "30"), account_info.today(), request.args.get("from"), request.args.get("to")), scoped=True)})
+                    "source": __import__("numbers_check").source(user, *win, scoped=True, live=live)})
 
 
 @bp.get("/ads/ad/<ad_id>/preview")

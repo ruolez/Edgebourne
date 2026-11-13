@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { acceptSheet } from "./decide.js";
 import { boot, confirmDialog, entityLink, esc, icon, leadClock, onRefresh, pairNote, sourceNote, toast, when, editing, showLoadError, withFrom } from "./ui.js";
-import { money, per, plural } from "./format.js";
+import { acctHour, acctZone, clock, money, per, plural } from "./format.js";
 import { alertButtons, moreButton, runChip, wireAlerts } from "./alertmenu.js";
 import { armDial, askMeeting, askNext } from "./followup.js";
 import "./outcome.js";
@@ -9,7 +9,7 @@ import "./outcome.js";
 const $ = (id) => document.getElementById(id);
 let me;
 
-const greeting = () => { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
+const greeting = () => { const h = acctHour(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
 const shortAd = (name) => (name || "").split(/\s+-\s+|\s+/)[0];
 
 // Today is one ranked queue (the server's today.rank): the Inbox's Needs action, never its FYI, with the
@@ -144,15 +144,16 @@ function render(d) {
   const budget = d.daily_budget_cents;
   const spentPct = budget ? Math.min(d.today.spend_cents / budget, 1) * 100 : 0;
   const y = d.yesterday;
-  const asOf = d.today.as_of ? `as of ${new Date(d.today.as_of * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
+  const asOfIso = d.today.as_of ? new Date(d.today.as_of * 1000).toISOString() : null;
+  const asOf = asOfIso ? `${d.today.error ? "from" : "as of"} ${clock(asOfIso)}` : "";
   const moneyCard = `<section class="panel td-sec" aria-labelledby="h-money">
-    <div class="td-sec-h"><h2 id="h-money">Money</h2><small>${asOf}</small></div>
-    <p class="td-big"><b>${money(d.today.spend_cents, { exact: true })}</b><span>spent today${budget ? ` of ${money(budget)} a day` : ""}</span></p>
+    <div class="td-sec-h"><h2 id="h-money">Money</h2><small id="td-asof">${esc(asOf)}</small></div>
+    <p class="td-big"><b id="td-spent">${money(d.today.spend_cents, { exact: true })}</b><span>spent today so far${budget ? ` of ${money(budget)} a day` : ""}</span></p>
     ${budget ? `<div class="bar ink"><i data-w="${spentPct.toFixed(1)}"></i></div>` : ""}
-    <p class="td-note">${plural(d.today.leads, "lead")} so far. Today keeps filling in; Meta reports late.</p>
+    <p class="td-note">${plural(d.today.leads, "lead")} so far. ${d.today.error ? "Meta didn't answer just now, so these are the last numbers it gave." : "Meta is still counting today; some leads show up later."}</p>
     <dl class="td-stats">
       <div><dt>Yesterday</dt><dd>${y ? `${money(y.spend_cents, { exact: true })} · ${plural(y.leads, "lead")}` : "no data yet"}</dd></div>
-      <div><dt>Leads, last 7 days</dt><dd>${d.week.leads ?? 0}${pairNote(d.source && d.source.leads)}</dd></div>
+      <div><dt>Leads, last 7 days with today</dt><dd>${d.week.leads ?? 0}${pairNote(d.source && d.source.leads)}</dd></div>
       <div><dt>Cost per lead</dt><dd>${per(d.week.spend_cents, d.week.leads)}</dd></div>
     </dl>
     <div class="td-src" id="fig-src">${sourceNote(d.source, { today: true })}</div>
@@ -167,14 +168,14 @@ function render(d) {
   </section>`;
 
   const strip = d.ad_strip || [];
-  const best = strip.reduce((b, a) => (a.leads > (b ? b.leads : 0) ? a : b), null);
+  const best = strip.find((a) => a.id === d.ad_strip_best) || null;  // most leads over complete days (FU-C)
   const inReview = (d.ads?.IN_PROCESS || 0) + (d.ads?.PENDING_REVIEW || 0);
   const adsCard = `<section class="panel td-sec" aria-labelledby="h-ads">
     <div class="td-sec-h"><h2 id="h-ads">Ads</h2><span class="on-count">${d.ads?.ACTIVE || 0} on</span>${inReview ? `<span class="pill warn">${inReview} in review</span>` : ""}<a class="more" href="/ads.html">Manage</a></div>
     ${strip.length ? `<ul class="td-onair">${strip.slice(0, 5).map((a) => `<li><a href="/ad.html?id=${esc(a.id)}" aria-label="${esc(a.name)}: ${plural(a.leads, "lead")}, ${money(a.spend_cents, { exact: true })}">
         <span class="t ${a.status === "ACTIVE" ? "" : "off"} ${best && best.id === a.id ? "best" : ""}">${a.thumbnail_url ? `<img src="${esc(a.thumbnail_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}<span>${esc(shortAd(a.name))}</span></span>
         <b>${plural(a.leads, "lead")}</b><small>${money(a.spend_cents, { exact: true })}</small></a></li>`).join("")}</ul>
-      <p class="td-note">Last 7 complete days. Judge an ad after it has spent about twice your target cost per lead.</p>`
+      <p class="td-note">Last 7 days with today so far. Judge an ad on complete days, after it has spent about twice your target cost per lead.</p>`
       : '<p class="td-note">No ads synced yet.</p>'}
   </section>`;
 
@@ -290,7 +291,7 @@ async function load() {
 me = await boot({ page: "home" });
 if (me) {
   $("hello").textContent = `${greeting()}, ${me.name.split(" ")[0]}`;
-  $("today-date").textContent = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  $("today-date").textContent = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", timeZone: acctZone() });
   if (me.role === "admin") { $("ask-claude").hidden = false; $("ask-claude").innerHTML = `${icon("spark")}<span>Ask Claude</span>`; }
   $("new-ad").innerHTML = `${icon("plus")}<span>New ad</span>`;
   $("new-ad").href = withFrom("/new-ad.html", "/home.html");

@@ -264,6 +264,76 @@ def ad_view(ad):
                                                   "video_id", "image_url", "thumbnail_url", "effective_object_story_id") if cr.get(k)}}
 
 
+ACCOUNT_ZONE = "America/Los_Angeles"
+TODAY_SET = {}  # ad id -> {"spend": dollars, "leads": n}: today's numbers set exactly by QA (/fake/_today); other ads spend nothing today
+
+
+def account_now():
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo(ACCOUNT_ZONE))
+
+
+def live_today(row):
+    """Today's row (account clock) is still counting: it grows through the day, or holds what QA set."""
+    now = account_now()
+    if row["date_start"] != now.date().isoformat():
+        return row
+    if TODAY_SET:
+        want = TODAY_SET.get(row["ad_id"]) or {"spend": 0.0, "leads": 0}
+        spend, leads = float(want["spend"]), int(want["leads"])
+    else:
+        part = (now.hour * 3600 + now.minute * 60 + now.second) / 86400
+        spend = round(float(row["spend"]) * part, 2)
+        leads = int(sum(int(a["value"]) for a in row["actions"] if a["action_type"] == "onsite_conversion.lead_grouped") * part)
+    imps = int(spend * 90)
+    acts = [{"action_type": "video_view", "value": str(int(imps * .3))}]
+    if leads:
+        acts.append({"action_type": "onsite_conversion.lead_grouped", "value": str(leads)})
+    return {**row, "spend": f"{spend:.2f}", "impressions": str(imps), "reach": str(int(imps * .8)),
+            "inline_link_clicks": str(int(imps * .012)), "clicks": str(int(imps * .03)), "actions": acts}
+
+
+HOURLY = "hourly_stats_aggregated_by_advertiser_time_zone"
+
+
+def hourly_rows(level, day):
+    """One day hour by hour (account time zone): each ad's spend, views and clicks split evenly over 24 hours, its
+    leads in hours 9, 13 and 17 (in turn), summed per campaign, ad set or the account."""
+    key = {"campaign": "campaign_id", "adset": "adset_id", "ad": "ad_id"}.get(level)
+    out = {}
+    for r in insights_rows("ad"):
+        if r["date_start"] != day:
+            continue
+        leads = sum(int(a["value"]) for a in r["actions"] if a["action_type"] == "onsite_conversion.lead_grouped")
+        for h in range(24):
+            o = out.setdefault((r[key] if key else ACCOUNT, h), {"spend": 0.0, "impressions": 0, "inline_link_clicks": 0, "leads": 0})
+            o["spend"] += float(r["spend"]) / 24
+            o["impressions"] += int(r["impressions"]) // 24
+            o["inline_link_clicks"] += int(r["inline_link_clicks"]) // 24
+        for i in range(leads):
+            out[(r[key] if key else ACCOUNT, (9, 13, 17)[i % 3])]["leads"] += 1
+    rows = []
+    for (ident, h), o in sorted(out.items(), key=lambda kv: (str(kv[0][0]), kv[0][1])):
+        row = {HOURLY: f"{h:02d}:00:00 - {h:02d}:59:59", "spend": f"{o['spend']:.2f}", "impressions": str(o["impressions"]),
+               "inline_link_clicks": str(o["inline_link_clicks"]), "date_start": day, "date_stop": day,
+               "actions": [{"action_type": "onsite_conversion.lead_grouped", "value": str(o["leads"])}] if o["leads"] else []}
+        if key:
+            row[key] = ident
+        rows.append(row)
+    return rows
+
+
+@app.route("/fake/_today")
+def fake_today():
+    """QA: today's numbers exactly. ?spend=<dollars>&leads=<n>&ad=<id> (that ad; every other ad spends nothing today),
+    ?clear=1 back to a day that grows with the clock."""
+    if request.args.get("clear"):
+        TODAY_SET.clear()
+    else:
+        TODAY_SET[request.args["ad"]] = {"spend": float(request.args.get("spend", 0)), "leads": int(request.args.get("leads", 0))}
+    return jsonify({"today": account_now().date().isoformat(), "set": TODAY_SET})
+
+
 def insights_rows(level):
     rows = []
     rng = random.Random(7)
@@ -288,7 +358,7 @@ def insights_rows(level):
                          "video_thruplay_watched_actions": va(thru), "video_p25_watched_actions": va(int(v3 * .7)),
                          "video_p50_watched_actions": va(int(v3 * .45)), "video_p75_watched_actions": va(int(v3 * .3)),
                          "video_p100_watched_actions": va(int(v3 * .2))})
-    rows = restated(rows)
+    rows = restated([live_today(r) for r in rows])
     if level == "campaign":
         today = [r for r in rows if r["date_start"] == TODAY.isoformat()]
         return [{"campaign_id": CAMPAIGN["id"], "spend": str(round(sum(float(r["spend"]) for r in today) * .6, 2)),
@@ -870,6 +940,9 @@ def graph(path):
         if parts == [act, "ads"]:
             return jsonify({"data": [ad_view(x) for x in ADS.values() if listed(x)]})
         if len(parts) == 2 and parts[1] == "insights":
+            if a.get("breakdowns") == HOURLY and parts[0] == act:
+                tr = json.loads(a.get("time_range") or "{}")
+                return jsonify({"data": hourly_rows(a.get("level"), tr.get("since", account_now().date().isoformat()))})
             if a.get("breakdowns"):
                 return jsonify({"data": breakdown_rows(a["breakdowns"])})
             if parts[0] == act and "reach" in (a.get("fields") or "") and "spend" not in (a.get("fields") or ""):

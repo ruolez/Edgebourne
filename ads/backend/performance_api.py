@@ -20,7 +20,7 @@ from util import api_error, log_activity
 
 bp = Blueprint("performance", __name__, url_prefix="/api/performance")
 
-RANGE_KEYS = ("7", "14", "30", "mtd", "lastmonth")
+RANGE_KEYS = ("today", "7", "14", "30", "mtd", "lastmonth")
 BAD_STATUSES = {"DISAPPROVED", "WITH_ISSUES"}
 
 
@@ -76,13 +76,18 @@ def window_totals(user, start, end, campaign_id=None):
     return {k: int(v) for k, v in row.items()}
 
 
-def overview_data(user, days, campaign_id=None, span=None):
+def overview_data(user, days, campaign_id=None, span=None, live=False, settled=None):
     """Everything the Performance page shows; also the AI desk's snapshot. `campaign_id`
-    narrows it to one campaign the person can see; `span` gives explicit windows, for months."""
-    (start, end), (prev_start, prev_end) = span or periods(account_info.today(), days)
+    narrows it to one campaign the person can see; `span` gives explicit windows, for months.
+    live (screens only, FU-C): the window may include today, read from Meta first; `settled` then names its
+    complete days, whose totals come back as `compare_now` (what "vs before" compares). The snapshot never
+    passes live: Claude judges complete days."""
+    today = account_info.today()
+    (start, end), (prev_start, prev_end) = span or periods(today, days)
     where, params = _scope_sql(user, "d.campaign_id")
     if campaign_id:
         where, params = f"({where}) AND d.campaign_id = %s", params + [campaign_id]
+    live_read = insights.read_today() if live and ranges.includes_today(start, end, today) else None
 
     totals = window_totals(user, start, end, campaign_id)
     by_day = db.query(
@@ -95,7 +100,8 @@ def overview_data(user, days, campaign_id=None, span=None):
     for i in range(days):
         d = (start + timedelta(days=i)).isoformat()
         r = filled.get(d) or {}
-        series.append({"day": d, "spend_cents": int(r.get("spend_cents") or 0), "leads": int(r.get("leads") or 0)})
+        series.append({"day": d, "spend_cents": int(r.get("spend_cents") or 0), "leads": int(r.get("leads") or 0),
+                       **({"partial": True} if d == today.isoformat() else {})})
 
     lwhere, lparams = where.replace("d.campaign_id", "l.campaign_id"), params
     quality = db.query(
@@ -166,8 +172,19 @@ def overview_data(user, days, campaign_id=None, span=None):
     import numbers_check
     # D1: where these numbers come from, how fresh, whether Ads Manager agrees; Meta's leads next to the leads received.
     source = numbers_check.source(user, start, end, meta_leads=int(totals["leads"]), received=sum(int(r["inbox"]) for r in quality),
-                                  scoped=bool(campaign_id) or visible_campaign_ids(user) is not None)
+                                  scoped=bool(campaign_id) or visible_campaign_ids(user) is not None, live=live_read)
+    compare_now = None
+    if settled:
+        now_t = window_totals(user, *settled, campaign_id)
+        now_q = db.query(
+            f"""SELECT COUNT(*) FILTER (WHERE {lq.qualified()}) AS qualified,
+                      COUNT(*) FILTER (WHERE l.booked_at IS NOT NULL) AS booked FROM leads l
+                WHERE {lq.counted()} AND (l.created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {lwhere}""",
+            [account_info.tz_name(), *settled] + lparams, one=True)
+        compare_now = {"start": settled[0].isoformat(), "end": settled[1].isoformat(), "spend_cents": now_t["spend_cents"],
+                       "leads": now_t["leads"], "qualified": int(now_q["qualified"] or 0), "booked": int(now_q["booked"] or 0)}
     return {
+        "compare_now": compare_now,
         "source": source,
         "range": {"start": start.isoformat(), "end": end.isoformat(), "days": days},
         "yesterday": {"day": last["day"], "spend_cents": last["spend_cents"], "leads": last["leads"],
@@ -220,32 +237,65 @@ def pacing_data(scope_ids=None):
                        cap["remaining_cents"] if cap and cap["limit_cents"] else None, so_far)
 
 
-def window_args(args):
-    """(key, start, end) from ?range=, or ?range=custom&start=&end= (a day linked from Settings → Numbers vs Ads Manager)."""
+def window_args(args, live=False):
+    """(key, start, end) from ?range=, or ?range=custom&start=&end= (a day linked from Settings → Numbers vs Ads Manager).
+    live: the window a screen shows, today so far included (FU-C)."""
     key = args.get("range", "7")
     if key == "custom" and args.get("start"):
-        start, end = ranges.window("custom", account_info.today(), args.get("start"), args.get("end") or args.get("start"))
+        start, end = ranges.window("custom", account_info.today(), args.get("start"), args.get("end") or args.get("start"), live=live)
         return key, start, end
     key = key if key in RANGE_KEYS else "7"
-    return (key, *ranges.window(key, account_info.today()))
+    return (key, *ranges.window(key, account_info.today(), live=live))
+
+
+def hours_before(campaign_ids, now=None):
+    """Yesterday up to the hour it is now (account clock), for the campaigns given (None: all): what Today is
+    compared with. None when Meta's hourly totals aren't there."""
+    rows = insights.yesterday_hours("campaign")
+    if rows is None:
+        return None
+    hour = account_info.local_now(now).hour
+    mine = [r for r in rows if campaign_ids is None or r.get("campaign_id") in campaign_ids]
+    return {**ranges.same_hours(mine, hour), "by": ranges.by_hour_words(hour)}
+
+
+def compare_info(plan, key):
+    """What "vs before" means for this window, in the page's words (FU-C)."""
+    before = plan["before"]
+    out = {"mode": plan["mode"], "note": plan["note"], "before_label": ranges.label(*before),
+           "before_days": (before[1] - before[0]).days + 1}
+    if plan["mode"] == "days" and plan["note"]:
+        out["now_label"] = ranges.label(*plan["now"])
+    return out
 
 
 @bp.get("")
 @login_required
 def overview():
     user = current_user()
-    key, start, end = window_args(request.args)
+    key, start, end = window_args(request.args, live=True)
     days = (end - start).days + 1
     campaign_id = request.args.get("campaign") or None
     if campaign_id:
         ids = visible_campaign_ids(user)
         if ids is not None and campaign_id not in ids:
             return api_error("Not found", 404)
-    out = overview_data(user, days, campaign_id, span=((start, end), ranges.previous(start, end, key)))
+    today = account_info.today()
+    plan = ranges.compare_plan(key, start, end, today)
+    out = overview_data(user, days, campaign_id, span=((start, end), plan["before"]), live=True,
+                        settled=plan["now"] if plan["note"] else None)
+    out["compare"] = compare_info(plan, key)
+    if plan["mode"] == "hours":
+        ids = visible_campaign_ids(user)
+        scope = [campaign_id] if campaign_id else ids
+        hrs = hours_before(scope)
+        out["compare"]["by"] = hrs["by"] if hrs else None
+        out["previous"] = {**out["previous"], **({"spend_cents": hrs["spend_cents"], "leads": hrs["leads"]} if hrs else
+                                                 {"spend_cents": None, "leads": None}), "qualified": None, "booked": None}
     import status_history
     out.update(status_history.marks_payload(user, {"campaigns": [campaign_id], "ad_meta_only": True} if campaign_id
                                             else {"account": True, "ad_meta_only": True}, start, end))
-    out["range"].update(key=key, label=ranges.label(start, end))
+    out["range"].update(key=key, label=ranges.label(start, end, today=today))
     out["campaigns"] = campaign_choices(user, start, end)
     out["campaign"] = campaign_id
     out["pacing"] = pacing_data(visible_campaign_ids(user))
@@ -282,7 +332,7 @@ def quality():
     and campaign. Counts only (clients see it too): no names, emails, phones or notes."""
     import lead_quality_store
     user = current_user()
-    key, start, end = window_args(request.args)
+    key, start, end = window_args(request.args, live=True)
     ids = visible_campaign_ids(user)
     campaign_id = request.args.get("campaign") or None
     if campaign_id and ids is not None and campaign_id not in ids:
@@ -292,10 +342,13 @@ def quality():
     where, params = _scope_sql(user, "d.campaign_id")
     if campaign_id:
         where, params = f"{where} AND d.campaign_id = %s", params + [campaign_id]
-    spent = db.query(f"""SELECT d.ad_id, COALESCE(MAX(a.name), MAX(d.ad_name)) AS name, MAX(a.effective_status) AS status,
-                                COALESCE(SUM(d.spend_cents), 0) AS spend_cents, COALESCE(SUM(d.leads), 0) AS leads
-                         FROM ad_daily d LEFT JOIN ads a ON a.id = d.ad_id
-                         WHERE d.day BETWEEN %s AND %s AND {where} GROUP BY d.ad_id""", [start, end] + params)
+
+    def spent_in(a, b):
+        return db.query(f"""SELECT d.ad_id, COALESCE(MAX(a.name), MAX(d.ad_name)) AS name, MAX(a.effective_status) AS status,
+                                   COALESCE(SUM(d.spend_cents), 0) AS spend_cents, COALESCE(SUM(d.leads), 0) AS leads
+                            FROM ad_daily d LEFT JOIN ads a ON a.id = d.ad_id
+                            WHERE d.day BETWEEN %s AND %s AND {where} GROUP BY d.ad_id""", [a, b] + params)
+    spent = spent_in(start, end)
     ad_spend = {r["ad_id"]: int(r["spend_cents"]) for r in spent}
     with_leads = {l["ad_id"] for l in leads}
     # A deleted ad shows only when it brought leads in the range; its spend stays in the totals.
@@ -311,7 +364,26 @@ def quality():
     out = lq.summarize(leads, spend, by, question, target, meta_leads=sum(int(r["leads"]) for r in spent),
                        total_spend_cents=sum(ad_spend.values()), labels={r["ad_id"]: r["name"] for r in spent} if by == "ad" else None)
     currency = account_info.currency()
-    out.update(verdict=lq.verdict(out, target, currency), junk_note=lq.junk_note(out["totals"], currency), questions=questions,
+    # The verdict judges complete days only (FU-C): today's leads and spend are still coming in.
+    today = account_info.today()
+    part = ranges.settled(start, end, today)
+    judged = out
+    if part is None:
+        verdict = {"name": None, "text": "No verdict for today alone: lead quality is judged on complete days only."}
+    else:
+        if part != (start, end):
+            p_spent = spent_in(*part)
+            p_spend = {r["ad_id"]: int(r["spend_cents"]) for r in p_spent}
+            p_leads = lead_quality_store.leads_for_window(ids, *part, campaign_id)
+            p_with = {l["ad_id"] for l in p_leads}
+            p_shown = {k: v for k, v in p_spend.items() if k in p_with or next(r["status"] for r in p_spent if r["ad_id"] == k) != "DELETED"}
+            judged = lq.summarize(p_leads, p_shown if by == "ad" else lq.form_spend(p_leads, p_spend) if by == "form" else {}, by, question,
+                                  target, meta_leads=sum(int(r["leads"]) for r in p_spent), total_spend_cents=sum(p_spend.values()),
+                                  labels={r["ad_id"]: r["name"] for r in p_spent} if by == "ad" else None)
+        verdict = lq.verdict(judged, target, currency)
+    out.update(verdict=verdict, best=judged.get("best") if part else None,
+               verdict_through=part[1].isoformat() if part and part[1] < end else None, today_only=part is None,
+               junk_note=lq.junk_note(out["totals"], currency), questions=questions,
                reasons=[{"value": k, "label": label} for k, label, _ in lq.LOST_REASONS], range={"start": start.isoformat(), "end": end.isoformat()})
     return jsonify(out)
 

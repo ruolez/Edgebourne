@@ -7,7 +7,7 @@ The pure part (top) takes everything as arguments; the database part (below) run
 account_ctx names, with that account's token and ad account from settings_store, never a module default."""
 import json
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import insights
 import meta_client
@@ -558,9 +558,10 @@ def ensure_period(start, end):
         return None
 
 
-def source(user, start, end, meta_leads=None, received=None, scoped=False):
+def source(user, start, end, meta_leads=None, received=None, scoped=False, live=None):
     """The `source` every figure endpoint carries: when its days were read from Meta, how far they are complete, whether
-    they match Ads Manager's own totals, and Meta's lead count next to the leads received."""
+    they match Ads Manager's own totals, and Meta's lead count next to the leads received. `live`: what
+    insights.read_today answered when the window shows today (FU-C); the check itself covers complete days only."""
     import refresh_api
     today = account_info.today()
     y = today - timedelta(days=1)
@@ -580,7 +581,18 @@ def source(user, start, end, meta_leads=None, received=None, scoped=False):
                       pulled=datetime.fromtimestamp(pulled, timezone.utc) if pulled else None)
     if meta_leads is not None and received is not None:
         out["leads"] = pair(meta_leads, received)
+    if end >= today:
+        out["today"] = today_note(live)
     return out
+
+
+def today_note(live):
+    """What a screen says about the today part of its numbers: when they were read from Meta, and whether the last
+    try to read them got an answer."""
+    live = live or {}
+    at = live.get("as_of")
+    return {"included": True, "as_of": datetime.fromtimestamp(at, timezone.utc).isoformat() if at else None,
+            "read_ok": not live.get("error"), "skipped": bool(live.get("skipped"))}
 
 
 def stamp_for(start, end, admin):

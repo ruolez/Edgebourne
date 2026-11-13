@@ -1,6 +1,6 @@
 import { api, startLoad } from "./api.js";
 import { boot, confirmDialog, emptyState, entityLink, esc, icon, onRefresh, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, sourceNote, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
-import { CTA_LABELS, EXPLAIN, RANGES, WORDS, count, money, pct, per, plural, rangeSelect, rememberRange, sharedRange, statusOf, statusPill, moneyWhole } from "./format.js";
+import { CTA_LABELS, EXPLAIN, JUDGED_RANGES, RANGES, WORDS, count, money, pct, per, plural, rangeSelect, rememberRange, sharedRange, statusOf, statusPill, moneyWhole } from "./format.js";
 import { barList, columnChart, marksPanel } from "./charts.js";
 import { editBudget, restoreVersion, toggleEntity } from "./controls.js";
 import { track } from "./manager.js";
@@ -16,7 +16,8 @@ try { format = localStorage.getItem("ebads-preview") || format; } catch (e) {}
 let tab = (location.hash.match(/tab=(\w+)/) || [])[1] || "overview";
 let foldAsked = (location.hash.match(/fold=(\w+)/) || [])[1] || null;  // a link can open one fold (the Gallery's "See versions")
 let audienceBy = "placement";
-const AUDIENCE_RANGES = [...RANGES, ["lifetime", "All time"]];
+// Who saw it: unique people over whole days, so no Today here (FU-C); the daily charts have it.
+const AUDIENCE_RANGES = [...JUDGED_RANGES, ["lifetime", "All time"]];
 // The overview's daily charts and the Audience tab open on the shared date range (or the link's ?range=).
 const linkRange = new URLSearchParams(location.search).get("range");
 let chartRange = RANGES.some(([k]) => k === linkRange) ? linkRange : sharedRange("7");
@@ -228,7 +229,7 @@ function renderOverview() {
         </section>
         ${claudeHtml(pending)}
         <section class="panel">
-          <div class="panel-head wrap"><h2>Per day</h2><p>Complete days only</p><span class="spacer"></span>${rangeSelect("chart-range", chartRange, RANGES, "Dates in the charts")}</div>
+          <div class="panel-head wrap"><h2>Per day</h2><p id="per-day-note">${RANGES.some(([k]) => k === chartRange) && chartRange !== "lastmonth" ? "With today so far, Meta still counting" : "Complete days only"}</p><span class="spacer"></span>${rangeSelect("chart-range", chartRange, RANGES, "Dates in the charts")}</div>
           <div class="panel-body">
             <div class="charts single"><div><h3 class="chart-title">Spend per day</h3><div class="chart" id="c-spend"></div></div>
             <div><h3 class="chart-title">Leads per day</h3><div class="chart" id="c-leads"></div></div></div>
@@ -321,8 +322,9 @@ function keepRange(r) {
 
 async function pickRange(r) {
   chartRange = r;
-  audienceRange = r;
+  if (AUDIENCE_RANGES.some(([k]) => k === r)) audienceRange = r;
   keepRange(r);
+  if ($("per-day-note")) $("per-day-note").textContent = r !== "lastmonth" ? "With today so far, Meta still counting" : "Complete days only";
   const superseded = startLoad("series");
   try {
     const d = await api(`/api/ads/ad/${encodeURIComponent(adId)}/series?range=${encodeURIComponent(r)}`);

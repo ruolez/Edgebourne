@@ -3,7 +3,7 @@
 // Names start with fu- (never ad-like words, which ad blockers hide).
 import { api } from "./api.js";
 import { esc, toast } from "./ui.js";
-import { FOLLOW } from "./format.js";
+import { FOLLOW, acctHour, zoneCity, zoneDiffers, zoneTag } from "./format.js";
 
 export const OUTCOMES = [["reached", "Talked to them"], ["no_answer", "No answer"], ["voicemail", "Left a voicemail"],
   ["booked", "Booked a call"], ["wrong_number", "Wrong number"]];
@@ -98,15 +98,17 @@ function meetingHtml(title, sub = "") {
       `<button type="button" class="fu-opt" data-day="${k}" aria-pressed="false">${esc(l)}</button>`).join("")}</div></fieldset>
     <div class="fu-when-row">
       <div class="field" id="fu-date-f" hidden><label for="fu-date">Date</label><input class="input" type="date" id="fu-date" data-field="when"></div>
-      <div class="field"><label for="fu-time">Time</label><input class="input" type="time" id="fu-time" value="${meetingDefault().time}" step="900"></div>
+      <div class="field"><label for="fu-time">Time</label><input class="input" type="time" id="fu-time" value="${meetingDefault().time}" step="900"${zoneDiffers() ? ' aria-describedby="fu-zone"' : ""}>
+        ${zoneDiffers() ? `<small class="hint" id="fu-zone">Times are ${esc(zoneCity())} time</small>` : ""}</div>
     </div>
     <p class="err" id="fu-err" role="alert" hidden></p>
     <div class="row end"><button type="button" class="btn" data-fu-unsure>Not sure yet</button><button type="submit" class="btn btn-primary" id="fu-save">Save</button></div>`;
 }
 
-// Today at the next full hour; from 8 PM on, tomorrow at 10:00 (a Save straight away is never in the past).
-function meetingDefault(now = new Date()) {
-  const h = now.getHours() + 1;
+// Today at the next full hour on the account's clock (the server reads the time as account time, FU-C); from 8 PM
+// on, tomorrow at 10:00 (a Save straight away is never in the past).
+export function meetingDefault(now = new Date()) {
+  const h = acctHour(now) + 1;
   return h >= 21 ? { day: "tomorrow", time: "10:00" } : { day: "today", time: `${String(h).padStart(2, "0")}:00` };
 }
 
@@ -290,7 +292,7 @@ export function boxHtml(lead) {
     const state = m.state;
     if (state === "unscheduled") lines.push(`<p class="fu-line" id="fu-meeting">Call booked, time not set.<span class="fu-actions">${act("set-time", "Set the time")}</span></p>`);
     else if (state === "check") lines.push(`<p class="fu-line warn" id="fu-meeting">Did the call ${esc(m.on)} happen?<span class="fu-actions">${act("held", "It happened")}${act("no_show", "No-show")}${act("moved", "Moved")}</span></p>`);
-    else if (state === "upcoming" || state === "soon") lines.push(`<p class="fu-line" id="fu-meeting">Call booked for <b>${esc(m.when)}</b> (${how}).<span class="fu-actions">${act("moved", "Moved")}${act("canceled", "Canceled")}</span></p>`);
+    else if (state === "upcoming" || state === "soon") lines.push(`<p class="fu-line" id="fu-meeting">Call booked for <b>${esc(m.when)}${m.at ? esc(zoneTag(new Date(m.at))) : ""}</b> (${how}).<span class="fu-actions">${act("moved", "Moved")}${act("canceled", "Canceled")}</span></p>`);
     else if (state === "held") lines.push(`<p class="fu-line ok" id="fu-meeting">The call ${esc(m.on)} happened.</p>`);
     else if (state === "no_show") lines.push(`<p class="fu-line" id="fu-meeting">No-show ${esc(m.on)}.<span class="fu-actions">${act("rebook", "Book again")}</span></p>`);
     else if (state === "canceled") lines.push(`<p class="fu-line" id="fu-meeting">Call ${m.on ? `${esc(m.on)} ` : ""}canceled.<span class="fu-actions">${act("rebook", "Book again")}</span></p>`);

@@ -4,7 +4,7 @@ import { api, startLoad } from "./api.js";
 import { boot, confirmDialog, emptyState, esc, icon, onRefresh, sourceNote, toast, showLoadError, rememberList, withFrom } from "./ui.js";
 import { count, dayLabel, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
-import { COLUMN_SETS, LEVEL_WORDS, columnLabel, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, setBooked, listHtml, narrow, peek, tableHtml, hasTrack, trackLegend, unlistedNote, wire } from "./manager.js";
+import { COLUMN_SETS, LEVEL_WORDS, columnLabel, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, setBooked, listHtml, narrow, peek, tableHtml, hasTrack, trackLegend, unlistedNote, wire, vsWords, rangeFoot } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = { level: "ad", view: "all", range: "7", vs: true, cols: "results", sort: "spend", dir: "desc", q: "", campaign: "", archived: false, display: "table", peek: "" };
@@ -59,16 +59,23 @@ function headerTotals() {
   const sum = (key, which) => camps.reduce((n, c) => n + ((c[which] || {})[key] || 0), 0);
   const keys = ["spend_cents", "leads", "qualified", "impressions", "reach", "link_clicks", "video_3s", "thruplays"];
   const pick = (which) => (state.campaign ? Object.fromEntries(keys.map((k) => [k, sum(k, which)])) : { ...data.totals[which], reach: sum("reach", which) });
-  return { camps, m: pick("m"), prev: state.vs && data.prev_range ? pick("prev") : null };
+  // FU-C: Today is compared with yesterday up to the same hour (the whole account, or the picked campaign's own
+  // hours); a range with today compares its complete days (`cmp`) with as many days before.
+  const zero = { spend_cents: 0, leads: 0, impressions: 0, link_clicks: 0 };
+  const hours = !state.vs || compareMode() !== "hours" || !data.totals.prev ? null
+    : state.campaign ? (data.hours_by_campaign ? { ...zero, ...(data.hours_by_campaign[state.campaign] || {}) } : null) : { ...data.totals.prev };
+  return { camps, m: pick("m"), prev: hours || (state.vs && data.prev_range ? pick("prev") : null), cmp: hours ? null : state.vs && data.totals.cmp ? pick("cmp") : null };
 }
+const compareMode = () => (data.compare && data.compare.mode) || "days";
+
 
 function headerFigures() {
-  const { camps, m, prev } = headerTotals();
+  const { camps, m, prev, cmp } = headerTotals();
   // People: unique across the whole account from Meta, not the campaigns added up.
   if (!state.campaign && data.reach_total != null) m.reach = data.reach_total;
   if (prev && !state.campaign && data.prev_reach_total != null) prev.reach = data.prev_reach_total;
   const camp = state.campaign ? camps[0] : null;
-  return figuresHtml(m, prev, data.target_qualified_cents, camp ? { today: camp.today, ever: camp.ever } : { today: data.today_total, ever: data.ever_total });
+  return figuresHtml(m, prev, data.target_qualified_cents, { ...(camp ? { today: camp.today, ever: camp.ever } : { today: data.today_total, ever: data.ever_total }), cmp });
 }
 
 function toolbar() {
@@ -99,7 +106,7 @@ function toolbar() {
 function render() {
   const canControl = me.role !== "client";
   document.querySelectorAll("#level [data-level]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.level === state.level)));
-  $("cr-sub").textContent = `${count((rows.campaign || []).length)} ${(rows.campaign || []).length === 1 ? "campaign" : "campaigns"} · ${count((rows.adset || []).length)} ad sets · ${count((rows.ad || []).length)} ads · ${data.range.label}${state.vs && data.prev_range ? ` vs ${data.prev_range.label}` : ""}`;
+  $("cr-sub").textContent = `${count((rows.campaign || []).length)} ${(rows.campaign || []).length === 1 ? "campaign" : "campaigns"} · ${count((rows.adset || []).length)} ad sets · ${count((rows.ad || []).length)} ads · ${data.range.label}${vsWords(data, state.vs, state.campaign)}`;
   if (!data.campaigns.length) {
     $("cr-all").innerHTML = `<section class="panel empty"><h3>No ads yet</h3><p>Once Meta is connected in Settings, your campaigns, ad sets and ads appear here.</p></section>`;
     return;
@@ -111,7 +118,7 @@ function render() {
     : narrow() ? listHtml({ rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), selected, sort: state.sort, dir: state.dir })
     : tableHtml({ level: state.level, rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: state.cols, sort: state.sort, dir: state.dir, selected, selectable: true, range: state.range });
   $("cr-all").innerHTML = buildsNote() + headerFigures() + toolbar() + `<div class="cr-src" id="fig-src">${sourceNote(data.source)}</div>` + body + (table && hasTrack(list) ? trackLegend() : "")
-    + `<p class="muted small flush cr-foot">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}); today is left out because Meta reports late.${esc(unlistedNote(headerTotals().m, (rows.ad || []).filter((a) => !state.campaign || a.campaign?.id === state.campaign)))} Click a row for a quick look.</p>`;
+    + `<p class="muted small flush cr-foot">${esc(rangeFoot(data))}${esc(unlistedNote(headerTotals().m, (rows.ad || []).filter((a) => !state.campaign || a.campaign?.id === state.campaign)))} Click a row for a quick look.</p>`;
   if (state.level === "campaign" && me.role === "admin") {
     document.querySelectorAll('#cr-all tr[data-row^="campaign:"] .c-name small').forEach((sm) => {
       const id = sm.closest("tr").dataset.row.split(":")[1];

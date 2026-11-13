@@ -2,6 +2,7 @@
 // A conversation is one or more runs (data.board.threads); each run is what you said and Claude's answer.
 import { emptyState, esc, icon, when } from "./ui.js";
 import { renderMarkdown } from "./markdown.js";
+import { acctDay, clock as acctClock, dayWords } from "./format.js";
 import { scorecardHtml } from "./tasks.js";
 import { RUN_WORDS, firstLine, proposalRow, suggestion, suggestionType } from "./board.js";
 import { adStatus, reportParts } from "./reading.js";
@@ -27,19 +28,18 @@ function took(fromIso, toIso) {
   return mins < 60 ? `${mins} min` : `${Math.floor(mins / 60)} h ${mins % 60} min`;
 }
 
+// Today / Yesterday on the account's clock (FU-C), whatever zone the browser is in.
 function dayOf(iso) {
-  const d = new Date(iso);
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const days = Math.floor((start - d) / 86400000) + 1;
-  return days <= 0 ? "Today" : days === 1 ? "Yesterday" : "Earlier";
+  const day = acctDay(new Date(iso)), today = acctDay();
+  const y = new Date(`${today}T12:00:00Z`);
+  y.setUTCDate(y.getUTCDate() - 1);
+  return day >= today ? "Today" : day === y.toISOString().slice(0, 10) ? "Yesterday" : "Earlier";
 }
 
 function shortWhen(iso) {
-  const d = new Date(iso);
   const day = dayOf(iso);
-  if (day === "Today") return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  return day === "Yesterday" ? day : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  if (day === "Today") return acctClock(iso);
+  return day === "Yesterday" ? day : dayWords(iso);
 }
 
 // ---------------------------------------------------------------- the list

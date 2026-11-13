@@ -184,11 +184,11 @@ def daily_params(v):
     return tuple(v[c] for c in DAILY_COLUMNS)
 
 
-def read_days(since, until):
+def read_days(since, until, timeout=meta_client.TIMEOUT):
     """Meta's per-ad results for each day from `since` to `until` (account days), as stored columns."""
     account = settings_store.get("meta_ad_account_id")
     return [daily_values(r) for r in meta_client.paged(
-        f"act_{account}/insights",
+        f"act_{account}/insights", timeout=timeout,
         level="ad", time_increment=1, fields=INSIGHT_FIELDS, limit=500,
         time_range=json.dumps({"since": since.isoformat(), "until": until.isoformat()}), **insight_params())]
 
@@ -295,18 +295,126 @@ def stored_today():
     return today_for(settings_store.get("today_snapshot"), account_info.today())
 
 
-def pull_today(timeout=meta_client.TIMEOUT):
-    """Spend and leads so far today per campaign, read from Meta and stored with the day they belong to."""
+TODAY_MAX_AGE = 90  # seconds: screens show today's numbers read from Meta at most this long ago (FU-C)
+
+
+def today_fresh(at, now, max_age=TODAY_MAX_AGE):
+    """Whether today's rows were read from Meta in the last `max_age` seconds (`at`: the stored epoch seconds)."""
+    try:
+        at = float(at)
+    except (TypeError, ValueError):
+        return False
+    return 0 <= now - at <= max_age
+
+
+def today_snapshot_from(rows, day, at):
+    """Spend and leads so far today per campaign, from today's per-ad rows, stamped with the day they belong to."""
+    campaigns = {}
+    for r in rows:
+        if str(r["day"]) != day.isoformat():
+            continue
+        c = campaigns.setdefault(r["campaign_id"], {"spend_cents": 0, "leads": 0})
+        c["spend_cents"] += int(r["spend_cents"] or 0)
+        c["leads"] += int(r["leads"] or 0)
+    return {"at": at, "day": day.isoformat(), "campaigns": campaigns}
+
+
+def _stamp_today(rows, day, at):
+    settings_store.set("today_snapshot", json.dumps(today_snapshot_from(rows, day, at)))
+    settings_store.set("today_ads_at", str(at))
+
+
+TODAY_MIN_TIME = 1.0  # seconds: a page with less time left than this shows the stored rows instead of asking Meta
+
+
+def read_today(force=False, now=None, timeout=None):
+    """Today's per-ad results read live from Meta for a screen (FU-C): {as_of, read, error}. Not again within
+    TODAY_MAX_AGE unless forced (Refresh: here, or once through the stored flag today_ads_force), not while another
+    read holds this account's pull lock (the rows it stores stand in), and a Meta that didn't answer isn't waited on
+    again for a couple of minutes. `timeout`: the time the page has left for it (All accounts shares one deadline);
+    with less than TODAY_MIN_TIME left nothing is asked ("skipped"). Stored in ad_daily like every daily read; the
+    today-by-campaign snapshot (pacing, the overspend alert) comes from the same rows. Judgments never call this
+    (tests/test_ranges_logic.LiveRatchetTests)."""
     import time
-    account = settings_store.get("meta_ad_account_id")
+    import account_ctx
+    import refresh_api
+    now = now or time.time()
+    try:
+        at = float(settings_store.get("today_ads_at"))
+    except (TypeError, ValueError):
+        at = None
+    if not settings_store.get("meta_ad_account_id") or not settings_store.get("meta_system_token"):
+        return {"as_of": at, "read": False, "error": None}
+    force = force or bool(settings_store.get("today_ads_force"))
+    if not force and today_fresh(at, now):
+        return {"as_of": at, "read": False, "error": None}
+    failed = meta_client.recently_failed("today_ads")
+    if failed and not force:
+        return {"as_of": at, "read": False, "error": "Meta didn't answer"}
+    timeout = meta_client.READ_TIMEOUT if timeout is None else min(timeout, meta_client.READ_TIMEOUT)
+    if timeout < TODAY_MIN_TIME:
+        return {"as_of": at, "read": False, "error": None, "skipped": True}
     day = account_info.today()
-    rows = list(meta_client.paged(f"act_{account}/insights", timeout=timeout, level="campaign", date_preset="today",
-                                  fields="campaign_id,spend,actions", limit=100))
-    snap = {"at": time.time(), "day": day.isoformat(),
-            "campaigns": {r["campaign_id"]: {"spend_cents": to_cents(r.get("spend")), "leads": lead_count(r.get("actions"))}
-                          for r in rows}}
-    settings_store.set("today_snapshot", json.dumps(snap))
-    return snap
+    with refresh_api.holding_pull_lock(account_ctx.current()) as got:
+        if not got:
+            return {"as_of": at, "read": False, "error": None}
+        settings_store.set("today_ads_force", None)
+        try:
+            rows = read_days(day, day, timeout=timeout)
+        except meta_client.MetaError as exc:
+            meta_client.remember_failure("today_ads", exc)
+            return {"as_of": at, "read": False, "error": "Meta didn't answer" if meta_client.transient(exc) else str(exc)}
+        for v in rows:
+            db.execute(UPSERT_DAILY, daily_params(v))
+        _stamp_today(rows, day, now)
+    return {"as_of": now, "read": True, "error": None}
+
+
+def stamp_today_from_stored(now=None):
+    """After a pull that already read today's rows (the quick pass): the snapshot and the stamp from what it stored,
+    with no Meta call of its own."""
+    import time
+    day = account_info.today()
+    rows = db.query("SELECT day, campaign_id, spend_cents, leads FROM ad_daily WHERE day = %s", (day,))
+    _stamp_today(rows, day, now or time.time())
+
+
+def pull_today(timeout=meta_client.TIMEOUT):
+    """Today's spend and leads, read from Meta now (kept for older callers; screens use read_today)."""
+    read_today(force=True)
+    return stored_today()
+
+
+HOURLY_TTL = 3600
+
+
+def yesterday_hours(level="campaign"):
+    """Yesterday's results hour by hour (account time zone) at campaign or ad set level, Meta's raw rows, kept an
+    hour (meta_cache, per account). Today is compared with them up to the same hour. None when Meta doesn't answer."""
+    import insights_api
+    if level not in ("campaign", "adset") or not settings_store.get("meta_ad_account_id"):
+        return None
+    if meta_client.recently_failed("today_ads"):
+        return None  # Meta just left today's read unanswered: the page has waited once already
+    y = account_info.yesterday()
+    account = settings_store.get("meta_ad_account_id")
+
+    def fetch():
+        return list(meta_client.paged(
+            f"act_{account}/insights", timeout=meta_client.READ_TIMEOUT, level=level,
+            breakdowns="hourly_stats_aggregated_by_advertiser_time_zone",
+            fields=f"{level}_id,spend,impressions,inline_link_clicks,actions", limit=500,
+            time_range=json.dumps({"since": y.isoformat(), "until": y.isoformat()}), **insight_params()))
+    key = f"hourly:{y.isoformat()}:{level}"
+    try:
+        data = insights_api.cached(key, HOURLY_TTL, fetch)
+    except meta_client.MetaError as exc:
+        if not meta_client.transient(exc):
+            # A refusal (this breakdown with unified attribution is unverified on real Meta) is kept for the hour
+            # too, so every Today open doesn't ask again; the page says "not compared yet".
+            insights_api.store(key, {"refused": str(exc)[:300]})
+        return None
+    return data if isinstance(data, list) else None
 
 
 # ---------------------------------------------------------------- results from before the first sync

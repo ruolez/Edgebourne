@@ -285,15 +285,21 @@ def connected():
     return bool(settings_store.own("meta_ad_account_id"))
 
 
-def overview_row(user, account):
-    """One account's figures over the shared range, read from stored data in that account (row-level security)."""
+def overview_row(user, account, deadline=None):
+    """One account's figures over the shared range, read from stored data in that account (row-level security).
+    Today's rows are read from Meta first when the range has today, within the time left before `deadline`
+    (time.monotonic(); one for the whole page, so a slow Meta costs one wait, not one per account)."""
     import account_info
     import inbox
     import lead_quality as lq
     import numbers_check
     import performance_api
     import ranges
-    key, start, end = performance_api.window_args(request.args)
+    import insights
+    key, start, end = performance_api.window_args(request.args, live=True)
+    today = account_info.today()
+    left = None if deadline is None else deadline - time.monotonic()
+    live = insights.read_today(timeout=left) if ranges.includes_today(start, end, today) else None
     t = performance_api.window_totals(user, start, end)
     ids = visible_campaign_ids(user)
     scope, params = (lambda t: "TRUE", []) if ids is None else (lambda t: f"{t}.campaign_id = ANY(%s)", [ids])
@@ -303,7 +309,7 @@ def overview_row(user, account):
     delivering = db.query(f"SELECT COUNT(*) AS n FROM ads a WHERE a.effective_status = 'ACTIVE' AND {scope('a')}", params, one=True)["n"]
     admin = user["role"] == "admin"
     cap = performance_api.cap_snapshot() if admin else None
-    source = numbers_check.source(user, start, end, meta_leads=t["leads"], received=received, scoped=ids is not None)
+    source = numbers_check.source(user, start, end, meta_leads=t["leads"], received=received, scoped=ids is not None, live=live)
     return {"id": account["id"], "name": account["name"], "currency": account_info.currency(), "tz": account_info.tz_name(),
             "connected": connected(), "spend_cents": t["spend_cents"], "leads": t["leads"], "received": int(received),
             "cpl_cents": round(t["spend_cents"] / t["leads"]) if t["leads"] else None, "delivering": int(delivering),
@@ -311,7 +317,7 @@ def overview_row(user, account):
             "suggestions": db.query("SELECT COUNT(*) AS n FROM desk_proposals WHERE status = 'pending'", one=True)["n"] if admin else None,
             "cap": {"limit_cents": cap["limit_cents"], "spent_cents": cap["spent_cents"]} if cap else None,
             "synced_at": settings_store.get("last_performance_sync"), "behind": bool(source["meta"]["behind"]), "source": source,
-            "range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "label": ranges.label(start, end)}}
+            "range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "label": ranges.label(start, end, today=today)}}
 
 
 @bp.get("/overview")
@@ -320,10 +326,14 @@ def overview():
     """All accounts: the owner sees every open account, everyone else only their own (one row)."""
     user = current_user()
     accounts = active_accounts() if is_owner(user) else [{"id": account_ctx.current(), "name": name_of(account_ctx.current())}]
-    rows = []
-    for a in accounts:
+    deadline = time.monotonic() + meta_client.READ_TIMEOUT
+    # The open account first, so its today is the one read when Meta is slow and the time runs out.
+    order = sorted(accounts, key=lambda a: a["id"] != account_ctx.current())
+    found = {}
+    for a in order:
         with account_ctx.use(a["id"]):
-            rows.append(overview_row(user, a))
+            found[a["id"]] = overview_row(user, a, deadline)
+    rows = [found[a["id"]] for a in accounts]
     here = next((r for r in rows if r["id"] == account_ctx.current()), rows[0])
     return jsonify({"range": here["range"], "rows": rows, "own_days": len({r["tz"] for r in rows}) > 1, "current": account_ctx.current(),
                     **adaccounts.overview_totals(rows)})

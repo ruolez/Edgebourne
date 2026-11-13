@@ -49,7 +49,12 @@ def gallery_cards():
     key = request.args.get("range", "7")
     key = key if key in ranges.KEYS else "7"
     today = account_info.today()
-    start, end = ranges.window(key, today, request.args.get("start"), request.args.get("end"))
+    # FU-C: the cards show the dates through today so far; their order, Too early and Cheapest read complete days.
+    start, end = ranges.window(key, today, request.args.get("start"), request.args.get("end"), live=True)
+    part = ranges.settled(start, end, today)
+    if ranges.includes_today(start, end, today):
+        import insights
+        insights.read_today()
     dim, value = request.args.get("dim", ""), concepts.clean_value(request.args.get("tag", ""))
     tag = (dim, value) if dim in concepts.DIMENSIONS and value else None
     ids = visible_campaign_ids(user)
@@ -67,6 +72,8 @@ def gallery_cards():
         days.setdefault(r["ad_id"], []).append(r)
     chains = _chains(ads, today) if ad_ids else {}
     totals = {a["id"]: gallery.credited(days.get(a["id"], []), chains.get(a["id"], [])) for a in ads}
+    in_part = (lambda r: part[0] <= r["day"] <= part[1]) if part else (lambda r: False)
+    judged_totals = {a["id"]: gallery.credited([r for r in days.get(a["id"], []) if in_part(r)], chains.get(a["id"], [])) for a in ads}
     first_spend = {r["ad_id"]: r["day"] for r in db.query(
         "SELECT ad_id, MIN(day) AS day FROM ad_daily WHERE ad_id = ANY(%s) AND spend_cents > 0 GROUP BY ad_id", (ad_ids,))}
     launched = {a["id"]: gallery.launch_day(first_spend.get(a["id"]), a["created_on"], chains.get(a["id"], ())) for a in ads}
@@ -81,10 +88,14 @@ def gallery_cards():
         "SELECT DISTINCT entity_id FROM alerts WHERE rule = 'fatigue' AND resolved_at IS NULL AND entity_id = ANY(%s)", (ad_ids,))}
     tags = concepts_api.tags_for(ad_ids)
     target = targets.lead_own()
-    groups = gallery.build(ads, totals, tags, tired, launched, delivered, track_days, today, target, since=since)
+    groups = gallery.build(ads, judged_totals, tags, tired, launched, delivered, track_days, today, target, since=since)
     out = gallery.pick(groups, request.args.get("view", "top"), request.args.get("status", ""), tag)
+    live_by = {g["key"]: g for g in gallery.build(ads, totals, tags, tired, launched, delivered, track_days, today, target, since=since)}
+    out["groups"] = ranges.with_live(out["groups"], [live_by[g["key"]] for g in out["groups"] if g["key"] in live_by], "key",
+                                     gallery.NUMBERS + ("video_impressions", "cpl_cents", "hook_rate"), {"enough": False})
     known = {d: sorted({v for x in groups for dd, v in x["tags_all"] if dd == d}, key=str.casefold) for d in concepts.DIMENSIONS}
-    return jsonify({**out, "range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "label": ranges.label(start, end)},
+    return jsonify({**out, "range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "label": ranges.label(start, end, today=today)},
+                    "judged_through": part[1].isoformat() if part else None, "with_today": end >= today,
                     "tag": list(tag) if tag else None, "total": len(groups),
                     "deleted": sum(1 for g in groups if g["bucket"] == "deleted"),
                     "target_cents": target, "fatigue_on": alerts.saved_rules()["fatigue"]["on"], "launch_days": gallery.LAUNCH_DAYS,

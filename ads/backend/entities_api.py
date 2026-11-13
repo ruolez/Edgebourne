@@ -9,6 +9,7 @@ import change_checks_db
 import compare
 import db
 import followup
+import insights
 import numbers_check
 import ranges
 import search as search_logic
@@ -71,24 +72,20 @@ def _series(where, params, start, end):
         f"""SELECT day, SUM(spend_cents) AS spend_cents, SUM(leads) AS leads, SUM(impressions) AS impressions,
                    SUM(link_clicks) AS link_clicks FROM ad_daily WHERE day BETWEEN %s AND %s AND {where} GROUP BY day""",
         [start, end] + params)}
-    out = []
-    for i in range((end - start).days + 1):
-        d = (start + timedelta(days=i)).isoformat()
-        r = rows.get(d) or {}
-        out.append({"day": d, **{k: int(r.get(k) or 0) for k in ("spend_cents", "leads", "impressions", "link_clicks")}})
-    return out
+    return ranges.daily_series(rows, start, end, ("spend_cents", "leads", "impressions", "link_clicks"), today=account_info.today())
 
 
 def _detail(level, entity_id):
     row, err = _visible(level, entity_id)
     if err:
         return err
-    key, start, end = ads_api.window_from(request.args)
-    prev = ranges.previous(start, end, key) if request.args.get("vs") == "prev" else None
     campaign_id = entity_id if level == "campaign" else row["campaign_id"]
+    key, start, end, prev, settled, hours, live = ads_api.live_window(request.args, [campaign_id], entity_id if level == "adset" else None)
     data = ads_api.tree_data(current_user(), start, end, prev=prev, campaign_id=campaign_id,
-                             adset_id=entity_id if level == "adset" else None, archived=request.args.get("archived") == "1")
+                             adset_id=entity_id if level == "adset" else None, archived=request.args.get("archived") == "1",
+                             settled=settled, hours=hours is not None)
     data["range"]["key"] = key
+    ads_api.compare_payload(data, start, end, prev, settled, hours)
     camp = data["campaigns"][0] if data["campaigns"] else None
     node = camp if level == "campaign" else next((s for s in (camp or {}).get("adsets", []) if s["id"] == entity_id), None)
     if node is None:
@@ -97,7 +94,7 @@ def _detail(level, entity_id):
     data.update({"level": level, "entity": node, "campaign": {k: v for k, v in (camp or {}).items() if k != "adsets"},
                  "crumbs": crumbs(level, row), "timeline": timeline_for(level, entity_id),
                  "series": _series(f"{col} = %s", [entity_id], start, end),
-                 "source": numbers_check.source(current_user(), start, end, scoped=True),
+                 "source": numbers_check.source(current_user(), start, end, scoped=True, live=live),
                  **status_history.marks_payload(current_user(), status_history.marks_scope(level, row), start, end)})
     return jsonify(data)
 
@@ -125,7 +122,7 @@ def entity_timeline(level, entity_id):
         # The quick look's day-by-day charts: the page's dates (?range=), or the last N days (?marks=14).
         args = request.args.to_dict()
         args.setdefault("range", args["marks"] if args["marks"] in ("7", "14", "30") else "14")
-        _, start, end = ads_api.window_from(args)
+        _, start, end = ads_api.window_from(args, live=True)
         out.update(status_history.marks_payload(current_user(), status_history.marks_scope(level, row), start, end))
     return jsonify(out)
 
@@ -146,13 +143,19 @@ def compare_ads():
     ids = [i for i in ids if i in rows]
     if len(ids) < 2:
         return api_error("Those ads aren't available to compare", 404)
-    key, start, end = ads_api.window_from(request.args)
-    prev = ranges.previous(start, end, key) if request.args.get("vs") == "prev" else None
+    # FU-C: the figures run through today so far; the verdict and "vs before" read the complete days only.
+    key, start, end = ads_api.window_from(request.args, live=True)
+    today = account_info.today()
+    live = insights.read_today() if ranges.includes_today(start, end, today) else None
+    plan = ranges.compare_plan(key, start, end, today)
+    part = ranges.settled(start, end, today)
+    prev = plan["before"] if request.args.get("vs") == "prev" and plan["mode"] == "days" else None
     where, params = "ad_id = ANY(%s)", [ids]
     cur, qual, booked = ads_api._metrics(where, params, start, end), ads_api._quality(where, params, start, end), ads_api._booked(where, params, start, end)
+    if part and part != (start, end):
+        cur_s, qual_s, booked_s = ads_api._metrics(where, params, *part), ads_api._quality(where, params, *part), ads_api._booked(where, params, *part)
     if prev:
         cur_p, qual_p, booked_p = ads_api._metrics(where, params, *prev), ads_api._quality(where, params, *prev), ads_api._booked(where, params, *prev)
-    import insights
     reach = insights.reach_many({"now": ("ad", start, end, None, 1800), **({"before": ("ad", *prev, None, 1800)} if prev else {})})
     reach_now, reach_before = reach["now"], reach.get("before")
     tags = {}
@@ -164,15 +167,21 @@ def compare_ads():
                 "series": _series("ad_id = %s", [i], start, end)}
         if prev:
             item["prev"] = {**cur_p.get(i, {}), "qualified": qual_p.get(i, 0), "booked": booked_p.get(i, 0)}
+        if part is None:
+            item["cmp"] = None
+        elif part != (start, end):
+            item["cmp"] = {**cur_s.get(i, {}), "qualified": qual_s.get(i, 0), "booked": booked_s.get(i, 0)}
         insights.apply_reach([item], reach_now, "m")
         if prev:
             insights.apply_reach([item], reach_before, "prev")
         items.append(item)
     shaped = compare.shape(items, targets.qualified(), targets.lead(), booked=followup.tracks_bookings())
     parents = list({p for i in ids for p in (rows[i].get("adset_id"), rows[i].get("campaign_id")) if p})
-    out = {"range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "label": ranges.label(start, end)},
+    shaped["verdict"]["through"] = part[1].isoformat() if part else None
+    out = {"range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "label": ranges.label(start, end, today=today)},
            "items": items, **shaped, **status_history.marks_payload(user, {"entities": ids, "parents": parents}, start, end),
-           "source": numbers_check.source(user, start, end, scoped=True)}
+           "compare": {"mode": plan["mode"], "note": plan["note"]},
+           "source": numbers_check.source(user, start, end, scoped=True, live=live)}
     if prev:
         out["prev_range"] = {"start": prev[0].isoformat(), "end": prev[1].isoformat(), "label": ranges.label(*prev)}
     return jsonify(out)

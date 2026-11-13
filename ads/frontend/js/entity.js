@@ -6,7 +6,7 @@ import { columnChart, marksPanel } from "./charts.js";
 import { count, dayLabel, explain, money, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
 import { openFromUrl } from "./outcome.js";
-import { LIVE, bulkBarHtml, closePeek, figuresHtml, flatten, setBooked, listHtml, narrow, peek, statusCell, tableHtml, hasTrack, trackLegend, unlistedNote, wire } from "./manager.js";
+import { LIVE, bulkBarHtml, closePeek, figuresHtml, flatten, setBooked, listHtml, narrow, peek, statusCell, tableHtml, hasTrack, trackLegend, unlistedNote, wire, vsWords, rangeFoot } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
 const LEVEL = document.body.dataset.level;
@@ -44,7 +44,7 @@ function render() {
   const canControl = e.can_control ?? data.campaign.can_control;
   $("en-title").textContent = e.name;
   document.title = `${e.name} | Edge Bourne Ads`;
-  $("en-sub").innerHTML = `${statusCell({ ...e, level: LEVEL })} <span class="sep-dot">·</span> ${esc(data.range.label)}${state.vs && data.prev_range ? ` vs ${esc(data.prev_range.label)}` : ""}`;
+  $("en-sub").innerHTML = `${statusCell({ ...e, level: LEVEL })} <span class="sep-dot">·</span> ${esc(data.range.label)}${esc(vsWords(data, state.vs))}`;
   const live = LIVE.includes(e.status);
   const budget = e.daily_budget_cents ? (canControl && live ? `<button type="button" class="chip" data-budget="${LEVEL}:${e.id}" data-current="${e.daily_budget_cents}" data-name="${esc(e.name)}">${money(e.daily_budget_cents, { exact: true })}/day</button>` : `<span class="chip">${money(e.daily_budget_cents, { exact: true })}/day</span>`) : "";
   $("en-actions").innerHTML = `${budget}
@@ -60,7 +60,10 @@ function render() {
     : list.length && narrow() ? listHtml({ rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), selected, sort: state.sort, dir: state.dir })
     : list.length ? tableHtml({ level: childLevel(), rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: "results", sort: state.sort, dir: state.dir, selected, selectable: true, range: state.range })
     : emptyHere(e, live);
-  $("cr-all").innerHTML = `${figuresHtml(e.m, state.vs ? e.prev : null, data.target_qualified_cents, { today: e.today, ever: e.ever })}
+  // FU-C: Today against yesterday up to the same hour; a range with today compares its complete days.
+  const hours = state.vs && data.compare && data.compare.mode === "hours" ? data.totals.prev : null;
+  const prev = hours || (state.vs ? e.prev : null);
+  $("cr-all").innerHTML = `${figuresHtml(e.m, prev, data.target_qualified_cents, { today: e.today, ever: e.ever, cmp: hours ? null : state.vs ? e.cmp : null })}
     <div class="charts"><section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
       <section class="panel"><div class="panel-head"><h2>Leads per day</h2></div><div class="chart" id="c-leads"></div></section></div>
     <div class="fig-foot"><div class="fig-src" id="fig-src"></div><div class="fig-marks" id="chg-panel"></div></div>
@@ -71,7 +74,7 @@ function render() {
       <button type="button" class="view-chip" id="vs" aria-pressed="${state.vs}">vs before</button></div>
     <div id="en-panel">${body}</div>
     ${state.tab !== "history" && !narrow() && hasTrack(list) ? trackLegend() : ""}
-    <p class="muted small flush">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}).${esc(unlistedNote(e.m, rows.ad))}</p>`;
+    <p class="muted small flush">${esc(rangeFoot(data))}${esc(unlistedNote(e.m, rows.ad))}</p>`;
   document.querySelectorAll("#cr-all [data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
   const marks = data.marks || [], marksSummary = data.marks_summary || "";
   columnChart({ el: $("c-spend"), series: data.series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 170,

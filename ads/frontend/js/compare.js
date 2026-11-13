@@ -41,16 +41,20 @@ function deltaHtml(key, d) {
   return `<span class="delta ${good == null ? "d-mute" : good ? "d-good" : "d-bad"}">${d > 0 ? "+" : "−"}${Math.abs(d)}%</span>`;
 }
 
+// The verdict reads complete days only (FU-C): with today in the range it says "through yesterday"; Today alone has none.
 function verdictHtml() {
   const v = data.verdict;
   const what = v.metric === "cpq_cents" ? "cost per qualified lead" : "cost per lead";
-  if (!v.need_spend_cents) return `<div class="note">Set a target in Settings → Targets to have a winner named once there's enough data.</div>`;
+  if (v.today_only) return `<div class="note" id="cmp-verdict">No verdict for today alone: judged on complete days only. Pick a range with finished days to name a winner.</div>`;
+  const thru = data.compare && data.compare.note ? ` <span class="td-thru">Judged through yesterday.</span>` : "";
+  if (!v.need_spend_cents) return `<div class="note" id="cmp-verdict">Set a target in Settings → Targets to have a winner named once there's enough data.</div>`;
   if (v.ready && v.leader) {
     const lead = data.items.find((i) => i.id === v.leader);
-    return `<div class="note ok"><b>${esc(lead.name)} leads on ${what}.</b> Every ad has spent at least ${money(v.need_spend_cents)} and has ${v.need_results}+ ${v.result === "qualified" ? "qualified leads" : "leads"}, so this is a fair call.</div>`;
+    return `<div class="note ok" id="cmp-verdict"><b>${esc(lead.name)} leads on ${what}.</b> Every ad has spent at least ${money(v.need_spend_cents)} and has ${v.need_results}+ ${v.result === "qualified" ? "qualified leads" : "leads"}, so this is a fair call.${thru}</div>`;
   }
-  const behind = data.items.filter((i) => i.m.spend_cents < v.need_spend_cents || (i.m[v.result] || 0) < v.need_results).map((i) => esc(i.name));
-  return `<div class="note warn"><b>Too early to name a winner.</b> Each ad needs ${money(v.need_spend_cents)} spent (2× your target) and ${v.need_results} ${v.result === "qualified" ? "qualified leads" : "leads"} before it's judged; not there yet: ${behind.join(", ")}.</div>`;
+  const judged = (i) => i.cmp || i.m;
+  const behind = data.items.filter((i) => judged(i).spend_cents < v.need_spend_cents || (judged(i)[v.result] || 0) < v.need_results).map((i) => esc(i.name));
+  return `<div class="note warn" id="cmp-verdict"><b>Too early to name a winner.</b> Each ad needs ${money(v.need_spend_cents)} spent (2× your target) and ${v.need_results} ${v.result === "qualified" ? "qualified leads" : "leads"} before it's judged; not there yet: ${behind.join(", ")}.${thru}</div>`;
 }
 
 function tableHtml() {
@@ -86,7 +90,8 @@ function chartSeries() {
 function render() {
   const n = data.items.length;
   $("cmp-title").textContent = `Compare ${n} ads`;
-  $("cmp-sub").textContent = `${data.range.label}${state.vs && data.prev_range ? ` vs the ${data.prev_range.label} before` : ""} · complete days only`;
+  const withToday = data.source && data.source.today && data.source.today.included;
+  $("cmp-sub").textContent = `${data.range.label}${state.vs && data.prev_range ? ` vs the ${data.prev_range.label} before` : ""}${withToday ? " · today so far, Meta still counting · verdict on complete days" : " · complete days only"}`;
   $("cmp-actions").innerHTML = `${rangeSelect("cmp-range", state.range)}
     <button type="button" class="view-chip" id="cmp-vs" aria-pressed="${state.vs}">vs before</button>
     ${n < MAX && all ? `<select class="input tool" id="cmp-add" aria-label="Add an ad"><option value="">+ Add an ad</option>${all.filter((a) => !ids().includes(a.id)).map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select>` : ""}

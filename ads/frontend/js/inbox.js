@@ -6,7 +6,7 @@ import { api, startLoad } from "./api.js";
 import { acceptSheet } from "./decide.js";
 import { boot, editing, entityLink, esc, icon, onRefresh, setInboxCount, toast, when, errorState } from "./ui.js";
 import { closeLayer, leaveLayer, openLayer } from "./urlstate.js";
-import { plural } from "./format.js";
+import { acctDay, plural } from "./format.js";
 import { alertButtons, snoozeChip, wireAlerts } from "./alertmenu.js";
 
 // The FYI tab gets a short label on the narrowest phones, so all three tabs fit without scrolling.
@@ -87,10 +87,10 @@ function renderList() {
       : kind !== "all" || unreadOnly ? `Nothing here with these filters. <button type="button" class="link-btn" data-clear-filters>Show every kind</button>` : "Nothing here yet."}</li>`;
     return;
   }
-  const today = new Date().toDateString();
+  const today = acctDay();  // the account's calendar day, wherever the browser is (FU-C)
   const head = (label) => `<li class="ib-head" role="presentation">${label}</li>`;
-  const todays = items.filter((i) => new Date(i.at).toDateString() === today);
-  const older = items.filter((i) => new Date(i.at).toDateString() !== today);
+  const todays = items.filter((i) => acctDay(new Date(i.at)) === today);
+  const older = items.filter((i) => acctDay(new Date(i.at)) !== today);
   $("ib-list").innerHTML = (todays.length ? head("Today") + todays.map(itemHtml).join("") : "") + (older.length ? head("Earlier") + older.map(itemHtml).join("") : "");
 }
 

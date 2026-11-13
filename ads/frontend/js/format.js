@@ -17,9 +17,33 @@ export const per = (cents, n) => (n ? money(cents / n, { exact: true }) : "—")
 export const pct = (a, b) => (b ? `${((a / b) * 100).toFixed(2)}%` : "—");
 export const dayLabel = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
 export const plural = (n, word, many = word + "s") => `${count(n)} ${n === 1 ? word : many}`;
+// The ad account's clock (FU-C): every time on screen reads the account's time zone, with a short zone tag ("PST")
+// when the browser's own zone differs, so a laptop or phone set elsewhere shows the same times Eugene works by.
+export const acctZone = () => (window.ebadsMe && window.ebadsMe.account && window.ebadsMe.account.tz) || undefined;
+const offsetOf = (zone, d) => {
+  try {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" })
+      .formatToParts(d).map((p) => [p.type, p.value]));
+    return Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute) - Math.floor(d.getTime() / 60000) * 60000;
+  } catch (e) { return 0; }
+};
+export const zoneDiffers = (d = new Date()) => Boolean(acctZone()) && offsetOf(acctZone(), d) !== offsetOf(undefined, d);
+export const shortZone = (d = new Date()) => {
+  try { return new Intl.DateTimeFormat("en-US", { timeZone: acctZone(), timeZoneName: "short" }).formatToParts(d).find((p) => p.type === "timeZoneName")?.value || ""; } catch (e) { return ""; }
+};
+export const zoneTag = (d = new Date()) => (zoneDiffers(d) ? ` ${shortZone(d)}` : "");
+// "Los Angeles" for a hint: "Times are Los Angeles time".
+export const zoneCity = () => (acctZone() || "").split("/").pop().replace(/_/g, " ");
+const inZone = (opts) => ({ ...opts, timeZone: acctZone() });
+// "2:41 PM" (+ " PST" when the browser's zone differs).
+export const clock = (iso) => { const d = new Date(iso); return d.toLocaleTimeString(undefined, inZone({ hour: "numeric", minute: "2-digit" })) + zoneTag(d); };
+// The account's calendar day of a moment, "YYYY-MM-DD" (Today / Yesterday grouping, the booking dialog's day).
+export const acctDay = (d = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: acctZone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+export const acctHour = (d = new Date()) => Number(new Intl.DateTimeFormat("en-US", { timeZone: acctZone(), hour: "numeric", hourCycle: "h23" }).format(d)) % 24;
+
 // words.py twins (00-PLAN S1): "Nov 9", "Thu, Nov 12, 2:00 PM", "today" / "5 hours ago" / "1 day ago".
-export const dayWords = (iso) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-export const dayTimeWords = (iso) => new Date(iso).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+export const dayWords = (iso) => new Date(iso).toLocaleDateString(undefined, inZone({ month: "short", day: "numeric" }));
+export const dayTimeWords = (iso) => { const d = new Date(iso); return d.toLocaleString(undefined, inZone({ weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })) + zoneTag(d); };
 export function agoWords(iso, now = Date.now()) {
   const hours = Math.floor((now - new Date(iso).getTime()) / 3600000);
   if (hours < 1) return "today";
@@ -96,7 +120,9 @@ export const EXPLAIN = {
 export const explain = (key) => EXPLAIN[key] || "";
 
 // The date ranges every page offers, and the one picker that shows them.
-export const RANGES = [["7", "Last 7 days"], ["14", "Last 14 days"], ["30", "Last 30 days"], ["mtd", "This month"], ["lastmonth", "Last month"]];
+// Today and the ranges that reach today show today so far (FU-C); pages whose view needs whole days keep JUDGED_RANGES.
+export const RANGES = [["today", "Today"], ["7", "Last 7 days"], ["14", "Last 14 days"], ["30", "Last 30 days"], ["mtd", "This month"], ["lastmonth", "Last month"]];
+export const JUDGED_RANGES = RANGES.filter(([k]) => k !== "today");
 // One date range for Ads, Campaign, Ad set, Ad, Compare and Results: the last one picked in this browser.
 // A page's own ?range= still wins (a shared link opens on its dates); picking one remembers it for the rest.
 const RANGE_KEY = "ebads-range";
@@ -141,11 +167,9 @@ export const statusPill = (s, fallback = "Unknown") => {
 
 // Where every number comes from (D1): the line under a page's figures, Meta's lead count next to the leads received,
 // and the Numbers vs Ads Manager check. One wording everywhere (00-PLAN §4: Received, Matches / Differs).
-const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-const clockWords = (d) => d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 export function syncedWords(iso, now = new Date()) {
   const d = new Date(iso);
-  return sameDay(d, now) ? clockWords(d) : `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${clockWords(d)}`;
+  return acctDay(d) === acctDay(now) ? clock(iso) : `${dayWords(iso)}, ${clock(iso)}`;
 }
 export function sinceWords(iso, now = Date.now()) {
   const minutes = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60000));
@@ -157,14 +181,23 @@ export const NUMBERS = { match: "Matches", off: "Differs", unchecked: "Not check
 // `today`: the page also shows today's live spend. Teammates and clients get the state of the check, never amounts.
 // Days on screen older than the nightly check reads were never compared: say how many were.
 const partlyChecked = (c) => c.days != null && c.checked_days != null && c.checked_days < c.days;
+// The today part of a live figure (FU-C): read from Meta at …, or when Meta didn't answer, the last read that worked.
+export function todayWords(t) {
+  if (!t || !t.included) return "";
+  if (t.skipped) return t.as_of ? `today's numbers are from ${clock(t.as_of)}` : "today's numbers not read yet";
+  if (!t.read_ok) return t.as_of ? `today's numbers are from ${clock(t.as_of)} (Meta didn't answer)` : "today's numbers not read yet (Meta didn't answer)";
+  return `today so far, Meta still counting${t.as_of ? ` (${clock(t.as_of)})` : ""}`;
+}
 export function sourceLine(src, { today = false } = {}) {
   const m = src && src.meta;
   if (!m) return "";
   const parts = ["From Meta"];
+  const live = todayWords(src.today);
   if (m.behind && m.pulled_at) parts.push(`last synced ${sinceWords(m.pulled_at)}`, "numbers may be behind");
   else if (m.behind) parts.push("not synced yet");
-  else if (m.synced_at) parts.push(`synced ${syncedWords(m.synced_at)}`);
-  if (today) parts.push("today so far, changes through the day");
+  else if (m.synced_at && !live) parts.push(`synced ${syncedWords(m.synced_at)}`);
+  if (live) parts.push(live);
+  else if (today) parts.push("today so far, Meta still counting");
   parts.push(`complete days to ${dayLabel(m.complete_to)}`);
   const c = m.check;
   if (c && c.state === "off") parts.push(c.spend_off_cents == null ? "being checked again" : `differs from Ads Manager on ${plural(c.off_days, "day")}`);
@@ -184,7 +217,9 @@ export function sourceHelp(src) {
       : partlyChecked(c) ? `Last checked ${dayTimeWords(c.checked_at)}: the ${plural(c.checked_days, "day")} checked match; the other ${plural(c.days - c.checked_days, "day")} are older than the nightly check reads.`
         : `Last checked ${dayTimeWords(c.checked_at)}: they match.`;
   return [
-    `Complete days only, in the ad account's time zone${zoneName()}. Today is partial and Meta reports some leads a day or two late.`,
+    src && src.today && src.today.included
+      ? `Days in the ad account's time zone${zoneName()}. Today's numbers are read from Meta when the page opens (at most every minute and a half) and keep changing until the day is over; Meta reports some leads a day or two late. Verdicts and comparisons use complete days only.`
+      : `Complete days only, in the ad account's time zone${zoneName()}. Today is partial and Meta reports some leads a day or two late.`,
     "Leads are what Meta counted under each ad set's attribution setting: on the day of the ad view or click, not the day the form arrived.",
     "Every night we read the last 28 days and last month again from Meta and compare them with Ads Manager's own totals.",
     last,

@@ -6,7 +6,7 @@ import { api } from "./api.js";
 import { confirmDialog, esc, icon, skeleton, switchHtml, timelineItem, toast, when } from "./ui.js";
 import { columnChart } from "./charts.js";
 import { editBudget, toggleEntity } from "./controls.js";
-import { EXPLAIN, FOLLOW, LEARNING, PROBLEM_STATES, REVIEW_STATES, WORDS, count, money, moneyWhole, pct, per, statusOf } from "./format.js";
+import { EXPLAIN, FOLLOW, LEARNING, PROBLEM_STATES, REVIEW_STATES, WORDS, count, dayLabel, money, moneyWhole, pct, per, statusOf } from "./format.js";
 
 export const LEVEL_WORDS = { campaign: ["campaign", "campaigns"], adset: ["ad set", "ad sets"], ad: ["ad", "ads"] };
 const isOn = (s) => s === "ACTIVE";
@@ -94,7 +94,11 @@ function budgetCell(r) {
 }
 
 // "vs before" compares month ranges with the same days of the month before, other ranges with the days just before.
-export const vsTitle = (range) => `Cost per lead against ${["mtd", "lastmonth"].includes(range) ? "the same days of the month before" : "the same number of days just before"}`;
+// FU-C: with today in the range a row is compared on its complete days (`cmp`, like with like); Today alone isn't.
+export const vsTitle = (range) => `Cost per lead against ${["mtd", "lastmonth"].includes(range) ? "the same days of the month before" : "the same number of days just before"}, complete days only`;
+const base = (r) => r.cmp || r.m;
+const NO_ROW_DELTA = "Each row is compared on complete days; pick another range";
+const vsCell = (r) => (r.vs_note ? `<span class="delta d-mute" title="${NO_ROW_DELTA}" aria-label="No change shown: ${NO_ROW_DELTA}">—</span>` : delta(cpl(base(r)), cpl(r.prev), true));
 const num = (key, label, value, show, opts = {}) => ({ key, label, num: true, sort: value, cell: (r) => show(r), ...opts });
 const C = {
   name: { key: "name", label: "Name", sort: (r) => r.name.toLowerCase(), cell: nameCell, cls: "c-name" },
@@ -103,7 +107,7 @@ const C = {
   spend: num("spend", WORDS.spend, (r) => r.m.spend_cents, (r) => money(r.m.spend_cents, { exact: true })),
   leads: num("leads", WORDS.leads, (r) => r.m.leads || 0, (r) => count(r.m.leads)),
   cpl: num("cpl", WORDS.cpl, (r) => cpl(r.m) ?? Infinity, (r) => `<b>${per(r.m.spend_cents, r.m.leads)}</b>`),
-  vs: num("vs", "vs before", (r) => (r.prev && cpl(r.prev) && cpl(r.m) ? cpl(r.m) / cpl(r.prev) : Infinity), (r) => delta(cpl(r.m), cpl(r.prev), true), { title: vsTitle() }),
+  vs: num("vs", "vs before", (r) => (r.prev && cpl(r.prev) && cpl(base(r)) ? cpl(base(r)) / cpl(r.prev) : Infinity), vsCell, { title: vsTitle() }),
   qualified: num("qualified", WORDS.qualified, (r) => r.m.qualified || 0, (r) => count(r.m.qualified)),
   booked: num("booked", FOLLOW.booked_col, (r) => r.m.booked || 0, (r) => count(r.m.booked), { title: FOLLOW.booked_title }),
   cpb: num("cpb", FOLLOW.cpb_col, (r) => (r.m.booked ? r.m.spend_cents / r.m.booked : Infinity), (r) => per(r.m.spend_cents, r.m.booked), { title: FOLLOW.booked_title }),
@@ -136,8 +140,13 @@ function sparkline(series) {
   const pts = series.slice(-14);
   const max = Math.max(...pts.map((d) => d.leads), 1);
   const w = 84, h = 22, step = w / Math.max(pts.length - 1, 1);
-  const line = pts.map((d, i) => `${(i * step).toFixed(1)},${(h - 2 - (d.leads / max) * (h - 4)).toFixed(1)}`).join(" ");
-  return `<svg class="tbl-sp" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${line}"/></svg>`;
+  const xy = pts.map((d, i) => `${(i * step).toFixed(1)},${(h - 2 - (d.leads / max) * (h - 4)).toFixed(1)}`);
+  // Today's point is still counting (FU-C): the line to it is dashed and lighter.
+  const open = pts[pts.length - 1].partial;
+  const done = open ? xy.slice(0, -1) : xy;
+  // Today alone: one dashed level line at today's height.
+  const rest = !open ? "" : pts.length > 1 ? xy.slice(-2).join(" ") : `0,${xy[0].split(",")[1]} ${w},${xy[0].split(",")[1]}`;
+  return `<svg class="tbl-sp" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">${done.length > 1 ? `<polyline points="${done.join(" ")}"/>` : ""}${rest ? `<polyline class="td-partial" points="${rest}"/>` : ""}</svg>`;
 }
 
 // ---------------------------------------------------------------- the table
@@ -188,7 +197,7 @@ export function listHtml({ rows, selected, sort, dir }) {
     <label class="pick"><input type="checkbox" class="tbl-cb" data-pick="${esc(r.id)}" aria-label="Select ${esc(r.name)}" ${selected.has(r.id) ? "checked" : ""}></label>
     ${r.level === "ad" ? thumb(r) : ""}
     <span class="pl-b"><a href="${href(r)}" class="tbl-link">${esc(r.name)}</a><span class="pl-st">${statusCell(r)}</span>
-      <small class="tnum">${money(r.m.spend_cents, { exact: true })} · ${count(r.m.impressions)} views · ${count(r.m.leads)} leads · ${per(r.m.spend_cents, r.m.leads)}${r.prev && cpl(r.prev) && cpl(r.m) ? ` ${delta(cpl(r.m), cpl(r.prev), true)}` : ""}</small></span>
+      <small class="tnum">${money(r.m.spend_cents, { exact: true })} · ${count(r.m.impressions)} views · ${count(r.m.leads)} leads · ${per(r.m.spend_cents, r.m.leads)}${r.prev && cpl(r.prev) && cpl(base(r)) ? ` ${delta(cpl(base(r)), cpl(r.prev), true)}` : ""}</small></span>
     ${C.on.cell(r)}</li>`).join("")}</ul>`;
 }
 
@@ -229,18 +238,39 @@ function todayEver(today, ever, key) {
   return `<span class="fig-s">${t != null ? `today ${count(t)}` : ""}${t != null && e != null ? " · " : ""}${e != null ? `all time ${count(e)}` : ""}</span>`;
 }
 
-export function figuresHtml(m, prev, target, { today = null, ever = null } = {}) {
+// " vs Oct 31 – Nov 5 · complete days", " vs yesterday by 3 PM": what the deltas compare.
+export function vsWords(d, vs, campaign = null) {
+  const c = d.compare || {};
+  if (!vs) return "";
+  if (c.mode === "hours" && campaign && c.by && !d.hours_by_campaign) return " · not compared for one campaign";
+  if (c.mode === "hours") return c.by ? ` vs yesterday by ${c.by}` : " · not compared yet";
+  return d.prev_range ? ` vs ${d.prev_range.label}${c.note ? " · complete days" : ""}` : "";
+}
+
+// The line under the table: which days the numbers cover (FU-C: today so far, or complete days only).
+export function rangeFoot(d) {
+  const t = d.source && d.source.today && d.source.today.included;
+  const hours = d.compare && d.compare.mode === "hours";
+  return t ? `${d.range.label === "Today" ? "Today so far" : d.range.label}: Meta is still counting today.${d.compare && d.compare.note ? " Changes compare complete days only." : ""}${hours ? " Rows aren't compared on today alone; pick another range to see each row's change." : ""}`
+    : `Complete days only (${dayLabel(d.range.start)} to ${dayLabel(d.range.end)}); today is left out because Meta reports late.`;
+}
+
+// `cmp` (FU-C): the complete days the deltas compare with `prev` when the figures include today so far.
+export function figuresHtml(m, prev, target, { today = null, ever = null, cmp = null } = {}) {
   const f = (label, value, d) => `<div class="fig"><span class="fig-l">${label}</span><b class="fig-v">${value}</b>${d || ""}</div>`;
   const qcpl = m.qualified ? m.spend_cents / m.qualified : null;
+  const c = cmp || m;
+  // People reached over the complete days alone isn't read from Meta (daily reach can't be added up): no delta then.
+  const reachOk = prev && !m.reach_summed && !cmp;
   return `<div class="figs"${booked ? ' data-booked="1"' : ""}>
-    ${f(WORDS.spend, money(m.spend_cents, { exact: true }), prev ? delta(m.spend_cents, prev.spend_cents, null).replace(/d-(good|bad)/, "d-mute") : "")}
-    ${f(WORDS.impressions, count(m.impressions), `${prev ? delta(m.impressions, prev.impressions, false) : ""}${todayEver(today, ever, "impressions")}`)}
-    ${f(WORDS.reach, count(m.reach) + (m.reach_summed ? "*" : ""), `${prev && !m.reach_summed ? delta(m.reach, prev.reach, false) : ""}${todayEver(today, ever, "reach")}`)}
-    ${f("Leads", count(m.leads), prev ? delta(m.leads, prev.leads, false) : "")}
-    ${f(WORDS.cpl, per(m.spend_cents, m.leads), prev ? delta(cpl(m), cpl(prev), true) : "")}
-    ${f(WORDS.qualified, count(m.qualified), prev ? delta(m.qualified, prev.qualified, false) : "")}
+    ${f(WORDS.spend, money(m.spend_cents, { exact: true }), prev ? delta(c.spend_cents, prev.spend_cents, null).replace(/d-(good|bad)/, "d-mute") : "")}
+    ${f(WORDS.impressions, count(m.impressions), `${prev ? delta(c.impressions, prev.impressions, false) : ""}${todayEver(today, ever, "impressions")}`)}
+    ${f(WORDS.reach, count(m.reach) + (m.reach_summed ? "*" : ""), `${reachOk ? delta(m.reach, prev.reach, false) : ""}${todayEver(today, ever, "reach")}`)}
+    ${f("Leads", count(m.leads), prev ? delta(c.leads, prev.leads, false) : "")}
+    ${f(WORDS.cpl, per(m.spend_cents, m.leads), prev ? delta(cpl(c), cpl(prev), true) : "")}
+    ${f(WORDS.qualified, count(m.qualified), prev ? delta(c.qualified, prev.qualified, false) : "")}
     ${f(WORDS.cpql, qcpl ? money(qcpl, { exact: true }) : "—", target ? `<span class="delta d-mute">target ${money(target)}</span>` : "")}
-    ${booked ? `${f(FOLLOW.booked_col, count(m.booked), prev && (m.booked || prev.booked) ? delta(m.booked, prev.booked, false) : "")}${f(FOLLOW.cpb_col, per(m.spend_cents, m.booked), "")}` : ""}
+    ${booked ? `${f(FOLLOW.booked_col, count(m.booked), prev && (c.booked || prev.booked) ? delta(c.booked, prev.booked, false) : "")}${f(FOLLOW.cpb_col, per(m.spend_cents, m.booked), "")}` : ""}
   </div>`;
 }
 
@@ -478,8 +508,8 @@ export async function peek(r, { onClose, focus = true } = {}) {
       ${r.level === "adset" ? `<a class="btn btn-small" href="/leads.html?adset=${encodeURIComponent(r.id)}">Its leads</a>` : ""}
       ${r.level === "campaign" ? `<a class="btn btn-small" href="/leads.html?campaign=${encodeURIComponent(r.id)}">Its leads</a>` : ""}</div>
     ${context(r)}
-    <h3 class="pk-h">This period ${r.prev ? "<small>against the same days before</small>" : ""}</h3>
-    ${figuresHtml(m, r.prev, null, { today: r.today, ever: r.ever }).replace('class="figs"', 'class="figs pk-figs"')}
+    <h3 class="pk-h">This period ${r.prev ? `<small>against the same days before${r.cmp ? ", complete days" : ""}</small>` : ""}</h3>
+    ${figuresHtml(m, r.prev, null, { today: r.today, ever: r.ever, cmp: r.cmp }).replace('class="figs"', 'class="figs pk-figs"')}
     ${moreNumbers(r)}
     ${(r.spark || []).length ? `<h3 class="pk-h">Day by day</h3><div class="pk-charts"><p class="pk-cap">Spent</p><div class="chart" id="pk-spend"></div><p class="pk-cap">Leads</p><div class="chart" id="pk-leads"></div></div>` : ""}
     <div class="pk-diag"><p class="muted small">Asking Meta how it rates this ad…</p></div>

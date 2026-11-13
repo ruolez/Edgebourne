@@ -56,8 +56,10 @@ function viewNote(d) {
     }
     return '<p class="note">Ads people have seen too often: each person sees them more and more while clicks fall and costs rise. The same check sends the "looks tired" alert.</p>';
   }
-  return '<p class="muted small flush">Cheapest cost per lead first among ads with enough to judge (3 leads and twice your target spent); the rest follow by what they spent.</p>';
+  return `<p class="muted small flush">Cheapest cost per lead first among ads with enough to judge (3 leads and twice your target spent); the rest follow by what they spent.${thruWords(d)}</p>`;
 }
+// FU-C: the cards show today so far; Too early, Cheapest and the order are judged on complete days only.
+const thruWords = (d) => (!d.with_today ? "" : d.judged_through ? " Judged through yesterday." : " Judged on complete days only: none yet in this range, so every card is Too early.");
 
 function copiesLine(g) {
   if (g.ads.length < 2) return "";
@@ -99,7 +101,7 @@ function card(g) {
       ${copiesLine(g)}
       <div class="gal-status">${track(g)}<span class="pill ${cls}">${esc(label)}</span>${g.tired ? '<span class="pill warn">Tired</span>' : ""}</div>
       ${copyNotes(g)}
-      <div class="gal-kpi"><span>${WORDS.cpl}</span><b class="${g.enough ? "" : "early"}"${g.enough ? "" : ' title="Fewer than 3 leads or less than twice your target spent: too early to judge"'}>${cpl}</b>${g.enough ? "" : '<span class="pill">Too early</span>'}</div>
+      <div class="gal-kpi"><span>${WORDS.cpl}</span><b class="${g.enough ? "" : "early"}"${g.enough ? (data.with_today ? ' title="Includes today so far; the card\'s place is judged on complete days, through yesterday"' : "") : ' title="Fewer than 3 leads or less than twice your target spent: too early to judge"'}>${cpl}</b>${g.enough ? "" : `<span class="pill"${data.with_today ? ' title="Judged on complete days, through yesterday"' : ""}>Too early</span>`}</div>
       <dl class="cr-stats gal-stats"><div><dt>${WORDS.spend}</dt><dd>${money(g.spend_cents, { exact: true })}</dd></div><div><dt>${WORDS.leads}</dt><dd>${count(g.leads)}</dd></div>
         ${g.kind === "video" ? `<div title="${esc(EXPLAIN.hook)}"><dt>${WORDS.hook}</dt><dd>${g.hook_rate == null ? "—" : `${(g.hook_rate * 100).toFixed(1)}%`}</dd></div>` : ""}</dl>
       ${tags ? `<div class="chips gal-tags">${tags}</div>` : ""}
@@ -130,7 +132,7 @@ function render() {
   const chips = VIEWS.map(([k, label]) => `<button type="button" class="view-chip" data-gview="${k}" aria-pressed="${state.view === k}">${label}<span>${count(d.counts[k])}</span></button>`).join("");
   const toolbar = `<div class="cr-toolbar gal-bar"><div class="views" role="group" aria-label="Show">${chips}</div><span class="spacer"></span>
     ${statusPick(d)}${tagPick(d)}${rangeSelect("range-pick", state.range)}</div>
-    <p class="muted small flush gal-when">${esc(d.range.label)} · complete days${d.groups.length ? ` · ${count(d.groups.length)} ${d.groups.length === 1 ? "card" : "cards"}` : ""}</p>`;
+    <p class="muted small flush gal-when">${esc(d.range.label)} · ${d.with_today ? "today so far, Meta still counting" : "complete days"}${d.groups.length ? ` · ${count(d.groups.length)} ${d.groups.length === 1 ? "card" : "cards"}` : ""}</p>`;
   let body;
   if (!d.groups.length) {
     const clear = filtered ? '<button type="button" class="btn" data-clear-filters>Clear filters</button>' : "";

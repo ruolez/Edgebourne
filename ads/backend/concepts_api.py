@@ -13,7 +13,7 @@ from util import api_error, log_activity
 
 bp = Blueprint("concepts", __name__, url_prefix="/api")
 
-SHARED = ("7", "14", "30", "mtd", "lastmonth")  # the dates picked on any page (ranges.py); "90" is kept for old links
+SHARED = ("today", "7", "14", "30", "mtd", "lastmonth")  # the dates picked on any page (ranges.py); "90" is kept for old links
 
 
 def tags_for(ad_ids=None):
@@ -97,29 +97,47 @@ def by_concept():
         end = today - timedelta(days=1)
         start = end - timedelta(days=89)
     elif key == "custom" and request.args.get("start"):
-        start, end = ranges.window("custom", today, request.args.get("start"), request.args.get("end") or request.args.get("start"))
+        start, end = ranges.window("custom", today, request.args.get("start"), request.args.get("end") or request.args.get("start"), live=True)
     else:
         key = key if key in SHARED else "30"
-        start, end = ranges.window(key, today)
+        start, end = ranges.window(key, today, live=True)
     days = (end - start).days + 1
     ids = visible_campaign_ids(user)
     where, params = ("TRUE", []) if ids is None else ("a.campaign_id = ANY(%s)", [ids])
+    # FU-C: figures through today so far; Cheapest, Too early and the order read the complete days only.
+    part = ranges.settled(start, end, today)
+    if ranges.includes_today(start, end, today):
+        import insights
+        insights.read_today()
+    rows = _concept_rows(where, params, start, end)
+    judged_rows = _concept_rows(where, params, *part) if part else []
+    import targets
+    target = targets.lead_own()  # none set: the groups' own average (see targets.py)
+    tags = tags_for([r["id"] for r in rows])
+    judged = c.group(judged_rows, tags, dim, target)
+    live = c.group(rows, tags, dim, target)
+    out = {**judged, "groups": ranges.with_live(judged["groups"], live["groups"], "value", LIVE_FIELDS, {"enough": False, "best": False})}
+    members = c.members(rows, tags, dim)
+    for g in out["groups"]:
+        g["members"] = members.get(g["value"], [])
+        g["ad_names"] = [m["name"] for m in g["members"]]
+        g["pictures"] = c.pictures(g["members"], limit=6)
+    return jsonify({**out, "by": dim, "dimensions": c.DIMENSIONS, "judged_through": part[1].isoformat() if part else None,
+                    "with_today": end >= today,
+                    "range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "days": days, "label": ranges.label(start, end, today=today)},
+                    "untagged_ads": len(members.get(c.UNTAGGED, []))})
+
+
+LIVE_FIELDS = ("ads", "spend_cents", "impressions", "leads", "qualified", "video_3s", "thruplays", "video_impressions",
+               "cpl_cents", "hook_rate", "hold_rate", "qualified_rate")
+
+
+def _concept_rows(where, params, start, end):
+    """Each ad that spent in the window, with its numbers and qualified leads."""
     ads = db.query(f"""SELECT a.id, a.name, COALESCE(a.thumbnail_url, a.image_url) AS thumb, COALESCE(SUM(d.spend_cents),0) AS spend_cents, COALESCE(SUM(d.impressions),0) AS impressions,
                               COALESCE(SUM(d.leads),0) AS leads, COALESCE(SUM(d.video_3s),0) AS video_3s, COALESCE(SUM(d.thruplays),0) AS thruplays,
                               COALESCE(SUM(d.impressions) FILTER (WHERE a.object_type = 'VIDEO' OR a.video_id IS NOT NULL),0) AS video_impressions
                        FROM ads a JOIN ad_daily d ON d.ad_id = a.id AND d.day BETWEEN %s AND %s
                        WHERE {where} GROUP BY a.id, a.name, a.thumbnail_url, a.image_url HAVING SUM(d.spend_cents) > 0""", [start, end] + params)
     q = qualified_by_ad(start, end)
-    rows = [{**{k: int(v) if k not in ("id", "name", "thumb") else v for k, v in a.items()}, "qualified": q.get(a["id"], 0)} for a in ads]
-    import targets
-    target = targets.lead_own()  # none set: the groups' own average (see targets.py)
-    tags = tags_for([r["id"] for r in rows])
-    out = c.group(rows, tags, dim, target)
-    members = c.members(rows, tags, dim)
-    for g in out["groups"]:
-        g["members"] = members.get(g["value"], [])
-        g["ad_names"] = [m["name"] for m in g["members"]]
-        g["pictures"] = c.pictures(g["members"], limit=6)
-    return jsonify({**out, "by": dim, "dimensions": c.DIMENSIONS,
-                    "range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "days": days, "label": ranges.label(start, end)},
-                    "untagged_ads": len(members.get(c.UNTAGGED, []))})
+    return [{**{k: int(v) if k not in ("id", "name", "thumb") else v for k, v in a.items()}, "qualified": q.get(a["id"], 0)} for a in ads]

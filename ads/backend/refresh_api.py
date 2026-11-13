@@ -31,6 +31,7 @@ LOCK_KEY = 7_204_311
 AUTO_CHOICES = (5, 10, 15, 30, 60)
 DEFAULT_AUTO_MINUTES = 15
 AUTO_RETRY_SECONDS = 300
+TODAY_AGAIN_SECONDS = 20  # Refresh re-reads today unless it was read this recently
 
 
 def refresh_due(last, now):
@@ -90,10 +91,8 @@ def pull_latest(conn):
         return None
     try:
         result = insights.sync_all(days=DAYS)
-        try:
-            insights.pull_today()  # what pacing and the overspend alert add for today (audit A3-13, A3-47)
-        except meta_client.MetaError as exc:
-            log.warning("refresh: today's spend not read: %s", exc)
+        # The pass read today's rows too: pacing, the overspend alert and screens use them (audit A3-13, A3-47; FU-C).
+        insights.stamp_today_from_stored()
         new_leads = 0
         try:
             new_leads = leads.backfill(days=LEAD_DAYS)
@@ -147,6 +146,13 @@ def status():
     return jsonify(out)
 
 
+def ask_today_again(now):
+    """Refresh without a pass of its own: the next screen reads today's rows from Meta once more (FU-C), unless they
+    were read in the last TODAY_AGAIN_SECONDS."""
+    if not insights.today_fresh(settings_store.get("today_ads_at"), now, TODAY_AGAIN_SECONDS):
+        settings_store.set("today_ads_force", "1")
+
+
 @bp.post("")
 @login_required
 def refresh():
@@ -154,12 +160,16 @@ def refresh():
         return api_error("Meta isn't connected yet. An admin can connect it in Settings.", 400)
     now = time.time()
     if not refresh_due(settings_store.get("last_refresh_at"), now):
+        # The full pass ran under a minute ago; today's numbers are still read again by the page that reloads
+        # next (FU-C), unless they were read in the last few seconds. The time of the last read stays for the wording.
+        ask_today_again(now)
         return jsonify({**_status(), "ran": False})
     try:
         pulled = pull_latest(db.get_db())
     except meta_client.MetaError as exc:
         return api_error(f"Meta didn't answer: {exc}", 502)
     if pulled is None:
+        ask_today_again(now)  # a page's read (or a pass) holds the lock: the next page reads today once more
         return jsonify({**_status(), "ran": False, "busy": True})
     user = current_user()
     log_activity("refresh", details={**pulled, "by": user["id"]})

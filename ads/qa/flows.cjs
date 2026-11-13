@@ -795,8 +795,9 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   check("Meta's history links the ad and the campaign each line is about", (await page.locator('#activity a.ent-link[href^="/ad.html?id="]').count()) === 1
     && (await page.locator('#activity a.ent-link[href^="/campaign.html?id="]').count()) === 1);
   check('"Yesterday" under cost per lead is the real yesterday', await page.evaluate(async () => {
+    // Last 7 days runs to today (FU-C); its complete days end yesterday.
     const [d, y] = [await (await fetch('/api/performance?range=lastmonth')).json(), await (await fetch('/api/performance?range=7')).json()];
-    return d.yesterday.day === y.range.end;
+    return d.yesterday.day === y.source.meta.complete_to && y.compare_now.end === d.yesterday.day;
   }));
   await page.click('.results-table [data-sort="cpl"]');
   let cpl = (await cells(6)).map(dollars);
@@ -3352,9 +3353,10 @@ print('{}')`);
 
   // Settings: send without my review, kept after a reload.
   await openSettings('reports-panel');
+  await page.waitForSelector('#rep-state .pill');  // the saved choice is painted first, so it can't undo the click below
   await page.check('#rep-review-auto');
   await page.click('#rep-form button[type=submit]');
-  await page.waitForFunction(() => /Report settings saved/.test(document.querySelector('.toast')?.textContent || ''));
+  await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some((t) => /Report settings saved/.test(t.textContent)));
   await openSettings('reports-panel');
   await page.waitForFunction(() => /sent by itself/.test(document.getElementById('rep-state')?.textContent || ''));
   check('Settings: "Send it without my review" is kept, and the pill says "Weekly · sent by itself"',
@@ -3956,13 +3958,14 @@ print(db.query('SELECT resolved_at IS NOT NULL AS done FROM alerts WHERE id = %s
     ageBudget(1);
     sql(`UPDATE status_events SET at = at - interval '1 day', meta_time = meta_time - interval '1 day' WHERE field IN ('end_time','targeting','start_time')`);
     const cd = await getJson(`/api/campaigns/${DC}?range=14`);
-    check('the campaign page carries budget marks for the day they happened', cd.marks.some((m) => m.day === cd.series[cd.series.length - 1].day && m.cats.includes('money'))
+    // The charts run to today (FU-C); the marks moved to yesterday sit on its bar, the last complete day.
+    check('the campaign page carries budget marks for the day they happened', cd.marks.some((m) => m.day === cd.source.meta.complete_to && m.cats.includes('money'))
       && /\d+ changes? in this period/.test(cd.marks_summary), JSON.stringify(cd.marks.slice(-1)));
     await page.goto(`${BASE}/campaign.html?id=${DC}&range=14`);
     await page.waitForSelector('#c-spend svg .chg-mark');
     check('the campaign charts show the marks and a guide on budget days', (await page.locator('#c-spend svg .chg-guide').count()) > 0
       && /\d+ changes? in this period/.test(await page.textContent('#chg-panel .chg-fold summary')));
-    await page.locator('#c-spend .hit').last().hover();
+    await page.locator('#c-spend .hit').nth((await page.locator('#c-spend .hit').count()) - 2).hover();
     await page.waitForSelector('#c-spend .tip:not([hidden]) .tip-chg');
     check('hovering a marked day lists its changes in the tooltip', /budget/i.test(await page.textContent('#c-spend .tip .tip-chg')));
     await page.screenshot({ path: `${OUT}/flow-d2-marks.png` });
@@ -6352,7 +6355,7 @@ for k in ('numbers_off_runs', 'numbers_last_check_at', 'numbers_check'): setting
     const pairText = await page.textContent('#fig-leads .src-pair');
     const perf7 = await getJson('/api/performance?range=7');
     const oracle = d1py(`import db,json;from datetime import date;r=db.query('SELECT MIN(m) AS t FROM (SELECT MAX(synced_at) AS m FROM ad_daily WHERE day BETWEEN %s AND %s GROUP BY day) x',(date.fromisoformat('${perf7.range.start}'),date.fromisoformat('${perf7.range.end}')),one=True);print(r['t'].isoformat())`);
-    check('D1: Results says where its numbers come from: From Meta, synced, complete days, and the days that differ (admins)', /^From Meta · synced .+ · complete days to \w{3} \d+ · differs from Ads Manager on 1 day/.test(srcLine.trim())
+    check('D1: Results says where its numbers come from: From Meta, today so far, complete days, and the days that differ (admins)', /^From Meta · today so far, Meta still counting \(.+\) · complete days to \w{3} \d+ · differs from Ads Manager on 1 day/.test(srcLine.trim())
       && /attribution setting/.test(help) && /Numbers check in Settings/.test(help), srcLine);
     check('D1: "synced" is when the oldest of the days on screen was last read', new Date(perf7.source.meta.synced_at).getTime() === new Date(oracle).getTime(), `${perf7.source.meta.synced_at} ${oracle}`);
     check('D1: the Leads figure shows Meta N · Received M, from the counts on the server', pairText === `Meta ${perf7.totals.leads} · Received ${perf7.source.leads.received}`, pairText);
@@ -6365,7 +6368,7 @@ for k in ('numbers_off_runs', 'numbers_last_check_at', 'numbers_check'): setting
       if (!ok) pagesWithNote.push(p);
     }
     check('D1: Today, Ads, Campaign, Ad set, Ad, Compare and the report carry the source line, and the report its stamp', pagesWithNote.length === 0, pagesWithNote.join(' '));
-    check('D1: Today says today\'s spend is live', /today so far, changes through the day/.test(await (async () => { await page.goto(`${BASE}/home.html`); await page.waitForSelector('#fig-src .src-note'); return page.textContent('#fig-src .src-note summary'); })()));
+    check('D1: Today says today\'s spend is live', /today so far, Meta still counting/.test(await (async () => { await page.goto(`${BASE}/home.html`); await page.waitForSelector('#fig-src .src-note'); return page.textContent('#fig-src .src-note summary'); })()));
     // 10–11. A teammate and a client: the state in words, never the amounts, no check, no buttons.
     d1py(`import db
 from werkzeug.security import generate_password_hash as h
@@ -6619,7 +6622,7 @@ with account_ctx.all_accounts():
   const rangeWords = async (url, sel) => { await page.goto(BASE + url); await page.waitForSelector(sel); return page.$$eval(`${sel} option`, (o) => o.map((x) => `${x.value}:${x.textContent}`).join(',')); };
   const ranges = [await rangeWords('/ads.html', '#range-pick'), await rangeWords('/performance.html', '#range-pick'),
     await rangeWords('/campaign.html?id=120252638288040312', '#range-pick'), await rangeWords('/compare.html?ids=120252672232030312,120252672233160312', '#cmp-range')];
-  check('one date range picker: Ads, Results, Campaign and Compare offer the same periods in the same words', new Set(ranges).size === 1 && /mtd:This month/.test(ranges[0]) && /^7:Last 7 days/.test(ranges[0]), ranges.join(' / '));
+  check('one date range picker: Ads, Results, Campaign and Compare offer the same periods in the same words', new Set(ranges).size === 1 && /mtd:This month/.test(ranges[0]) && /^today:Today,7:Last 7 days/.test(ranges[0]), ranges.join(' / '));
   const chipsOk = async (url, sel) => { await page.goto(BASE + url); await page.waitForSelector(`${sel} button`); return page.$$eval(`${sel} button`, (bs) => bs.length > 1 && bs.every((b) => b.classList.contains('view-chip'))); };
   check('list filters are the one Filter chip (Leads, Tests, Research, Results)', await chipsOk('/leads.html', '#filters') && await chipsOk('/experiments.html', '#show')
     && await chipsOk('/research.html', '#swipe-filter') && await chipsOk('/performance.html', '#cr-filter'));
@@ -7100,6 +7103,285 @@ with account_ctx.all_accounts():
   errors.splice(a2Seen, errors.length - a2Seen, ...errors.slice(a2Seen).filter((e) => !/Failed to load resource: the server responded with a status of 4\d\d/.test(e)));
 
   }
+  // FU-C: numbers through now. Screens read today's figures live from Meta (at most every 90 s), say "today so far",
+  // draw today's bar apart, and compare like with like; every judgment (alerts, verdicts, Did it work?, Claude's
+  // snapshot) stays on complete days, through yesterday. Times read the account's clock wherever the browser is.
+  {
+    const fake = (q) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001${q}').read().decode())"`));
+    const lpy = (code) => require('child_process').execSync('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', { input: code }).toString().trim();
+    const N4 = '120252672232030312', N1 = '120252672229040312', N2 = '120252672229400312';
+    const readAgo = (s) => lpy(`import time, account_ctx, settings_store\nwith account_ctx.use(1):\n    settings_store.set('today_ads_at', ${s == null ? 'None' : `str(time.time() - ${s})`})\n`);
+    const todayReads = (hits, day) => hits.map((h) => decodeURIComponent(h.replace(/\+/g, ' '))).filter((h) => /\/insights\?/.test(h) && /level=ad(&|$)/.test(h)
+      && /time_increment=1/.test(h) && h.includes(`"since": "${day}", "until": "${day}"`)).length;
+    const T = fake(`/fake/_today?spend=7.50&leads=1&ad=${N4}`).today;
+    const Y = new Date(Date.parse(`${T}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    readAgo(null);
+
+    // 1. Today on Results: today's $7.50, read from Meta, said so.
+    await page.goto(`${BASE}/performance.html?range=today`);
+    await page.waitForSelector('#fig-spent .value');
+    const spentToday = (await page.textContent('#fig-spent .value')).trim();
+    const lineToday = await page.textContent('#fig-src .src-line');
+    check('FU-C: Results › Today shows today\'s $7.50 with "today so far, Meta still counting"', spentToday === '$7.50' && /today so far, Meta still counting \(\d{1,2}:\d{2}\s?(AM|PM)/.test(lineToday), `${spentToday} | ${lineToday}`);
+    check('FU-C: Today is in the date picker and the page names it', (await page.$eval('#range-pick', (s) => s.value)) === 'today' && /Today/.test(await page.textContent('#range-pick')));
+
+    // 2. Last 7 days = the 6 complete days before today + today so far; today's point is flagged.
+    const r7 = await getJson('/api/performance?range=7');
+    const last = r7.series[r7.series.length - 1];
+    const sum7 = r7.series.reduce((n, d) => n + d.spend_cents, 0);
+    check('FU-C: Last 7 days runs to today: 6 complete days + today\'s $7.50, today\'s point partial', r7.series.length === 7 && r7.range.end === T && last.day === T
+      && last.partial === true && last.spend_cents === 750 && sum7 === r7.totals.spend_cents && r7.series.slice(0, -1).every((d) => !d.partial), JSON.stringify({ end: r7.range.end, last, sum7, total: r7.totals.spend_cents }));
+    check('FU-C: Last 7 days compares its 6 complete days with the 6 before ("complete days")', r7.compare.mode === 'days' && r7.compare.note === 'complete days'
+      && r7.compare_now.end === Y && r7.compare.before_days === 6 && r7.source.meta.complete_to === Y && r7.source.today.included === true, JSON.stringify(r7.compare));
+
+    // 3. The chips say how they compare.
+    await page.goto(`${BASE}/performance.html?range=7`);
+    await page.waitForSelector('#fig-spent .delta');
+    const chip7 = await page.getAttribute('#fig-spent .delta', 'title');
+    const note7 = await page.textContent('#cmp-note');
+    check('FU-C: on Last 7 days the change chips compare complete days and say so once', /complete days/.test(chip7) && /Compared without today: today isn't over yet/.test(note7), `${chip7} | ${note7}`);
+    check('FU-C: on Last 7 days "Who and where" names its days: the last 7 complete days, to yesterday', /the last 7 complete days, to yesterday/.test(await page.textContent('main')));
+    check('FU-C: Results draws today\'s bar lighter and hatched with a key', (await page.locator('#c-spend .td-partial').count()) === 1 && (await page.locator('#c-spend .td-hatch').count()) <= 1
+      && /Today so far \(still counting\)/.test(await page.textContent('#c-spend .td-key')));
+    await page.goto(`${BASE}/performance.html?range=today`);
+    await page.waitForSelector('#fig-spent .delta');
+    const chipT = (await page.textContent('#fig-spent .delta')).trim();
+    check('FU-C: Today is compared with yesterday up to the same hour', /^vs yesterday by (\d{1,2} (AM|PM)|noon|midnight): (same|[+−]\$\d)/.test(chipT), chipT);
+
+    // 4. Read at most every 90 s; Refresh (or an older read) reads again.
+    readAgo(null);
+    metaHits(true);
+    await getJson('/api/performance?range=today');
+    await page.goto(`${BASE}/performance.html?range=7`);
+    await page.waitForSelector('#fig-spent .value');
+    const twice = todayReads(metaHits(true), T);
+    readAgo(91);
+    await getJson('/api/performance?range=today');
+    const after91 = todayReads(metaHits(true), T);
+    readAgo(30);
+    await getJson('/api/performance?range=today');
+    const after30 = todayReads(metaHits(true), T);
+    check('FU-C: two page opens within 90 s read today from Meta once; a read 91 s old is read again, one 30 s old is not', twice === 1 && after91 === 1 && after30 === 0, `${twice} ${after91} ${after30}`);
+    readAgo(30);
+    const refreshed = await page.evaluate(async () => (await fetch('/api/refresh', { method: 'POST' })).status);
+    const after = JSON.parse(lpy(`import json, time, account_ctx, settings_store\nwith account_ctx.use(1):\n    v = settings_store.get('today_ads_at')\n    print(json.dumps({'age': None if v is None else round(time.time() - float(v)), 'force': settings_store.get('today_ads_force')}))`));
+    metaHits(true);
+    const reread = await getJson('/api/performance?range=today');
+    const rereads = todayReads(metaHits(true), T);
+    check('FU-C: Refresh reads today with its pass, or makes the next page read it again', refreshed === 200
+      && ((after.age != null && after.age < 10) || (after.force === '1' && after.age != null && after.age >= 25)) && (after.force !== '1' || rereads === 1)
+      && reread.source.today.as_of != null, JSON.stringify({ refreshed, after, rereads }));
+    readAgo(30);
+    const again = await page.evaluate(async () => (await (await fetch('/api/refresh', { method: 'POST' })).json()));
+    const flagged = JSON.parse(lpy(`import json, time, account_ctx, settings_store\nwith account_ctx.use(1):\n    v = settings_store.get('today_ads_at')\n    print(json.dumps({'age': None if v is None else round(time.time() - float(v)), 'force': settings_store.get('today_ads_force')}))`));
+    metaHits(true);
+    const next1 = await getJson('/api/performance?range=today');
+    const reads1 = todayReads(metaHits(true), T);
+    await getJson('/api/performance?range=today');
+    const reads2 = todayReads(metaHits(true), T);
+    check('FU-C: a Refresh too soon after the last keeps the last read time and lets the next page read today once more', again.ran === false
+      && flagged.force === '1' && flagged.age >= 25 && reads1 === 1 && reads2 === 0 && next1.source.today.as_of != null, JSON.stringify({ ran: again.ran, flagged, reads1, reads2 }));
+    readAgo(30);
+
+    // 5-7. Judgments stay on complete days: a big jump today changes no alert, no verdict, no "Did it work?", no snapshot figure.
+    const judged = ['cpl_high', 'no_leads', 'fatigue', 'lead_quality_low', 'lead_junk_high'];
+    const openAlerts = () => lpy(`import json, account_ctx, db\nwith account_ctx.use(1):\n    print(json.dumps(sorted(r['k'] for r in db.query("SELECT rule || ':' || COALESCE(entity_id, '') AS k FROM alerts WHERE resolved_at IS NULL AND rule = ANY(%s)", (${JSON.stringify(judged).replace(/"/g, "'")},)))))`);
+    const d3 = JSON.parse(sh('docker cp dev/seed_checks.py edgebourne-ads-backend:/tmp/seed_checks.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python /tmp/seed_checks.py').trim().split('\n').pop());
+    const outcomes = () => JSON.parse(lpy(`import json, account_ctx, change_checks_db\nwith account_ctx.use(1):\n    print(json.dumps({str(i): [[r.get('horizon'), r.get('state'), r.get('sentence')] for r in change_checks_db.compute(i)] for i in (${d3.worked}, ${d3.worse}, ${d3.pause})}, default=str))`).split('\n').pop());
+    const snapshot = () => JSON.parse(lpy(`import json, settings_store, desk_api, account_ctx
+from app import create_app
+app = create_app(run_migrations=False)
+with account_ctx.use(1):
+    old = settings_store.get('agent_key_hash')
+    settings_store.set('agent_key_hash', desk_api.key_hash('qa-agent-key'))
+try:
+    s = app.test_client().get('/api/agent/snapshot?range=7', headers={'Authorization': 'Bearer qa-agent-key'}).get_json()
+    print(json.dumps({'end': s['performance']['range']['end'], 'spend': s['performance']['totals']['spend_cents'], 'today': s['today_so_far']}))
+finally:
+    with account_ctx.use(1):
+        settings_store.set('agent_key_hash', old)`).split('\n').pop());
+    runAlerts();
+    const alertsBefore = openAlerts();
+    const cmpUrl = `/api/compare?ids=${N1},${N2}&range=7&vs=prev`;
+    const cmpBefore = await getJson(cmpUrl);
+    const checksBefore = outcomes();
+    const snapBefore = snapshot();
+    fake(`/fake/_today?spend=500&leads=0&ad=${N4}`);
+    readAgo(null);
+    await getJson('/api/performance?range=today');  // the live read stores today's $500
+    lpy(`import account_ctx, account_info, db\nwith account_ctx.use(1):\n    for ad, camp, aset in (('qa-d3-pad1', 'qa-d3-pcamp', 'qa-d3-pset'),):\n        db.execute("INSERT INTO ad_daily (day, ad_id, campaign_id, adset_id, spend_cents, leads) VALUES (%s, %s, %s, %s, 90000, 0) ON CONFLICT (day, ad_id) DO UPDATE SET spend_cents = 90000, leads = 0", (account_info.today(), ad, camp, aset))\n`);
+    runAlerts();
+    const alertsAfter = openAlerts();
+    const cmpAfter = await getJson(cmpUrl);
+    const checksAfter = outcomes();
+    const snapAfter = snapshot();
+    const t7 = await getJson('/api/performance?range=today');
+    check('FU-C: a $500 day so far opens no cost-per-lead, no-leads, tired or lead-quality alert', t7.totals.spend_cents >= 50000 && JSON.stringify(alertsBefore) === JSON.stringify(alertsAfter), `${t7.totals.spend_cents} ${alertsBefore} → ${alertsAfter}`);
+    check('FU-C: Compare\'s verdict is the same before and after today\'s jump, judged through yesterday', JSON.stringify(cmpBefore.verdict) === JSON.stringify(cmpAfter.verdict)
+      && cmpAfter.verdict.through === Y, `${JSON.stringify(cmpBefore.verdict)} → ${JSON.stringify(cmpAfter.verdict)}`);
+    check('FU-C: Did it work? gives the same results after a big day so far', JSON.stringify(checksBefore) === JSON.stringify(checksAfter) && Object.values(checksAfter).every((v) => v.length && v.every((h) => h[1])), JSON.stringify(checksAfter));
+    check('FU-C: Claude\'s snapshot judges complete days to yesterday and keeps today apart ($500 so far)', snapBefore.end === Y && snapAfter.end === Y && snapBefore.spend === snapAfter.spend
+      && snapAfter.today.spend_cents >= 50000 && snapAfter.today.day === T && /Never judge on it/.test(snapAfter.today.note), JSON.stringify(snapAfter));
+    sh('docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python /tmp/seed_checks.py --clean');
+    await page.goto(`${BASE}/compare.html?ids=${N1},${N2}&range=7`);
+    await page.waitForSelector('#cmp-verdict');
+    check('FU-C: Compare says its verdict is judged through yesterday', /Judged through yesterday/.test(await page.textContent('#cmp-verdict')));
+    await page.goto(`${BASE}/compare.html?ids=${N1},${N2}&range=today`);
+    await page.waitForSelector('#cmp-verdict');
+    check('FU-C: Compare names no winner on today alone', /No verdict for today alone/.test(await page.textContent('#cmp-verdict')));
+
+    // 8. The Ads manager on Today: today's totals, no per-row change, today drawn apart.
+    await page.goto(`${BASE}/ads.html?range=today`);
+    await page.waitForSelector('.figs .fig-v');
+    const mgr = await page.evaluate(() => ({ spent: document.querySelector('.figs .fig-v').textContent.trim(),
+      dashes: [...document.querySelectorAll('td .delta')].filter((d) => d.title === 'Each row is compared on complete days; pick another range' && /^No change shown/.test(d.getAttribute('aria-label') || '')).length,
+      partial: document.querySelectorAll('.tbl-sp .td-partial').length, sub: document.getElementById('cr-sub').textContent, foot: document.querySelector('.cr-foot').textContent }));
+    check('FU-C: Ads › Today shows today\'s $500, rows say (also to screen readers and in the footer) why they have no change, today\'s line is drawn apart', mgr.spent === '$500.00' && mgr.dashes > 0 && mgr.partial > 0
+      && /Today vs yesterday by /.test(mgr.sub) && /^Today so far: Meta is still counting today\. Rows aren't compared on today alone/.test(mgr.foot), JSON.stringify(mgr));
+    await page.goto(`${BASE}/ads.html?range=today&campaign=120252638288040312`);
+    await page.waitForSelector('.figs .fig-v');
+    const oneCamp = await page.evaluate(async () => ({ sub: document.getElementById('cr-sub').textContent,
+      deltas: [...document.querySelectorAll('.figs .delta')].map((d) => d.textContent.trim()),
+      hours: Object.keys((await (await fetch('/api/ads?range=today&vs=prev')).json()).hours_by_campaign || {}) }));
+    check('FU-C: Ads › Today with one campaign picked compares that campaign with yesterday by the hour', /vs yesterday by /.test(oneCamp.sub)
+      && oneCamp.hours.includes('120252638288040312') && oneCamp.deltas.length > 0 && oneCamp.deltas.some((t) => !/^[–-]?$/.test(t)), JSON.stringify(oneCamp));
+    await page.goto(`${BASE}/ads.html?range=7`);
+    await page.waitForSelector('.cr-foot');
+    const foot7 = await page.textContent('.cr-foot');
+    check('FU-C: the Ads footer on Last 7 days says "… – today: Meta is still counting today", never "today, today so far"', /– today: Meta is still counting today\./.test(foot7) && !/today, today/.test(foot7), foot7);
+
+    // 9. Campaign, ad set and ad pages on Last 7 days: the last bar is today's, hatched.
+    for (const [what, url] of [['campaign', '/campaign.html?id=120252638288040312&range=7'], ['ad set', '/adset.html?id=120252672227950312&range=7'], ['ad', `/ad.html?id=${N4}&range=7`]]) {
+      await page.goto(BASE + url);
+      await page.waitForSelector('#c-spend svg');
+      const bars = await page.evaluate(() => { const cols = [...document.querySelectorAll('#c-spend path.col')]; return { n: cols.length, lastPartial: cols[cols.length - 1]?.classList.contains('td-partial'), partial: document.querySelectorAll('#c-spend .td-partial').length }; });
+      check(`FU-C: the ${what} page's last bar on Last 7 days is today's, drawn apart`, bars.n === 7 && bars.lastPartial && bars.partial === 1, JSON.stringify(bars));
+    }
+
+    // 10. Gallery and Ideas on Today: today's figures; every verdict waits for complete days.
+    await page.goto(`${BASE}/gallery.html?range=today`);
+    await page.waitForSelector('.gal-when');
+    const gal = await page.evaluate(() => ({ when: document.querySelector('.gal-when').textContent, early: document.querySelectorAll('.gal-kpi .pill').length,
+      enough: document.querySelectorAll('.gal-kpi b:not(.early)').length, note: document.querySelector('#gal-body, main')?.textContent.includes('Judged on complete days only') }));
+    check('FU-C: Gallery › Today shows today so far and calls every card Too early (judged on complete days only)', /today so far, Meta still counting/.test(gal.when) && gal.early > 0 && gal.enough === 0 && gal.note, JSON.stringify(gal));
+    await page.goto(`${BASE}/ideas.html?range=today`);
+    await page.waitForSelector('.idea-when');
+    const idea = await page.evaluate(() => ({ when: document.querySelector('.idea-when').textContent, verdict: document.getElementById('idea-verdict')?.textContent || '', cheapest: [...document.querySelectorAll('.pill')].filter((p) => p.textContent === 'Cheapest').length }));
+    check('FU-C: Ideas › Today names no cheapest idea and says it judges complete days only', /today so far/.test(idea.when) && /complete days only/.test(idea.verdict) && idea.cheapest === 0, JSON.stringify(idea));
+    await page.goto(`${BASE}/gallery.html?range=7`);
+    await page.waitForSelector('.gal-when');
+    const galCards = await page.evaluate(() => [...document.querySelectorAll('.gal-kpi')].filter((k) => /through yesterday/.test(k.textContent)).length);
+    check('FU-C: Gallery on Last 7 days says its order and chips are judged through yesterday, and no cost figure is labelled "through yesterday"', /Judged through yesterday/.test(await page.textContent('main')) && galCards === 0, String(galCards));
+
+    // 11. Today: "spent today so far" = today's sum, as of a time on the account's clock.
+    await page.goto(`${BASE}/home.html`);
+    await page.waitForSelector('#td-spent');
+    const home = { spent: (await page.textContent('#td-spent')).trim(), asof: await page.textContent('#td-asof'), says: await page.textContent('.td-big span') };
+    check('FU-C: Today says "spent today so far" with today\'s $500.00, as of a clock time', home.spent === '$500.00' && /spent today so far/.test(home.says) && /^as of \d{1,2}:\d{2}\s?(AM|PM)$/.test(home.asof.trim()), JSON.stringify(home));
+    fake(`/fake/_today?spend=500&leads=60&ad=${N4}`);
+    readAgo(null);
+    const hb = await getJson('/api/home');
+    const strip5 = hb.ad_strip.slice(0, 5).map((a) => a.id);
+    const settledBest = lpy(`import account_ctx, account_info, db\nfrom datetime import timedelta\nwith account_ctx.use(1):\n    t = account_info.today()\n    r = db.query("SELECT ad_id FROM ad_daily WHERE ad_id = ANY(%s) AND day BETWEEN %s AND %s GROUP BY ad_id HAVING SUM(leads) > 0 ORDER BY SUM(leads) DESC, ad_id LIMIT 1", (${JSON.stringify(strip5).replace(/"/g, "'")}, t - timedelta(days=6), t - timedelta(days=1)), one=True)\n    print(r['ad_id'] if r else '')`);
+    const n4Today = hb.ad_strip.find((a) => a.id === N4);
+    check('FU-C: Today\'s ad strip highlights the most leads over complete days, not an ad with 60 leads today so far', (hb.ad_strip_best || '') === settledBest
+      && (!n4Today || n4Today.leads >= 60), JSON.stringify({ best: hb.ad_strip_best, settledBest, n4: n4Today && n4Today.leads }));
+    fake(`/fake/_today?spend=500&leads=0&ad=${N4}`);
+    readAgo(null);
+    await getJson('/api/home');
+
+    // 12-13. A laptop in Berlin reads the account's clock with the zone named; one in Los Angeles sees no tag.
+    const state = await page.context().storageState();
+    const lead = JSON.parse(lpy(`import json, account_ctx, db\nwith account_ctx.use(1):\n    r = db.query("SELECT id, meeting_at, meeting_status FROM leads WHERE NOT is_test AND repeat_of IS NULL ORDER BY id DESC LIMIT 1", one=True)\n    db.execute("UPDATE leads SET meeting_at = now() + interval '2 days', meeting_status = 'scheduled' WHERE id = %s", (r['id'],))\n    print(json.dumps({'id': r['id'], 'at': r['meeting_at'].isoformat() if r['meeting_at'] else None, 'status': r['meeting_status']}))`).split('\n').pop());
+    const zoneCheck = async (timezoneId) => {
+      const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 }, timezoneId, storageState: state });
+      const p = await ctx.newPage();
+      p.on('pageerror', (e) => errors.push(`${timezoneId}: ${e.message}`));
+      await p.goto(`${BASE}/performance.html?range=today`);
+      await p.waitForSelector('#fig-src .src-line');
+      const line = await p.textContent('#fig-src .src-line');
+      await p.goto(`${BASE}/leads.html#lead=${lead.id}`);
+      await p.waitForSelector('#fu-meeting');
+      const booked = await p.textContent('#fu-meeting b');
+      const dialog = await p.evaluate(async () => {
+        const m = await import('/js/followup.js');
+        m.askMeeting({ id: 0 });
+        const d = document.querySelector('#fu-time').closest('dialog');
+        const out = { time: document.getElementById('fu-time').value, hint: document.getElementById('fu-zone')?.textContent || '',
+          want: `${String((Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hourCycle: 'h23' }).format(new Date())) % 24) + 1).padStart(2, '0')}:00` };
+        d.close();
+        return out;
+      });
+      await ctx.close();
+      return { line, booked, dialog };
+    };
+    const berlin = await zoneCheck('Europe/Berlin');
+    const la = await zoneCheck('America/Los_Angeles');
+    const laHourNext = Number(berlin.dialog.want.slice(0, 2));
+    check('FU-C: in Berlin the times carry the account zone (PST/PDT) and the booking dialog starts at the next Los Angeles hour, saying "Los Angeles time"',
+      /\((\d{1,2}:\d{2}\s?(AM|PM)) P[SD]?T\)/.test(berlin.line) && /P[SD]?T$/.test(berlin.booked.trim()) && /Times are Los Angeles time/.test(berlin.dialog.hint)
+      && (laHourNext >= 21 ? berlin.dialog.time === '10:00' : berlin.dialog.time === berlin.dialog.want), JSON.stringify(berlin));
+    check('FU-C: in Los Angeles itself no zone tag shows', !/P[SD]T/.test(la.line) && !/P[SD]T/.test(la.booked) && !la.dialog.hint, JSON.stringify(la));
+    lpy(`import account_ctx, db\nwith account_ctx.use(1):\n    db.execute("UPDATE leads SET meeting_at = %s, meeting_status = %s WHERE id = %s", (${lead.at ? `'${lead.at}'` : 'None'}, ${lead.status ? `'${lead.status}'` : 'None'}, ${lead.id}))\n`);
+
+    // 15. A client sees today's figures in the ranges they already see, without the check's amounts.
+    lpy(`from werkzeug.security import generate_password_hash
+import db
+pw = generate_password_hash('fuc-pass-123')
+if db.query("SELECT 1 FROM users WHERE email = 'client-fuc@edgebourne.test'", one=True):
+    db.execute("UPDATE users SET role = 'client', account_id = 1, password_hash = %s, must_change_password = FALSE, is_active = TRUE WHERE email = 'client-fuc@edgebourne.test'", (pw,))
+else:
+    db.execute("INSERT INTO users (email, name, password_hash, role, account_id) VALUES ('client-fuc@edgebourne.test', 'Client FU-C', %s, 'client', 1)", (pw,))`);
+    const cctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+    const cp = await cctx.newPage();
+    cp.on('pageerror', (e) => errors.push(`client: ${e.message}`));
+    await cp.goto(BASE + '/login.html');
+    await cp.fill('#email', 'client-fuc@edgebourne.test');
+    await cp.fill('#password', 'fuc-pass-123');
+    await Promise.all([cp.waitForURL('**/home.html**'), cp.click('button[type=submit]')]);
+    await cp.goto(`${BASE}/performance.html?range=today`);
+    await cp.waitForSelector('#fig-spent .value');
+    const cr = await cp.evaluate(async () => (await (await fetch('/api/performance?range=today')).json()));
+    check('FU-C: a client sees today\'s figures, labelled, with no amounts in the check note', (await cp.textContent('#fig-spent .value')).trim() === '$500'
+      && /today so far/.test(await cp.textContent('#fig-src .src-line')) && (!cr.source.meta.check || cr.source.meta.check.spend_off_cents == null), JSON.stringify(cr.source.meta.check));
+    await cctx.close();
+    lpy(`import db\ndb.execute("UPDATE users SET is_active = FALSE WHERE email = 'client-fuc@edgebourne.test'")`);
+
+    // 14. Meta slow: the page opens in time with the stored today and says Meta didn't answer.
+    fake('/fake/_slow?daily=12');
+    readAgo(200);
+    lpy(`import account_ctx, settings_store\nwith account_ctx.all_accounts():\n    import db\n    ids = [r['id'] for r in db.query("SELECT id FROM accounts WHERE archived_at IS NULL AND id <> 1")]\nfor i in ids:\n    with account_ctx.use(i):\n        settings_store.set('today_ads_at', None)\n`);
+    const tAll = Date.now();
+    const allSlow = await page.evaluate(async () => { const r = await fetch('/api/accounts/overview?range=today'); const d = await r.json(); return { status: r.status, rows: d.rows.length, notes: d.rows.map((x) => x.source && x.source.today) }; });
+    const allMs = Date.now() - tAll;
+    check('FU-C: when Meta is slow, All accounts on Today answers within ~9 s with one wait shared by every account', allSlow.status === 200 && allMs < 11000 && allSlow.notes[0] && allSlow.notes[0].read_ok === false, `${allMs} ms ${JSON.stringify(allSlow)}`);
+    const t0 = Date.now();
+    await page.goto(`${BASE}/performance.html?range=today`);
+    await page.waitForSelector('#fig-src .src-line', { timeout: 15000 });
+    const slowMs = Date.now() - t0;
+    const slowLine = await page.textContent('#fig-src .src-line');
+    fake('/fake/_slow?daily=0');
+    check('FU-C: when Meta is slow, Results opens within ~9 s with the stored numbers and says Meta didn\'t answer', slowMs < 11000 && /Meta didn't answer/.test(slowLine)
+      && /today's numbers are from \d{1,2}:\d{2}\s?(AM|PM)/.test(slowLine) && (await page.textContent('#fig-spent .value')).trim() === '$500', `${slowMs} ms | ${slowLine}`);
+
+    // 16. Phones: the source line stays one line, the chips wrap, the dates are 44px and 16px.
+    for (const w of [390, 320]) {
+      const pctx = await browser.newContext({ viewport: { width: w, height: 800 }, storageState: state, isMobile: true, hasTouch: true });
+      const pp = await pctx.newPage();
+      await pp.goto(`${BASE}/performance.html?range=today`);
+      await pp.waitForSelector('#fig-src .src-line');
+      const fit = await pp.evaluate(() => { const line = document.querySelector('#fig-src .src-line'), pick = document.getElementById('range-pick'), r = line.getBoundingClientRect();
+        const over = [...document.querySelectorAll('.figure .delta, #cmp-note, .td-key')].filter((e) => e.getBoundingClientRect().right > innerWidth + 1).length;
+        return { lineH: Math.round(r.height), right: Math.round(r.right), vw: innerWidth, sideways: document.documentElement.scrollWidth - innerWidth, over,
+          pickH: Math.round(pick.getBoundingClientRect().height), pickFont: getComputedStyle(pick).fontSize }; });
+      check(`FU-C: on a ${w}px phone the source line is one line, nothing runs past the edge, the dates are 44px with a 16px font`, fit.lineH <= 24 && fit.right <= fit.vw && fit.sideways <= 0
+        && fit.over === 0 && fit.pickH >= 44 && fit.pickFont === '16px', JSON.stringify(fit));
+      await pctx.close();
+    }
+    fake('/fake/_today?clear=1');
+    readAgo(null);
+  }
+
   await browser.close();
   console.log(results.join('\n'));
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');

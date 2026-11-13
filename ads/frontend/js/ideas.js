@@ -38,12 +38,14 @@ function set(patch) {
   load();
 }
 
+// FU-C: Cheapest and Too early read complete days only; with today in the range they say "through yesterday".
 function verdict(d) {
   const best = d.groups.find((g) => g.best);
   const what = DIMS.find(([k]) => k === d.by)[1].toLowerCase();
-  if (!best) return `<p class="note">Too early to say which ${esc(what)} works best: each group needs 3 or more leads and twice the target cost in spend.</p>`;
-  return d.best_is_clear ? `<p class="note ok"><b>${esc(best.value)}</b> brings the cheapest leads, ${d.best_confidence}% sure.</p>`
-    : `<p class="note"><b>${esc(best.value)}</b> is cheapest so far, but only ${d.best_confidence}% sure: the difference could be chance. Keep the ideas running side by side.</p>`;
+  const thru = !d.with_today ? "" : d.judged_through ? ' <span class="td-thru">Judged through yesterday.</span>' : ' <span class="td-thru">Judged on complete days only: none yet in this range.</span>';
+  if (!best) return `<p class="note" id="idea-verdict">Too early to say which ${esc(what)} works best: each group needs 3 or more leads and twice the target cost in spend.${thru}</p>`;
+  return d.best_is_clear ? `<p class="note ok" id="idea-verdict"><b>${esc(best.value)}</b> brings the cheapest leads, ${d.best_confidence}% sure.${thru}</p>`
+    : `<p class="note" id="idea-verdict"><b>${esc(best.value)}</b> is cheapest so far, but only ${d.best_confidence}% sure: the difference could be chance. Keep the ideas running side by side.${thru}</p>`;
 }
 
 function pictures(g) {
@@ -86,7 +88,7 @@ function group(g) {
 function render(d) {
   const dims = DIMS.map(([k, l]) => `<button type="button" data-idea="${k}" aria-pressed="${k === state.by}">${esc(l)}</button>`).join("");
   const bar = `<div class="cr-toolbar idea-bar"><div class="format-scroll"><div class="segmented" id="idea-by" role="group" aria-label="Group by">${dims}</div></div></div>
-    <p class="muted small flush idea-when">${esc(d.range.label)} · complete days · ${esc(d.dimensions[d.by][1])}</p>`;
+    <p class="muted small flush idea-when">${esc(d.range.label)} · ${d.with_today ? "today so far, Meta still counting" : "complete days"} · ${esc(d.dimensions[d.by][1])}</p>`;
   if (!d.groups.length) {
     $("ideas").innerHTML = bar + emptyState({ title: "No ad spent money in these dates", body: "Ideas show here once tagged ads have spent. Pick longer dates above.", variant: "center" });
     return;

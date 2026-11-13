@@ -74,3 +74,22 @@ class ShapeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CompleteDaysVerdictTests(unittest.TestCase):
+    """FU-C: the figures may include today so far; the verdict and the deltas read the complete days (`cmp`)."""
+
+    def test_the_verdict_reads_complete_days_not_todays_bump(self):
+        settled = [{"id": "a", "m": m(9000, 12), "cmp": m(3000, 6)}, {"id": "b", "m": m(3100, 6), "cmp": m(3000, 3)}]
+        v = compare.shape(settled, None, 500)["verdict"]
+        self.assertEqual((v["ready"], v["leader"]), (True, "a"))
+
+    def test_deltas_compare_complete_days_with_the_days_before(self):
+        items = [{"id": "a", "m": m(9000, 12), "cmp": m(3000, 6), "prev": m(3000, 3)}, {"id": "b", "m": m(100, 1), "cmp": m(100, 1), "prev": m(100, 1)}]
+        spend = next(r for r in compare.shape(items, None, 500)["rows"] if r["key"] == "spend_cents")
+        self.assertEqual([(c["value"], c["delta_pct"]) for c in spend["cells"]], [(9000, 0), (100, 0)])
+
+    def test_today_alone_names_no_winner(self):
+        items = [{"id": "a", "m": m(9000, 12), "cmp": None}, {"id": "b", "m": m(9000, 3), "cmp": None}]
+        v = compare.shape(items, None, 500)["verdict"]
+        self.assertEqual((v["ready"], v["leader"], v["today_only"]), (False, None, True))

@@ -805,3 +805,4 @@ dialog.dg-form .dg-count { font-variant-numeric: tabular-nums; }
     background: var(--surface); border-top: 1px solid var(--line); }
   dialog.dg-form form > .row.end .btn { flex: 1; }
 }
+.tbl-sp polyline.td-partial { stroke-dasharray: 2 2; opacity: .55; }

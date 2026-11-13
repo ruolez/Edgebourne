@@ -1,6 +1,6 @@
 // Shared UI: app frame, icons, toasts, formatting.
 import { api } from "./api.js";
-import { setCurrency, currencySymbol, money, moneyWhole, explain, sourceLine, sourceHelp, leadsPair, LEADS_PAIR_HELP, SCOPE_NOTE } from "./format.js";
+import { setCurrency, currencySymbol, money, moneyWhole, explain, sourceLine, sourceHelp, leadsPair, LEADS_PAIR_HELP, SCOPE_NOTE, acctZone, zoneTag } from "./format.js";
 import { outcomeLine } from "./outcome.js";
 
 const ICONS = {
@@ -202,10 +202,11 @@ export function leadClock(lead, { long = false } = {}) {
   const label = waiting ? (long ? "waiting for a call" : "waiting") : (long ? "since they asked" : "ago");
   return `<span class="clock ${u}"><b>${text}</b><small>${label}</small></span>`;
 }
+// A moment on the account's clock (FU-C), tagged with the zone when the browser's differs: "Nov 12, 2:41 PM PST".
 export function when(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: acctZone() }) + zoneTag(d);
 }
 export function phoneDisplay(p) {
   if (!p) return "";

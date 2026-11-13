@@ -46,6 +46,8 @@ some other way.
 - Judge only on complete days (through yesterday, account time zone) and only with enough
   data: spend ≥ 2× target and ≥ 3 results on the unit judged. "Not enough data yet" with the
   date it will be enough is a good answer.
+- `today_so_far` in `desk snapshot` is today's partial spend and leads (Meta is still counting): you may
+  mention it ("$12 so far today"), never judge, compare or propose on it.
 - Every number you state names its period and source (Meta insights vs the dashboard inbox).
 
 ## Passing JSON and long text to `desk` (headless runs)

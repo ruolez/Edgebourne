@@ -476,6 +476,15 @@ a.toast-act { display: inline-flex; align-items: center; text-decoration: none; 
 .chg-edit { fill: var(--mark-edit); background: var(--mark-edit); }
 .chg-meta { fill: var(--mark-meta); background: var(--mark-meta); }
 .chart .chg-guide { stroke: var(--mark-money); stroke-width: 1; stroke-dasharray: 3 3; opacity: .45; pointer-events: none; }
+/* FU-C: today's bar is still counting, so it never looks like a finished day: lighter, hatched, and said in a key. */
+.chart .col.td-partial { fill-opacity: .38; }
+.chart .td-hatch { pointer-events: none; }
+.chart .td-hatch-l { stroke: var(--ink-2); stroke-width: 1.6; opacity: .5; }
+.td-key { display: flex; align-items: center; gap: 6px; margin: 2px 0 0 52px; color: var(--ink-3); font-size: var(--t-xs); }
+.td-key-sw { display: inline-block; width: 12px; height: 10px; border-radius: 2px; border: 1px solid var(--line-strong);
+  background: repeating-linear-gradient(45deg, var(--surface-2) 0 2px, var(--ink-3) 2px 3px); }
+.td-note-line { margin: 4px 0 0; color: var(--ink-3); font-size: var(--t-s); }
+.td-thru { color: var(--ink-3); font-weight: 400; }
 body.chg-off .chg-mark, body.chg-off .chg-guide { display: none; }
 .chg-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .tip .chg-dot { box-shadow: 0 0 0 1.5px var(--surface); margin-top: 4px; }

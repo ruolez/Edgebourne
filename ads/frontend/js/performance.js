@@ -73,10 +73,21 @@ function yesterdayLine(y) {
   return `<span class="sub">Yesterday: ${m(y.spend_cents)} spent (${vs(y.spend_cents, y.prev_spend_cents, m)}), ${count(y.leads)} lead${y.leads === 1 ? "" : "s"} (${vs(y.leads, y.prev_leads, count)})</span>`;
 }
 
-// "▲ 18% vs prior 7 days": `better` says which direction is good news (null: neither).
-function change(now, before, better, prev) {
-  const span = `${dayLabel(prev.start)} – ${dayLabel(prev.end)}`;
-  const prior = ["mtd", "lastmonth"].includes(range) ? "the month before" : data.range.days === 1 ? "the day before" : `prior ${data.range.days} days`;
+// "▲ 18% vs prior 7 days": `better` says which direction is good news (null: neither). FU-C: Today is compared with
+// yesterday up to the same hour ("vs yesterday by 3 PM: +$4.10"); a range with today compares its complete days only.
+function change(now, before, better, prev, fmt = count) {
+  const cmp = data.compare || {};
+  if (cmp.mode === "hours") {
+    if (!cmp.by) return `<span class="delta" title="Meta's hour-by-hour numbers for yesterday aren't in yet">not compared yet</span>`;
+    if (now == null || before == null) return "";
+    const diff = now - before;
+    const words = Math.abs(diff) < 0.5 ? "same" : `${diff > 0 ? "+" : "−"}${fmt(Math.abs(diff))}`;
+    const tone = better === null || Math.abs(diff) < 0.5 ? "" : (diff < 0) === (better === "down") ? "good" : "bad";
+    return `<span class="delta ${tone}" title="Today so far against yesterday up to the same hour">vs yesterday by ${esc(cmp.by)}: ${words}</span>`;
+  }
+  const span = `${dayLabel(prev.start)} – ${dayLabel(prev.end)}${cmp.note ? " · complete days" : ""}`;
+  const days = cmp.note ? cmp.before_days : data.range.days;
+  const prior = ["mtd", "lastmonth"].includes(range) ? "the month before" : days === 1 ? "the day before" : `prior ${days} days`;
   const vs = `vs ${prior}`;
   if (now == null) return "";
   if (before == null || before === 0) return `<span class="delta" title="${esc(span)}">none in ${prior}</span>`;
@@ -89,6 +100,9 @@ function change(now, before, better, prev) {
 function render() {
   const t = data.totals;
   const p = data.previous;
+  // What "vs before" compares: the complete days when the range has today in it (FU-C), else the figures shown.
+  const c = data.compare_now || t;
+  const exact = (v) => money(v, { exact: true });
   const cpl = t.leads ? t.spend_cents / t.leads : null;
   const noData = !data.ads.length && !t.spend_cents;
   const alerts = data.alerts.map((a) => `<p class="note ${a.level}" role="status">${esc(a.text)}${a.href ? ` <a href="${esc(a.href)}">${esc(a.link || "Open")}</a>` : ""}</p>`).join("");
@@ -104,14 +118,14 @@ function render() {
 
   const ratio = (c, n) => (n ? c / n : null);
   const figures = `<section class="panel figures${data.tracks_bookings ? " booked" : ""}" aria-label="Totals for the period">
-    <div class="figure hero"><span class="label">Cost per lead</span><span class="value">${cpl ? money(cpl, { exact: true }) : "—"}</span>${change(cpl, ratio(p.spend_cents, p.leads), "down", p)}<span class="sub">${count(t.leads)} lead${t.leads === 1 ? "" : "s"} from ${money(t.spend_cents)}</span>${yesterdayLine(data.yesterday)}</div>
-    <div class="figure"><span class="label">Spent</span><span class="value">${money(t.spend_cents)}</span>${change(t.spend_cents, p.spend_cents, null, p)}</div>
-    <div class="figure" id="fig-leads"><span class="label">Leads</span><span class="value">${count(t.leads)}</span>${change(t.leads, p.leads, "up", p)}${pairNote(data.source && data.source.leads)}</div>
-    <div class="figure"><span class="label">Qualified or won</span><span class="value">${count(t.qualified)}</span>${change(t.qualified, p.qualified, "up", p)}<span class="sub">got that far · from your leads</span></div>
-    <div class="figure"><span class="label">Cost per qualified lead</span><span class="value">${per(t.spend_cents, t.qualified)}</span>${change(ratio(t.spend_cents, t.qualified), ratio(p.spend_cents, p.qualified), "down", p)}<span class="sub">the number that matters most</span></div>
-    ${data.tracks_bookings ? `<div class="figure" id="fig-booked"><span class="label">${FOLLOW.booked}</span><span class="value">${count(t.booked)}</span>${change(t.booked, p.booked, "up", p)}<span class="sub">${count(t.held)} held, ${plural(t.no_show, "no-show")}</span></div>
-    <div class="figure" id="fig-cpb"><span class="label">${FOLLOW.cpb}</span><span class="value">${per(t.spend_cents, t.booked)}</span>${change(ratio(t.spend_cents, t.booked), ratio(p.spend_cents, p.booked), "down", p)}<span class="sub">from your leads</span></div>` : ""}
-  </section>`;
+    <div class="figure hero"><span class="label">Cost per lead</span><span class="value">${cpl ? money(cpl, { exact: true }) : "—"}</span>${change(ratio(c.spend_cents, c.leads), ratio(p.spend_cents, p.leads), "down", p, exact)}<span class="sub">${count(t.leads)} lead${t.leads === 1 ? "" : "s"} from ${money(t.spend_cents)}</span>${yesterdayLine(data.yesterday)}</div>
+    <div class="figure" id="fig-spent"><span class="label">Spent</span><span class="value">${money(t.spend_cents)}</span>${change(c.spend_cents, p.spend_cents, null, p, exact)}</div>
+    <div class="figure" id="fig-leads"><span class="label">Leads</span><span class="value">${count(t.leads)}</span>${change(c.leads, p.leads, "up", p)}${pairNote(data.source && data.source.leads)}</div>
+    <div class="figure"><span class="label">Qualified or won</span><span class="value">${count(t.qualified)}</span>${change(c.qualified, p.qualified, "up", p)}<span class="sub">got that far · from your leads</span></div>
+    <div class="figure"><span class="label">Cost per qualified lead</span><span class="value">${per(t.spend_cents, t.qualified)}</span>${change(ratio(c.spend_cents, c.qualified), ratio(p.spend_cents, p.qualified), "down", p, exact)}<span class="sub">the number that matters most</span></div>
+    ${data.tracks_bookings ? `<div class="figure" id="fig-booked"><span class="label">${FOLLOW.booked}</span><span class="value">${count(t.booked)}</span>${change(c.booked, p.booked, "up", p)}<span class="sub">${count(t.held)} held, ${plural(t.no_show, "no-show")}</span></div>
+    <div class="figure" id="fig-cpb"><span class="label">${FOLLOW.cpb}</span><span class="value">${per(t.spend_cents, t.booked)}</span>${change(ratio(c.spend_cents, c.booked), ratio(p.spend_cents, p.booked), "down", p, exact)}<span class="sub">from your leads</span></div>` : ""}
+  </section>${data.compare && data.compare.note ? `<p class="td-note-line" id="cmp-note">Compared without today: today isn't over yet. The changes compare ${esc(data.compare.now_label)} with ${esc(data.compare.before_label)}.</p>` : ""}`;
 
   const charts = `<div class="charts">
     <section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
@@ -122,8 +136,9 @@ function render() {
     <thead><tr><th>Day</th><th class="num">Spent</th><th class="num">Leads</th></tr></thead>
     <tbody>${data.series.map((d) => `<tr><td>${dayLabel(d.day)}</td><td class="num">${money(d.spend_cents, { exact: true })}</td><td class="num">${d.leads}</td></tr>`).join("")}</tbody></table></div></details>`;
 
+  const withToday = data.source && data.source.today && data.source.today.included;
   const ads = `<section class="panel" id="cr-panel" aria-label="Ads"></section>
-    <p class="muted small flush">Complete days only (${dayLabel(data.range.start)} to ${dayLabel(data.range.end)}): today is left out because Meta reports late. A cost in grey comes from fewer than ${EARLY} leads, too few to judge the ad on.</p>`;
+    <p class="muted small flush">${withToday ? `${data.range.label === "Today" ? "Today so far" : esc(data.range.label)}: Meta is still counting today and reports some leads late.` : `Complete days only (${dayLabel(data.range.start)} to ${dayLabel(data.range.end)}): today is left out because Meta reports late.`} A cost in grey comes from fewer than ${EARLY} leads, too few to judge the ad on.</p>`;
   const quality = `<section class="panel quality-panel" id="quality-panel" aria-labelledby="quality-h">
       <div class="panel-head wrap"><h2 id="quality-h">Lead quality</h2><p>What happened to the leads from each ad, same period</p><span class="spacer"></span>
         <div class="quality-tools"><div class="segmented" id="quality-by" role="group" aria-label="Lead quality by">${Q_BY.map(([k, l]) =>
@@ -131,7 +146,9 @@ function render() {
           <label class="sr-only" for="quality-question">Question</label><select class="input tool" id="quality-question" hidden></select></div></div>
       <div class="panel-body" id="quality-body">${skeleton()}</div></section>`;
 
-  const extra = `<section class="panel"><div class="panel-head wrap"><h2>Who and where</h2><p>${campaign ? "This campaign" : "All ads"}, same period</p><span class="spacer"></span>
+  // Who and where is read for whole days only (FU-C): name the days it covers, which stop at yesterday.
+  const settledWords = (k) => (["7", "14", "30"].includes(k) ? `the last ${k} complete days, to yesterday` : k === "mtd" ? "this month to yesterday (complete days)" : "complete days only, to yesterday");
+  const extra = `<section class="panel"><div class="panel-head wrap"><h2>Who and where</h2><p>${campaign ? "This campaign" : "All ads"}, ${range === "today" ? "yesterday: read for whole days only" : withToday ? settledWords(range) : "same period"}</p><span class="spacer"></span>
       <div class="format-scroll"><div class="segmented" id="acc-by">${[["placement", "Placement"], ["age", "Age"], ["gender", "Gender"], ["device", "Device"], ["region", "Region"], ["hour", "Hour"]].map(([k, l]) => `<button type="button" data-by="${k}" aria-pressed="${k === accBy}">${l}</button>`).join("")}</div></div></div>
       <div class="panel-body aud-grid"><div><h3 class="chart-title">Share of spend</h3><div id="acc-spend">${skeleton("Loading from Meta…")}</div></div>
       <div><h3 class="chart-title">Leads and cost per lead</h3><div id="acc-leads"></div></div></div></section>
@@ -397,7 +414,8 @@ function qualityCells(d, r) {
 
 function qualityHtml(d) {
   const v = d.verdict || {};
-  const verdict = `<p class="quality-verdict" id="quality-verdict">${v.name ? `<b>${esc(v.name)}</b> ` : ""}${esc(v.text || "")}</p>`;
+  const thru = d.verdict_through ? ` <span class="td-thru">(through yesterday)</span>` : "";
+  const verdict = `<p class="quality-verdict" id="quality-verdict">${v.name ? `<b>${esc(v.name)}</b> ` : ""}${esc(v.text || "")}${thru}</p>`;
   if (!d.rows.length) return verdict;
   const head = d.by === "ad" ? "Ad" : d.by === "form" ? "Form" : "Answer";
   const rows = d.rows.map((r) => {

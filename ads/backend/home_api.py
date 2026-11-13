@@ -18,21 +18,15 @@ from desk_api import bridge_status, bridge_with_status
 from performance_api import cap_snapshot, daily_budget_cents, overview_data
 
 bp = Blueprint("home", __name__, url_prefix="/api/home")
-TODAY_TTL = 300
 
 
 def today_by_campaign():
-    """Spend and leads so far today, per campaign, cached for five minutes. Today waits on this read, so a
-    short timeout, and a Meta that didn't answer isn't asked again for a couple of minutes (audit A3-121)."""
-    snap = insights.stored_today()
-    if snap and time.time() - snap["at"] < TODAY_TTL:
-        return snap
-    if not meta_client.recently_failed("today_snapshot"):
-        try:
-            return insights.pull_today(timeout=meta_client.READ_TIMEOUT)
-        except meta_client.MetaError as exc:
-            meta_client.remember_failure("today_snapshot", exc)
-    return snap or {"at": None, "campaigns": {}}
+    """Spend and leads so far today, per campaign: read from Meta when the last read is over
+    insights.TODAY_MAX_AGE old (FU-C). Today waits on this read, so a short timeout, and a Meta that didn't answer
+    isn't asked again for a couple of minutes (audit A3-121); the stored numbers stand in."""
+    read = insights.read_today()
+    snap = insights.stored_today() or {"at": None, "campaigns": {}}
+    return {**snap, "at": read["as_of"] or snap.get("at"), "error": read["error"]}
 
 
 CALL_ROWS = 6  # leads listed in the queue; the rest are counted with a link to Leads
@@ -166,8 +160,11 @@ def lead_rows(scope_ids, now):
 def home():
     user = current_user()
     scope_ids = visible_campaign_ids(user)
-    perf = overview_data(user, 7)
     so_far = today_by_campaign()
+    import ranges
+    today_d = account_info.today()
+    week = ranges.window("7", today_d, live=True)
+    perf = overview_data(user, 7, span=(week, ranges.previous(*week, "7")), live=True)
     today_rows = [v for cid, v in (so_far.get("campaigns") or {}).items() if scope_ids is None or cid in scope_ids]
     lw = "TRUE" if scope_ids is None else "campaign_id = ANY(%s)"
     lp = [] if scope_ids is None else [scope_ids]
@@ -187,6 +184,11 @@ def home():
     strip = [{"id": a["id"], "name": a["name"], "status": a["effective_status"], "thumbnail_url": a.get("thumbnail_url"),
               "spend_cents": int(a["spend_cents"]), "leads": int(a["leads"])}
              for a in perf["ads"] if a["effective_status"] not in ("DELETED", "ARCHIVED")][:8]
+    # The strip's highlight is a judgment: the most leads over the week's complete days, never today so far (FU-C).
+    done = ranges.settled(*week, today_d)
+    best = db.query("""SELECT ad_id, SUM(leads) AS n FROM ad_daily WHERE ad_id = ANY(%s) AND day BETWEEN %s AND %s
+                       GROUP BY ad_id HAVING SUM(leads) > 0 ORDER BY SUM(leads) DESC, ad_id LIMIT 1""",
+                    ([a["id"] for a in strip[:5]], *done), one=True) if strip and done else None
     rows, waiting_calls, counts, follow = queue(user, scope_ids)
     out = {
         "queue": rows,
@@ -195,7 +197,7 @@ def home():
         "fyi_unread": counts["fyi_unread"],
         "snoozed": counts["snoozed"],
         "today": {"spend_cents": sum(r["spend_cents"] for r in today_rows), "leads": sum(r["leads"] for r in today_rows),
-                  "as_of": so_far.get("at")},
+                  "as_of": so_far.get("at"), "error": so_far.get("error")},
         "yesterday": perf["yesterday"],
         "week": {**perf["totals"], "range": perf["range"]},
         "ads": {r["effective_status"] or "UNKNOWN": int(r["n"]) for r in ads},
@@ -204,9 +206,10 @@ def home():
         "stages": {r["status"]: int(r["n"]) for r in stages},
         "daily_budget_cents": budget,
         "ad_strip": strip,
+        "ad_strip_best": best["ad_id"] if best else None,
         "changes": changes,
         "updated_at": settings_store.get("last_refresh_at") or settings_store.get("last_performance_sync"),
-        "source": perf["source"],  # D1: the week's figures come from Meta's stored days; today's spend is live
+        "source": perf["source"],  # D1: the last 7 days, today so far included (FU-C), as read from Meta
     }
     if user["role"] == "admin":
         out["desk"] = db.query("""SELECT id, kind, prompt, status, summary, finished_at FROM desk_tasks

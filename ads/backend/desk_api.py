@@ -1124,12 +1124,27 @@ def snapshot():
     import spend_limit
     return jsonify({"account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current()),
                                 "ad_account_id": spend_limit.act()},
-                    "spend_limit": limit_snapshot(),
+                    "spend_limit": limit_snapshot(), "today_so_far": today_so_far(),
                     "performance": perf, "source": perf["source"], "lead_stages_by_ad": stages, "lead_business_types": types,
                     "speed_to_lead": speed, "follow_ups": follow,
                     "lead_quality_by_ad": quality_rows, "lead_quality_totals": quality_totals, "lead_quality_notes": lq.SNAPSHOT_NOTES, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
                     "experiments": tests, **budget_snapshot(perf["range"]),
                     "change_results": change_checks_db.outcomes(30, 20)})
+
+
+def today_so_far():
+    """FU-C: today's spend and leads as last stored (no Meta read), apart from the complete days the snapshot judges on,
+    so Claude can mention them without counting them."""
+    from datetime import datetime, timezone
+    row = db.query("SELECT COALESCE(SUM(spend_cents), 0) AS spend_cents, COALESCE(SUM(leads), 0) AS leads FROM ad_daily WHERE day = %s",
+                   (account_info.today(),), one=True)
+    try:
+        at = float(settings_store.get("today_ads_at"))
+    except (TypeError, ValueError):
+        at = None
+    return {"day": account_info.today().isoformat(), "spend_cents": int(row["spend_cents"]), "leads": int(row["leads"]),
+            "as_of": datetime.fromtimestamp(at, timezone.utc).isoformat() if at else None,
+            "note": "Partial: Meta is still counting today. Never judge on it; every figure above is complete days through yesterday."}
 
 
 def limit_snapshot():

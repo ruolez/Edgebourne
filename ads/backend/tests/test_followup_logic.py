@@ -86,6 +86,26 @@ class CleanNextTests(unittest.TestCase):
                           {"kind": "other", "text": "Send the case study", "at": utc(2026, 11, 13, 22)}])
 
 
+class ServerZoneTests(unittest.TestCase):
+    """FU-C: a time picked in the booking dialog is the account's clock, whatever zone the server (or browser) runs in."""
+
+    def test_a_picked_time_is_account_time_on_a_server_in_berlin(self):
+        import os
+        import time
+        old = os.environ.get("TZ")
+        os.environ["TZ"] = "Europe/Berlin"
+        time.tzset()
+        try:
+            got = [fu.clean_meeting({"at": "2026-11-12T15:00"}, LA, NOW), fu.clean_meeting({"preset": "today", "time": "15:00"}, LA, NOW)]
+        finally:
+            if old is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old
+            time.tzset()
+        self.assertEqual(got, [utc(2026, 11, 12, 23), utc(2026, 11, 11, 23)])
+
+
 class CleanMeetingTests(unittest.TestCase):
     def test_today_tomorrow_an_exact_time_or_not_sure_yet(self):
         self.assertEqual([fu.clean_meeting({"preset": "today", "time": "14:00"}, LA, NOW),

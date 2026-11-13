@@ -103,6 +103,7 @@ function drawWidth(el) {
   return w >= 240 && w < 560 ? w : 560;
 }
 
+let hatchIds = 0;
 export function columnChart({ el, series, key, color, format, axisFormat, title, integer = false, height = 220, marks = [], marksSummary = "" }) {
   const byDay = markOf(marks);
   const marked = series.map((d, i) => ({ m: byDay.get(d.day), i })).filter((x) => x.m);
@@ -120,24 +121,30 @@ export function columnChart({ el, series, key, color, format, axisFormat, title,
     if (empty && v > 0) continue;
     ticks += `<text class="tick" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${axisFormat(v)}</text>`;
   }
+  // Today's bar (FU-C: Meta is still counting it) is drawn lighter and hatched, never like a finished day.
+  const hatch = series.some((d) => d.partial) ? `tdh-${++hatchIds}` : "";
   const cols = series.map((d, i) => {
-    const x = L + i * band + (band - bw) / 2;
+    const w = d.partial ? Math.min(band, Math.max(6, bw)) : bw;
+    const x = L + i * band + (band - w) / 2;
     const h = (d[key] / top) * plotH;
-    const r = Math.min(4, h);
-    const path = h <= 0 ? "" : `M${x},${T + plotH} V${T + plotH - h + r} Q${x},${T + plotH - h} ${x + r},${T + plotH - h} H${x + bw - r} Q${x + bw},${T + plotH - h} ${x + bw},${T + plotH - h + r} V${T + plotH} Z`;
-    const label = dayTick(i, series.length) ? `<text class="tick" x="${L + i * band + band / 2}" y="${H - 6}" text-anchor="middle">${dayLabel(d.day)}</text>` : "";
-    return `<rect class="hit" data-i="${i}" x="${L + i * band}" y="${T}" width="${band}" height="${plotH}"/><path class="col" d="${path}" fill="${color}"/>${label}`;
+    const r = Math.min(4, h, w / 2);
+    const path = h <= 0 ? "" : `M${x},${T + plotH} V${T + plotH - h + r} Q${x},${T + plotH - h} ${x + r},${T + plotH - h} H${x + w - r} Q${x + w},${T + plotH - h} ${x + w},${T + plotH - h + r} V${T + plotH} Z`;
+    const label = dayTick(i, series.length) ? `<text class="tick" x="${L + i * band + band / 2}" y="${H - 6}" text-anchor="middle">${d.partial ? "Today" : dayLabel(d.day)}</text>` : "";
+    const bar = d.partial ? `<path class="col td-partial" d="${path}" fill="${color}"/>${path ? `<path class="td-hatch" d="${path}" fill="url(#${hatch})"/>` : ""}` : `<path class="col" d="${path}" fill="${color}"/>`;
+    return `<rect class="hit" data-i="${i}" x="${L + i * band}" y="${T}" width="${band}" height="${plotH}"/>${bar}${label}`;
   }).join("");
+  const defs = hatch ? `<defs><pattern id="${hatch}" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="td-hatch-l" x1="0" y1="0" x2="0" y2="5"/></pattern></defs>` : "";
   const sum = described(marksSummary ? `${title}. ${marksSummary}` : title, columnSummary(series, key, format, title));
   const shapes = markShapes(marked, (i) => L + i * band + band / 2, T, plotH);
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" ${sum.attrs}><g class="grid">${grid}</g>${ticks}${shapes}${cols}</svg>${sum.note}<div class="tip" hidden></div>`;
+  const key_ = hatch ? `<p class="td-key"><i class="td-key-sw"></i>Today so far (still counting)</p>` : "";
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" ${sum.attrs}>${defs}<g class="grid">${grid}</g>${ticks}${shapes}${cols}</svg>${key_}${sum.note}<div class="tip" hidden></div>`;
   el.querySelector("svg").style.height = `${H}px`;
   const tip = el.querySelector(".tip");
   const svg = el.querySelector("svg");
   wireTips(el, (i) => {
     const d = series[i];
     const scale = svg.getBoundingClientRect().width / W;
-    tip.innerHTML = `${format(d[key])}<small>${dayLabel(d.day)}</small>${tipChanges(byDay.get(d.day))}`;
+    tip.innerHTML = `${format(d[key])}<small>${dayLabel(d.day)}${d.partial ? ", today so far" : ""}</small>${tipChanges(byDay.get(d.day))}`;
     tip.style.left = `${(L + i * band + band / 2) * scale}px`;
     tip.style.top = `${y(d[key]) * scale}px`;
     tip.hidden = false;

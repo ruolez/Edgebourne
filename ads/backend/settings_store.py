@@ -36,6 +36,9 @@ ACCOUNT_KEYS = {
     "meta_ad_account_via",
     # FU-B: the pause after a spending-limit read-back that didn't match, and when the limit was last read back.
     "spend_limit_block", "spend_limit_last_check",
+    # FU-C: when today's per-ad rows were last read from Meta (any reader: a screen, Refresh, the worker).
+    "today_ads_at",
+    "today_ads_force",
 }
 INHERITED = {"meta_system_token"}
 

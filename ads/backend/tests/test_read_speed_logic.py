@@ -227,12 +227,14 @@ class TodayTests(unittest.TestCase):
     def setUp(self):
         forget_failures()
 
-    def test_today_asks_a_slow_meta_once_then_serves_what_it_has(self):
+    def test_when_meta_doesnt_answer_today_serves_what_it_has_and_says_so(self):
+        # How often Meta is asked (90 s, once per two minutes when slow) is tests/test_live_today_logic.ReadTodayTests.
         snap = {"at": 1.0, "day": "2026-11-11", "campaigns": {"c1": {"spend_cents": 500, "leads": 1}}}
         with mock.patch.object(home_api.insights, "stored_today", return_value=snap), \
-                mock.patch.object(home_api.insights, "pull_today", side_effect=SLOW) as pull, account_ctx.use(ACCOUNT):
-            out = [home_api.today_by_campaign(), home_api.today_by_campaign()]
-        self.assertEqual((out, pull.call_count, pull.call_args.kwargs), ([snap, snap], 1, {"timeout": meta_client.READ_TIMEOUT}))
+                mock.patch.object(home_api.insights, "read_today", return_value={"as_of": 1.0, "read": False, "error": "Meta didn't answer"}), \
+                account_ctx.use(ACCOUNT):
+            out = home_api.today_by_campaign()
+        self.assertEqual(out, {**snap, "error": "Meta didn't answer"})
 
 
 class BulkReadTests(unittest.TestCase):

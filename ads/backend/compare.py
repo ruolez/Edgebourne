@@ -57,8 +57,11 @@ BOOKED_ROWS = ("booked", "cpb_cents")
 
 def shape(items, target_cents, lead_target_cents=None, booked=False):
     """booked: the account books calls (L1), so Calls booked and Cost per booked call get rows. They are shown,
-    never judged: the verdict stays on qualified leads or leads."""
+    never judged: the verdict stays on qualified leads or leads. An item's `cmp` (FU-C) is its complete days when
+    the figures include today so far: the verdict and the deltas read it; `cmp` None: today alone, no verdict."""
     cur = [rates(i["m"]) for i in items]
+    today_only = any("cmp" in i and i["cmp"] is None for i in items)
+    judged = [rates(i["cmp"]) if i.get("cmp") is not None else c for i, c in zip(items, cur)]
     prev = [rates(i["prev"]) if i.get("prev") else None for i in items]
     rows = []
     for key, label, direction in ROWS:
@@ -66,16 +69,16 @@ def shape(items, target_cents, lead_target_cents=None, booked=False):
             continue
         values = [c.get(key) for c in cur]
         rows.append({"key": key, "label": label, "best": _best(values, direction),
-                     "cells": [{"value": v, "delta_pct": _delta(v, p.get(key) if p else None)} for v, p in zip(values, prev)]})
+                     "cells": [{"value": v, "delta_pct": _delta(j.get(key), p.get(key) if p else None)} for v, j, p in zip(values, judged, prev)]})
     if target_cents:
         metric, result, target = "cpq_cents", "qualified", target_cents
     else:
         metric, result, target = "cpl_cents", "leads", lead_target_cents
     need = 2 * target if target else None
-    ready = bool(need) and all(c["spend_cents"] >= need and c.get(result, 0) >= 3 for c in cur)
+    ready = not today_only and bool(need) and all(c["spend_cents"] >= need and c.get(result, 0) >= 3 for c in judged)
     leader = None
     if ready:
-        idx = _best([c.get(metric) for c in cur], -1)
+        idx = _best([c.get(metric) for c in judged], -1)
         leader = items[idx]["id"] if idx is not None else None
     return {"rows": rows, "verdict": {"ready": ready, "leader": leader, "metric": metric, "need_spend_cents": need,
-                                      "need_results": 3, "result": result}}
+                                      "need_results": 3, "result": result, "today_only": today_only}}
