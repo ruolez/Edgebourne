@@ -39,11 +39,11 @@ def to_cents(value):
     return int(round(float(value or 0) * 100))
 
 
-CREATIVE_FIELDS = "{id,object_type,title,body,call_to_action_type,video_id,image_url,thumbnail_url,effective_object_story_id,asset_feed_spec}"
+CREATIVE_FIELDS = "{id,object_type,title,body,call_to_action_type,video_id,image_url,thumbnail_url,effective_object_story_id}"
 AD_BASE = ("id,name,campaign_id,adset_id,status,configured_status,effective_status,ad_review_feedback,issues_info,"
            "created_time,updated_time,")
-# Larger creative thumbnails when Meta accepts the sizing parameters; plain fields otherwise.
-AD_FIELDS = AD_BASE + "creative.thumbnail_width(720).thumbnail_height(900)" + CREATIVE_FIELDS
+# Larger creative thumbnails and the placement videos (asset_feed_spec) when Meta accepts them; plain fields otherwise.
+AD_FIELDS = AD_BASE + "creative.thumbnail_width(720).thumbnail_height(900)" + CREATIVE_FIELDS[:-1] + ",asset_feed_spec}"
 AD_FIELDS_PLAIN = AD_BASE + "creative" + CREATIVE_FIELDS
 
 
