@@ -12,7 +12,7 @@ import today
 
 CATEGORY = {
     "ad_rejected": "status", "ad_approved": "status", "learning_limited": "status", "no_delivery": "status",
-    "fatigue": "status", "changed_outside": "status", "outside_edit": "money",
+    "fatigue": "status", "changed_outside": "status", "outside_edit": "money", "change_result": "money",
     "spend_cap": "money", "cap_soon": "money", "pace_over": "money", "day_overspend": "money",
     "week_overspend": "money", "cpl_high": "money", "no_leads": "money",
     "tracking": "system", "events_quiet": "system", "stale_data": "system",
@@ -33,7 +33,7 @@ def _alert_needs(a):
     return a.get("kind", "condition") == "condition" or a["level"] in ("warn", "bad")
 
 
-DONE_OK = {"outside_edit"}  # alerts.DONE_OK: open events a person closes with Done
+DONE_OK = {"outside_edit", "change_result"}  # alerts.DONE_OK: open events a person closes with Done
 DIAGNOSE_DAYS = 3  # Claude can still look into an alert this long after it cleared ("why did it happen")
 
 

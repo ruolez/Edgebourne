@@ -13,4 +13,7 @@ docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "impor
 with account_ctx.all_accounts():
     db.execute('DELETE FROM client_reports'); db.execute(\"DELETE FROM alerts WHERE rule IN ('report_review', 'report_sent')\")
     db.execute(\"DELETE FROM settings WHERE key ~ '^report_(review|email|last_sent|sent_to)(@[0-9]+)?$'\")" >/dev/null
+# "Did it work?" (D3): a run that stopped half-way leaves its seeded campaigns and spend behind; they go first.
+docker cp dev/seed_checks.py edgebourne-ads-backend:/tmp/seed_checks.py >/dev/null
+docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python /tmp/seed_checks.py --clean >/dev/null
 node qa/flows.cjs

@@ -3,6 +3,7 @@
 // Research (`place: "inline"`) through the confirmation in tasks.js. Both read the same card.
 import { entityLink, esc, icon, previewSkeleton, when } from "./ui.js";
 import { WORDS } from "./format.js";
+import { outcomeLine } from "./outcome.js";
 
 const isVersion = (p) => /^make a new version/i.test(p.title || "");
 const TEST_METRICS = { cpl: WORDS.cpl, cpql: WORDS.cpql, ctr: WORDS.ctr, hook: WORDS.hook };
@@ -146,7 +147,8 @@ export function suggestionCard(p, { ix = null, place = "inline", task = null } =
   const decided = p.status !== "pending" && decidedOf(p);
   const foot = p.status === "pending"
     ? `<div class="sg-do">${actions(p, place, task)}</div>`
-    : `<p class="flush"><span class="pill ${decided ? decided[0] : ""}">${esc(decided ? decided[1] : p.status)}</span>${p.decided_at ? ` <span class="muted small">${esc(when(p.decided_at))}</span>` : ""}</p>`;
+    : `<p class="flush"><span class="pill ${decided ? decided[0] : ""}">${esc(decided ? decided[1] : p.status)}</span>${p.decided_at ? ` <span class="muted small">${esc(when(p.decided_at))}</span>` : ""}</p>${
+      p.check ? `<div class="sg-result">${outcomeLine(p.check, { changeId: p.check.change_id, canUndo: Boolean(p.check.can_undo), expect: p.check.expected || p.check.expected_text, label: p.title })}</div>` : ""}`;
   return `<article class="sg ${big ? "with-media" : side ? "with-thumb" : ""}" id="p-${p.id}" data-kind="${esc(p.kind)}" data-proposal="${p.id}" data-title="${esc(p.title)}" data-change="${esc(change)}">
     ${side}
     <div class="sg-main">

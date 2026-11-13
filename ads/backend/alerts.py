@@ -39,12 +39,14 @@ DEFAULTS = {
     "learning_limited": {"on": True},
     "changed_outside": {"on": True},
     "outside_edit": {"on": True},
+    # D3: a change made from the console looks worse after 3, 7 or 14 complete days (good results are FYI only).
+    "change_result": {"on": True},
     # W1b: how the leads the team worked turned out, over the 14 days that end 2 days ago (newer leads had no fair chance).
     "qualified_low": {"on": True, "percent": 20, "min_leads": 10},
     "junk_high": {"on": True, "percent": 30, "min_leads": 10},
 }
-# Events that stay open until someone deals with them get a Done (00-PLAN C16); D3 adds change_result.
-DONE_OK = {"outside_edit"}
+# Events that stay open until someone deals with them get a Done (00-PLAN C16).
+DONE_OK = {"outside_edit", "change_result"}
 # An outside budget change that broke a money rule closes by itself once the 3-day window has passed.
 OUTSIDE_EDIT_OPEN = timedelta(hours=72)
 MIN_IMPRESSIONS = 1000  # per 7-day window, before fatigue is judged

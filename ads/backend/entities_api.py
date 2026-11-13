@@ -5,6 +5,7 @@ from flask import Blueprint, jsonify, request
 
 import account_info
 import ads_api
+import change_checks_db
 import compare
 import db
 import followup
@@ -49,7 +50,8 @@ def timeline_for(level, entity_id):
             c["proposal_id"] = None
     proposals = [] if client else db.query("""SELECT id, task_id, title, status, decided_at FROM desk_proposals
                             WHERE entity_id = %s AND decided_at IS NOT NULL ORDER BY id DESC LIMIT 50""", (entity_id,))
-    return timeline.merge(events, changes, proposals, money=account_info.money, subject=entity_id)
+    checks = change_checks_db.summary_for([c["id"] for c in changes], client=client)
+    return timeline.merge(events, changes, proposals, money=account_info.money, subject=entity_id, checks=checks)
 
 
 def _visible(level, entity_id):

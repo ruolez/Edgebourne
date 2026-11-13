@@ -1,4 +1,5 @@
 """Home: what needs attention right now, and the day at a glance."""
+import re
 import time
 from datetime import datetime, timezone
 
@@ -77,6 +78,7 @@ def queue(user, scope_ids):
                      # W1: Got it / Diagnose with Claude on the row (admins); a snoozed problem is FYI, so never here.
                      **{k: i[k] for k in ("actions", "choices", "diagnose") if k in i}})
     rows += [] if user["role"] == "client" else _extras(user)
+    _undo_flags(rows, user)
     leads_rows, total, follow = lead_rows(scope_ids, now)
     rows += leads_rows
     for r in rows:
@@ -86,6 +88,23 @@ def queue(user, scope_ids):
     shown = {r["key"] for r in calls[:CALL_ROWS]}
     counts = {**inbox.counts(items), "snoozed": inbox.snoozed_count(items)}
     return [r for r in ranked if r["rule"] != "new_lead" or r["key"] in shown], int(total), counts, follow
+
+
+def _undo_flags(rows, user):
+    """D3: Put it back shows on a "didn't help" row only while there is still something to put back (not changed
+    again since, not archived, no newer version), the same test History uses."""
+    import change_checks_db
+    ids = {}
+    for r in rows:
+        m = re.search(r"[?&]check=(\d+)", r.get("href") or "") if r["rule"] == "change_result" else None
+        if m:
+            ids[r["key"]] = int(m.group(1))
+    if not ids:
+        return
+    found = change_checks_db.summary_for(sorted(set(ids.values())), client=user["role"] == "client")
+    for r in rows:
+        if r["key"] in ids:
+            r["can_undo"] = bool((found.get(ids[r["key"]]) or {}).get("can_undo"))
 
 
 # L1's lead rows: which Today group each bucket of followup.queue() lands in (00-PLAN S9), and its words.

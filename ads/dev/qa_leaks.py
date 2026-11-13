@@ -46,7 +46,7 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
     once("desk_reports", {"task_id": task, "title": f"{mark} report", "body": f"{mark} report body", "account_id": acct}, "title")
     once("status_events", {"level": "ad", "entity_id": ad, "entity_name": f"{mark} ad", "campaign_id": campaign, "field": "review",
                            "new_value": f"{mark} review", "source": "console", "account_id": acct}, "new_value")
-    once("meta_changes", {"user_id": admin_id, "level": "ad", "entity_id": ad, "entity_name": f"{mark} ad", "campaign_id": campaign,
+    change = once("meta_changes", {"user_id": admin_id, "level": "ad", "entity_id": ad, "entity_name": f"{mark} ad", "campaign_id": campaign,
                           "action": "status", "old_value": "ACTIVE", "new_value": f"{mark} change", "ok": True, "account_id": acct}, "new_value")
     once("ad_versions", {"ad_id": ad, "number": 900, "creative_id": f"{mark}creative", "label": f"{mark} version", "title": f"{mark} version",
                          "body": f"{mark} version body", "account_id": acct}, "label")
@@ -69,7 +69,8 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
     db.execute("UPDATE activity SET at = now() WHERE id = %s", (activity["id"],))  # History lists the latest 200 only
     once("inbox_reads", {"user_id": admin_id, "item_key": f"{mark}read", "account_id": acct}, "item_key")
     swipe = once("swipes", {"page_name": f"{mark} rival", "body": f"{mark} rival words", "source": "manual", "account_id": acct}, "page_name")
-    return {"proposal": proposal["id"], "view": view["id"], "build": build["id"], "swipe": swipe["id"], "alert": problem["id"]}
+    return {"proposal": proposal["id"], "view": view["id"], "build": build["id"], "swipe": swipe["id"], "alert": problem["id"],
+            "change": change["id"]}
 
 with account_ctx.all_accounts():
     acct = db.query("SELECT id FROM accounts WHERE name = 'Burdanova QA'", one=True)
@@ -155,7 +156,8 @@ def fill(rule, other):
     for name in rule.arguments:
         v = {"ad_id": other["ad"], "adset_id": other["adset"], "campaign_id": other["campaign"], "entity_id": other["ad"], "level": "ad",
              "lead_id": other["lead"], "task_id": other["task"], "exp_id": other.get("exp", 1), "id": other["lead"],
-             "proposal_id": other["proposal"], "build_id": other["build"], "view_id": other["view"], "number": 900}.get(name, "1")
+             "proposal_id": other["proposal"], "build_id": other["build"], "view_id": other["view"], "number": 900,
+             "change_id": other["change"]}.get(name, "1")
         url = re.sub(r"<(?:[a-z]+:)?" + name + ">", str(v), url)
     return url
 

@@ -5,6 +5,7 @@ import { boot, emptyState, esc, icon, onRefresh, setCrumbs, switchHtml, timeline
 import { columnChart, marksPanel } from "./charts.js";
 import { count, dayLabel, explain, money, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
+import { openFromUrl } from "./outcome.js";
 import { LIVE, bulkBarHtml, closePeek, figuresHtml, flatten, setBooked, listHtml, narrow, peek, statusCell, tableHtml, hasTrack, trackLegend, unlistedNote, wire } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
@@ -114,7 +115,10 @@ async function load() {
     { label: data.entity.name, href: location.pathname + location.search }]);
   render();
   if (state.peek) openPeek(state.peek, { quiet: true });
+  // An Inbox or Today link to a change's "Did it work?" (?check=N) opens it once, over the History.
+  if (!urlCheckDone) { urlCheckDone = true; openFromUrl(); }
 }
+let urlCheckDone = false;
 
 // id's default is "", so writing the state always keeps ?id= in the address (it used to drop it on a change of dates).
 const KEYS = DEFAULTS;

@@ -7,6 +7,7 @@ import { statusPill } from "./format.js";
 import { renderMarkdown } from "./markdown.js";
 import { KIND_LABELS, scoreClass } from "./tasks.js";
 import { suggestionCard, suggestionType } from "./suggest.js";
+import { outcomeLine } from "./outcome.js";
 
 const STATE_PILL = {
   waiting: "claude", working: "claude", live: "ok", off: "", review: "warn", archived: "", deleted: "",
@@ -88,7 +89,9 @@ export function proposalRow(p, ix) {
   const look = p.kind === "creative" && p.payload ? ` <button class="prow-look" type="button" data-view-proposal="${p.id}">Preview</button>` : "";
   const go = p.can_continue ? ` <button class="prow-look" type="button" data-continue="${p.id}">Have Claude do this</button>` : "";
   const why = p.failure ? `<small class="prow-why">${esc(p.failure)}</small>` : "";
-  return `<li class="prow">${pill(p.state)}<span class="prow-title">${esc(p.title)}${outcome(p, ix)}${decide}${look}${go}${why}</span></li>`;
+  // D3: what happened after an applied suggestion, with what Claude expected.
+  const result = p.check ? outcomeLine(p.check, { changeId: p.check.change_id, canUndo: Boolean(p.check.can_undo), expect: p.check.expected || p.check.expected_text, label: p.title }) : "";
+  return `<li class="prow">${pill(p.state)}<span class="prow-title">${esc(p.title)}${outcome(p, ix)}${decide}${look}${go}${why}${result}</span></li>`;
 }
 
 // One Suggestion card everywhere (9.4e): what still waits for a decision is the same card as in the

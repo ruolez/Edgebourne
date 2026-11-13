@@ -2,10 +2,11 @@ import { api, startLoad } from "./api.js";
 import { boot, confirmDialog, emptyState, entityLink, esc, icon, onRefresh, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
 import { CTA_LABELS, EXPLAIN, RANGES, WORDS, count, money, pct, per, plural, rangeSelect, rememberRange, sharedRange, statusOf, statusPill, moneyWhole } from "./format.js";
 import { barList, columnChart, marksPanel } from "./charts.js";
-import { editBudget, toggleEntity } from "./controls.js";
+import { editBudget, restoreVersion, toggleEntity } from "./controls.js";
 import { track } from "./manager.js";
 import { ACTIVE, proposalCard, taskCard, wireTaskActions } from "./tasks.js";
 import { diagnoseHtml, wireAlerts } from "./alertmenu.js";
+import { openFromUrl } from "./outcome.js";
 
 const $ = (id) => document.getElementById(id);
 const adId = new URLSearchParams(location.search).get("id");
@@ -733,6 +734,7 @@ function renderHistory() {
 
 // ---------------------------------------------------------------- load
 
+let urlCheckDone = false;
 async function load() {
   try {
     const fresh = await api(`/api/ads/ad/${encodeURIComponent(adId)}?range=${encodeURIComponent(chartRange)}`);
@@ -740,6 +742,7 @@ async function load() {
     renderHead();
     if ((tab === "video" && data.ad.object_type !== "VIDEO") || (tab === "polish" && !data.ad.can_control)) tab = "overview";
     showTab(tab);
+    if (!urlCheckDone) { urlCheckDone = true; openFromUrl(); }  // ?check=N: a change's "Did it work?" (Inbox, Today)
     api(`/api/insights/ad/${encodeURIComponent(adId)}/comments`).then((c) => { data.comment_total = c.total; renderHead(); }).catch(() => {});
   } catch (err) {
     // A refresh that fails keeps the page as it was; a first load says what happened, with Try again.
@@ -772,15 +775,7 @@ if (me) {
       return;
     }
     const back = e.target.closest("[data-restore]");
-    if (back) {
-      const yes = await confirmDialog({ title: `Switch back to version ${back.dataset.restore}?`, body: "<p>That version goes back on this ad. Meta reviews it again and learning can restart. The current version stays in the list, so you can switch to it later.</p>", confirm: "Switch back" });
-      if (!yes) return;
-      back.disabled = true;
-      try { await api(`/api/ads/ad/${encodeURIComponent(adId)}/versions/${back.dataset.restore}/restore`, { method: "POST" }); toast("Switched back. Meta reviews it next."); }
-      catch (err) { toast(err.message, "bad"); }
-      load();
-      return;
-    }
+    if (back) { restoreVersion({ adId, number: back.dataset.restore }, load, back); return; }
     const sw = e.target.closest("[data-toggle]");
     if (sw) { toggleEntity(sw, load); return; }
     if (e.target.closest("#archive")) {

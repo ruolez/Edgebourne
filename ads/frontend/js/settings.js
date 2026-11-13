@@ -256,6 +256,7 @@ const RULE_UI = [
   ["learning_limited", "An ad set is learning limited", []],
   ["changed_outside", "Switched on or off in Ads Manager (Inbox only, no message)", []],
   ["outside_edit", "Changed in Ads Manager: budget, bid, dates or audience", []],
+  ["change_result", "A change didn't help", []],
   ["no_delivery", "An ad is live but nobody has seen it", [["hours", "after", "hours"]]],
   ["fatigue", "An ad looks tired", [["frequency", "seen more than", "times a week,"], ["ctr_drop", "clicks down", "%,"], ["cpm_rise", "cost per 1,000 views up", "%"]]],
   ["day_overspend", "One day's spend is high (shown on Today only)", [["times", "more than", "× the daily budget"]]],
@@ -286,6 +287,7 @@ function renderAlerts() {
         : "Off until a target is set in Targets."} <a href="#targets">Change</a></small>`
       : id === "qualified_low" ? '<small class="muted">Over the 14 days that end 2 days ago, counting only leads someone has worked (past New, or Lost).</small>'
       : id === "junk_high" ? '<small class="muted">Junk = marked Spam or fake, or fake-looking details and never contacted.</small>'
+      : id === "change_result" ? '<small class="muted">After a budget, on/off or new-version change, tell me when cost per lead got worse. Checked after 3, 7 and 14 full days.</small>'
       : id === "outside_edit" ? '<small class="muted">A note when someone changes these in Ads Manager. It\'s marked as needing action when the change breaks a money rule. Turning it off stops the note only: changes are still recorded and the 3-day rule still holds.</small>' : "";
     return `<li><label class="check"><input type="checkbox" data-rule="${id}" data-key="on" ${r.on ? "checked" : ""}> ${esc(label)}</label>${inputs ? `<div class="al-fields">${inputs}</div>` : ""}${hint}</li>`;
   }).join("");

@@ -14,6 +14,7 @@ by hand keeps the pass in ~/.config/ads-desk/claims.json for the later calls.
   desk queue                             queued and active tasks
   desk snapshot [7|14|30]                performance + lead quality from the dashboard
   desk history                           recent finished tasks (summaries, report titles)
+  desk outcomes [--days 60]              did it work: before/after results of changes and suggestions, declined ones
   desk progress <id> <text>              status line shown live on the Desk page
   desk report <id> --title T [--file F]  report body from F or stdin (Markdown)
   desk propose <id> [--file F]           proposals JSON from F or stdin
@@ -41,7 +42,7 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSION = "2.4"
+VERSION = "2.5"
 # ADS_DESK_CONFIG points a test run at another dashboard (e.g. the local dev stack).
 CONFIG = os.environ.get("ADS_DESK_CONFIG") or os.path.expanduser("~/.config/ads-desk/config.json")
 SERVICE = "ads-desk"
@@ -225,6 +226,7 @@ def main(argv=None):
     sub.add_parser("queue")
     sp = sub.add_parser("snapshot"); sp.add_argument("range", nargs="?", default="7", choices=["7", "14", "30"])
     sub.add_parser("history")
+    sp = sub.add_parser("outcomes"); sp.add_argument("--days", type=int, default=60)
     sp = sub.add_parser("progress"); sp.add_argument("id", type=int); sp.add_argument("text", nargs="+")
     sp = sub.add_parser("report"); sp.add_argument("id", type=int); sp.add_argument("--title", required=True); sp.add_argument("--file")
     sp = sub.add_parser("propose"); sp.add_argument("id", type=int); sp.add_argument("--file")
@@ -275,6 +277,8 @@ def main(argv=None):
             print(json.dumps(go("GET", f"/api/agent/snapshot?range={a.range}")[1], indent=2))
         elif a.cmd == "history":
             print(json.dumps(go("GET", "/api/agent/history")[1], indent=2))
+        elif a.cmd == "outcomes":
+            print(json.dumps(go("GET", f"/api/agent/outcomes?days={max(1, min(60, a.days))}")[1], indent=2))
         elif a.cmd == "progress":
             go("POST", f"/api/agent/tasks/{a.id}/status", {"status": "running", "progress": " ".join(a.text)})
             print("ok")

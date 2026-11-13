@@ -102,6 +102,11 @@ def _loop():
             except Exception:
                 log.exception("account %s: alert rules failed", acct)
             try:
+                import change_checks_db
+                change_checks_db.run()
+            except Exception:
+                log.exception("account %s: did it work failed", acct)
+            try:
                 import meta_tests
                 meta_tests.sync_running()
             except Exception:

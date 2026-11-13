@@ -15,6 +15,8 @@ from flask import Blueprint, jsonify, request
 
 import account_ctx
 import account_info
+import change_checks
+import change_checks_db
 import money_rules
 import ranges
 import db
@@ -207,15 +209,18 @@ def after_write(what, fn, *args):
         log.exception("after the write to Meta: %s failed", what)
 
 
-def record(user, level, row, action, old, new, ok, error=None, proposal_id=None, entity_id=None, accepted=None):
-    """One write to Meta in meta_changes. `accepted`: the warnings confirmed knowingly ('big', 'recent')."""
+def record(user, level, row, action, old, new, ok, error=None, proposal_id=None, entity_id=None, accepted=None, undo_of=None):
+    """One write to Meta in meta_changes. `accepted`: the warnings confirmed knowingly ('big', 'recent'); `undo_of`: the
+    change a Put it back reverses (D3, checked by `undo_target`)."""
     db.execute(
         """INSERT INTO meta_changes (user_id, level, entity_id, entity_name, campaign_id, action, old_value,
-                                     new_value, ok, error, proposal_id, bulk_id, accepted)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                     new_value, ok, error, proposal_id, bulk_id, accepted, undo_of)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
         (user["id"] if user else None, level, entity_id or row["id"], row.get("name"), row.get("campaign_id"),
          action, None if old is None else str(old), None if new is None else str(new), ok, error, proposal_id,
-         BULK_ID.get(), list(accepted) if accepted else None))
+         BULK_ID.get(), list(accepted) if accepted else None, undo_of))
+    if ok and undo_of:
+        after_write("close the put-back result", change_checks_db.close_put_back, undo_of)
     log_activity(f"meta.{action}" + ("" if ok else "_failed"), subject=entity_id or row["id"],
                  details={"level": level, "name": row.get("name"), "old": old, "new": new, "error": error,
                           **({"accepted": list(accepted)} if accepted else {})})
@@ -426,7 +431,21 @@ def change_public(change):
 
 # ---------------------------------------------------------------- changes (shared with proposals)
 
-def apply_status(user, level, row, status, proposal_id=None, live=None):
+def undo_target(raw, entity_id, actions, value, versions=()):
+    """The change a Put it back names, when it is an applied change of this account (RLS), on this same thing, of the
+    matching kind, and this write (`value`) restores exactly what it replaced (change_checks.reverses); else None
+    (the write goes ahead as a plain change). It never skips any check."""
+    try:
+        change_id = int(raw)
+    except (TypeError, ValueError):
+        return None
+    row = db.query("""SELECT id, action, old_value, new_value FROM meta_changes
+                      WHERE id = %s AND ok AND entity_id = %s AND action = ANY(%s)""",
+                   (change_id, entity_id, list(actions)), one=True)
+    return row["id"] if row and change_checks.reverses(row, value, versions) else None
+
+
+def apply_status(user, level, row, status, proposal_id=None, live=None, undo_of=None):
     """Switch on or off, compared with Meta's status read now (the stored one can be minutes old; audit
     A3-19, A3-22) unless the caller has just read it (`live`). Returns None, or what went wrong
     (NOT_SENT / UNKNOWN prefixed as above)."""
@@ -446,14 +465,14 @@ def apply_status(user, level, row, status, proposal_id=None, live=None):
     except meta_client.MetaError as exc:
         record(user, level, row, "status", old, status, False, str(exc), proposal_id)
         return (UNKNOWN if exc.unknown else "") + str(exc)
-    record(user, level, row, "status", old, status, True, proposal_id=proposal_id)
+    record(user, level, row, "status", old, status, True, proposal_id=proposal_id, undo_of=undo_of)
     if not BULK_ID.get():  # a bulk change re-reads its items together at the end
         after_write("status refresh", refresh_entity, level, row["id"])
     resync_later()
     return None
 
 
-def apply_budget(user, level, row, cents, proposal_id=None, accepted=None):
+def apply_budget(user, level, row, cents, proposal_id=None, accepted=None, undo_of=None):
     old = row["daily_budget_cents"]
     if not old:
         return NOT_SENT + "This one has no daily budget of its own (the budget is set one level up)."
@@ -462,7 +481,7 @@ def apply_budget(user, level, row, cents, proposal_id=None, accepted=None):
     except meta_client.MetaError as exc:
         record(user, level, row, "budget", old, cents, False, str(exc), proposal_id)
         return (UNKNOWN if exc.unknown else "") + str(exc)
-    record(user, level, row, "budget", old, cents, True, proposal_id=proposal_id, accepted=accepted)
+    record(user, level, row, "budget", old, cents, True, proposal_id=proposal_id, accepted=accepted, undo_of=undo_of)
     after_write("stored budget", db.execute, f"UPDATE {LEVELS[level]} SET daily_budget_cents = %s WHERE id = %s", (int(cents), row["id"]))
     return None
 
@@ -717,8 +736,10 @@ def ad_detail(ad_id):
             c["proposal_id"] = None
     else:  # a card says "Not applied" when the console's own check stopped it, as the Claude page does
         stopped = timeline.checked_refusals(changes)
+        checks = change_checks_db.proposal_checks(proposals)  # D3: what happened after an applied suggestion
         for p in proposals:
             p["checked"] = p["id"] in stopped
+            p["check"] = checks.get(p["id"])
     # The tests it is in (the Tests page is for admins), so the ad page links to them.
     tests = []
     if user["role"] == "admin":
@@ -743,7 +764,8 @@ def ad_detail(ad_id):
                     "status": delivery.explain(ad, ad.get("learning_stage"), ad["track"]),
                     "timeline": status_rows, "claude_run": claude_run,
                     "history": timeline.merge(status_rows, changes, proposals, money=account_info.money, subject=ad_id,
-                                              names={ad["adset_id"]: ad.get("adset_name"), ad["campaign_id"]: ad.get("campaign_name")}),
+                                              names={ad["adset_id"]: ad.get("adset_name"), ad["campaign_id"]: ad.get("campaign_name")},
+                                              checks=change_checks_db.summary_for([c["id"] for c in changes], client=user["role"] == "client")),
                     **status_history.marks_payload(user, status_history.marks_scope("ad", ad), *ranges.window(
                         request.args.get("range", "30"), account_info.today(), request.args.get("from"), request.args.get("to"))),
                     "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS]})
@@ -797,7 +819,7 @@ def set_status(level, entity_id):
         problem = turn_on_problem(level, row, data)
         if problem:
             return api_error(problem[0], problem[1], **(problem[2] if len(problem) > 2 else {}))
-    error = apply_status(current_user(), level, row, status)
+    error = apply_status(current_user(), level, row, status, undo_of=undo_target(data.get("undo_of"), row["id"], ("status",), status))
     if error:
         return write_error(error)
     return jsonify(entity(level, entity_id))
@@ -918,7 +940,8 @@ def set_budget(level, entity_id):
         knowing = (change["big"] or change["recent"]) and not change["over_cap"] and cents >= 100
         extra = {"code": "recent_change", "last": last_public(change["last"])} if knowing and not (change["big"] and not accept_big) else {}
         return api_error(problem, 409 if knowing else 400, field="budget", **extra)
-    error = apply_budget(current_user(), level, row, cents, accepted=money_rules.accepted(change, accept_big, accept_recent))
+    error = apply_budget(current_user(), level, row, cents, accepted=money_rules.accepted(change, accept_big, accept_recent),
+                         undo_of=undo_target(data.get("undo_of"), row["id"], ("budget",), cents))
     if error:
         return write_error(error)
     return jsonify(entity(level, entity_id))

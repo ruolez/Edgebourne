@@ -22,6 +22,9 @@ class CategoryTests(unittest.TestCase):
     def test_lead_quality_alerts_are_about_leads(self):
         self.assertEqual([inbox.category(r) for r in ("qualified_low", "junk_high")], ["leads", "leads"])
 
+    def test_d3_did_it_work_is_about_money(self):
+        self.assertEqual(inbox.category("change_result"), "money")
+
 
 class BuildTests(unittest.TestCase):
     def setUp(self):
@@ -138,6 +141,20 @@ DAY = timedelta(days=1)
 def cond(i, rule, created, level="warn", entity="c1", **kw):
     return {"id": i, "rule": rule, "level": level, "title": f"t{i}", "lines": ["l"], "href": "/performance.html", "entity_id": entity,
             "campaign_id": "c1", "created_at": created, "resolved_at": None, "kind": "condition", "measure": None, "quiet": False, **kw}
+
+
+class ChangeResultTests(unittest.TestCase):
+    """D3: "didn't help" waits in Needs action until put back or Done; good and flat results are FYI."""
+    def ev(self, level, resolved=None):
+        return {**alert(40, "change_result", 5, level), "kind": "event", "resolved_at": resolved}
+
+    def test_didnt_help_needs_action_with_done_and_diagnose(self):
+        got = inbox.build([self.ev("warn")], [], [], set(), can_close=True, now=NOW)[0]
+        self.assertEqual((got["category"], got["need"], got["actions"]), ("money", True, ["diagnose", "done"]))
+
+    def test_worked_is_for_information(self):
+        got = inbox.build([self.ev("info", NOW)], [], [], set(), can_close=True, now=NOW)[0]
+        self.assertEqual((got["need"], got["actions"]), (False, ["diagnose"]))
 
 
 class SnoozeAndDiagnoseTests(unittest.TestCase):

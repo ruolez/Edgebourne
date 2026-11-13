@@ -1,6 +1,7 @@
 // Shared UI: app frame, icons, toasts, formatting.
 import { api } from "./api.js";
 import { setCurrency, currencySymbol, money, moneyWhole, explain } from "./format.js";
+import { outcomeLine } from "./outcome.js";
 
 const ICONS = {
   check: '<path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -239,6 +240,8 @@ let shownAt = null; // the updated_at the page's data was last loaded at
 let autoMinutes = null;
 let clockSkew = 0;
 export function onRefresh(fn, opts = {}) { refreshHandler = fn; autoHandler = opts.auto || null; }
+// Reload the page's data the way its Refresh does (after a change made from a dialog that isn't the page's own).
+export async function refreshPage() { if (refreshHandler) await refreshHandler(); }
 
 export function ago(ts, now = Date.now() / 1000) {
   if (!ts) return "not yet";
@@ -479,7 +482,8 @@ export function timelineItem(i, { cards = false } = {}) {
     i.kind === "proposal" && owner && i.task_id ? `<a href="/desk.html#r/${i.task_id}">Conversation</a>` : "",
   ].filter(Boolean);
   return `<li class="tl-${i.tone || "n"}" data-source="${esc(i.source || "")}"><span class="tl-dot"></span><span class="tl-w">${esc(when(i.at))}</span>
-    <span class="tl-t"><b>${esc(i.title)}</b>${i.sub ? `<small${i.kind === "change" && i.tone === "bad" ? ' class="bad-text"' : ""}>${esc(i.sub)}</small>` : ""}${who || links.length ? `<small>${[who && esc(who), ...links].filter(Boolean).join(" · ")}</small>` : ""}</span></li>`;
+    <span class="tl-t"><b>${esc(i.title)}</b>${i.sub ? `<small${i.kind === "change" && i.tone === "bad" ? ' class="bad-text"' : ""}>${esc(i.sub)}</small>` : ""}${who || links.length ? `<small>${[who && esc(who), ...links].filter(Boolean).join(" · ")}</small>` : ""}${
+      i.check ? outcomeLine(i.check, { changeId: i.change_id, canUndo: Boolean(i.check.can_undo), label: i.title }) : ""}</span></li>`;
 }
 export const timelineHtml = (items, opts) => `<ol class="tl">${items.map((i) => timelineItem(i, opts)).join("")}</ol>`;
 

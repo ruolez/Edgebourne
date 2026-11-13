@@ -41,6 +41,24 @@ def change(action, new, ok=True, old=None, **kw):
             "user_name": "Eugene", **kw}
 
 
+class CheckTests(unittest.TestCase):
+    """D3: a change that has a "Did it work?" result carries it, and nothing else changes."""
+    CHANGES = [{"id": 5, "created_at": T, "action": "budget", "old_value": "2000", "new_value": "2400", "ok": True, "user_name": "Eugene"},
+               {"id": 6, "created_at": T - timedelta(hours=1), "action": "status", "old_value": "ACTIVE", "new_value": "PAUSED", "ok": True}]
+    CHECK = {"state": "better", "sentence": "Worked: cost per lead $47 → $28 over 7 days (40% cheaper).", "ready_on": "2026-11-17", "worse": False}
+
+    def merge(self, **kw):
+        return timeline.merge([], [dict(c) for c in self.CHANGES], [], money=lambda c: f"${c / 100:.2f}", **kw)
+
+    def test_only_the_checked_change_gets_its_result_and_id(self):
+        got = self.merge(checks={5: self.CHECK})
+        self.assertEqual([(i.get("change_id"), i.get("check")) for i in got], [(5, self.CHECK), (None, None)])
+
+    def test_without_checks_the_items_are_unchanged(self):
+        self.assertEqual(self.merge(), self.merge(checks={}))
+        self.assertFalse(any("check" in i or "change_id" in i for i in self.merge()))
+
+
 class TitleTests(unittest.TestCase):
     def title(self, c):
         return timeline.merge([], [c], [], money=str)[0]["title"]

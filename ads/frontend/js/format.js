@@ -30,6 +30,15 @@ export function agoWords(iso, now = Date.now()) {
 // A Claude run started from an alert or Meta's advice, in the console's words (W1a).
 export const RUN_STATE = { queued: "Waiting for your Mac", claimed: "Claude is on it", running: "Claude is on it" };
 export const suggestions = (n) => plural(n, "suggestion");
+// "Did it work?" (D3): the result of a change in the console's words (change_checks.OUTCOME says the same). Words carry
+// the meaning; the tone only backs them up (green stays "delivering", so a good result is the neutral ok tone).
+export const OUTCOME = {
+  better: "Worked", lean_better: "Looks better, not sure yet", same: "No clear change", lean_worse: "Looks worse, not sure yet",
+  worse: "Didn't help", too_early: "Too early to tell", waiting: "Not checked yet", on_target: "On target", over_target: "Over target",
+  mixed: "Changed again too soon", no_compare: "Nothing to compare", stopped: "Off", not_running: "Not running yet",
+};
+export const outcomeWords = (state) => OUTCOME[state] || "";
+export const OUTCOME_TONE = { better: "ok", lean_better: "ok", on_target: "ok", worse: "bad", lean_worse: "bad", over_target: "warn" };
 // Change marks on the charts: the four kinds, in the console's words.
 export const CHANGE_CATS = { money: "Budget", switch: "On/off", edit: "Edits", meta: "Meta" };
 

@@ -160,6 +160,11 @@ def tasks_with_results(where="TRUE", params=(), limit=50):
         why = reasons.get(p["id"]) or {}
         p["failure"] = why.get("error")
         p["checked"] = desk_view.refused_by_check(why.get("new_value"))
+    # D3: what happened after each applied suggestion, with what Claude expected.
+    import change_checks_db
+    checks = change_checks_db.proposal_checks(proposals)
+    for p in proposals:
+        p["check"] = checks.get(p["id"])
     for t in tasks:
         t["reports"] = [r for r in reports if r["task_id"] == t["id"]]
         t["proposals"] = [p for p in proposals if p["task_id"] == t["id"]]
@@ -923,6 +928,9 @@ def clean_proposal(p):
             out["kind"] = "other"
     if kind == "budget":
         out["payload"] = clean_budget(p.get("payload"))
+    # D3: what Claude says will happen, in a form "Did it work?" can test (else read from the text, best effort).
+    import change_checks
+    out["expect"] = change_checks.clean_expect(p.get("expect")) or change_checks.expect_from_text(out["expected"])
     return out
 
 
@@ -1023,7 +1031,7 @@ def add_proposals(task_id):
             p["payload"] = stamp_update(p["payload"], task)
     cols = list(items[0].keys())
     for p in items:
-        values = [json.dumps(p[c]) if c == "payload" and p[c] is not None else p[c] for c in cols]
+        values = [json.dumps(p[c]) if c in ("payload", "expect") and p[c] is not None else p[c] for c in cols]
         db.execute(f"INSERT INTO desk_proposals (task_id, {', '.join(cols)}) VALUES (%s, {', '.join(['%s'] * len(cols))})",
                    [task_id] + values)
     db.execute("UPDATE desk_tasks SET updated_at = now() WHERE id = %s", (task_id,))
@@ -1083,11 +1091,13 @@ def snapshot():
         a["tags"] = perf_tags.get(a["id"], {})
     import account_ctx
     import accounts_api
+    import change_checks_db
     return jsonify({"account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current())},
                     "performance": perf, "lead_stages_by_ad": stages, "lead_business_types": types,
                     "speed_to_lead": speed, "follow_ups": follow,
                     "lead_quality_by_ad": quality_rows, "lead_quality_totals": quality_totals, "lead_quality_notes": lq.SNAPSHOT_NOTES, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
-                    "experiments": tests, **budget_snapshot(perf["range"])})
+                    "experiments": tests, **budget_snapshot(perf["range"]),
+                    "change_results": change_checks_db.outcomes(30, 20)})
 
 
 def budget_snapshot(rng):
@@ -1114,6 +1124,19 @@ def budget_snapshot(rng):
     return {"budget_changes": budgets, "recent_changes": marks["marks"]}
 
 
+@agent_bp.get("/outcomes")
+@agent_required
+def outcomes():
+    """D3: what happened after each change made from the console (and after Claude's suggestions), and the suggestions
+    Eugene declined or sent back, so Claude doesn't suggest again what didn't help. Numbers only, no lead details."""
+    import change_checks_db
+    try:
+        days = max(1, min(60, int(request.args.get("days", "60"))))
+    except ValueError:
+        days = 60
+    return jsonify({"days": days, "changes": change_checks_db.outcomes(days, 100), "declined": change_checks_db.declined(days)})
+
+
 @agent_bp.get("/history")
 @agent_required
 def history():
@@ -1121,6 +1144,8 @@ def history():
     rows = tasks_with_results("t.status = 'done'", [], 10)
     for t in rows:
         t["reports"] = [{"title": r["title"], "created_at": r["created_at"]} for r in t["reports"]]
+        for p in t["proposals"]:  # D3: what happened after an applied suggestion (the headline result)
+            p["result"] = p.pop("check", None)
     return jsonify(rows)
 
 

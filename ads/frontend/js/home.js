@@ -4,6 +4,7 @@ import { boot, confirmDialog, entityLink, esc, icon, leadClock, onRefresh, toast
 import { money, per, plural } from "./format.js";
 import { alertButtons, moreButton, runChip, wireAlerts } from "./alertmenu.js";
 import { armDial, askMeeting, askNext } from "./followup.js";
+import "./outcome.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
@@ -68,6 +69,9 @@ function followRow(r) {
 const FOLLOW_RULES = new Set(["meeting_soon", "followup_overdue", "meeting_check", "followup_today"]);
 const rowOf = (r) => (r.rule === "new_lead" ? leadRow(r) : FOLLOW_RULES.has(r.rule) ? followRow(r) : itemRow(r));
 
+// The change a "Did it work?" item is about, from its History link (?check=N).
+const checkOf = (r) => { const m = /[?&]check=(\d+)/.exec(r.href || ""); return m ? m[1] : null; };
+
 function itemRow(r) {
   const s = r.subject;
   // The thing it is about links to its page, named once (a suggestion's line is that name already).
@@ -78,6 +82,13 @@ function itemRow(r) {
   if (r.proposal_id) {
     acts = `<button type="button" class="btn btn-claude" data-accept="${r.proposal_id}">Review</button>`
       + (me.role === "admin" ? `<a class="btn btn-quiet" href="${esc(r.href)}">Conversation</a>` : "");
+  } else if (r.rule === "change_result" && checkOf(r)) {
+    // D3: a change that didn't help. See what happened opens "Did it work?"; Put it back opens the usual dialog filled in.
+    const cid = checkOf(r);
+    acts = `<button type="button" class="btn" data-oc-open="${cid}">See what happened</button>`
+      + (me.role !== "client" && r.level === "warn" && r.can_undo ? `<button type="button" class="btn btn-quiet" data-oc-undo="${cid}">Put it back</button>` : "");
+    const more = alertButtons(r);
+    if (more) acts += `<span class="al-inline">${more}</span>${moreButton(r)}`;
   } else {
     acts = r.href ? `<a class="btn" href="${esc(r.href)}">${esc(actionLabel(r))}</a>` : "";
     // Admins: Diagnose with Claude and Got it… beside it on a computer, in one ⋯ on a phone (rows keep one button).

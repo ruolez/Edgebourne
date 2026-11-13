@@ -30,9 +30,11 @@ PLAYBOOKS = {  # rule → (skill on the Mac, plain label for the dialog, what to
                      "activity log: who changed what, and whether it breaks the money rules"),
     "qualified_low": ("meta-ads-doctor", "lead quality", "message fit, form questions, audience; lead stages by ad"),
     "junk_high": ("meta-ads-doctor", "lead quality", "message fit, form questions, audience; plus a higher-intent form"),
+    "change_result": ("cpa-diagnostics", "why a change didn't help",
+                      "before/after windows, what else changed, whether to put it back"),
 }
 # Not offered: tracking (the console's Page link, which Claude can't see), stale_data (the console's token),
-# ad_approved (good news), report_review / report_sent / booking_* (not about ads). D3 adds change_result.
+# ad_approved (good news), report_review / report_sent / booking_* (not about ads).
 LEVEL_WORDS = (("ad", "ad"), ("adset", "ad set"), ("campaign", "campaign"))
 
 

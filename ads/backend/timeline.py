@@ -150,8 +150,10 @@ def merge(status_events, changes, proposals, money, subject=None, names=None, ve
     """Newest first. With `subject` (the page's own id), a change or suggestion about its ad set or campaign
     says where it happened (`on`), so the page can link there; `names` gives those ids' names. Every item
     carries `cat` (money | switch | edit | meta) and what it is about (`level`, `entity_id`, `entity_name`).
-    `versions` (ad_versions rows with `ad_name`) add "Version N started"; `checks` is kept for "Did it work?"."""
+    `versions` (ad_versions rows with `ad_name`) add "Version N started"; `checks` ({change id: result}, D3) puts
+    "Did it work?" on the changes that have one, with their `change_id`."""
     names = names or {}
+    checks = checks or {}
     linked = {s.get("change_id") for s in status_events if s.get("change_id")}
     checked = checked_refusals(changes)
     items = _status_items(status_events)
@@ -165,6 +167,8 @@ def merge(status_events, changes, proposals, money, subject=None, names=None, ve
                                 "on": _elsewhere(c.get("level"), c.get("entity_id"), name, subject),
                                 "level": c.get("level"), "entity_id": c.get("entity_id"), "entity_name": name,
                                 "field": c["action"], "old": c.get("old_value"), "new": c.get("new_value")}))
+        if c.get("id") in checks:
+            items[-1].update(change_id=c["id"], check=checks[c["id"]])
     for p in proposals:
         if not p.get("decided_at"):
             continue

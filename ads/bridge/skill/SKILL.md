@@ -94,6 +94,11 @@ A failed suggestion carries `failure`, the exact error: read it before explainin
      and the dashboard's verdict. Don't call a running test differently from its verdict;
      a closed one's `verdict` is what Eugene concluded, so build on it.
    - `desk history`: what earlier Desk runs concluded and proposed; build on it, don't repeat it.
+   - `desk outcomes` (60 days): "Did it work?" for every change made from the console and every
+     applied suggestion (before/after cost per lead over 3, 7 and 14 complete days, the state, whether
+     your `expect` was met, whether it was put back), plus the suggestions Eugene declined or sent back.
+     **Before proposing, read it.** Don't suggest again what didn't help (or was declined) without
+     saying what's different this time. `change_results` in `desk snapshot` is the last 30 days of it.
    - `briefs/edgebourne.md` (offer, audience, target: $60 per qualified lead, kill band above
      $120 after $240 spend) and the end of `reports/log.md` (recent changes and why).
    - The Meta MCP read tools (`ads_get_ad_entities` with insights, `ads_get_errors`,
@@ -128,7 +133,10 @@ A failed suggestion carries `failure`, the exact error: read it before explainin
    `kind` (budget | status | creative | targeting | experiment | other), `title`, `entity_type`
    (campaign | adset | ad), `entity_id`, `entity_name`, `field`, `current_value`,
    `proposed_value` (budgets in dollars per day, e.g. "$20/day"), `rationale` (with the
-   numbers), `expected`, `rollback` (the exact previous value). Respect the workspace rules:
+   numbers), `expected`, `rollback` (the exact previous value), and with every budget, on/off or
+   new-version suggestion `expect`: what it should do, in a form the console can check, e.g.
+   `{"metric": "cpl", "op": "<", "cents": 4000, "days": 7}` (metric `cpl` or `cpq` = cost per
+   qualified lead, op `<` or `<=`, days 3, 7 or 14). Respect the workspace rules:
    one budget change per campaign, ≥ 3 days apart, ≤ +20%.
    **Before any budget proposal, read `budget_changes` in `desk snapshot`**: each campaign's and ad
    set's last budget change (`last.at`, `from`, `to`, `where`: `console` or `outside` = changed in

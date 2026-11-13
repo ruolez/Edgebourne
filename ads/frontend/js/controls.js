@@ -31,8 +31,8 @@ export async function toggleEntity(btn, after) {
 }
 
 // The one way anything is turned on or off: the same confirmation from a switch or a plain button (`btn`
-// is disabled while it runs).
-export async function changeStatus({ level, id, name, turnOn }, after, btn = document.createElement("button")) {
+// is disabled while it runs). `undoOf` (D3 Put it back) names the change this reverses; every check stays.
+export async function changeStatus({ level, id, name, turnOn, undoOf = null }, after, btn = document.createElement("button")) {
   let spend = null;
   if (turnOn) {
     // Turning on spends money: show the daily budget Meta has right now (the server checks it was seen).
@@ -52,7 +52,7 @@ export async function changeStatus({ level, id, name, turnOn }, after, btn = doc
   if (!ok) return;
   btn.disabled = true;
   try {
-    await api(`/api/ads/${level}/${id}/status`, { method: "POST", body: { status: turnOn ? "ACTIVE" : "PAUSED", ...spendBody(spend) } });
+    await api(`/api/ads/${level}/${id}/status`, { method: "POST", body: { status: turnOn ? "ACTIVE" : "PAUSED", ...spendBody(spend), ...(undoOf ? { undo_of: undoOf } : {}) } });
     toast(`${name} is ${turnOn ? "on" : "off"}`);
     after();
   } catch (err) { toast(err.message, "bad"); btn.disabled = false; }
@@ -69,8 +69,9 @@ export function lastChangeWords(last) {
 
 // The one budget dialog. It reads the last change first (a database read; the server checks it again at
 // write time): a raise under 3 days after it needs the same knowing yes as a step over +20% (rule 6).
-// D3 adds `suggest`, `note` and `undoOf` to this signature.
-export async function editBudget({ level, id, name, current }, after) {
+// D3 Put it back fills it in: `suggest` (the amount in the field), `note` (one more paragraph, HTML) and `undoOf` (the
+// change it reverses, sent along). Validation, the warnings and the server's checks stay exactly the same.
+export async function editBudget({ level, id, name, current, suggest = null, note = "", undoOf = null }, after) {
   const now = current / 100;
   let history = null;
   try { history = await api(`/api/ads/${level}/${encodeURIComponent(id)}/budget/last`); }
@@ -83,7 +84,7 @@ export async function editBudget({ level, id, name, current }, after) {
   const isBig = (cents) => (cents - current) / current > 0.2;
   const value = await confirmDialog({
     title: `Daily budget for “${name}”`,
-    body: `<p>Now <b>${money(current, { exact: true })} a day</b>. Meta may spend up to 75% more on a busy day and evens it out over the week.</p>${last ? `<p class="muted small" id="cd-last">${lastChangeWords(last)}</p>` : ""}`,
+    body: `<p>Now <b>${money(current, { exact: true })} a day</b>. Meta may spend up to 75% more on a busy day and evens it out over the week.</p>${note ? `<p id="cd-note">${note}</p>` : ""}${last ? `<p class="muted small" id="cd-last">${lastChangeWords(last)}</p>` : ""}`,
     confirm: "Change budget",
     confirmLabel: (v) => {
       const cents = typed(v);
@@ -95,7 +96,7 @@ export async function editBudget({ level, id, name, current }, after) {
     },
     // The +20% and 3-day warnings are in the hint; confirming with them showing is the knowing yes the server asks for.
     field: {
-      label: "New daily budget", prefix: currencySymbol(), suffix: "/day", inputmode: "decimal", value: now.toFixed(2),
+      label: "New daily budget", prefix: currencySymbol(), suffix: "/day", inputmode: "decimal", value: (suggest ? suggest / 100 : now).toFixed(2),
       validate: (v) => {
         const n = Number(String(v).replace(/[$,\s]/g, ""));
         if (!Number.isFinite(n) || n < 1) return `Enter at least ${money(100)}`;
@@ -118,8 +119,21 @@ export async function editBudget({ level, id, name, current }, after) {
   if (value === false) return;
   const cents = typed(value);
   try {
-    await api(`/api/ads/${level}/${id}/budget`, { method: "POST", body: { daily_budget_cents: cents, from_cents: current, accept_big: isBig(cents), accept_recent: isRecentRaise(cents) } });
+    await api(`/api/ads/${level}/${id}/budget`, { method: "POST", body: { daily_budget_cents: cents, from_cents: current, accept_big: isBig(cents), accept_recent: isRecentRaise(cents), ...(undoOf && cents === suggest ? { undo_of: undoOf } : {}) } });
     toast(`Budget is now ${money(cents, { exact: true })}/day`);
     after();
   } catch (err) { toast(err.message, "bad"); }
+}
+
+// Putting an earlier version back on an ad: one confirmation from the Versions list and from Put it back (D3).
+export async function restoreVersion({ adId, number, undoOf = null }, after, btn = document.createElement("button")) {
+  const yes = await confirmDialog({ title: `Switch back to version ${number}?`, body: "<p>That version goes back on this ad. Meta reviews it again and learning can restart. The current version stays in the list, so you can switch to it later.</p>", confirm: "Switch back" });
+  if (!yes) return;
+  btn.disabled = true;
+  try {
+    await api(`/api/ads/ad/${encodeURIComponent(adId)}/versions/${number}/restore`, { method: "POST", body: undoOf ? { undo_of: undoOf } : {} });
+    toast("Switched back. Meta reviews it next.");
+  } catch (err) { toast(err.message, "bad"); }
+  btn.disabled = false;
+  after();
 }

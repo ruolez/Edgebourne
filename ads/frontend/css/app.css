@@ -305,6 +305,56 @@ dialog.fu-dialog form { max-height: calc(100dvh - 48px); overflow-y: auto; }
   dialog.fu-dialog .row.end .btn { flex: 1 1 auto; justify-content: center; }
 }
 
+/* "Did it work?" (D3): the line under a change in History and under Claude's decided suggestions, and its dialog.
+   The word carries the meaning; good results stay neutral (green means delivering), bad ones use the bad tone. */
+.oc-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; font-size: var(--t-s); color: var(--ink-2); line-height: 1.45; }
+.oc-wait .oc-text { color: var(--ink-3); }
+.oc-state { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: var(--radius-pill); background: var(--surface-2);
+  color: var(--ink); font-size: var(--t-xs); font-weight: 600; white-space: nowrap; }
+.oc-state.bad { background: var(--bad-soft); color: var(--bad-ink); }
+.oc-state.warn { background: var(--amber-soft); color: var(--amber-ink); }
+.oc-text { min-width: 0; overflow-wrap: anywhere; }
+.oc-back { color: var(--ink-3); }
+.oc-acts { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.oc-expect { display: block; margin-top: 2px; padding-left: 8px; border-left: 2px solid var(--violet); font-size: var(--t-s); color: var(--ink-2); overflow-wrap: anywhere; }
+.prow-title .oc-line, .prow-title .oc-expect { font-weight: 400; }
+dialog.oc-sheet { width: min(600px, calc(100vw - 32px)); }
+dialog.oc-sheet form { max-height: calc(100dvh - 48px); overflow-y: auto; }
+.oc-sub { margin: -8px 0 0; color: var(--ink-2); font-size: var(--t-s); overflow-wrap: anywhere; }
+.oc-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line-strong); border-radius: var(--radius-s); overflow: hidden; }
+.oc-tabs button { min-height: 36px; padding: 4px 6px; border: 0; background: var(--surface); color: var(--ink-2); font: inherit; font-size: var(--t-s);
+  font-weight: 600; cursor: pointer; }
+.oc-tabs button + button { border-left: 1px solid var(--line-strong); }
+.oc-tabs button[aria-selected="true"] { background: var(--surface-2); color: var(--ink); box-shadow: inset 0 -2px 0 var(--ink); }
+.oc-tabs button:disabled { color: var(--ink-3); cursor: default; font-weight: 500; }
+.oc-panel { display: grid; gap: 10px; margin-top: 12px; }
+.oc-say { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; color: var(--ink); }
+.oc-grid { border: 1px solid var(--line); border-radius: var(--radius-s); }
+.oc-r { display: grid; grid-template-columns: 40% 30% 30%; }
+.oc-r + .oc-r { border-top: 1px solid var(--line); }
+.oc-h, .oc-k, .oc-v { padding: 7px 10px; min-width: 0; overflow-wrap: anywhere; }
+.oc-h { display: flex; flex-direction: column; font-size: var(--t-s); }
+.oc-h + .oc-h { align-items: flex-end; text-align: right; }
+.oc-h small { color: var(--ink-3); font-size: var(--t-xs); }
+.oc-k { color: var(--ink-2); font-size: var(--t-s); }
+.oc-v { text-align: right; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: var(--t-s); }
+.oc-note { margin: 0; color: var(--ink-2); font-size: var(--t-s); }
+.oc-notes { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--ink-2); font-size: var(--t-s); }
+.oc-expect-box { margin: 0; padding: 8px 12px; border-left-width: 3px; border-radius: 0 var(--radius-s) var(--radius-s) 0; background: var(--surface-2); color: var(--ink); }
+.oc-expect-box p { margin: 0; }
+.oc-end { align-items: center; flex-wrap: wrap; }
+.oc-why { margin: 0 auto 0 0; }
+@media (max-width: 720px) {
+  .oc-btn { min-height: var(--target); }
+  /* On a phone the dialog is a full-height sheet: 44px tabs, Put it back full width at the bottom. */
+  dialog.oc-sheet { width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; }
+  dialog.oc-sheet form { min-height: 100%; max-height: none; padding-bottom: calc(22px + env(safe-area-inset-bottom)); }
+  .oc-tabs button { min-height: var(--target); }
+  .oc-h, .oc-k, .oc-v { padding: 7px 6px; }
+  .oc-end { margin-top: auto; }
+  .oc-end .btn { flex: 1 1 100%; justify-content: center; min-height: var(--target); }
+}
+
 .back-link { display: none; }
 
 .muted { color: var(--ink-3); }

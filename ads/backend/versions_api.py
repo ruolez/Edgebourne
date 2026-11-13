@@ -3,7 +3,7 @@ Every switch is kept in ad_versions so results can be read per version and a ver
 import json
 import logging
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 import account_info
 import concepts
@@ -151,6 +151,8 @@ def restore(ad_id, number):
         return api_error("That version isn't there any more", 404)
     row = {"id": ad["id"], "name": ad["name"], "campaign_id": ad["campaign_id"]}
     label = f"Back to version {number}"
+    undo_of = ads_api.undo_target((request.get_json(silent=True) or {}).get("undo_of"), ad["id"], ("update_creative", "restore_creative"),
+                                  version, db.query("SELECT number, creative_id FROM ad_versions WHERE ad_id = %s ORDER BY number", (ad_id,)))
     try:
         ad = _with_live_creative(ad)
         if ad["creative_id"] == version["creative_id"]:
@@ -161,7 +163,7 @@ def restore(ad_id, number):
         if exc.unknown:
             return api_error(ads_api.SWITCH_UNKNOWN, 400)
         return api_error(f"Meta refused: {exc}. The running ad wasn't changed.", 400)
-    ads_api.record(user, "ad", row, "restore_creative", ad["creative_id"], f"{label} (creative {version['creative_id']})", True)
+    ads_api.record(user, "ad", row, "restore_creative", ad["creative_id"], f"{label} (creative {version['creative_id']})", True, undo_of=undo_of)
     ads_api.after_write("stored creative", _stored, ad, version["creative_id"], version["title"], version["body"])
     ads_api.after_write("version history", save_switch, ad, version["creative_id"], label, user["id"], None, version["title"], version["body"], number)
     ads_api.resync_later()

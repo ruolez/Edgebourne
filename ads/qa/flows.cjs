@@ -696,7 +696,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   // Alerts: rules in Settings; a rejected ad raises one alert (Telegram + Today), not twice, and it clears by itself.
   await openSettings('alerts');
   await page.waitForSelector('#al-rules li');
-  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 19);
+  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 20);
   check('W1b: Settings lists the two lead-quality rules, on by default, with their numbers and what junk means',
     /Few leads qualify/.test(await page.textContent('#al-rules')) && /counting only leads someone has worked \(past New, or Lost\)/.test(await page.textContent('#al-rules')) && /Many leads look like junk/.test(await page.textContent('#al-rules'))
     && await page.isChecked('[data-rule="qualified_low"][data-key="on"]') && await page.isChecked('[data-rule="junk_high"][data-key="on"]')
@@ -4709,7 +4709,7 @@ db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users
       await sp.goto(BASE + '/settings.html#alerts');
       await sp.waitForSelector('#al-rules input[data-key="on"]');
       const widths = await sp.evaluate(() => [...document.querySelectorAll('#al-rules input[data-key="on"]')].map((i) => Math.round(i.getBoundingClientRect().width)));
-      check('Settings → Alerts on a phone: every rule\'s tick box is 18px wide', widths.length === 19 && widths.every((w) => w === 18), JSON.stringify(widths));
+      check('Settings → Alerts on a phone: every rule\'s tick box is 18px wide', widths.length === 20 && widths.every((w) => w === 18), JSON.stringify(widths));
       await sp.context().close();
     }
     // Gone again: without those leads both alerts close by themselves at the next check.
@@ -5233,6 +5233,7 @@ print(json.dumps({'old': old, 'new': new, 'repeat_of': r['repeat_of'], 'earlier'
     const saveLq = async (on) => {
       await page.goto(`${BASE}/settings.html#lead-quality`);
       await page.waitForSelector('#lq-form #lq-repeats');
+      await page.waitForSelector('#lq-state .pill');  // the page has filled in the saved settings (or they'd overwrite the tick)
       await page.setChecked('#lq-repeats', on);
       await Promise.all([page.waitForResponse((r) => /\/api\/settings\/lead-quality$/.test(r.url()) && r.request().method() === 'PUT'), page.click('#lq-form button[type=submit]')]);
       await page.waitForFunction((want) => document.getElementById('lq-repeats').checked === want, on);
@@ -5357,6 +5358,234 @@ print(json.dumps({'by_ad': 'lead_quality_by_ad' in d, 'totals': d.get('lead_qual
     check('L2: the snapshot carries lead quality per ad and no names, emails, phones, answers or notes', snap.by_ad && snap.totals && snap.pii.length === 0, JSON.stringify(snap));
     py(`import db
 db.execute(\\"DELETE FROM leads WHERE meta_lead_id LIKE 'qa-l2-%%' OR meta_lead_id LIKE '7713%%' OR full_name IN ('Repeat QA', 'Late QA')\\")`);
+  }
+  // D3 "Did it work?": changes seeded with known results (dev/seed_checks.py), the History line, the dialog, Put it back
+  // through the usual budget dialog, Claude's expectation, Today and the Inbox, Settings, who sees what, Claude's outcomes, phones.
+  {
+    const d3 = JSON.parse(sh('docker cp dev/seed_checks.py edgebourne-ads-backend:/tmp/seed_checks.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python /tmp/seed_checks.py').trim().split('\n').pop());
+    const W = d3.worked_campaign, X = d3.worse_campaign;
+    const lineOf = (p, title) => p.evaluate((t) => [...document.querySelectorAll('.tl li')].map((li) => li.textContent.replace(/\s+/g, ' ').trim()).find((x) => x.includes(t)) || '', title);
+    // 1. The History line under the budget change.
+    await page.goto(`${BASE}/campaign.html?id=${W}&tab=history`);
+    await page.waitForSelector('.tl .oc-line');
+    const wText = await lineOf(page, 'Budget $20.00 → $24.00 a day');
+    check('D3: History says "Worked:" under "Budget $20.00 → $24.00 a day", with Details', /Worked\s*cost per lead \$47 → \$14 over 7 days \(70% cheaper\)\.\s*Details/.test(wText)
+      && (await page.locator(`.tl [data-oc-open="${d3.worked}"]`).count()) === 1 && (await page.locator(`.tl [data-oc-undo="${d3.worked}"]`).count()) === 0, wText);
+    // 2. Details: the dialog's 7-day tab holds the seeded sums; the 14-day tab waits with its date; Claude's expectation was met.
+    await page.click(`[data-oc-open="${d3.worked}"]`);
+    await page.waitForSelector('dialog.oc-sheet .oc-grid');
+    const dlg = await page.evaluate(() => {
+      const d = document.querySelector('dialog.oc-sheet');
+      const rows = Object.fromEntries([...d.querySelectorAll('.oc-r')].slice(1).map((r) => [r.querySelector('.oc-k').textContent, [...r.querySelectorAll('.oc-v')].map((c) => c.textContent)]));
+      const tabs = [...d.querySelectorAll('[data-oc-h]')].map((b) => [b.textContent, b.disabled, b.getAttribute('aria-selected')]);
+      return { title: d.querySelector('h2').textContent, sub: d.querySelector('#oc-sub').textContent, rows, tabs, url: location.search,
+        expect: [...d.querySelectorAll('.oc-expect-box p')].map((x) => x.textContent.trim()).join(' '), rule: d.textContent.includes('Judged only once each side has spent at least $120 (2× your $60 target) and has 3 leads.') };
+    });
+    const s = d3.sums.worked;
+    check('D3: Details opens "Did it work?" on 7 days with the seeded before and after sums', dlg.title === 'Did it work?' && /^Budget \$20\.00 → \$24\.00 a day · \w{3} \d+ · Eugene · from Claude's suggestion$/.test(dlg.sub)
+      && JSON.stringify(dlg.rows.Spent) === JSON.stringify([`$${(s.before.spend / 100).toFixed(2)}`, `$${(s.after.spend / 100).toFixed(2)}`])
+      && JSON.stringify(dlg.rows.Leads) === JSON.stringify([String(s.before.leads), String(s.after.leads)])
+      && JSON.stringify(dlg.rows['Cost per lead']) === JSON.stringify(['$46.67', '$14.00']) && dlg.rule, JSON.stringify(dlg));
+    check('D3: the 14-day tab is disabled and says when it can be read', dlg.tabs[1][2] === 'true' && dlg.tabs[2][1] === true && /^14 days · \w{3} \d+$/.test(dlg.tabs[2][0]), JSON.stringify(dlg.tabs));
+    check('D3: Claude\'s expectation is shown and met', dlg.expect === 'Claude expected: cost per lead under $40. Got: $14 over 7 days. Met.', dlg.expect);
+    check('D3: the open dialog is in the address (?check=)', dlg.url.includes(`check=${d3.worked}`), dlg.url);
+    await page.goBack();
+    await page.waitForTimeout(300);
+    check('D3: Back closes the dialog and leaves History open', !(await page.$('dialog.oc-sheet')) && !page.url().includes('check=') && page.url().includes('tab=history'), page.url());
+    // 4. Claude page: the applied suggestion's row says what Claude expected and what happened.
+    await page.goto(`${BASE}/desk.html#r/${d3.task}`);
+    await page.waitForSelector('.prow .oc-line');
+    const prow = (await page.locator('.prow:has(.oc-line)', { hasText: 'raise the budget 20%' }).textContent()).replace(/\s+/g, ' ');
+    check('D3: Claude\'s page shows the result under the suggestion with "Expected: … Met"', /Worked/.test(prow) && /Expected: cost per lead under \$40\. Got: \$14 over 7 days · Met/.test(prow), prow);
+    // 5a. Today and the Inbox: "didn't help" waits in Needs action (FYI for "worked"), with See what happened and Put it back.
+    const needTitle = 'Budget raise on “QA D3 worse”: didn\'t help';
+    const inboxNeed = async () => (await getJson('/api/inbox?box=need')).items.filter((i) => i.title === needTitle).length;
+    const fyi = (await getJson('/api/inbox?box=fyi')).items.find((i) => i.title === 'Budget raise on “QA D3 worked”: worked');
+    check('D3: "didn\'t help" is in Needs action, "worked" is for your information', (await inboxNeed()) === 1 && Boolean(fyi), JSON.stringify(fyi && fyi.title));
+    await page.goto(`${BASE}/home.html`);
+    await page.waitForSelector('.tq-group, .tq-clear');
+    const tq = page.locator('.tq-row', { hasText: needTitle });
+    check('D3: Today lists it under Money with See what happened and Put it back', (await tq.count()) === 1
+      && (await tq.locator(`[data-oc-open="${d3.worse}"]`).textContent()) === 'See what happened' && (await tq.locator(`[data-oc-undo="${d3.worse}"]`).count()) === 1);
+    // 6. An Inbox link (historyHref with check=) opens History with the dialog already open.
+    const href = (await getJson('/api/inbox?box=need')).items.find((i) => i.title === needTitle).href;
+    check('D3: the item links to the campaign\'s History with ?check=', href === `/campaign.html?id=${X}&tab=history&check=${d3.worse}`, href);
+    await page.goto(BASE + href);
+    await page.waitForSelector('dialog.oc-sheet #oc-undo');
+    check('D3: the link opens "Did it work?" with Put it back as the main button', /Didn't help/.test(await page.textContent('dialog.oc-sheet .oc-say'))
+      && (await page.getAttribute('#oc-undo', 'class')).includes('btn-primary'));
+    // 3. Put it back opens the usual budget dialog filled in with $20.00. Cancel sends nothing; confirm sends undo_of.
+    const budgetPosts = [];
+    const onReq = (r) => { if (r.method() === 'POST' && /\/budget$/.test(r.url())) budgetPosts.push(r.postDataJSON()); };
+    page.on('request', onReq);
+    await page.click('#oc-undo');
+    await page.waitForSelector('dialog.confirm #cd-input');
+    const filled = { value: await page.inputValue('#cd-input'), note: await page.textContent('#cd-note'), ok: await page.textContent('#cd-ok') };
+    check('D3: Put it back opens the budget dialog filled in with the amount before, and says so', filled.value === '20.00'
+      && /^Before the change on \w{3} \d+ it was \$20\.00 a day\.$/.test(filled.note) && filled.ok === 'Change budget', JSON.stringify(filled));
+    await page.click('#cd-cancel');
+    await page.waitForTimeout(500);
+    check('D3: Cancel sends nothing', budgetPosts.length === 0, JSON.stringify(budgetPosts));
+    // 3b. Another amount typed into Put it back is a plain change: not sent as a put back, and the server keeps undo_of
+    // only for the exact old amount. The item stays in Needs action and History says nothing about putting it back.
+    await page.click(`.tl [data-oc-undo="${d3.worse}"]`);
+    await page.waitForSelector('dialog.confirm #cd-input');
+    await page.fill('#cd-input', '22.00');
+    await Promise.all([page.waitForResponse((r) => /\/budget$/.test(r.url()) && r.request().method() === 'POST'), page.click('#cd-ok')]);
+    check('D3: an edited amount is sent as a plain change, without undo_of', budgetPosts.length === 1 && budgetPosts[0].daily_budget_cents === 2200
+      && !('undo_of' in budgetPosts[0]), JSON.stringify(budgetPosts));
+    budgetPosts.length = 0;
+    const forged = await page.evaluate(async ([id, cid]) => (await fetch(`/api/ads/campaign/${id}/budget`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ebads' },
+      body: JSON.stringify({ daily_budget_cents: 2300, from_cents: 2200, accept_recent: true, undo_of: cid }) })).status, [X, d3.worse]);
+    const notBack = JSON.parse(py(`import json, account_ctx, db
+with account_ctx.use(1):
+    print(json.dumps([[r['new_value'], r['undo_of']] for r in db.query('SELECT new_value, undo_of FROM meta_changes WHERE entity_id = %s AND action = %s AND id > %s ORDER BY id', ('${X}', 'budget', ${d3.worse}))]))`).split('\n').pop());
+    check('D3: the server stores undo_of only for the exact old amount (22.00 and 23.00 are plain changes)', forged === 200
+      && JSON.stringify(notBack) === JSON.stringify([['2200', null], ['2300', null]]), JSON.stringify({ forged, notBack }));
+    await page.reload();
+    await page.waitForSelector('.tl .oc-line');
+    check('D3: after another amount, History has no "Put back on" and the item stays in Needs action',
+      !/Put back on/.test(await lineOf(page, 'Budget $20.00 → $24.00 a day')) && (await inboxNeed()) === 1);
+    await page.goto(`${BASE}/home.html`);
+    await page.waitForSelector('.tq-group, .tq-clear');
+    const tqAgain = page.locator('.tq-row', { hasText: needTitle });
+    check('D3: changed again since, Today offers See what happened but no Put it back', (await tqAgain.count()) === 1
+      && (await tqAgain.locator(`[data-oc-open="${d3.worse}"]`).count()) === 1 && (await tqAgain.locator('[data-oc-undo]').count()) === 0);
+    // Back to $24.00 on Meta and here, without those two changes, so the real Put it back below starts as seeded.
+    py(`import account_ctx, db, requests
+requests.post('http://fake-meta:5001/v24.0/${X}', data={'daily_budget': '2400', 'access_token': 'x'}, timeout=10).raise_for_status()
+with account_ctx.use(1):
+    db.execute('DELETE FROM meta_changes WHERE entity_id = %s AND id > %s', ('${X}', ${d3.worse}))
+    db.execute('UPDATE campaigns SET daily_budget_cents = 2400 WHERE id = %s', ('${X}',))`);
+    await page.goto(`${BASE}/campaign.html?id=${X}&tab=history`);
+    await page.waitForSelector(`.tl [data-oc-undo="${d3.worse}"]`);
+    budgetPosts.length = 0;
+    await page.click(`.tl [data-oc-undo="${d3.worse}"]`);
+    await page.waitForSelector('dialog.confirm #cd-input');
+    await Promise.all([page.waitForResponse((r) => /\/budget$/.test(r.url()) && r.request().method() === 'POST'), page.click('#cd-ok')]);
+    page.off('request', onReq);
+    check('D3: confirming sends $20.00 from $24.00 and names the change it puts back', JSON.stringify(budgetPosts) === JSON.stringify([{ daily_budget_cents: 2000, from_cents: 2400, accept_big: false, accept_recent: false, undo_of: d3.worse }]), JSON.stringify(budgetPosts));
+    check('D3: Meta has $20.00 again', String(metaObj(X).daily_budget) === '2000', JSON.stringify(metaObj(X)));
+    await page.reload();
+    await page.waitForSelector('.tl .oc-line');
+    const backText = await lineOf(page, 'Budget $20.00 → $24.00 a day');
+    check('D3: History says "Put back on … by Eugene" and offers no Put it back any more', new RegExp(`Put back on \\w{3} \\d+ by ${d3.admin}`).test(backText)
+      && (await page.locator(`[data-oc-undo="${d3.worse}"]`).count()) === 0, backText);
+    // 5b. Putting it back closes the Needs-action item.
+    check('D3: put back, it leaves Needs action', (await inboxNeed()) === 0);
+    // Settings → Alerts has the switch, on by default.
+    await openSettings('alerts');
+    await page.waitForSelector('#al-rules li');
+    const row = page.locator('#al-rules li', { hasText: "A change didn't help" });
+    check('D3: Settings → Alerts has "A change didn\'t help", on, with what it does', (await row.count()) === 1 && await row.locator('input[data-key="on"]').isChecked()
+      && /Checked after 3, 7 and 14 full days\./.test(await row.textContent()));
+    // 7–8. A client sees the line but never Put it back or Claude; a teammate off the campaign gets a 404.
+    py(`import db
+from werkzeug.security import generate_password_hash as h
+for email, role in (('qa-d3-client@example.com', 'client'), ('qa-d3-mate@example.com', 'member')):
+    db.execute(\\"INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, %s, 1) ON CONFLICT (email) DO UPDATE SET is_active = TRUE, password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, account_id = 1, must_change_password = FALSE\\", (email, 'QA D3 ' + role, h('d3-pass-12345'), role))
+db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users WHERE email = 'qa-d3-mate@example.com')\\")`);
+    for (const [email, who] of [['qa-d3-client@example.com', 'client'], ['qa-d3-mate@example.com', 'mate']]) {
+      const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+      const p = await ctx.newPage();
+      p.on('pageerror', (e) => errors.push(e.message));
+      await p.goto(BASE + '/login.html');
+      await p.fill('#email', email); await p.fill('#password', 'd3-pass-12345');
+      await Promise.all([p.waitForURL('**/home.html**'), p.click('button[type=submit]')]);
+      const res = await p.evaluate(async (ids) => { const r = await fetch(`/api/changes/${ids[0]}/check`); return { code: r.status, body: r.ok ? await r.json() : null }; }, [d3.worse]);
+      if (who === 'client') {
+        await p.goto(`${BASE}/campaign.html?id=${W}&tab=history`);
+        await p.waitForSelector('.tl .oc-line');
+        check('D3: a client sees the History line and no Put it back', /Worked/.test(await lineOf(p, 'Budget $20.00 → $24.00 a day')) && (await p.locator('[data-oc-undo]').count()) === 0);
+        await p.click(`[data-oc-open="${d3.worked}"]`);
+        await p.waitForSelector('dialog.oc-sheet .oc-grid');
+        check('D3: a client\'s dialog has the numbers, no Put it back and nothing about Claude', !(await p.$('#oc-undo')) && !(await p.$('.oc-expect-box'))
+          && !/Claude/.test(await p.textContent('dialog.oc-sheet')));
+        check('D3: a client\'s check has no undo, proposal or expectation, not even expect_met on a row', res.code === 200
+          && !['undo', 'proposal', 'expect', 'expected_text'].some((k) => k in res.body) && !/expect/.test(JSON.stringify(res.body)), JSON.stringify(res.body));
+      } else {
+        check('D3: a teammate who isn\'t on the campaign gets a 404', res.code === 404, String(res.code));
+      }
+      await ctx.close();
+    }
+    py(`import db
+db.execute(\\"UPDATE users SET is_active = FALSE WHERE email IN ('qa-d3-client@example.com', 'qa-d3-mate@example.com')\\")`);
+    // 9. Claude on the Mac: outcomes of the account's changes, with sentences and no lead details.
+    const agent = JSON.parse(py(`import json, settings_store, desk_api, account_ctx
+from app import create_app
+app = create_app(run_migrations=False)
+old = settings_store.get('agent_key_hash')
+settings_store.set('agent_key_hash', desk_api.key_hash('qa-agent-key'))
+try:
+    c = app.test_client()
+    r = c.get('/api/agent/outcomes?days=60', headers={'Authorization': 'Bearer qa-agent-key'})
+    snap = c.get('/api/agent/snapshot?range=7', headers={'Authorization': 'Bearer qa-agent-key'}).get_json()
+    print(json.dumps({'code': r.status_code, 'body': r.get_json(), 'text': r.get_data(as_text=True), 'snap': len(snap.get('change_results') or [])}))
+finally:
+    settings_store.set('agent_key_hash', old)`).split('\n').pop());
+    const mine = agent.body.changes.filter((c) => [d3.worked, d3.worse, d3.pause].includes(c.change.id));
+    const byId = Object.fromEntries(mine.map((c) => [c.change.id, c]));
+    check('D3: /api/agent/outcomes lists the three changes with their sentences, the expectation and what was put back', agent.code === 200 && mine.length === 3
+      && byId[d3.worked].result.sentence === 'Worked: cost per lead $47 → $14 over 7 days (70% cheaper).' && byId[d3.worked].result.expect_met === true
+      && byId[d3.worked].change.by === 'claude' && byId[d3.worse].put_back === true && byId[d3.pause].result.state === 'lean_better' && agent.snap > 0,
+      JSON.stringify(mine.map((c) => [c.change.id, c.result.state, c.put_back])));
+    check('D3: Claude\'s outcomes carry no names, emails or phones of leads', !/full_name|"email"|"phone"/.test(agent.text));
+    // The ad page's "Claude's earlier suggestions": the applied one says what happened, with the expectation in words and
+    // a labelled Details that opens the dialog for its change.
+    await page.goto(`${BASE}/ad.html?id=${d3.pause_ad}#tab=history`);
+    await page.waitForSelector('#hist-cards .sg-result .oc-line');
+    const card = await page.evaluate((cid) => { const c = document.querySelector('#hist-cards .sg-result');
+      return { text: c.textContent.replace(/\s+/g, ' ').trim(), label: c.querySelector(`[data-oc-open="${cid}"]`)?.getAttribute('aria-label') }; }, d3.pause);
+    check('D3: the ad page\'s earlier suggestion shows its result and what Claude expected', /^Looks better, not sure yet\s*cost per lead \$35 → \$28 over 7 days\./.test(card.text)
+      && /Expected: Cheaper leads on the ad set/.test(card.text) && card.label === 'Did it work? QA D3: turn off ad 2', JSON.stringify(card));
+    await page.click(`#hist-cards [data-oc-open="${d3.pause}"]`);
+    await page.waitForSelector('dialog.oc-sheet .oc-grid');
+    const tabsA11y = await page.evaluate(() => { const d = document.querySelector('dialog.oc-sheet');
+      const sel = d.querySelector('[role=tab][aria-selected=true]'); const others = [...d.querySelectorAll('[role=tab][aria-selected=false]')];
+      return { sel: sel && sel.tabIndex, others: others.map((b) => b.tabIndex), labelled: d.querySelector('[role=tabpanel]').getAttribute('aria-labelledby') === sel.id,
+        controls: sel.getAttribute('aria-controls') === d.querySelector('[role=tabpanel]').id }; });
+    check('D3: the dialog\'s tabs: only the selected one is in the tab order, and the panel is labelled by it', tabsA11y.sel === 0 && tabsA11y.others.every((t) => t === -1)
+      && tabsA11y.labelled && tabsA11y.controls, JSON.stringify(tabsA11y));
+    await page.keyboard.press('Escape');
+    // 10–11. Phones: the line wraps, Details and Put it back are 44px, the dialog is a full-height sheet with 44px tabs, nothing past the edge.
+    for (const width of [390, 320]) {
+      const pctx = await browser.newContext({ viewport: { width, height: 760 }, isMobile: true, hasTouch: true });
+      await pctx.addCookies(await page.context().cookies());
+      const pp = await pctx.newPage();
+      pp.on('pageerror', (e) => errors.push(e.message));
+      await pp.goto(`${BASE}/campaign.html?id=${W}&tab=history`);
+      await pp.waitForSelector('.tl .oc-line');
+      const lineFit = await pp.evaluate(() => { const b = document.querySelector('.tl .oc-btn').getBoundingClientRect(); const l = document.querySelector('.tl .oc-line').getBoundingClientRect();
+        return { h: Math.round(b.height), right: Math.round(l.right), vw: innerWidth, wide: document.documentElement.scrollWidth <= innerWidth }; });
+      await pp.click(`.tl [data-oc-open="${d3.worked}"]`);
+      await pp.waitForSelector('dialog.oc-sheet .oc-grid');
+      const sheet = await pp.evaluate(() => { const d = document.querySelector('dialog.oc-sheet'); const r = d.getBoundingClientRect();
+        const small = [...d.querySelectorAll('button')].filter((b) => b.getBoundingClientRect().height < 44).map((b) => b.textContent);
+        const over = [...d.querySelectorAll('*')].filter((e) => e.getBoundingClientRect().right > innerWidth + 1).map((e) => e.className || e.tagName);
+        return { h: Math.round(r.height), vh: innerHeight, w: Math.round(r.width), small, over, scroll: d.querySelector('form').scrollWidth - d.querySelector('form').clientWidth,
+          font: getComputedStyle(d.querySelector('.oc-v')).fontFamily }; });
+      check(`D3 phone ${width}: the History line fits with a 44px Details`, lineFit.h >= 44 && lineFit.right <= lineFit.vw && lineFit.wide, JSON.stringify(lineFit));
+      check(`D3 phone ${width}: the dialog fills the screen, every button and tab is 44px, numbers in Geist Mono, nothing sideways`, sheet.h === sheet.vh && sheet.w === width
+        && sheet.small.length === 0 && sheet.over.length === 0 && sheet.scroll <= 0 && /Geist Mono/.test(sheet.font), JSON.stringify(sheet));
+      if (width === 390) {
+        await pp.goBack();
+        await pp.waitForTimeout(300);
+        check('D3 phone: Back closes the dialog', !(await pp.$('dialog.oc-sheet')) && !pp.url().includes('check='), pp.url());
+        // An Inbox or Today link (?check=) opens the dialog with its own history step: Back closes it and stays on History.
+        await pp.goto(`${BASE}/campaign.html?id=${X}&tab=history&check=${d3.worse}`);
+        await pp.waitForSelector('dialog.oc-sheet .oc-say');
+        await pp.goBack();
+        await pp.waitForTimeout(300);
+        check('D3 phone: Back from a ?check= link closes the dialog and stays on History', !(await pp.$('dialog.oc-sheet')) && !pp.url().includes('check=')
+          && pp.url().includes(`id=${X}`) && pp.url().includes('tab=history') && (await pp.$('.tl .oc-line')) !== null, pp.url());
+        await pp.goto(`${BASE}/campaign.html?id=${X}&tab=history`);
+        await pp.waitForSelector('.tl .oc-line');
+        await pp.screenshot({ path: `${OUT}/d3-history-390.png` });
+      }
+      await pctx.close();
+    }
+    // The seeded campaigns and their spend go, so later checks see the account as it was.
+    sh('docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python /tmp/seed_checks.py --clean');
   }
   await page.goto(BASE + '/desk.html#list');
   await page.waitForSelector('#cv[data-state]');

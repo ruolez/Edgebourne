@@ -11,7 +11,15 @@ FULL = {"kind": "budget", "title": "Raise the ad set budget", "entity_type": "ad
 class CleanProposalTests(unittest.TestCase):
     def test_keeps_every_known_field_trimmed(self):
         padded = {k: f"  {v}  " for k, v in FULL.items()}
-        self.assertEqual(desk_api.clean_proposal(padded), {**FULL, "payload": None})
+        self.assertEqual(desk_api.clean_proposal(padded), {**FULL, "payload": None, "expect": None})
+
+    def test_d3_a_structured_expectation_is_kept(self):
+        out = desk_api.clean_proposal({**FULL, "expect": {"metric": "cpl", "op": "<", "cents": 4000, "days": 14}})
+        self.assertEqual(out["expect"], {"metric": "cpl", "op": "<", "cents": 4000, "days": 14})
+
+    def test_d3_without_one_the_expected_text_is_read(self):
+        out = desk_api.clean_proposal({**FULL, "expected": "CPL under $40 within 7 days", "expect": {"metric": "roas"}})
+        self.assertEqual(out["expect"], {"metric": "cpl", "op": "<", "cents": 4000, "days": 7})
 
     def test_unknown_kind_becomes_other_and_extra_keys_are_dropped(self):
         out = desk_api.clean_proposal({"kind": "delete_everything", "title": "x", "sql": "DROP TABLE"})
