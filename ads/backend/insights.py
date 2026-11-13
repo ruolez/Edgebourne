@@ -39,7 +39,7 @@ def to_cents(value):
     return int(round(float(value or 0) * 100))
 
 
-CREATIVE_FIELDS = "{id,object_type,title,body,call_to_action_type,video_id,image_url,thumbnail_url,effective_object_story_id}"
+CREATIVE_FIELDS = "{id,object_type,title,body,call_to_action_type,video_id,image_url,thumbnail_url,effective_object_story_id,asset_feed_spec}"
 AD_BASE = ("id,name,campaign_id,adset_id,status,configured_status,effective_status,ad_review_feedback,issues_info,"
            "created_time,updated_time,")
 # Larger creative thumbnails when Meta accepts the sizing parameters; plain fields otherwise.
@@ -89,17 +89,31 @@ def stored_pictures():
         "ORDER BY video_id, synced_at DESC")}
 
 
+def creative_media(cr):
+    """(object_type, video_id) to store for a creative. A placement-customised creative (4:5 feeds + 9:16
+    Reels) comes back as SHARE with its videos inside asset_feed_spec; when it holds only videos it is a
+    video ad, so hook rate, the Video tab and the full-size picture work for it too."""
+    if cr.get("video_id"):
+        return cr.get("object_type"), cr["video_id"]
+    feed = cr.get("asset_feed_spec") or {}
+    videos = [v["video_id"] for v in feed.get("videos") or [] if v.get("video_id")]
+    if videos and not feed.get("images"):
+        return "VIDEO", videos[0]
+    return cr.get("object_type"), None
+
+
 def upsert_ad(ad, source, pictures, listed_at):
     """Store one ad as Meta returned it and record what changed since the last pull."""
     cr = ad.get("creative") or {}
-    image = cr.get("image_url") or (video_picture(cr["video_id"], pictures) if cr.get("video_id") else None)
+    object_type, video_id = creative_media(cr)
+    image = cr.get("image_url") or (video_picture(video_id, pictures) if video_id else None)
     prev, written = status_history.upsert_tracked("ad", ad["id"], AD_UPSERT, (
         ad["id"], ad["name"], ad.get("campaign_id"), ad.get("adset_id"), ad.get("status"),
         ad.get("configured_status"), ad.get("effective_status"), cr.get("thumbnail_url"),
         json.dumps(ad.get("ad_review_feedback")) if ad.get("ad_review_feedback") else None,
         json.dumps(ad.get("issues_info")) if ad.get("issues_info") else None,
-        cr.get("id"), cr.get("object_type"), cr.get("title"), cr.get("body"), cr.get("call_to_action_type"),
-        cr.get("video_id"), image, ad.get("created_time"), ad.get("updated_time"), cr.get("effective_object_story_id"),
+        cr.get("id"), object_type, cr.get("title"), cr.get("body"), cr.get("call_to_action_type"),
+        video_id, image, ad.get("created_time"), ad.get("updated_time"), cr.get("effective_object_story_id"),
         listed_at))
     if not written:
         return []

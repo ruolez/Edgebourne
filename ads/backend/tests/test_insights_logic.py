@@ -12,6 +12,16 @@ class ActionValueTests(unittest.TestCase):
                          (125, 127, 0))
 
 
+class CreativeMediaTests(unittest.TestCase):
+    def test_placement_customised_video_ads_count_as_video(self):
+        plain_video = {"object_type": "VIDEO", "video_id": "v1"}
+        feeds_and_reels = {"object_type": "SHARE", "asset_feed_spec": {"videos": [{"video_id": "v45"}, {"video_id": "v916"}]}}
+        image_and_video = {"object_type": "SHARE", "asset_feed_spec": {"images": [{"hash": "h"}], "videos": [{"video_id": "v"}]}}
+        image = {"object_type": "SHARE", "image_url": "https://x"}
+        self.assertEqual([insights.creative_media(c) for c in (plain_video, feeds_and_reels, image_and_video, image, {})],
+                         [("VIDEO", "v1"), ("VIDEO", "v45"), ("SHARE", None), ("SHARE", None), (None, None)])
+
+
 class BreakdownShapeTests(unittest.TestCase):
     def test_placements_get_readable_names_and_merge(self):
         rows = [{"publisher_platform": "instagram", "platform_position": "stream", "spend": "10", "impressions": "100",
