@@ -1,11 +1,13 @@
 // Creative › Gallery (UX-AUDIT 9.5): every ad as people see it with what it earned, copies of one ad as one
 // card (backend/gallery.py). Views Top, Just launched and Tired; filters by status, idea tag and the shared
-// dates; Compare from the cards picked (each card's top-spending ad). Everything is in the URL.
+// dates; Compare from the cards picked (each card's top-spending ad), and (admins) Make more like these: a brief for
+// Claude from the picked cards, edited before it goes (js/brief.js). Everything is in the URL.
 import { api, startLoad } from "./api.js";
 import { boot, emptyState, entityLink, esc, icon, onRefresh, rememberList, showLoadError, withFrom } from "./ui.js";
 import { EXPLAIN, RANGES, WORDS, count, dayLabel, money, rangeSelect, rememberRange, sharedRange, statusOf } from "./format.js";
 import * as UrlState from "./urlstate.js";
 import { track, trackLegend } from "./manager.js";
+import { BRIEF_MAX, askForMore } from "./brief.js";
 
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = { view: "top", status: "", dim: "", tag: "", range: "7" };
@@ -115,8 +117,11 @@ function trayHtml() {
   const ok = n >= 2 && n <= MAX_COMPARE;
   const film = list.slice(0, MAX_COMPARE).map((g) => (g.image_url ? `<img class="tbl-th" src="${esc(g.image_url)}" alt="" referrerpolicy="no-referrer">` : '<span class="tbl-th"></span>')).join("");
   const why = ok ? "" : `<span class="gal-why" id="gal-why">${n < 2 ? `Pick 2 to ${MAX_COMPARE} to compare` : `Compare takes ${MAX_COMPARE} at most`}</span>`;
+  // Claude's requests are an admin's (POST /api/desk/tasks); a brief takes BRIEF_MAX cards at most, like Research's.
+  const briefOk = n <= BRIEF_MAX;
+  const more = me.role !== "admin" ? "" : `${briefOk ? "" : `<span class="gal-why" id="gal-why-more">Make more takes ${BRIEF_MAX} at most</span>`}<button type="button" class="btn btn-claude btn-small" data-tray="more" ${briefOk ? "" : 'disabled aria-describedby="gal-why-more"'}>${icon("spark")}<span>${n === 1 ? "Make more like this" : "Make more like these"}</span></button>`;
   return `<div class="bk" role="toolbar" aria-label="${n} selected"><span class="bk-n"><b>${n}</b> selected</span><span class="bk-film">${film}</span>
-    <span class="bk-acts">${why}<button type="button" class="btn btn-primary btn-small" data-tray="compare" ${ok ? "" : 'disabled aria-describedby="gal-why"'}>${icon("compare")}<span>Compare</span></button></span>
+    <span class="bk-acts">${why}<button type="button" class="btn btn-primary btn-small" data-tray="compare" ${ok ? "" : 'disabled aria-describedby="gal-why"'}>${icon("compare")}<span>Compare</span></button>${more}</span>
     <button type="button" class="icon-btn bk-x" data-tray="clear" aria-label="Clear the selection">×</button></div>`;
 }
 
@@ -204,6 +209,11 @@ if (me) {
     if (!b) return;
     if (b.dataset.tray === "clear") { picked.clear(); render(); return; }
     const ids = [...picked.values()].map((g) => g.top_ad_id);
+    if (b.dataset.tray === "more") {
+      b.disabled = true;
+      askForMore(ids, state.range).finally(() => { if (b.isConnected) b.disabled = false; });
+      return;
+    }
     location.href = `/compare.html?ids=${ids.map(encodeURIComponent).join(",")}&range=${encodeURIComponent(state.range)}&vs=1`;
   });
   document.addEventListener("keydown", (e) => {

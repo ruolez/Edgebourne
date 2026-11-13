@@ -251,5 +251,91 @@ class PickTests(unittest.TestCase):
         self.assertEqual(ids(g.pick(cards(), "nonsense", status="nonsense")), ids(g.pick(cards(), "top")))
 
 
+PERIOD = (date(2026, 11, 5), date(2026, 11, 11))
+TEXT_WORDS = ["orders", "quotes", "invoices", "retyping", "shop", "software", "built", "around", "how", "you", "work", "Speed"]
+
+
+def brief_card(i, spend=8400, leads=6, imp=10000, v3=3120, tags=None, target=1000, copies=1, **over):
+    """One Gallery card as the brief route hands it over: gallery.build's card plus its top ad's text and button."""
+    ads = [ad(i if n == 0 else f"{i}-{n}", creative=f"c-{i}", **{k: v for k, v in over.items() if k not in ("body", "cta_type")}) for n in range(copies)]
+    card = build(ads, {i: nums(spend, leads, imp, v3)}, tags={i: tags or {}}, target=target)[0]
+    return {**card, "body": over.get("body", WORDS["body"]), "cta_type": over.get("cta_type", WORDS["cta_type"])}
+
+
+class BriefTests(unittest.TestCase):
+    def test_make_more_like_this_names_the_ad_its_words_and_what_it_earned_on_complete_days(self):
+        c = brief_card("n3", tags={"angle": "Speed", "hook": "Question"})
+        self.assertEqual(g.brief([c], "Edge Bourne", PERIOD), {"left_out": 0, "prompt": (
+            "Make more ads for Edge Bourne like this one of ours from the Gallery. Keep what seems to make it work (the hook, the angle, "
+            "the format) and write 3 genuinely different new ads for the same offer, in fresh words: not copies of it. "
+            "The numbers are for Nov 5 – Nov 11, complete days only.\n\n"
+            "Ad n3 · video ad · Delivering\n"
+            "Headline: Type it once\n"
+            "Text: Your tools don't talk to each other.\n"
+            "Button: Book travel\n"
+            "Results: spent $84.00, 6 leads, $14.00 per lead\n"
+            "Hook rate: 31.2% watched 3 seconds\n"
+            "Ideas: Hook: Question · Angle: Speed\n"
+            "Ad id: n3\n\n"
+            "Send them back as new ad suggestions.")})
+
+    def test_several_cards_are_numbered_in_the_order_picked(self):
+        p = g.brief([brief_card("b", title="Second picked first"), brief_card("a", title="Then this")], "Edge Bourne", PERIOD)["prompt"]
+        self.assertTrue(p.startswith("Make more ads for Edge Bourne like these 2 of ours from the Gallery."), p[:90])
+        self.assertIn("3 genuinely different new ads", p)
+        self.assertLess(p.index("1. Ad b · video ad"), p.index("2. Ad a · video ad"))
+
+    def test_too_little_to_judge_says_so_and_gives_no_cost_per_lead(self):
+        p = g.brief([brief_card("x", spend=1200, leads=1)], "X", PERIOD)["prompt"]
+        self.assertIn("\nResults: spent $12.00, 1 lead (too early to judge)\n", p)
+        self.assertNotIn("per lead", p)
+
+    def test_a_card_that_spent_nothing_on_those_days_says_so(self):
+        p = g.brief([brief_card("x", spend=0, leads=0, imp=0, v3=0)], "X", PERIOD)["prompt"]
+        self.assertIn("\nResults: nothing spent on these days\n", p)
+        self.assertNotIn("Hook rate", p)
+
+    def test_a_picture_has_no_hook_rate_and_missing_words_leave_no_empty_lines(self):
+        c = brief_card("pic", video=None, title=None, body=None, cta_type=None)
+        block = g.brief([c], "X", PERIOD)["prompt"].split("\n\n")[1]
+        self.assertEqual(block, "Ad pic · image ad · Delivering\nResults: spent $84.00, 6 leads, $14.00 per lead\nAd id: pic")
+
+    def test_status_copies_and_tired_are_in_the_first_line(self):
+        c = {**brief_card("t", status="DISAPPROVED", copies=3), "tired": True}
+        self.assertEqual(g.brief([c], "X", PERIOD)["prompt"].split("\n\n")[1].split("\n")[0],
+                         "Ad t · video ad · Rejected or has a problem · runs as 3 ads · looks tired")
+
+    def test_money_is_in_the_account_currency(self):
+        self.assertIn("Results: spent 84.00 CAD, 6 leads, 14.00 CAD per lead", g.brief([brief_card("c")], "X", PERIOD, "CAD")["prompt"])
+
+    def test_no_complete_days_means_no_numbers(self):
+        p = g.brief([brief_card("n")], "X", None)["prompt"]
+        self.assertIn("There are no complete days in the dates picked yet, so no numbers.", p)
+        self.assertNotIn("Results:", p)
+
+    def test_no_business_name_reads_us(self):
+        self.assertTrue(g.brief([brief_card("n")], "  ", PERIOD)["prompt"].startswith("Make more ads for us like this one"))
+
+    def test_more_than_ten_keeps_the_first_ten_and_says_how_many_were_left_out(self):
+        out = g.brief([brief_card(f"k{i}") for i in range(13)], "X", PERIOD)
+        self.assertEqual((out["left_out"], out["prompt"].endswith("(3 more you picked were left out to keep this short.)")), (3, True))
+        self.assertIn("10. Ad k9 ·", out["prompt"])
+
+    def test_any_pick_fits_the_draft_keeps_its_order_and_counts_every_card(self):
+        import swipes
+        rnd = random.Random(7)
+        for _ in range(150):
+            n = rnd.randint(1, 14)
+            picked = [brief_card(f"r{i}", title=" ".join(rnd.choice(TEXT_WORDS) for _ in range(rnd.randint(0, 60))) or None,
+                                 body=" ".join(rnd.choice(TEXT_WORDS) for _ in range(rnd.randint(0, 900))) or None,
+                                 name="N" * rnd.randint(1, 300), tags={"hook": "Q" * rnd.randint(1, 120)}) for i in range(n)]
+            out = g.brief(picked, "Edge Bourne", PERIOD)
+            kept = [line for line in out["prompt"].split("\n") if line.startswith(("Ad id: ",))]
+            with self.subTest(n=n):
+                self.assertLessEqual(len(out["prompt"]), swipes.DRAFT_MAX)
+                self.assertEqual(kept, [f"Ad id: r{i}" for i in range(len(kept))])
+                self.assertEqual(len(kept) + out["left_out"], n)
+
+
 if __name__ == "__main__":
     unittest.main()

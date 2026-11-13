@@ -8,6 +8,8 @@ from datetime import timedelta
 
 import concepts
 import creative_versions as cv
+import swipes
+import words
 
 LAUNCH_DAYS = 7
 VIEWS = ("top", "launched", "tired")
@@ -167,3 +169,59 @@ def pick(groups, view="top", status="", tag=None):
     else:
         shown = sorted(base, key=lambda g: (not g["enough"], g["cpl_cents"] if g["enough"] else 0, -g["spend_cents"]))
     return {"view": view, "status": status, "groups": shown, "counts": counts}
+
+
+STATUS_WORDS = {"delivering": "Delivering", "review": "In review", "problem": "Rejected or has a problem", "off": "Off", "deleted": "Deleted"}
+BRIEF_FRAMES = {
+    "one": ("Make more ads for {business} like this one of ours from the Gallery. Keep what seems to make it work (the hook, the angle, "
+            "the format) and write 3 genuinely different new ads for the same offer, in fresh words: not copies of it."),
+    "many": ("Make more ads for {business} like these {n} of ours from the Gallery. Say what they have in common and what seems to make "
+             "them work (cost per lead counts only where there's enough to judge), then write 3 genuinely different new ads that keep it, "
+             "in fresh words: not copies of them."),
+}
+BRIEF_OUTRO = "Send them back as new ad suggestions."
+
+
+def _results(card, currency):
+    if not card.get("spend_cents"):
+        return "Results: nothing spent on these days"
+    spent = f"spent {words.money(card['spend_cents'], currency)}, {card['leads']} lead{'' if card['leads'] == 1 else 's'}"
+    if not card.get("enough") or not card.get("cpl_cents"):
+        return f"Results: {spent} (too early to judge)"
+    return f"Results: {spent}, {words.money(card['cpl_cents'], currency)} per lead"
+
+
+def _brief_lines(card, body_room, share, currency, numbers):
+    """One card as lines: what it is, its words, what it earned on the complete days, its ideas, its ad id."""
+    head = [swipes.fit(card.get("name"), 200), f"{card.get('kind') or 'image'} ad", STATUS_WORDS.get(card.get("bucket"), "Off")]
+    if len(card.get("ads") or ()) > 1:
+        head.append(f"runs as {len(card['ads'])} ads")
+    if card.get("tired"):
+        head.append("looks tired")
+    cta = str(card.get("cta_type") or "").replace("_", " ").strip().capitalize()
+    order = list(concepts.DIMENSIONS)
+    tags = sorted((t for t in card.get("tags_all") or () if t[0] in concepts.DIMENSIONS and str(t[1] or "").strip()), key=lambda t: (order.index(t[0]), t[1]))
+    ideas = swipes.fit(" · ".join(f"{concepts.DIMENSIONS[d][0]}: {swipes.fit(v, 80)}" for d, v in tags), max(40, min(300, share // 4)))
+    hook = card.get("hook_rate") if card.get("kind") == "video" and card.get("spend_cents") else None
+    return [" · ".join(head),
+            *([f"Headline: {swipes.fit(card['title'], max(40, min(150, share // 5)))}"] if str(card.get("title") or "").strip() else []),
+            *([f"Text: {swipes.fit(card['body'], body_room)}"] if str(card.get("body") or "").strip() else []),
+            *([f"Button: {cta}"] if cta else []),
+            *([_results(card, currency)] if numbers else []),
+            *([f"Hook rate: {hook * 100:.1f}% watched 3 seconds"] if numbers and hook is not None else []),
+            *([f"Ideas: {ideas}"] if ideas else []),
+            f"Ad id: {card.get('top_ad_id')}"]
+
+
+def brief(cards, business, period, currency="USD"):
+    """The request "Make more like these" drafts from Gallery cards picked (in that order), for Claude to edit
+    and send: each card's words, what it earned over `period` ((first, last) complete days, or None when the
+    dates picked have none yet: no numbers then) and its ideas, trimmed under swipes.DRAFT_MAX like a swipe
+    brief. cards: gallery.build cards plus their top ad's `body` and `cta_type`. Returns {prompt, left_out}."""
+    who = " ".join(str(business or "").split()) or "us"
+    when = (f"The numbers are for {words.day(period[0])}{'' if period[0] == period[1] else f' – {words.day(period[1])}'}, complete days only."
+            if period else "There are no complete days in the dates picked yet, so no numbers.")
+
+    def frame(n):
+        return f"{BRIEF_FRAMES['one' if n == 1 else 'many'].format(business=who, n=n)} {when}", BRIEF_OUTRO, n > 1
+    return swipes.pack(cards, frame, lambda c, room, share: _brief_lines(c, room, share, currency, bool(period)))

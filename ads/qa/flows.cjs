@@ -1887,6 +1887,14 @@ db.execute(\\"UPDATE desk_tasks SET status = 'cancelled' WHERE kind = 'creative'
   await page.waitForSelector('#view');
   await page.waitForTimeout(600);
   check('a weekly Competitor check schedule is offered, off', /Competitor check/.test(await page.textContent('#view')));
+  check('Claude › Schedules has its page heading', (await page.textContent('#view-head h1')) === 'Schedules' && await page.isVisible('#view-head h1'));
+  await page.goto(BASE + '/desk.html#ads');
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector('#view-head h1')?.textContent === 'By ad');
+  await page.goto(BASE + '/desk.html#list');
+  await page.reload();
+  await page.waitForSelector('#cl-list');
+  check('Claude › By ad has its heading, and a conversation keeps only its own', await page.isHidden('#view-head') && (await page.locator('h1:visible').count()) <= 1);
 
   // Meta's advice on Today: score, suggestions in plain words, apply one through the +20% warning, benchmarks from the Mac.
   sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/120252638288040312?access_token=x', data=b'daily_budget=2000'))"`);
@@ -2998,6 +3006,16 @@ with account_ctx.all_accounts():
   await cp.waitForSelector('.gal-card, #gal .empty');
   const galActs = await clientActs();
   check('a client sees the Gallery with nothing to change', galActs.length === 0, galActs.join(' | '));
+  // FU-finish: "Make more like these" (a request to Claude) is an admin's: a client's picked cards offer Compare only.
+  const clientMore = await cp.evaluate(async () => (await fetch('/api/gallery/brief?ads=120252672229040312&range=30')).status);
+  let clientTray = 'no cards to pick in this account';
+  if (await cp.locator('.gal-card [data-pick]').count()) {
+    await cp.locator('.gal-card [data-pick]').first().check();
+    await cp.waitForSelector('#gal-tray .bk');
+    clientTray = (await cp.locator('#gal-tray [data-tray="more"]').count()) === 0 && (await cp.locator('#gal-tray [data-tray="compare"]').count()) === 1 ? 'ok' : 'Make more shown';
+    await cp.keyboard.press('Escape');
+  }
+  check('the Gallery brief route refuses a client, and their tray has no Make more', clientMore === 403 && clientTray === 'ok', `${clientMore} ${clientTray}`);
   await cp.goto(BASE + '/research.html');
   await cp.waitForURL('**/home.html');
   const clientBrief = await cp.evaluate(async () => (await fetch('/api/swipes/brief?ids=1')).status);
@@ -4475,6 +4493,97 @@ db.execute('DELETE FROM ads WHERE id = %s', ('qa-gal-del',))`);
     const cmpUrl = new URL(page.url());
     check('Gallery: Compare from two picked cards opens Compare on their top-spending ads with the same dates',
       cmpUrl.searchParams.get('ids') === tops.join(',') && cmpUrl.searchParams.get('range') === '14' && cmpUrl.searchParams.get('vs') === '1', page.url());
+    // FU-finish: Make more like these (Phase 9 mockup) = a brief from the picked cards through the swipe loop's editable
+    // dialog → POST /api/desk/tasks {kind: creative, origin: brief} → the conversation. No money path; numbers on complete days.
+    {
+      const yday = py(`import account_info, words;from datetime import timedelta;print(words.day(account_info.today() - timedelta(days=1)))`);
+      await page.goto(BASE + '/gallery.html?range=14');
+      await page.waitForSelector('.gal-card [data-pick]');
+      const mk = await page.$$eval('.gal-card', (cs) => cs.slice(0, 2).map((c) => c.dataset.key));
+      const mTops = (await getJson('/api/gallery?range=14')).groups.filter((x) => mk.includes(x.key)).sort((a, b) => mk.indexOf(a.key) - mk.indexOf(b.key)).map((x) => x.top_ad_id);
+      const madeBefore = creativeIds().length;
+      await page.locator(`.gal-card[data-key="${mk[1]}"] [data-pick]`).check();
+      await page.waitForSelector('#gal-tray [data-tray="more"]');
+      check('Gallery: one picked card offers Make more like this beside the waiting Compare', (await page.textContent('#gal-tray [data-tray="more"]')).trim() === 'Make more like this'
+        && await page.isDisabled('#gal-tray [data-tray="compare"]') && await page.isEnabled('#gal-tray [data-tray="more"]'));
+      await page.locator(`.gal-card[data-key="${mk[0]}"] [data-pick]`).check();
+      await page.waitForFunction(() => /Make more like these/.test(document.querySelector('#gal-tray [data-tray="more"]')?.textContent || ''));
+      await page.click('#gal-tray [data-tray="more"]');
+      await page.waitForSelector('dialog.confirm.wide #cd-input');
+      const moreDraft = await page.inputValue('#cd-input');
+      const i1 = moreDraft.indexOf(`Ad id: ${mTops[1]}`), i0 = moreDraft.indexOf(`Ad id: ${mTops[0]}`);
+      check('Make more like these drafts from the picked cards in the order picked, with numbers through yesterday only',
+        /^Make more ads for Edge Bourne like these 2 of ours from the Gallery/.test(moreDraft) && moreDraft.includes(` – ${yday}, complete days only.`)
+        && i1 > 0 && i0 > i1 && /^1\. /m.test(moreDraft) && /^Results: spent \$/m.test(moreDraft) && moreDraft.length <= 3500 && !/today/i.test(moreDraft)
+        && (await page.textContent('dialog.confirm h2')) === 'Make more like these 2 ads' && /of 4,000 characters/.test(await page.textContent('#cd-hint')),
+        moreDraft.slice(0, 240));
+      await page.click('#cd-cancel');
+      await page.waitForSelector('dialog.confirm', { state: 'detached' });
+      check('… Cancel sends nothing and keeps the picks', creativeIds().length === madeBefore && (await page.locator('.gal-card.is-picked').count()) === 2);
+      const todayOnly = await getJson(`/api/gallery/brief?ads=${mTops[0]}&range=today`);
+      // The brief's dates are the complete days of the window the Gallery shows (the cards are judged on them).
+      const gal30 = await getJson('/api/gallery?range=30');
+      const brief30 = await getJson(`/api/gallery/brief?ads=${mTops[0]}&range=30`);
+      const want30 = py(`import words;from datetime import date;print(words.day(date.fromisoformat('${gal30.range.start}')) + ' – ' + words.day(date.fromisoformat('${gal30.judged_through}')))`).trim();
+      check('a Last 30 days brief quotes the Gallery\'s own dates: its first day through the day it is judged on', brief30.prompt.includes(`The numbers are for ${want30}, complete days only.`), `${want30} | ${brief30.prompt.slice(0, 200)}`);
+      check('a brief asked on Today still quotes complete days only (yesterday)', todayOnly.prompt.includes(`The numbers are for ${yday}, complete days only.`)
+        && /^Make more ads for Edge Bourne like this one of ours/.test(todayOnly.prompt) && todayOnly.count === 1, todayOnly.prompt.slice(0, 200));
+      await page.click('#gal-tray [data-tray="more"]');
+      await page.waitForSelector('dialog.confirm.wide #cd-input');
+      await page.fill('#cd-input', (await page.inputValue('#cd-input')) + '\nQA: more like these, calmer.');
+      await Promise.all([page.waitForURL('**/desk.html#r/**'), page.click('#cd-ok')]);
+      const moreId = Number(page.url().split('#r/')[1]);
+      const moreTask = JSON.parse(py(`import db, json;r=db.query('SELECT kind, prompt, status, options, full_session FROM desk_tasks WHERE id = %s', (${moreId},), one=True);print(json.dumps(r, default=str))`));
+      check('… Send to Claude starts a creative conversation with the edited words, marked as a brief (usual tools), and opens it',
+        moreTask.kind === 'creative' && moreTask.status === 'queued' && moreTask.prompt.endsWith('QA: more like these, calmer.') && moreTask.options.brief === true
+        && moreTask.full_session === null && creativeIds().length === madeBefore + 1, JSON.stringify({ ...moreTask, prompt: '' }));
+      py(`import db;db.execute(\\"UPDATE desk_tasks SET status = 'cancelled' WHERE id = %s AND status = 'queued'\\", (${moreId},))`);
+      const seenErrs = errors.length;
+      const refused = await page.evaluate(async () => Promise.all(['', 'abc,-1', '999999999'].map(async (q) => (await fetch(`/api/gallery/brief?ads=${q}`)).status)));
+      await page.waitForTimeout(300);
+      errors.splice(seenErrs);  // the refused requests log their expected 400 / 404
+      check('the brief route refuses no ads or garbage (400) and ads it does not hold (404)', refused.join() === '400,400,404', refused.join());
+      // A teammate can't send Claude requests: no Make more in their tray, and the route says no.
+      py(`import db
+from werkzeug.security import generate_password_hash as h
+db.execute(\\"INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, 'member', 1) ON CONFLICT (email) DO UPDATE SET is_active = TRUE, password_hash = EXCLUDED.password_hash, role = 'member', account_id = 1, must_change_password = FALSE\\", ('qa-fu-mate@example.com', 'QA FU mate', h('fu-pass-12345')))
+db.execute(\\"INSERT INTO campaign_members (campaign_id, user_id, account_id) SELECT '120252638288040312', id, 1 FROM users WHERE email = 'qa-fu-mate@example.com' ON CONFLICT DO NOTHING\\")`);
+      const mctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+      const mp = await mctx.newPage();
+      await mp.goto(BASE + '/login.html');
+      await mp.fill('#email', 'qa-fu-mate@example.com'); await mp.fill('#password', 'fu-pass-12345');
+      await Promise.all([mp.waitForURL('**/home.html**'), mp.click('button[type=submit]')]);
+      await mp.goto(BASE + '/gallery.html?range=30');
+      await mp.waitForSelector('.gal-card [data-pick], #gal .empty');
+      let mateTray = 'no cards';
+      if (await mp.locator('.gal-card [data-pick]').count()) {
+        await mp.locator('.gal-card [data-pick]').first().check();
+        await mp.waitForSelector('#gal-tray .bk');
+        mateTray = (await mp.locator('#gal-tray [data-tray="more"]').count()) === 0 ? 'ok' : 'Make more shown';
+      }
+      const mateMore = await mp.evaluate(async (a) => (await fetch(`/api/gallery/brief?ads=${a}&range=30`)).status, mTops[0]);
+      check("a teammate's tray has no Make more, and the brief route refuses a teammate", mateTray === 'ok' && mateMore === 403, `${mateTray} ${mateMore}`);
+      await mctx.close();
+      py(`import db;db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users WHERE email = 'qa-fu-mate@example.com')\\");db.execute(\\"UPDATE users SET is_active = FALSE WHERE email = 'qa-fu-mate@example.com'\\")`);
+      // Phones: New ad's media choices and the ad's Audience / Video labels are whole, never cut.
+      await page.setViewportSize({ width: 320, height: 740 });
+      await page.goto(BASE + '/new-ad.html');
+      await page.waitForSelector('#mt-same');
+      const cut = (sel) => page.$$eval(sel, (els) => els.filter((el) => el.offsetParent !== null && (el.scrollWidth > el.clientWidth + 1 || el.getBoundingClientRect().right > innerWidth)).map((el) => el.textContent.trim()));
+      const mediaCut = await cut('#media-tabs button');
+      check('New ad at 320 px: Upload, From your library and Same as the starting ad are whole', mediaCut.length === 0 && (await page.locator('#media-tabs button').count()) === 3, mediaCut.join(' | '));
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(BASE + '/ad.html?id=120252672230740312#tab=audience');
+      await page.reload();
+      await page.waitForSelector('#aud-spend .bar-label');
+      const audCut = [...await cut('#aud-by button'), ...await cut('.bar-label'), ...await cut('.bar-extra')];
+      await page.click('#cr-tabs [data-tab="video"]').catch(() => page.goto(BASE + '/ad.html?id=120252672230740312#tab=video'));
+      await page.waitForSelector('#funnel .bar-label');
+      const vidCut = [...await cut('.bar-label'), ...await cut('.bar-extra')];
+      check('the ad\'s Audience and Video tabs at 390 px show every label whole ("Hour of day", "Watched to the end")', audCut.length === 0 && vidCut.length === 0
+        && (await page.textContent('#funnel')).includes('Watched to the end'), [...audCut, ...vidCut].join(' | '));
+      await page.setViewportSize({ width: 1360, height: 900 });
+    }
     // On a phone the tray never covers the last row: the page makes room below it.
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(BASE + '/gallery.html?range=30');
@@ -4487,6 +4596,30 @@ db.execute('DELETE FROM ads WHERE id = %s', ('qa-gal-del',))`);
     check('Gallery on a phone: with cards picked, the last card ends above the tray', room.last <= room.tray, JSON.stringify(room));
     await page.keyboard.press('Escape');
     check('Gallery: Escape clears the picks and gives the room back', !(await page.evaluate(() => document.body.classList.contains('has-bulk'))) && (await page.locator('#gal-tray .bk').count()) === 0);
+    // The phone tray never squeezes its buttons: one pick (the "Pick 2 to 6" line on its own row, Make more on, Compare
+    // waiting; 7-10 picks lay out the same way) and every card picked (up to 7).
+    for (const w of [390, 320]) {
+      await page.setViewportSize({ width: w, height: 760 });
+      await page.goto(BASE + '/gallery.html?range=30');
+      await page.waitForSelector('.gal-card [data-pick]');
+      for (const many of [false, true]) {
+        const boxes = await page.$$('.gal-card [data-pick]');
+        const n = many ? Math.min(7, boxes.length) : 1;
+        if (many && n < 2) continue;
+        for (const box of boxes.slice(0, n)) await box.check();
+        await page.waitForSelector('#gal-tray [data-tray="more"]');
+        const tray = await page.evaluate(() => {
+          const r = (s) => { const b = document.querySelector(s).getBoundingClientRect(); return { w: Math.round(b.width), h: Math.round(b.height), l: b.left, r: b.right }; };
+          return { more: r('#gal-tray [data-tray="more"]'), cmp: r('#gal-tray [data-tray="compare"]'), vw: innerWidth,
+            wide: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+        });
+        const ok = (b) => b.w >= 44 && b.h >= 44 && b.l >= 0 && b.r <= tray.vw;
+        const why = many || await page.isVisible('#gal-why');
+        check(`Gallery tray at ${w} px with ${n} picked: Make more and Compare are whole 44 px taps inside the screen`, ok(tray.more) && ok(tray.cmp) && !tray.wide && why, JSON.stringify({ ...tray, why }));
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('#gal-tray .bk', { state: 'detached' });
+      }
+    }
     await page.setViewportSize({ width: 1360, height: 900 });
     // ⌘K and the Claude section: Research lives under Creative now, at the same address.
     await page.goto(BASE + '/research.html');
@@ -4909,10 +5042,20 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   check('Clear filters goes back to every open lead', (await page.inputValue('#source')) === '' && (await page.getAttribute('#filters [data-f="open"]', 'aria-pressed')) === 'true');
   await page.fill('#q', 'zz-nobody-by-this-name');
   await page.waitForSelector('#list [data-clear-filters]');
-  check('a search that finds nobody says so and offers Clear filters', /Nothing matches/.test(await page.textContent('#list')));
+  check('a search that finds nobody says so and offers Clear filters, once (the toolbar\'s hides)', /Nothing matches/.test(await page.textContent('#list'))
+    && await page.isHidden('#clear-filters') && (await page.locator('button:visible:has-text("Clear filters")').count()) === 1);
   await page.click('#list [data-clear-filters]');
   await page.waitForSelector('#list .lead-row');
   check('…which brings the leads back and empties the search', (await page.inputValue('#q')) === '' && (await page.locator('#list .lead-row').count()) > 0);
+  // Due today with nothing to show: its own Clear filters, and the toolbar's hides (one, not two).
+  await page.goto(BASE + '/leads.html?due=today');
+  await page.waitForSelector('#list .lead-row, #list .empty');
+  await page.fill('#q', 'zz-nobody-due-today');
+  await page.waitForFunction(() => /Nothing due today/.test(document.querySelector('#list')?.textContent || ''));
+  check('Leads › Due today with nothing due offers Clear filters once (the toolbar\'s hides)', await page.isHidden('#clear-filters')
+    && (await page.locator('button:visible:has-text("Clear filters")').count()) === 1);
+  await page.click('#list [data-clear-filters]');
+  await page.waitForSelector('#list .lead-row');
   // 9.4 Today: one ranked queue made of the Inbox's Needs action, leads first, never its FYI.
   await page.goto(BASE + '/home.html');
   await page.waitForSelector('.tq-group, .tq-clear');
@@ -4926,11 +5069,22 @@ db.execute(\\"UPDATE campaigns SET effective_status = '${st}' WHERE id = '${arch
   const fromInbox = homeData.queue.filter((r) => /^(alert|proposal):/.test(r.key));
   check('Today lists what needs action and nothing that is only for your information', fromInbox.length > 0 && fromInbox.every((r) => needKeys.includes(r.key))
     && homeData.queue.every((r) => !fyiKeys.includes(r.key)) && new Set(homeData.queue.map((r) => r.key)).size === homeData.queue.length, fromInbox.map((r) => r.key).join());
-  const openLeads = (await getJson('/api/leads?status=open')).leads;
-  const callRows = homeData.queue.filter((r) => r.group === 'call');
-  check('Today and Leads use one urgency rule for every waiting lead', callRows.length > 0
-    && callRows.every((r) => openLeads.find((l) => `lead:${l.id}` === r.key)?.urgency === r.level)
-    && (await page.$$eval('.tq-lead .clock', (c) => c.map((x) => x.className))).every((c, i) => c === `clock ${callRows[i].level}`), callRows.map((r) => r.level).join());
+  // Waiting leads only (rule new_lead): Call first also holds a booked call within the hour (meeting_soon), whose clock is
+  // the call's, so earlier QA's 2 PM booking showed up there in the afternoon. A lead can cross a clock boundary (5 min,
+  // 1 hour) between the reads: Today, Leads and the screen are read together, once more if they disagree.
+  let callRows = [], waiting = [], sameRule = false;
+  for (let tries = 0; tries < 2 && !sameRule; tries += 1) {
+    if (tries) { await page.reload(); await page.waitForSelector('.tq-group, .tq-clear'); }
+    const homeNow = await getJson('/api/home');
+    const openNow = (await getJson('/api/leads?status=open')).leads;
+    callRows = homeNow.queue.filter((r) => r.group === 'call');
+    waiting = callRows.filter((r) => r.rule === 'new_lead');
+    const clocks = await page.evaluate((keys) => keys.map((k) => document.querySelector(`.tq-row[data-key="${k}"] .clock`)?.className || null), waiting.map((r) => r.key));
+    // Today draws the first few and says how many more wait; every row it draws shows the same clock.
+    sameRule = waiting.length > 0 && clocks.some(Boolean)
+      && waiting.every((r, i) => openNow.find((l) => `lead:${l.id}` === r.key)?.urgency === r.level && (clocks[i] === null || clocks[i] === `clock ${r.level}`));
+  }
+  check('Today and Leads use one urgency rule for every waiting lead', sameRule, waiting.map((r) => `${r.key} ${r.level}`).join());
   check('the first hour comes first, then the longest wait', callRows.every((r, i) => i === 0 || (callRows[i - 1].bucket < r.bucket)
     || (callRows[i - 1].bucket === r.bucket && new Date(callRows[i - 1].at) <= new Date(r.at))), callRows.map((r) => `${r.bucket}`).join());
   if (!(await page.locator('.tq-group[aria-labelledby="tq-decide"] [data-accept]').count())) {
@@ -6915,7 +7069,7 @@ with account_ctx.all_accounts():
     const farKey = await far.getAttribute('data-key');
     await far.click();
     await phonePage.waitForSelector('#ib-panel.showing-detail [data-ib-back]');
-    const backFocused = await phonePage.evaluate(() => document.activeElement?.hasAttribute('data-ib-back'));
+    const backFocused = await phonePage.waitForFunction(() => document.activeElement?.hasAttribute('data-ib-back'), null, { timeout: 2000 }).then(() => true, () => false);
     const gap = await phonePage.evaluate(() => { const h = document.querySelector('.main h1'); return h ? Math.round(h.getBoundingClientRect().top + window.scrollY) : -1; });
     check('on a phone a short page (an open Inbox item) starts right under the top bar', gap > 0 && gap < 120, String(gap));
     await phonePage.click('#ib-detail [data-ib-back]');
@@ -7094,6 +7248,8 @@ with account_ctx.all_accounts():
   check('on a 320px phone "Clients may move leads" has its explanation under the words, not in a column of its own', repLeads && repLeads.textLeft === repLeads.explainLeft && repLeads.below, JSON.stringify(repLeads));
   await narrow.goto(BASE + '/desk.html');
   await narrow.waitForSelector('.cl-new');
+  await narrow.waitForSelector('.topbar');
+  await narrow.waitForSelector('.subnav [data-sub]');  // .cl-new is in the page's HTML; the bars come with boot
   const clTop = await narrow.evaluate(() => { const top = document.querySelector('.topbar').getBoundingClientRect(), tabs = document.querySelector('.subnav').getBoundingClientRect(),
     btn = document.querySelector('.cl-new').getBoundingClientRect();
     return { topbar: Math.round(top.bottom), tabs: [Math.round(tabs.top), Math.round(tabs.bottom)], button: Math.round(btn.top) }; });

@@ -1,4 +1,6 @@
 // Local design review: screenshots of each screen in light and dark.
+// AS=client node qa/shots.cjs <dir>: the same as a read-only client of Edge Bourne (files named client-…), only the
+// screens a client opens; a QA client user is made for the run and switched off after it.
 // Playwright: $PLAYWRIGHT_CORE, else the first intact copy on this Mac (the render pipeline's copy lost
 // its package files on 2026-11-10; any 1.64 drives the Chromium 1248 below).
 const PW = [process.env.PLAYWRIGHT_CORE, '/Users/ruolez/Desktop/Dev/meta-ads/creatives/2026-11-07-new5/src/node_modules/playwright-core',
@@ -31,6 +33,25 @@ with account_ctx.use(1):
                    (t, attachments.MIMES[mime], mime, name, cap, len(data), hashlib.sha256(data).hexdigest(), m['width'], m['height'], m['duration_ms'], data))
 print(t)
 `).trim().split('\n').pop());
+  const asClient = process.env.AS === 'client';
+  const login = asClient ? ['qa-shots-client@example.com', 'shots-client-123'] : ['eugene@edgebourne.com', 'localdev-pass-123'];
+  const tag0 = asClient ? 'client-' : '';
+  if (asClient) {
+    sh('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', `import db
+from werkzeug.security import generate_password_hash as h
+db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, 'Shots client', %s, 'client', 1)
+              ON CONFLICT (email) DO UPDATE SET is_active = TRUE, password_hash = EXCLUDED.password_hash, role = 'client', account_id = 1, must_change_password = FALSE""",
+           ('${login[0]}', h('${login[1]}')))
+`);
+  }
+  const CLIENT_PAGES = ['home', 'inbox', 'ads', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312', 'compare.html#pick',
+    'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video',
+    'ad.html?id=120252672230740312#tab=history', 'gallery', 'ideas', 'performance', 'report', 'account', 'leads.html?due=today', 'performance.html?range=today'];
+  const OWNER_PAGES = ['home', 'inbox', 'ads', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312', 'compare.html?ids=120252672232030312,120252672233160312,120252672230740312', 'compare.html#pick', 'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=polish', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video', 'ad.html?id=120252672230740312#tab=comments', 'ad.html?id=120252672230740312#tab=history', 'ads.html?level=adset', 'new-ad', 'new-adset.html?campaign=120252638288040312', 'gallery', 'gallery.html?view=launched', 'ideas', 'research', 'research.html#tab=search', 'research.html#tab=watched', 'research.html#tab=past', 'desk', 'desk.html#ads', 'desk.html#schedules', 'performance', 'experiments', 'report', 'forms', 'new-campaign', 'team', 'settings', 'account', 'accounts', 'offline', 'missing-page.html',
+        'inbox.html?box=fyi', 'inbox.html?box=all', 'gallery.html?view=tired', 'leads.html?due=today',
+        // FU-C: today so far (Results and Ads on Today, the ad page's daily charts with today's bar).
+        'performance.html?range=today', 'ads.html?range=today', 'ad.html?id=120252672232030312&range=7',
+        ...['targets', 'alerts', 'reports-panel', 'replies', 'lead-quality', 'tracking', 'crm', 'ab', 'activity-panel', 'meta-app', 'auto', 'telegram', 'email', 'accounts-panel'].map((s) => `settings.html#${s}`)];
   const fullAccess = (on) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "UPDATE user_sessions SET full_until = ${on ? "now() + interval '8 hours'" : 'NULL'} WHERE user_id = 1"`);
   for (const scheme of ['light', 'dark']) {
     for (const [vw, vh, tag] of [[1440, 900, 'desk'], [390, 844, 'phone']]) {
@@ -40,31 +61,28 @@ print(t)
       page.on('console', (m) => { if (m.type() === 'error' && !(/status of 404/.test(m.text()) && /missing-page/.test(page.url()))) errors.push(`${tag} ${m.text()}`); });
       page.on('pageerror', (e) => errors.push(`${tag} ${e.message}`));
       await page.goto(BASE + '/login.html');
-      await page.screenshot({ path: `${OUT}/login-${tag}-${scheme}.png` });
-      await page.fill('#email', 'eugene@edgebourne.com');
-      await page.fill('#password', 'localdev-pass-123');
+      if (!asClient) await page.screenshot({ path: `${OUT}/login-${tag}-${scheme}.png` });
+      await page.fill('#email', login[0]);
+      await page.fill('#password', login[1]);
       await Promise.all([page.waitForURL('**/home.html**'), page.click('button[type=submit]')]);
       await page.goto(BASE + '/leads.html');
       await page.waitForSelector('.lead-row');
       await page.waitForTimeout(400);
-      await page.screenshot({ path: `${OUT}/leads-${tag}-${scheme}.png` });
+      await page.screenshot({ path: `${OUT}/${tag0}leads-${tag}-${scheme}.png` });
       if (tag === 'phone') {
         await page.click('.lead-row');
         await page.waitForSelector('#stages');
-        await page.screenshot({ path: `${OUT}/lead-detail-${tag}-${scheme}.png`, fullPage: true });
+        await page.screenshot({ path: `${OUT}/${tag0}lead-detail-${tag}-${scheme}.png`, fullPage: true });
       }
-      for (const p of ['home', 'inbox', 'ads', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312', 'compare.html?ids=120252672232030312,120252672233160312,120252672230740312', 'compare.html#pick', 'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=polish', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video', 'ad.html?id=120252672230740312#tab=comments', 'ad.html?id=120252672230740312#tab=history', 'ads.html?level=adset', 'new-ad', 'new-adset.html?campaign=120252638288040312', 'gallery', 'gallery.html?view=launched', 'ideas', 'research', 'research.html#tab=search', 'research.html#tab=watched', 'research.html#tab=past', 'desk', 'desk.html#ads', 'desk.html#schedules', 'performance', 'experiments', 'report', 'forms', 'new-campaign', 'team', 'settings', 'account', 'accounts', 'offline', 'missing-page.html',
-        'inbox.html?box=fyi', 'inbox.html?box=all', 'gallery.html?view=tired', 'leads.html?due=today',
-        // FU-C: today so far (Results and Ads on Today, the ad page's daily charts with today's bar).
-        'performance.html?range=today', 'ads.html?range=today', 'ad.html?id=120252672232030312&range=7',
-        ...['targets', 'alerts', 'reports-panel', 'replies', 'lead-quality', 'tracking', 'crm', 'ab', 'activity-panel', 'meta-app', 'auto', 'telegram', 'email', 'accounts-panel'].map((s) => `settings.html#${s}`)]) {
+      for (const p of (asClient ? CLIENT_PAGES : OWNER_PAGES)) {
         await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
         if (p.includes('#')) await page.reload();
         await page.waitForTimeout(600);
         await page.waitForTimeout(p.includes('#') ? 900 : 0);
         const variant = (p.match(/(?:#tab=|#|level=|view=|box=|due=|range=)([\w-]+)/) || ['', ''])[1];
-        await page.screenshot({ path: `${OUT}/${p.split('.')[0]}${variant ? '-' + variant : ''}-${tag}-${scheme}.png`, fullPage: true });
+        await page.screenshot({ path: `${OUT}/${tag0}${p.split('.')[0]}${variant ? '-' + variant : ''}-${tag}-${scheme}.png`, fullPage: true });
       }
+      if (asClient) { await ctx.close(); continue; }
       // FU-D: full access on, and a conversation with an image and a video preview.
       fullAccess(true);
       await page.goto(`${BASE}/desk.html#new`);
@@ -86,6 +104,23 @@ print(t)
       await page.waitForTimeout(300);
       await page.screenshot({ path: `${OUT}/acp-picker-${tag}-${scheme}.png` });
       await page.keyboard.press('Escape');
+      // FU-finish: the Gallery's tray with one card picked (Make more like this, Compare waiting), then two picked
+      // and Make more like these (the brief to edit before it goes).
+      await page.goto(`${BASE}/gallery.html?range=30`);
+      await page.waitForSelector('.gal-card [data-pick]');
+      await page.locator('.gal-card [data-pick]').first().check();
+      await page.waitForSelector('#gal-tray [data-tray="more"]');
+      await page.screenshot({ path: `${OUT}/gallery-picked-one-${tag}-${scheme}.png` });
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('#gal-tray .bk', { state: 'detached' });
+      for (const box of (await page.locator('.gal-card [data-pick]').all()).slice(0, 2)) await box.check();
+      await page.waitForSelector('#gal-tray [data-tray="more"]');
+      await page.screenshot({ path: `${OUT}/gallery-picked-${tag}-${scheme}.png` });
+      await page.click('#gal-tray [data-tray="more"]');
+      await page.waitForSelector('dialog.confirm.wide #cd-input');
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${OUT}/gallery-more-${tag}-${scheme}.png` });
+      await page.click('#cd-cancel');
       // The command menu, the shortcuts and (phones) the More sheet and the bulk bar.
       await page.goto(`${BASE}/home.html`);
       await page.waitForTimeout(600);
@@ -115,6 +150,7 @@ print(t)
     }
   }
   await browser.close();
+  if (asClient) sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "UPDATE users SET is_active = FALSE WHERE email = '${login[0]}'"`);
   sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "DELETE FROM desk_reports WHERE task_id = ${fudTask}; DELETE FROM desk_tasks WHERE id = ${fudTask}"`);
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');
 })();

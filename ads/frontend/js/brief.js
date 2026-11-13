@@ -1,16 +1,28 @@
 // From research to a new ad (UX-AUDIT 9.5): "Make something like this" on one saved competitor ad, "Write a brief" on
-// several. The server drafts the request from everything saved about them, trimmed to fit (GET /api/swipes/brief); it
-// opens here to edit, goes to Claude as a new conversation of kind "creative" and that conversation opens. Claude's ads
-// come back as suggestions: nothing reaches Meta until one is accepted, the usual way.
+// several, and the Gallery's "Make more like these" on our own picked cards. The server drafts the request, trimmed to
+// fit (GET /api/swipes/brief, /api/gallery/brief); it opens here to edit, goes to Claude as a new conversation of kind
+// "creative" and that conversation opens. Claude's ads come back as suggestions: nothing reaches Meta until one is
+// accepted, the usual way.
 import { api } from "./api.js";
 import { confirmDialog, esc, toast } from "./ui.js";
 import { count } from "./format.js";
 
 export const BRIEF_MAX = 10;  // swipes.BRIEF_MAX
 
-export async function askForBrief(ids, as = "brief") {
+export function askForBrief(ids, as = "brief") {
+  return sendBrief(`/api/swipes/brief?ids=${ids.map(encodeURIComponent).join(",")}&as=${as === "like" ? "like" : "brief"}`,
+    (d) => (as === "like" ? "Make something like this" : `Write a brief from ${count(d.count)} saved ad${d.count === 1 ? "" : "s"}`));
+}
+
+// The Gallery: the cards holding these ads (each card's top ad, in the order picked), numbers on the complete days of `range`.
+export function askForMore(adIds, range) {
+  return sendBrief(`/api/gallery/brief?ads=${adIds.map(encodeURIComponent).join(",")}&range=${encodeURIComponent(range)}`,
+    (d) => (d.count === 1 ? "Make more like this" : `Make more like these ${count(d.count)} ads`));
+}
+
+async function sendBrief(url, titleOf) {
   let d;
-  try { d = await api(`/api/swipes/brief?ids=${ids.map(encodeURIComponent).join(",")}&as=${as === "like" ? "like" : "brief"}`); }
+  try { d = await api(url); }
   catch (err) { toast(err.message, "bad"); return false; }
   const limit = d.limit;
   const tooLong = (v) => v.trim().length > limit;
@@ -18,7 +30,7 @@ export async function askForBrief(ids, as = "brief") {
   let problem = "";
   for (;;) {
     const sent = await confirmDialog({
-      title: as === "like" ? "Make something like this" : `Write a brief from ${count(d.count)} saved ad${d.count === 1 ? "" : "s"}`,
+      title: titleOf(d),
       body: `<p>Claude gets this as a new conversation. Change anything first: what to keep, what to avoid, which offer.</p>
         <p>Its ads come back as suggestions. Nothing goes to Meta until you accept one.</p>
         ${d.left_out ? `<p>${esc(count(d.left_out))} more you picked were left out to keep it short.</p>` : ""}

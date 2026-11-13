@@ -555,7 +555,7 @@ async function renderAudience() {
       <div class="panel-head wrap"><h2>Who saw it, and where</h2><span class="spacer"></span>
         ${rangeSelect("aud-range", audienceRange, AUDIENCE_RANGES)}</div>
       <div class="panel-body stack">
-        <div class="format-scroll"><div class="segmented" id="aud-by">${BY.map(([k, l]) => `<button type="button" data-by="${k}" aria-pressed="${k === audienceBy}">${l}</button>`).join("")}</div></div>
+        <div class="segmented wraps" id="aud-by" role="group" aria-label="Break down by">${BY.map(([k, l]) => `<button type="button" data-by="${k}" aria-pressed="${k === audienceBy}">${l}</button>`).join("")}</div>
         <div id="aud-body">${skeleton("Loading from Meta…")}</div>
       </div>
     </section>`;

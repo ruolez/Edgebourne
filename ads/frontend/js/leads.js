@@ -106,7 +106,6 @@ function rowHtml(lead) {
 
 function renderList() {
   const list = $("list");
-  $("clear-filters").hidden = !filtered();
   if (!state.leads.length && state.filter === "lost" && state.why) {
     list.innerHTML = `<li class="empty"><h3>Nothing lost for this reason</h3><p>Try another reason or All reasons.</p><button type="button" class="btn" data-clear-why>All reasons</button></li>`;
   } else if (!state.leads.length && DUE_EMPTY[state.due]) {
@@ -119,6 +118,8 @@ function renderList() {
   } else {
     list.innerHTML = state.leads.map(rowHtml).join("");
   }
+  // One Clear filters at a time: an empty list that offers its own hides the toolbar's.
+  $("clear-filters").hidden = !filtered() || !!list.querySelector("[data-clear-filters]");
   state.leads.forEach((l) => state.seen.add(l.id));
 }
 

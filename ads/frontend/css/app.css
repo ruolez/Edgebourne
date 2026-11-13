@@ -198,6 +198,9 @@ dialog form > .row.end { margin-top: 6px; }
   .view-chip, .segmented button { min-height: var(--target); min-width: var(--target); justify-content: center; flex-shrink: 0; }
   .segmented { padding: 2px; overflow-x: auto; flex-wrap: nowrap; }
   .stage .segmented { flex-wrap: wrap; overflow-x: visible; }
+  /* A few long choices (New ad's Upload / From your library / Same as the starting ad): wrap, never cut. */
+  .segmented.wraps { flex-wrap: wrap; overflow-x: visible; }
+  .segmented.wraps button { flex: 1 1 auto; }
   .filters { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
 }
 .note.ok { background: var(--signal-soft); color: var(--signal-ink); }
@@ -767,6 +770,8 @@ dialog.confirm textarea#cd-input { min-height: 240px; max-height: 52vh; resize: 
   .gal-bar #range-pick { flex-basis: 100%; }
   .gal-kpi b { font-size: var(--t-m); }
   .gal-why { flex: 1 1 100%; order: -1; margin: 0; }
+  /* The "Pick 2 to 6" line takes its own row; the buttons share the next one (never squeezed to slivers). */
+  #gal-tray .bk-acts { flex-wrap: wrap; row-gap: 4px; }
 }
 
 /* ---------- Ad page ---------- */
@@ -1107,8 +1112,10 @@ span.tq-fu { display: contents; }
 }
 @media (max-width: 720px) {
   .aud-grid { grid-template-columns: 1fr; }
-  .bars li { grid-template-columns: 96px 1fr 44px; }
-  .bar-extra { grid-column: 2 / -1; text-align: left; margin-top: -4px; }
+  /* Phones: the whole label on its own line ("Watched to the end", "Instagram Reels"), the bar, figure and extra under it. */
+  .bars li { grid-template-columns: minmax(0, 1fr) 44px minmax(100px, max-content); row-gap: 2px; }
+  .bar-extra { white-space: normal; overflow-wrap: anywhere; }
+  .bar-label { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; }
   .score-row > summary { grid-template-columns: 1fr auto; }
   .score-bar { display: none; }
   .score-verdict { grid-column: 1 / -1; }
@@ -1611,6 +1618,7 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
   .team-tbl td { display: block; padding: 0; border: 0; }
   .team-tbl td[data-label]::before { content: attr(data-label); display: block; color: var(--ink-3); font-size: var(--t-xs); font-weight: 500; margin-bottom: 2px; }
   .team-tbl .tm-acts { white-space: normal; }
+  .team-tbl td a.ent-link { display: inline-flex; align-items: center; min-height: var(--target); }  /* a teammate's campaigns are 44 px taps */
   .team-tbl .tm-acts .row { justify-content: flex-start; flex-wrap: wrap; }
 }
 .login-form .note { margin: 0; }
@@ -1844,8 +1852,8 @@ dialog.acp #acp-again { min-height: var(--target); }
 .ovw-table .src-note .src-line { white-space: normal; overflow: visible; text-overflow: clip; }
 .ovw-table tfoot th, .ovw-table tfoot td { border-top: 1px solid var(--line-strong); font-weight: 600; padding: 10px 12px; }
 .ovw-off { display: block; font: 400 var(--t-xs)/1.4 var(--font-ui); color: var(--amber-ink); margin-top: 2px; }
-.ovw-cards { display: none; list-style: none; margin: 0; padding: 0; gap: 10px; }
-.ovw-item { display: grid; gap: 4px; }
+.ovw-cards { display: none; list-style: none; margin: 0; padding: 0; gap: 24px; }
+.ovw-item { display: grid; gap: 0; }  /* a card's links and source line read as its own, apart from the next card */
 .ovw-card { display: grid; gap: 10px; min-height: var(--target); padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-m);
   background: var(--surface); color: var(--ink); text-decoration: none; }
 .ovw-card:hover { border-color: var(--line-strong); }

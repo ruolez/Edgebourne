@@ -329,6 +329,11 @@ function renderConv(sel) {
   if (wantedTask && ix.tasks.has(wantedTask)) wantedTask = null;
 }
 
+const VIEW_HEADS = {
+  ads: ["By ad", "Each ad Claude has worked on: its conversations, the ideas and what came of them."],
+  schedules: ["Schedules", "Regular reviews, on the days and times you pick."],
+};
+
 function renderSubnav() {
   const nav = document.querySelector(".subnav");
   if (!nav) return;
@@ -357,6 +362,12 @@ function drawView() {
   const chat = view === "chat";
   $("convs").hidden = !chat;
   $("view").hidden = chat;
+  // By ad and Schedules are pages of their own: each gets its heading (a conversation has its own in its header).
+  $("view-head").hidden = chat;
+  if (!chat) {
+    const [h, sub] = VIEW_HEADS[view];
+    if ($("view-h").textContent !== h) { $("view-h").textContent = h; $("view-sub").textContent = sub; }
+  }
   document.body.classList.toggle("conv-page", chat);
   if (chat) {
     $("view").innerHTML = "";  // one copy of each suggestion card on the page (ids, focus)

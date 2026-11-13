@@ -164,7 +164,7 @@ Every action from the Phase 8 inventory (`REDESIGN.md`) and where it lives after
 | Frame | Sidebar, account switcher, badges, refresh, spending limit, banners, ⌘K, breadcrumbs, phone tabs + More | Work / Run groups with Creative; ⌘K reaches every page, tab, Settings section, saved view, action, form, test and swipe; `?` shortcuts; More with Claude's count, Claude then Creative first [x] |
 | New in Phase 9 | Creative › Gallery (copies merged, Top / Just launched / Tired, Compare from cards) | `gallery.html` [x] |
 | New in Phase 9 | Creative › Ideas (idea groups with pictures, See in Gallery) | `ideas.html` [x] |
-| New in Phase 9 | Gallery: "Make more like these" from picked cards (mockup) | Not built yet; the brief loop runs from Research and from a test's winner [ ] |
+| New in Phase 9 | Gallery: "Make more like these" from picked cards (mockup) | Built in FU-finish (2026-11-13): the tray's Make more like this / these → `GET /api/gallery/brief` → the swipe loop's editable dialog → a creative conversation; admins only [x] |
 
 **Audit 3 features (the 11 Eugene picked), all shipped:** follow-up queue [x] · booked-call tracking [x] · lost reasons and lead quality [x] · repeat and junk leads [x] · snooze and lead-quality alerts [x] · Diagnose with Claude [x] · client report review [x] · edits made in Ads Manager [x] · change markers on charts [x] · "Did it work?" [x] · match Ads Manager [x] (commits in ROADMAP §2, Audit 3; where each lives in the README's Features section).
 

@@ -171,6 +171,7 @@ def fill(rule, other):
 
 # GET routes that read their ids from the query: asked with the other account's.
 QUERY = {"/api/swipes/brief": lambda other: f"?ids={other['swipe']}&as=brief",
+         "/api/gallery/brief": lambda other: f"?ads={other['ad']}&range=30",
          "/api/diagnose/draft": lambda other: f"?alert_id={other['alert']}"}
 
 SKIP = re.compile(r"^/api/(agent/|auth/logout)|/wait$|/stream$|^/webhooks/")

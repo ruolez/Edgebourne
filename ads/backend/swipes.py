@@ -117,33 +117,44 @@ def _lines(s, body_room, share):
             *([f"Ad Library: {s['library_url']}"] if s.get("library_url") else [])]
 
 
-def brief(items, mode, business):
-    """The prompt Claude gets for "Make something like this" (one saved ad) or "Write a brief" (several): every
-    saved detail of each ad, the ad text trimmed so the whole draft stays under DRAFT_MAX. Returns
-    {prompt, left_out} (ads past BRIEF_MAX, or that didn't fit)."""
+def pack(items, frame, lines):
+    """A draft from picked items under DRAFT_MAX (both briefs: the swipe file's and the Gallery's). frame(n) →
+    (intro, outro, numbered); lines(item, body_room, share) → the item's lines, its "Text: " line only when it has a
+    body. The text is trimmed first; when even that won't fit, items drop from the end (never the first one).
+    Returns {prompt, left_out} (items past BRIEF_MAX, or that didn't fit)."""
     picked = list(items)[:BRIEF_MAX]
     left_out = len(items) - len(picked)
-    who = " ".join(str(business or "").split()) or "us"
     while True:
         n = len(picked)
-        key = ("like" if mode == "like" else "brief1") if n == 1 else "brief"
-        intro, outro = FRAMES[key]
-        intro = intro.format(business=who, n=n)
+        intro, outro, numbered = frame(n)
         tail = [outro] if outro else []
         if left_out:
             tail.append(f"({left_out} more you picked were left out to keep this short.)")
-        frame = len(intro) + sum(len(t) + 2 for t in tail) + 2 * n
-        share = (DRAFT_MAX - frame) // max(n, 1)
+        frame_len = len(intro) + sum(len(t) + 2 for t in tail) + 2 * n
+        share = (DRAFT_MAX - frame_len) // max(n, 1)
         blocks = []
         for i, s in enumerate(picked):
-            number = f"{i + 1}. " if key == "brief" else ""
-            fixed = len(number) + len("\n".join(_lines({**s, "body": ""}, 0, share))) + len("\nText: ")
-            blocks.append(number + "\n".join(_lines(s, max(MIN_BODY, share - fixed), share)))
+            number = f"{i + 1}. " if numbered else ""
+            fixed = len(number) + len("\n".join(lines({**s, "body": ""}, 0, share))) + len("\nText: ")
+            blocks.append(number + "\n".join(lines(s, max(MIN_BODY, share - fixed), share)))
         prompt = "\n\n".join([intro, *blocks, *tail])
         if len(prompt) <= DRAFT_MAX or n == 1:
             return {"prompt": prompt, "left_out": left_out}
         picked = picked[:-1]
         left_out += 1
+
+
+def brief(items, mode, business):
+    """The prompt Claude gets for "Make something like this" (one saved ad) or "Write a brief" (several): every
+    saved detail of each ad, the ad text trimmed so the whole draft stays under DRAFT_MAX. Returns
+    {prompt, left_out} (ads past BRIEF_MAX, or that didn't fit)."""
+    who = " ".join(str(business or "").split()) or "us"
+
+    def frame(n):
+        key = ("like" if mode == "like" else "brief1") if n == 1 else "brief"
+        intro, outro = FRAMES[key]
+        return intro.format(business=who, n=n), outro, key == "brief"
+    return pack(items, frame, _lines)
 
 
 def view(row, today):
