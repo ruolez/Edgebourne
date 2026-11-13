@@ -91,7 +91,7 @@ function render() {
   const p = data.previous;
   const cpl = t.leads ? t.spend_cents / t.leads : null;
   const noData = !data.ads.length && !t.spend_cents;
-  const alerts = data.alerts.map((a) => `<p class="note ${a.level}" role="status">${esc(a.text)}</p>`).join("");
+  const alerts = data.alerts.map((a) => `<p class="note ${a.level}" role="status">${esc(a.text)}${a.href ? ` <a href="${esc(a.href)}">${esc(a.link || "Open")}</a>` : ""}</p>`).join("");
 
   const cap = pacingPanel(data);
 
@@ -326,7 +326,7 @@ function pacingPanel(data) {
       : p.cap_days !== null ? `Runs out around ${shortDay(p.cap_date)} at this pace` : `${money(data.cap.remaining_cents)} left`;
     return `<div class="figure"><span class="label">Account spending limit</span><span class="value">${money(data.cap.spent_cents)} <small>of ${money(data.cap.limit_cents)}</small></span>
       <div class="meter ${used >= 1 ? "bad" : used >= 0.8 ? "warn" : ""}" role="meter" aria-valuemin="0" aria-valuemax="${data.cap.limit_cents}" aria-valuenow="${data.cap.spent_cents}" aria-label="Spending limit used"><i data-w="${Math.min(used, 1) * 100}"></i></div>
-      <span class="sub">${sub}</span></div>`;
+      <span class="sub">${sub}${data.can_set_target ? ' · <a href="/settings.html#spend-limit" id="cap-change">Change the limit</a>' : ""}</span></div>`;
   })() : "";
   const target = p.target_cents
     ? `<span class="value">${money(p.target_cents)}</span><span class="sub">${p.needed_daily_cents === 0 ? "Already spent" : `Land on it with ${money(p.needed_daily_cents, { exact: true })} a day from today`}${p.vs_target_pct ? `; this pace is ${Math.abs(p.vs_target_pct)}% ${p.vs_target_pct > 0 ? "over" : "under"}` : ""}</span>`

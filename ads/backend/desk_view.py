@@ -337,6 +337,10 @@ def review_item(p, plan, currency="USD"):
         body = {"from_cents": plan["from"], "to_cents": plan["to"], "accept_big": bool(plan.get("big"))}
         if recent:
             body["accept_recent"] = True  # sent only when this item is ticked by hand (it never starts ticked)
+    elif kind == "spend_limit":
+        # FU-B: the account-wide ceiling on total spend. Never ticked for you; the echoed old amount is checked again.
+        group, blocked, needs_tick = "money", plan.get("problem"), True
+        body = {"from_cents": plan["from"], "to_cents": plan["to"], "remove": bool(plan.get("remove"))}
     elif kind == "status":
         turning_on = plan["to"] == "ACTIVE"
         group = "money" if turning_on else "live"
@@ -353,13 +357,21 @@ def _conflict_key(p, plan):
     target = p.get("entity_id") or plan.get("ad_id") or (p.get("payload") or {}).get("template_ad_id")
     if plan["kind"] in ("vertical", "update") and target:
         return f"creative:{target}"  # one creative per ad: a 9:16 and a words update can't both go on
-    return f"{plan['kind']}:{target}" if plan["kind"] in ("budget", "status", "render") and target else None
+    return f"{plan['kind']}:{target}" if plan["kind"] in ("budget", "status", "render", "spend_limit") and target else None
+
+
+ALONE_REMOVAL = "Removing the limit is accepted on its own: open the suggestion."
+ALONE_BIG = "A raise this big is accepted on its own: open the suggestion."
 
 
 def review(pairs, currency="USD"):
     """The Accept sheet for (proposal, plan) pairs. Two suggestions that change the same thing can't
     both go through, so neither starts ticked and the sheet lets one be picked."""
     items = [review_item(p, plan, currency) for p, plan in pairs]
+    if len(items) > 1:  # FU-B: removing the account's spending limit, or more than doubling it, never goes through with others
+        for item, (p, plan) in zip(items, pairs):
+            if plan["kind"] == "spend_limit" and (plan.get("remove") or plan.get("big")) and not item["blocked"]:
+                item.update(group="blocked", blocked=ALONE_REMOVAL if plan.get("remove") else ALONE_BIG, tick=False)
     keys = [None if i["blocked"] else _conflict_key(p, plan) for i, (p, plan) in zip(items, pairs)]
     for item, key in zip(items, keys):
         if key and keys.count(key) > 1:

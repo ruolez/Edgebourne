@@ -5,6 +5,7 @@ import { api } from "./api.js";
 import { confirmDialog, esc, toast } from "./ui.js";
 import { money } from "./format.js";
 import { spendWords } from "./controls.js";
+import { confirmBig, confirmRemove, limitLine, limitMoney } from "./spendlimit.js";
 
 const GROUPS = {
   money: "Spending", live: "Changes to what's running", create: "New ads, created switched off",
@@ -18,6 +19,7 @@ function line(item) {
     const pct = p.pct == null ? "" : ` (${p.pct > 0 ? "+" : ""}${p.pct}%)`;
     return `${esc(p.name)}: <del>${money(p.from, { exact: true })}</del> → <ins>${money(p.to, { exact: true })}</ins> a day${pct}${p.big ? ' <span class="pill warn">Over the +20% rule</span>' : ""}`;
   }
+  if (p.kind === "spend_limit") return limitLine(p);
   if (p.kind === "status" && p.to === "ACTIVE") return `Turns on <b>${esc(p.name)}</b>${spendWords(p.spend)}`;
   if (p.kind === "status" && p.already) return `<b>${esc(p.name)}</b> is already off on Meta, so nothing is sent.`;
   if (p.kind === "status") return `Turns off <b>${esc(p.name)}</b> right away. Nothing is deleted.`;
@@ -48,8 +50,10 @@ function totals(items) {
   const spending = [...on.values()].reduce((n, s) => n + (s.daily_cents || 0), 0);
   const lifetime = [...on.values()].reduce((n, s) => n + (s.lifetime_cents || 0), 0);
   const runs = items.filter((i) => i.plan.kind === "render" || i.plan.kind === "record").length;
+  const limit = items.find((i) => i.plan.kind === "spend_limit");
   return [
     budget ? `Daily budgets ${budget > 0 ? "+" : "−"}${money(Math.abs(budget), { exact: true })} a day` : "",
+    limit ? `Spending limit ${limitMoney(limit.plan.from)} → ${limitMoney(limit.plan.to)}` : "",
     spending ? `Starts spending up to ${money(spending, { exact: true })} a day` : "",
     lifetime ? `Up to ${money(lifetime, { exact: true })} in total from lifetime budgets` : "",
     runs ? `${runs} new ${runs === 1 ? "run" : "runs"} on your Mac` : "",
@@ -58,6 +62,16 @@ function totals(items) {
 
 async function applyOne(item) {
   const p = item.plan;
+  if (p.kind === "spend_limit" && p.remove) {
+    // Removing the account's limit is its own yes, asked before anything is sent.
+    if (!(await confirmRemove())) throw new Error("Not removed: the limit stays as it is.");
+    return api(`/api/proposals/${item.id}/approve`, { method: "POST", body: { ...item.body, confirm_remove: true } });
+  }
+  if (p.kind === "spend_limit" && p.big) {
+    // So is more than doubling it.
+    if (!(await confirmBig(p))) throw new Error("Not changed: the limit stays as it is.");
+    return api(`/api/proposals/${item.id}/approve`, { method: "POST", body: { ...item.body, accept_big: true } });
+  }
   if (p.kind === "render") {
     await api(`/api/ads/ad/${encodeURIComponent(p.ad_id)}/render`, { method: "POST", body: { from_task: p.from_task, from_proposal: item.id, direction: p.note } });
   }

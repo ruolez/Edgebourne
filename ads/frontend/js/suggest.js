@@ -27,6 +27,7 @@ export function suggestionType(p) {
   if (isVersion(p)) return { label: "New version", rank: 3 };
   if (p.kind === "budget") return { label: "Budget", rank: 0 };
   if (p.kind === "status") return { label: "On / off", rank: 1 };
+  if (p.kind === "spend_limit") return { label: "Spending limit", rank: 0 };
   if (p.kind === "creative") return pl.update_ad || pl.vertical ? { label: "Update ad", rank: 2 } : { label: "New ad", rank: 2 };
   if (p.kind === "targeting") return { label: "Targeting", rank: 4 };
   if (p.kind === "experiment") return { label: "Test", rank: 5 };
@@ -59,6 +60,11 @@ export function changeList(p, ix) {
     rows.push(`<div><dt>${pl.media && pl.media.kind === "image" ? "Image" : "Video"}</dt><dd>${media ? `<ins>New ${esc(pl.media.kind)} Claude made</ins>` : '<span class="muted">Same as now</span>'}</dd></div>`);
     if (pl.name && !pl.update_ad) rows.push(`<div><dt>Name</dt><dd>${esc(pl.name)}</dd></div>`);
     return `<dl class="facts changes">${rows.join("")}</dl>`;
+  }
+  if (p.kind === "spend_limit") {
+    const to = pl.remove ? "No limit" : p.proposed_value || "";
+    return `<dl class="facts changes"><div><dt>Account spending limit</dt><dd>${p.current_value ? `<del>${esc(p.current_value)}</del> → ` : ""}<ins>${esc(to)}</ins></dd></div>${
+      p.expected ? `<div><dt>Then</dt><dd>${esc(p.expected)}</dd></div>` : ""}</dl>`;
   }
   if (p.kind === "tags" && p.payload) {
     const DIM = { hook: "Hook", angle: "Angle", persona: "Who it's for", format: "Format", offer: "Offer" };
@@ -95,6 +101,7 @@ export function changeSummary(p, ix) {
   if (p.kind === "creative" && pl.vertical) return `Updates “${adName}” on Meta: Reels and Stories show Claude's 9:16 video, feeds keep the 4:5 one. Same words and form.`;
   if (p.kind === "creative" && pl.update_ad) return `Updates “${adName}” on Meta with this version. It stays the same ad and keeps its results.`;
   if (p.kind === "creative") return `New ad “${pl.name || p.title}”, created switched off${pl.media && pl.media.kind !== "same" ? ", with Claude's new " + pl.media.kind : ""}.`;
+  if (p.kind === "spend_limit") return pl.remove ? "Removes the account spending limit" : `Spending limit ${p.current_value || "—"} → ${p.proposed_value || "—"}`;
   if (p.kind === "status") return [p.entity_name, /^(paused|off|pause)$/i.test(p.proposed_value || "") ? "turns off" : /^(active|on|resume)$/i.test(p.proposed_value || "") ? "turns on" : p.proposed_value].filter(Boolean).join(" · ");
   return [p.entity_name, p.field && `${p.field}: ${p.current_value || "—"} → ${p.proposed_value || "—"}`].filter(Boolean).join(" · ");
 }

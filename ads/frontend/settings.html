@@ -64,6 +64,17 @@
             </div>
             <div class="row"><button class="btn btn-primary" type="submit">Save targets</button></div>
           </form>
+          <form class="panel-body stack sl-box" id="spend-limit" novalidate aria-labelledby="sl-title">
+            <h3 class="sl-title" id="sl-title">Account spending limit</h3>
+            <div id="sl-state" aria-live="polite"></div>
+            <div id="sl-paused" hidden></div>
+            <div class="sl-row" id="sl-controls">
+              <div class="field"><label for="sl-new">New limit</label><span class="money-input"><span data-cur>$</span><input class="input" id="sl-new" name="to" inputmode="decimal" autocomplete="off" placeholder="200" data-no-guard></span></div>
+              <button class="btn btn-primary" type="submit" id="sl-change">Change limit</button>
+              <button class="btn btn-quiet" type="button" id="sl-remove">Remove the limit…</button>
+            </div>
+            <span class="hint">Meta pauses every ad once this much has been spent in total. Raising it lets them run again. Claude can suggest a change too; nothing changes until someone with access here says yes.</span>
+          </form>
         </section>
         <section class="panel" id="alerts" data-section hidden>
           <div class="panel-head"><h2>Alerts</h2><p>Checked after every pull from Meta. Each one goes to the admins once a day per ad or campaign, and shows on Today until it's fixed.</p></div>

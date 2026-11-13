@@ -27,7 +27,8 @@ try:
     tools = bridge.allowed_tools(SKILL, WORKDIR, task["kind"], web=True)
     writes = [t for t in tools if t.startswith(("WebFetch", "WebSearch")) or (t.startswith("Bash(") and "/desk:" not in t)
               or (t.startswith("mcp__") and not any(t.endswith("__" + r) for r in bridge.READ_TOOLS))
-              or (t.startswith("Edit(") and "reports/desk" not in t)]
+              # FU-B: every kind may append applied changes to the workspace change log, nothing else outside reports/desk.
+              or (t.startswith("Edit(") and "reports/desk" not in t and not t.endswith("reports/log.md)"))]
     alert = task["options"]["alert"]
     ad_id = alert.get("ad_id") or (task["options"].get("ad_id"))
     if not ad_id:

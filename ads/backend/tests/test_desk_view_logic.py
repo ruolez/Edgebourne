@@ -485,3 +485,39 @@ class RecentBudgetReviewTest(unittest.TestCase):
         item = plan_item(plan=self.STEP, current_value="$20/day")
         self.assertEqual(item["note"], "Claude saw $20.00 a day. It's $24.00 now. "
                                        "Budget last changed Nov 9 ($20.00 → $24.00, in Ads Manager), 1 day ago.")
+
+
+class SpendLimitReviewTest(unittest.TestCase):
+    """FU-B: the account spending limit is money, never ticked for you, and a removal is accepted on its own."""
+    PLAN = {"kind": "spend_limit", "from": 15000, "to": 20000, "spent": 4120, "remove": False, "problem": None}
+
+    def test_a_raise_is_money_and_waits_for_its_own_tick_with_the_amounts_it_was_read_at(self):
+        item = plan_item(plan=self.PLAN, kind="spend_limit")
+        self.assertEqual((item["group"], item["tick"], item["needs_tick"], item["body"]),
+                         ("money", False, True, {"from_cents": 15000, "to_cents": 20000, "remove": False}))
+
+    def test_a_removal_is_blocked_on_a_sheet_of_several_and_needs_its_own_tick_alone(self):
+        removal = {**self.PLAN, "to": None, "remove": True}
+        many = desk_view.review([(proposal(1, 9, title="A", kind="spend_limit"), removal),
+                                 (proposal(2, 9, title="B"), {"kind": "tags"})])
+        alone = desk_view.review([(proposal(1, 9, title="A", kind="spend_limit"), removal)])
+        self.assertEqual(([(i["id"], i["blocked"]) for i in many][-1],
+                          (alone[0]["blocked"], alone[0]["tick"], alone[0]["needs_tick"], alone[0]["body"])),
+                         ((1, "Removing the limit is accepted on its own: open the suggestion."),
+                          (None, False, True, {"from_cents": 15000, "to_cents": None, "remove": True})))
+
+    def test_a_raise_past_double_is_blocked_on_a_sheet_of_several_and_left_to_its_own_yes_alone(self):
+        big = {**self.PLAN, "to": 2500000, "big": True}
+        many = desk_view.review([(proposal(1, 9, title="A", kind="spend_limit"), big), (proposal(2, 9, title="B"), {"kind": "tags"})])
+        alone = desk_view.review([(proposal(1, 9, title="A", kind="spend_limit"), big)])
+        self.assertEqual(([(i["id"], i["blocked"]) for i in many if i["id"] == 1], alone[0]["blocked"], alone[0]["tick"], "accept_big" in alone[0]["body"]),
+                         ([(1, "A raise this big is accepted on its own: open the suggestion.")], None, False, False))
+
+    def test_a_refused_plan_is_blocked_with_its_sentence(self):
+        item = plan_item(plan={**self.PLAN, "problem": "That's at or below what's already spent ($41.20)"}, kind="spend_limit")
+        self.assertEqual((item["group"], item["blocked"]), ("blocked", "That's at or below what's already spent ($41.20)"))
+
+    def test_two_limit_suggestions_are_never_ticked_together(self):
+        items = desk_view.review([(proposal(1, 9, title="A", kind="spend_limit", entity_id="act_1"), self.PLAN),
+                                  (proposal(2, 9, title="B", kind="spend_limit", entity_id="act_1"), {**self.PLAN, "to": 30000})])
+        self.assertEqual([i["conflict"] for i in items], ["spend_limit:act_1", "spend_limit:act_1"])

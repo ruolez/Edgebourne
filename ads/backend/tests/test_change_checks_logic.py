@@ -387,3 +387,9 @@ class AlertTitleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpendLimitNotJudgedTests(unittest.TestCase):
+    def test_did_it_work_ignores_account_spending_limit_changes(self):
+        cases = [{"ok": True, "level": "account", "action": a, "entity_id": "act_1"} for a in ("spend_limit", "spend_limit_restore")]
+        self.assertEqual([cc.mode_for(c, None) for c in cases], [None, None])

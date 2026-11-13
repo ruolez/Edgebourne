@@ -251,3 +251,10 @@ class NumbersOffTests(unittest.TestCase):
                 dict(alert(2, "numbers_off", 5, "warn"), kind="condition", entity_id="account2")]
         got = {i["key"]: i["need"] for i in inbox.build(rows, [], [], set())}
         self.assertEqual(got, {"alert:1": False, "alert:2": True})
+
+
+class SpendLimitMismatchTests(unittest.TestCase):
+    def test_money_needs_action_and_never_snoozable(self):
+        import snooze
+        a = {"rule": "spend_limit_mismatch", "level": "bad", "kind": "event", "resolved_at": None, "entity_id": "account"}
+        self.assertEqual((inbox.category("spend_limit_mismatch"), inbox._alert_needs(a), snooze.choices(a)), ("money", True, []))

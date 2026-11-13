@@ -273,16 +273,16 @@ def evaluate(snap, rules, today):
             done = used >= 100
             add("spend_cap", "account", "bad" if done else "warn",
                 "The account spending limit is reached" if done else f"{used:.0f}% of the account spending limit is used",
-                [f"{money(cap['spent_cents'])} of {money(cap['limit_cents'])}. Every ad stops when it's reached; raise it in Meta's billing settings if you want them to keep running."],
-                None, "/performance.html", measure=round(used, 1))
+                [f"{money(cap['spent_cents'])} of {money(cap['limit_cents'])}. Every ad stops when it's reached. Change the limit in Settings → Targets, or ask Claude."],
+                None, "/settings.html#spend-limit", measure=round(used, 1))
 
     p = snap.get("pacing") or {}
     r = rules["cap_soon"]
     if r["on"] and p.get("cap_days") is not None and p["cap_days"] <= r["days"] and not (cap and cap["spent_cents"] >= cap["limit_cents"]):
         when = date.fromisoformat(p["cap_date"]).strftime("%a %b %-d")
         add("cap_soon", "account", "warn", f"The spending limit runs out in about {p['cap_days']} day{'s' if p['cap_days'] != 1 else ''}",
-            [f"At the current pace every ad stops around {when}. Raise the limit in Meta's billing settings to keep them running."],
-            None, "/performance.html", measure=p["cap_days"])
+            [f"At the current pace every ad stops around {when}. Change the limit in Settings → Targets, or ask Claude."],
+            None, "/settings.html#spend-limit", measure=p["cap_days"])
     r = rules["pace_over"]
     if r["on"] and p.get("vs_target_pct") is not None and p["vs_target_pct"] > r["percent"]:
         add("pace_over", "account", "warn", f"This month is heading {p['vs_target_pct']}% over your target",

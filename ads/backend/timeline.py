@@ -52,6 +52,8 @@ def change_title(c, money):
         return words if ok else "Tried to change the budget"
     if action == "recommendation_check":
         return "Meta's advice set a different budget than shown"
+    if action in ("spend_limit", "spend_limit_restore"):
+        return _limit_title(action, old, new, ok, money)
     tried = {"update_creative": "Tried to update the ad", "restore_creative": "Tried to switch back to an earlier version",
              "placement_media": "Tried to add a 9:16 video for Reels and Stories", "duplicate": "Tried to duplicate it",
              "enhancement": "Tried to change one of Meta's automatic changes", "create": "Tried to create it",
@@ -78,6 +80,24 @@ def change_title(c, money):
     return {"archive": "Archived", "delete": "Deleted", "copy": "Copied", "subscribe": "Subscribed",
             "unsubscribe": "Unsubscribed", "comment_reply": "Replied to a comment", "comment_hide": "Hid a comment",
             "comment_show": "Showed a comment again"}.get(action, action.replace("_", " ").capitalize())
+
+
+def _limit_title(action, old, new, ok, money):
+    """FU-B: the ad account's spending limit, in cents as stored ('' or None = no limit)."""
+    def amount(v):
+        try:
+            return money(int(v)) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+    was, now = amount(old), amount(new)
+    if action == "spend_limit_restore":
+        return (f"Put the account spending limit back to {now}" if now else "Removed the account spending limit again") if ok \
+            else "Tried to put the account spending limit back"
+    if not ok:
+        return "Tried to change the account spending limit"
+    if now is None:
+        return "Removed the account spending limit"
+    return f"Account spending limit {was} → {now}" if was else f"Account spending limit: none → {now}"
 
 
 def _refusal(c):

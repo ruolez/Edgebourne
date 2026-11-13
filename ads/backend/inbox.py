@@ -13,7 +13,7 @@ import today
 CATEGORY = {
     "ad_rejected": "status", "ad_approved": "status", "learning_limited": "status", "no_delivery": "status",
     "fatigue": "status", "changed_outside": "status", "outside_edit": "money", "change_result": "money",
-    "spend_cap": "money", "cap_soon": "money", "pace_over": "money", "day_overspend": "money",
+    "spend_cap": "money", "cap_soon": "money", "spend_limit_mismatch": "money", "pace_over": "money", "day_overspend": "money",
     "week_overspend": "money", "cpl_high": "money", "no_leads": "money",
     "tracking": "system", "events_quiet": "system", "stale_data": "system",
     "report_review": "system", "report_sent": "system", "numbers_off": "system",

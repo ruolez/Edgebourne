@@ -171,3 +171,148 @@ def recommendation_amount(extra):
     else:
         return None
     return value if value >= 100 else None
+
+
+# ---------------------------------------------------------------- the ad account spending limit (FU-B)
+# Meta's Ad Account reference (checked 2026-11-12 and 2026-11-13): the READ field spend_cap is "in basic unit of the
+# currency, e.g. cents for USD"; the UPDATE parameter spend_cap is a float "in standard denomination, e.g. 23.50 for
+# USD $23.50". So the console reads cents and writes dollars, through these two functions only (a ratchet test holds it).
+
+LIMIT_MIN_HEADROOM = 1  # cents: a new limit must be above what's already spent, by at least this
+LIMIT_DAILY = "daily"  # limit_words: the words name an amount per day, a budget, not the account's limit
+LIMIT_UNCLEAR = "unclear"  # limit_words: not one clear amount
+LIMIT_BIG_FACTOR = 2  # a raise past this × the current limit needs a second, separate yes (like a removal)
+
+
+def _whole_cents(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def spend_cap_cents(raw):
+    """Meta's READ value of an ad account's spend_cap (minor units, a numeric string) in cents; None = no limit
+    ("0", "" or missing). Anything else (a decimal like "150.00", junk, a negative) raises ValueError: never guessed."""
+    if raw is None or raw == "" or raw == 0:
+        return None
+    if _whole_cents(raw):
+        if raw < 0:
+            raise ValueError(f"spend_cap {raw!r} is negative")
+        return raw
+    if isinstance(raw, str) and raw.strip().isdigit():
+        value = int(raw.strip())
+        return value or None
+    raise ValueError(f"spend_cap {raw!r} isn't a whole number of minor units")
+
+
+def spend_cap_param(cents, currency):
+    """THE ONLY place that turns cents into Meta's spend_cap WRITE unit (standard denomination): 20000 → "200.00",
+    None → "0" (no limit). Refuses a zero-decimal currency (100× off), and 0, negatives or non-integers: 0 would
+    remove the limit on Meta, so removing is only ever spelled None."""
+    import account_info
+    if (currency or "").upper() in account_info.ZERO_DECIMAL:
+        raise ValueError(f"{currency} has no cents: the console never writes its spending limit")
+    if cents is None:
+        return "0"
+    if not _whole_cents(cents) or cents <= 0:
+        raise ValueError(f"spending limit {cents!r} isn't a whole number of cents above 0")
+    return f"{cents // 100}.{cents % 100:02d}"
+
+
+def readback_ok(intended_cents, raw_read):
+    """Meta's stored spend_cap, read back after a write, is exactly the cents we meant (None = no limit)."""
+    try:
+        return spend_cap_cents(raw_read) == intended_cents if raw_read is not None else False
+    except ValueError:
+        return False
+
+
+def spend_limit_change(old_cents, new_cents, spent_cents, rate_cents, currency="USD"):
+    """What changing the account's limit from old to new means at the current pace. left_* = limit − spent (None
+    without a limit), days_* = whole days that lasts at `rate_cents` a day (None without a pace or a limit)."""
+    def left(limit):
+        return None if limit is None else limit - spent_cents
+
+    def days(limit):
+        return None if limit is None or not rate_cents or rate_cents <= 0 else max(limit - spent_cents, 0) // rate_cents
+    big = old_cents is not None and new_cents is not None and new_cents > LIMIT_BIG_FACTOR * old_cents
+    return {"from": old_cents, "to": new_cents, "spent": spent_cents, "remove": new_cents is None,
+            "left_now": left(old_cents), "left_after": left(new_cents), "days_now": days(old_cents),
+            "days_after": days(new_cents), "rate": rate_cents, "currency": currency, "big": big}
+
+
+def spend_limit_problem(change, confirm_remove, accept_big=False):
+    """Why the limit can't be changed as asked, in plain words, or None. A removal and a raise past
+    LIMIT_BIG_FACTOR × the current limit (almost the same as none) each need their own second yes."""
+    import words
+    to, spent = change["to"], change["spent"]
+    if to is not None and to < 100:
+        return "The new limit must be at least 1.00."
+    if to is not None and to < spent + LIMIT_MIN_HEADROOM:
+        said = words.money(spent, change.get("currency"))
+        return f"That's at or below what's already spent ({said}): Meta would stop every ad at once. Pick more than {said}."
+    if change["remove"] and change["from"] is None:
+        return "There's no limit already."
+    if change["remove"] and not confirm_remove:
+        return "Removing the limit needs its own confirmation."
+    if to == change["from"]:
+        return "That's already the limit."
+    if change.get("big") and not accept_big:
+        return "Raising the limit to more than double needs its own confirmation."
+    return None
+
+
+def limit_account_problem(entity_id, current_act):
+    """A spending-limit suggestion names an ad account; when it's accepted that must still be this account's one
+    (an admin may have pointed the account at another ad account since). None, or why it can't be applied."""
+    if entity_id and current_act and entity_id == current_act and current_act != "act_None":
+        return None
+    return (f"This suggestion was for another ad account ({entity_id or 'none named'}); this account's is "
+            f"{current_act} now. Decline it and ask again.")
+
+
+def limit_read_words(raw, currency=None):
+    """What Meta holds, read as a raw spend_cap, in words: "$200.00", "no limit", or, when it can't be read,
+    "an amount the console can't read ('200.00')" (never called "no limit")."""
+    import words
+    try:
+        cents = spend_cap_cents(raw)
+    except ValueError:
+        return f"an amount the console can't read ({raw!r})"
+    return "no limit" if cents is None else words.money(cents, currency)
+
+
+_PER_DAY = re.compile(r"/\s*day\b|\ba\s+day\b|\bper\s+day\b|\bdaily\b|\beach\s+day\b|\bevery\s+day\b", re.I)
+_REMOVE = re.compile(r"\bno\s+(?:spending\s+)?limit\b|\bremove\b.*\blimit\b|\bunlimited\b", re.I)
+
+
+def limit_words(text):
+    """The total limit a spend_limit suggestion names: "$200" / "to $200" / "200 dollars" → 20000; "no limit" /
+    "remove the limit" → None; anything per day → LIMIT_DAILY (that's a budget); otherwise LIMIT_UNCLEAR
+    (budget words' rules: "or", "?", two amounts, a percentage → not an amount)."""
+    text = "" if text is None else str(text)
+    if _PER_DAY.search(text):
+        return LIMIT_DAILY
+    if _REMOVE.search(text):
+        return None if not re.search(r"\d", text) else LIMIT_UNCLEAR
+    cents = parse_budget_text(text)
+    return cents if cents is not None else LIMIT_UNCLEAR
+
+
+def limit_action(text, payload):
+    """Accepting a spend_limit suggestion: ("spend_limit", cents | None for no limit), or ("unclear", why). The
+    structured amount is used only when the words name that same amount (as for budgets)."""
+    words_said = (text or "").strip()
+    named = limit_words(text)
+    payload = payload if isinstance(payload, dict) else {}
+    if named == LIMIT_DAILY:
+        return "unclear", "This reads as a daily budget, not the account spending limit. Decline it and ask again."
+    cents, remove = payload.get("proposed_cents"), payload.get("remove") is True
+    if remove and cents is None:
+        if named is None:
+            return "spend_limit", None
+        return "unclear", f"Claude's words (“{words_said}”) don't say to remove the limit, so it can't be applied. Decline it and ask again."
+    if not _whole_cents(cents) or cents < 100 or "remove" in payload:
+        return "unclear", "Claude's new limit isn't a whole amount of at least 1.00, so it can't be applied. Decline it and ask again."
+    if named != cents:
+        return "unclear", (f"Claude's amount ({cents / 100:,.2f}) isn't what its words say (“{words_said}”), "
+                           "so it can't be applied. Decline it and ask again.")
+    return "spend_limit", cents

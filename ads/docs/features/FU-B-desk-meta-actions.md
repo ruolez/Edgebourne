@@ -8,7 +8,7 @@ Unit key: `FU-B-desk-meta-actions` · Asked by Eugene 2026-11-12 · Meta: **one 
 > - **Units.** Meta's reference (checked 2026-11-12, Ad Account reference): the *read* field `spend_cap` is "Value specified in basic unit of the currency, for example 'cents' for USD". The *update* parameter `spend_cap` is a float, "Value specified in standard denomination of the currency, e.g. 23.50 for USD $23.50". So we **read cents and write dollars**. Both conversions live in `money_rules` and nowhere else. After every write we read back, and on any mismatch we put the previous value back, raise a bad alert and block further limit writes until an owner clears the block.
 > - Refusals: a new limit **at or below the amount already spent** (Meta would stop every ad at once). **0 or no limit** needs a separate explicit confirmation. Only the **owner or this account's admin**; teammates and clients never. Never `spend_cap_action` (its `reset` zeroes `amount_spent`, its `delete` removes the limit without our confirmation).
 > - Wording: `/ads-desk` (`bridge/skill/SKILL.md`) gets one mapping table so "raise campaign X to $30/day", "turn off N3" and "set my limit to $200" land as budget, status and spend-limit proposals in whichever account the conversation belongs to. Skill text only: desk **2.7**.
-> - No migration. The block flag is a per-account setting, and the alert uses the existing `alerts` table.
+> - ~~No migration.~~ **Built (2026-11-13): migration `043_spend_limit_kind.sql`**, because `desk_proposals.kind` has a CHECK constraint (016) that refused the new kind; it only widens that check (no new table, no RLS change). A unit test now ties `desk_api.PROPOSAL_KINDS` to the newest constraint. The block flag is a per-account setting, and the alert uses the existing `alerts` table.
 
 ## Goal
 
@@ -40,7 +40,7 @@ Eugene, 2026-11-12: *"adjusting our Desk Agent to have ability and access to use
 
 ## Data / migration
 
-**No migration.**
+**Migration 043** widens `desk_proposals_kind_check` with `spend_limit` (see the note above); nothing else.
 
 - New per-account settings keys (add to `settings_store.ACCOUNT_KEYS`):
   - `spend_limit_block`: JSON `{at, by_change_id, wanted_cents, got_cents, restored: true|false, restored_cents}` while writes are blocked. Absent = allowed.
@@ -191,9 +191,9 @@ No new controls. The conversation shows the spend-limit suggestion card like any
 
    Rules: match names against the snapshot's campaigns and ads (short codes like N3). Several matches → ask. The conversation's account is the only one a run can change. When he names the other business ("raise Masha's campaign"), answer "Switch to Masha Fontana Studio and ask there", because a run can't suggest changes for another account.
 4. Keep "No money moves from a Desk task" and add: "Changing it happens in the console when Eugene taps Accept: the console reads Meta again, checks the money rules and records it."
-5. Logging: when `desk history` shows an applied `spend_limit`, `budget` or `status` suggestion not yet in `reports/log.md`, the next run appends one line (what, old → new, when, by Accept) through the existing log step (`Edit(reports/log.md)` is allowed in render and advice runs today; add it to every run kind, the only file a reading run may edit outside `reports/desk/`). No other new tool.
+5. Logging: when `desk history` shows an applied `spend_limit`, `budget` or `status` suggestion not yet in `reports/log.md`, the next run appends one line (what, old → new, when, by Accept) through `desk log-applied <id>` (built after review: the CLI appends fixed-format lines from the dashboard's record, owner's own requests only, so a run that reads outside text never gets an Edit grant on the log; `Edit(reports/log.md)` stays with render and advice runs for their uploads).
 
-Bridge: `desk VERSION` 2.7. Code unchanged except the allow list line for `reports/log.md`. Install after the server Update (check for a running Desk task first).
+Bridge: `desk VERSION` 2.7, with the new `desk log-applied` command. Install after the server Update (check for a running Desk task first).
 
 ## Money and security rules
 
@@ -280,7 +280,7 @@ Reset at the end: `mode=normal`, limit 15000, spent 4120, block cleared.
 
 ### Bridge
 
-`bridge/test_bridge.py`: every kind's allow list contains `Edit(reports/log.md)` and nothing else new. No Meta write tool is in any list (an existing check, extended to the full write-tool list).
+`bridge/test_bridge.py`: only render and advice runs may edit `reports/log.md`; `desk log-applied` lines tested (built after review). No Meta write tool is in any list (an existing check, extended to the full write-tool list).
 
 ## Live checks owed (with Eugene, in this order, his yes before each)
 

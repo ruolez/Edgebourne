@@ -37,7 +37,7 @@ bp = Blueprint("desk", __name__, url_prefix="/api/desk")
 agent_bp = Blueprint("agent", __name__, url_prefix="/api/agent")
 
 KINDS = ("question", "review", "research", "creative")  # typed on the Claude page; diagnose runs start from an alert
-PROPOSAL_KINDS = ("budget", "status", "creative", "targeting", "experiment", "tags", "other")
+PROPOSAL_KINDS = ("budget", "status", "spend_limit", "creative", "targeting", "experiment", "tags", "other")
 ACTIVE = ("queued", "claimed", "running")
 ONLINE_SECONDS = 90
 STALE_MINUTES = 30
@@ -906,7 +906,8 @@ def add_report(task_id):
     return jsonify({"id": row["id"]}), 201
 
 
-def clean_proposal(p):
+def clean_proposal(p, ad_account=None):
+    """`ad_account`: this account's Meta ad account id (digits); a spend_limit suggestion must name exactly it."""
     def text(key, n=2000):
         v = p.get(key)
         return None if v is None else str(v).strip()[:n] or None
@@ -928,6 +929,14 @@ def clean_proposal(p):
             out["kind"] = "other"
     if kind == "budget":
         out["payload"] = clean_budget(p.get("payload"))
+    if kind == "spend_limit":
+        # FU-B: the account's own limit only; a run can't aim at another account's (it becomes a note).
+        out["payload"] = clean_spend_limit(p.get("payload"))
+        own = f"act_{ad_account}" if ad_account else None
+        if not out["payload"] or not own or out["entity_id"] != own:
+            out.update(kind="other", payload=None)
+        else:
+            out["entity_type"] = "account"
     # D3: what Claude says will happen, in a form "Did it work?" can test (else read from the text, best effort).
     import change_checks
     out["expect"] = change_checks.clean_expect(p.get("expect")) or change_checks.expect_from_text(out["expected"])
@@ -941,6 +950,21 @@ def clean_budget(raw):
     if isinstance(cents, str) and cents.strip().isdigit():
         cents = int(cents.strip())
     if not isinstance(cents, int) or isinstance(cents, bool) or cents <= 0:
+        return None
+    return {"proposed_cents": cents}
+
+
+def clean_spend_limit(raw):
+    """A spend_limit suggestion's new total limit: {"proposed_cents": 20000}, or {"remove": True} (literally true) to
+    remove it. Both, neither or anything else → None. Approving checks the cents against the words (money_rules)."""
+    if not isinstance(raw, dict):
+        return None
+    cents = raw.get("proposed_cents")
+    if isinstance(cents, str) and cents.strip().isdigit():
+        cents = int(cents.strip())
+    if "remove" in raw:
+        return {"remove": True} if raw["remove"] is True and cents is None else None
+    if not isinstance(cents, int) or isinstance(cents, bool) or cents < 100:
         return None
     return {"proposed_cents": cents}
 
@@ -1020,7 +1044,8 @@ def stamp_update(payload, task):
 def add_proposals(task_id):
     data = request.get_json(silent=True) or {}
     items = data.get("proposals") if isinstance(data.get("proposals"), list) else []
-    items = [clean_proposal(p) for p in items[:20] if isinstance(p, dict)]
+    ad_account = settings_store.get("meta_ad_account_id")
+    items = [clean_proposal(p, ad_account) for p in items[:20] if isinstance(p, dict)]
     if not items or any(not p["title"] for p in items):
         return api_error("Each proposal needs at least a title", 400)
     task = _open_task(task_id)
@@ -1096,12 +1121,26 @@ def snapshot():
     import account_ctx
     import accounts_api
     import change_checks_db
-    return jsonify({"account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current())},
+    import spend_limit
+    return jsonify({"account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current()),
+                                "ad_account_id": spend_limit.act()},
+                    "spend_limit": limit_snapshot(),
                     "performance": perf, "source": perf["source"], "lead_stages_by_ad": stages, "lead_business_types": types,
                     "speed_to_lead": speed, "follow_ups": follow,
                     "lead_quality_by_ad": quality_rows, "lead_quality_totals": quality_totals, "lead_quality_notes": lq.SNAPSHOT_NOTES, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
                     "experiments": tests, **budget_snapshot(perf["range"]),
                     "change_results": change_checks_db.outcomes(30, 20)})
+
+
+def limit_snapshot():
+    """FU-B: the account spending limit as stored by the last read (no Meta call here) and the pace, so Claude can
+    suggest a `spend_limit` change with the numbers. `paused`: limit changes are paused after a read-back mismatch."""
+    import performance_api
+    import spend_limit
+    cap = performance_api.cap_snapshot() or {}
+    pace = performance_api.pacing_data(None)
+    return {"ad_account_id": spend_limit.act(), "limit_cents": cap.get("limit_cents"), "spent_cents": cap.get("spent_cents"),
+            "rate_cents": pace.get("rate_cents"), "days_left": pace.get("cap_days"), "paused": bool(spend_limit.blocked())}
 
 
 def budget_snapshot(rng):

@@ -5,6 +5,7 @@ import { renderMarkdown } from "./markdown.js";
 import { money } from "./format.js";
 import { lastChangeWords, spendBody, spendWords } from "./controls.js";
 import { suggestionCard } from "./suggest.js";
+import { confirmBig, confirmRemove, limitBody, limitMoney } from "./spendlimit.js";
 
 export const KIND_LABELS = { question: "Question", review: "Review results", research: "Research competitors", creative: "New ad ideas", polish: "Polish", render: "New version", advice: "Meta's advice", diagnose: "Diagnosis" };
 const STATUS = {
@@ -93,6 +94,15 @@ function approvalDialog(card, plan) {
           ${recent ? `<p class="note warn"><b>Less than 3 days since the last change.</b> Meta is still adjusting to it; another raise now makes results hard to read.</p><p class="muted small">${lastChangeWords(plan.last)}</p>` : ""}`,
       },
       body: { from_cents: plan.from, to_cents: plan.to, accept_big: !!plan.big, ...(recent ? { accept_recent: true } : {}) },
+    };
+  }
+  if (plan.kind === "spend_limit") {
+    if (plan.problem) { toast(plan.problem, "bad"); return null; }
+    return {
+      dialog: { title, claude: true, danger: !!plan.remove, confirm: plan.remove ? "Remove the limit…" : `Change to ${limitMoney(plan.to)}`, body: limitBody(plan) },
+      body: { from_cents: plan.from, to_cents: plan.to, remove: !!plan.remove },
+      removal: !!plan.remove,
+      big: !!plan.big,
     };
   }
   if (plan.kind === "status" && plan.to === "ACTIVE") {
@@ -195,6 +205,14 @@ export function wireTaskActions(root, onChange, openReports) {
         if (!ask) { approve.disabled = false; return; }
         const yes = await confirmDialog(ask.dialog);
         if (!yes) { approve.disabled = false; return; }
+        if (ask.removal) {
+          if (!(await confirmRemove())) { approve.disabled = false; return; }
+          ask.body.confirm_remove = true;
+        }
+        if (ask.big) {
+          if (!(await confirmBig(plan))) { approve.disabled = false; return; }
+          ask.body.accept_big = true;
+        }
         let r;
         try { r = await api(`/api/proposals/${id}/approve`, { method: "POST", body: as ? { ...ask.body, apply_as: as } : ask.body }); }
         catch (err) { approve.disabled = false; throw err; }

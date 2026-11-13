@@ -158,7 +158,7 @@ def fake_adaccounts():
 def other_account_get(acct, parts, a):
     """GET on act_<one of OTHER_ACCOUNTS> and its edges."""
     if len(parts) == 1:
-        return jsonify({**OTHER_ACCOUNTS[acct], "id": f"act_{acct}", "account_id": acct, "spend_cap": "0", "amount_spent": "0"})
+        return jsonify({**OTHER_ACCOUNTS[acct], "id": f"act_{acct}", "account_id": acct, **cap_fields(acct)})
     edge = parts[1]
     mine = lambda d: [x for x in d.values() if x.get("account") == acct and listed(x)]  # noqa: E731
     if edge == "campaigns":
@@ -724,6 +724,79 @@ def fake_studies():
 
 SUBSCRIPTIONS = {"app": {}, "accounts": []}  # app-level webhook objects, ad accounts that installed the app
 
+# FU-B: each ad account's spending limit. Read like Meta, in cents as numeric strings ("0" = no limit); written like
+# Meta's documented update parameter, a decimal in the currency's standard unit ("200.00" = $200).
+ACCOUNT_STATE = {}
+SPEND_CAP = {"mode": "normal", "silent_readback": 0.0, "hang_next": False, "lose_next": False}
+
+
+def account_state(acct):
+    if acct not in ACCOUNT_STATE:
+        ACCOUNT_STATE[acct] = {"spend_cap": 15000, "amount_spent": 4120} if acct == ACCOUNT else {"spend_cap": None, "amount_spent": 0}
+    return ACCOUNT_STATE[acct]
+
+
+def cap_fields(acct):
+    st = account_state(acct)
+    if SPEND_CAP["hang_next"] and request.method == "GET":
+        SPEND_CAP["hang_next"] = False
+        import time
+        time.sleep(SPEND_CAP["silent_readback"])  # the read-back after a write goes unanswered (longer than the console waits)
+    return {"spend_cap": st.get("raw") or str(st["spend_cap"] or 0), "amount_spent": str(st["amount_spent"])}
+
+
+@app.route("/fake/_spend_cap")
+def fake_spend_cap():
+    """QA: ?mode=cents (the NEXT write is read as cents: "200.00" stored as 200) | ignore (the next write answers success
+    and changes nothing) | decimal (the next write is read back as the decimal it was sent, e.g. "200.00") | normal;
+    ?limit=<cents|0> and ?amount_spent=<cents> set the state; ?silent_readback=<s> makes the first read after the next
+    write hang that long; ?lose_next=1 drops the connection after the next write is stored (the console gets no answer);
+    ?acct=<id> picks the ad account (Edge Bourne's by default)."""
+    st = account_state(request.args.get("acct") or ACCOUNT)
+    if "mode" in request.args:
+        SPEND_CAP["mode"] = request.args["mode"]
+    if "limit" in request.args:
+        st["spend_cap"] = int(request.args["limit"]) or None
+        st.pop("raw", None)
+    if "lose_next" in request.args:
+        SPEND_CAP["lose_next"] = request.args["lose_next"] == "1"
+    if "amount_spent" in request.args:
+        st["amount_spent"] = int(request.args["amount_spent"])
+    if "silent_readback" in request.args:
+        SPEND_CAP["silent_readback"] = float(request.args["silent_readback"])
+        SPEND_CAP["hang_next"] = False
+    return jsonify({**st, **SPEND_CAP})
+
+
+def account_write(acct, a):
+    """POST act_<id>: only spend_cap is modelled. The action parameter (reset / delete) is refused: the console never sends it."""
+    if "spend_cap_action" in a:
+        return jsonify({"error": {"message": "spend_cap_action is not used by the console (fake)", "code": 100}}), 400
+    if "spend_cap" not in a:
+        return jsonify({"error": {"message": "fake Graph: only spend_cap is modelled on an ad account", "code": 100}}), 400
+    import re
+    from decimal import Decimal
+    raw = str(a["spend_cap"]).strip()
+    if not re.fullmatch(r"\d+(\.\d{1,2})?", raw):
+        return jsonify({"error": {"message": f"(#100) Invalid parameter: spend_cap {raw!r} (fake)", "code": 100}}), 400
+    cents = int(Decimal(raw) * 100)
+    mode, SPEND_CAP["mode"] = SPEND_CAP["mode"], "normal"
+    st = account_state(acct)
+    if mode == "cents":
+        st["spend_cap"] = int(Decimal(raw)) or None
+    elif mode == "decimal":
+        st["raw"] = raw
+    elif mode != "ignore":
+        st["spend_cap"] = cents or None
+        st.pop("raw", None)
+    if SPEND_CAP["silent_readback"]:
+        SPEND_CAP["hang_next"] = True
+    if SPEND_CAP["lose_next"]:
+        SPEND_CAP["lose_next"] = False
+        import socket
+        request.environ["werkzeug.socket"].shutdown(socket.SHUT_RDWR)  # stored, but the answer never arrives
+    return jsonify({"success": True})
+
 
 @app.route("/fake/_subscriptions")
 def fake_subscriptions():
@@ -735,6 +808,9 @@ def graph_ids():
     """Meta's multi-id read: GET /?ids=a,b&fields=…; an unknown id fails the whole call, as on Meta."""
     out = {}
     for oid in (request.args.get("ids") or "").split(","):
+        if oid.startswith("act_"):
+            out[oid] = {"id": oid, **cap_fields(oid[4:])}
+            continue
         obj = by_id(oid)
         if obj is None:
             return jsonify({"error": {"message": f"Object {oid} does not exist (fake)", "code": 100}}), 400
@@ -776,7 +852,7 @@ def graph(path):
             return other_account_get(parts[0][4:], parts, a)
         if parts == [act]:
             return jsonify({"name": "Edge Bourne Consulting", "currency": "USD", "timezone_name": "America/Los_Angeles",
-                            "spend_cap": "15000", "amount_spent": "4120", "account_status": 1,
+                            **cap_fields(ACCOUNT), "account_status": 1,
                             "business": {"id": BUSINESS, "name": "Edge Bourne"}, "opportunity_score": ADVICE["score"]})
         if parts == [act, "recommendations"]:
             return jsonify({"data": [{"recommendations": ADVICE["recs"]}]})
@@ -1062,6 +1138,8 @@ def graph(path):
             STUDIES[sid] = {"id": sid, "name": a["name"], "type": kind, "start_time": int(a["start_time"]),
                             "end_time": int(a["end_time"]), "cells": cells, "description": a.get("description")}
             return jsonify({"id": sid})
+        if len(parts) == 1 and parts[0].startswith("act_") and (parts[0][4:] == ACCOUNT or parts[0][4:] in OTHER_ACCOUNTS):
+            return account_write(parts[0][4:], a)
         if len(parts) == 1 and parts[0] in STUDIES:
             if "end_time" in a:
                 STUDIES[parts[0]]["end_time"] = int(a["end_time"])

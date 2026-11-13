@@ -75,6 +75,8 @@ def allowed_tools(skill_dir, workdir, kind="question", web=False):
     # JSON for scorecards and proposals is written to files here and passed with --file
     # (heredocs with JSON get refused by the permission checker).
     tools += files("reports/desk")
+    # Applied budget, on/off and spending-limit suggestions reach reports/log.md through `desk log-applied` (fixed
+    # lines from the dashboard's record), so a run reading outside text can't rewrite the change log (FU-B).
     for name in READ_TOOLS:
         tools += [f"mcp__meta-ads__{name}", f"mcp__claude_ai_Meta_Ads__{name}"]
     # Polish looks at video frames through `desk frames` / `desk probe`, which open only videos in the

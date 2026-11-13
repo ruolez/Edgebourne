@@ -22,7 +22,7 @@ def category(item):
     if kind == "version":
         return "edit"
     if kind == "change":
-        if field in ("budget", "recommendation", "recommendation_check"):
+        if field in ("budget", "recommendation", "recommendation_check", "spend_limit", "spend_limit_restore"):
             return "money"
         if field in ("status", "archive", "delete"):
             return "switch"
@@ -76,7 +76,7 @@ def short_words(item):
         return "budget raised" if a and b and b > a else "budget lowered" if a and b and b < a else "budget changed"
     if field in ("recommendation", "recommendation_check"):
         return "Meta's advice applied"
-    if field in ("spend_cap",):
+    if field in ("spend_cap", "spend_limit", "spend_limit_restore"):
         return "spending limit changed"
     if field in ("bid_strategy", "bid_amount"):
         return "bid changed"

@@ -14,6 +14,7 @@ by hand keeps the pass in ~/.config/ads-desk/claims.json for the later calls.
   desk queue                             queued and active tasks
   desk snapshot [7|14|30]                performance + lead quality from the dashboard
   desk history                           recent finished tasks (summaries, report titles)
+  desk log-applied <id>                  append applied budget / on-off / spending-limit suggestions to reports/log.md
   desk outcomes [--days 60]              did it work: before/after results of changes and suggestions, declined ones
   desk progress <id> <text>              status line shown live on the Desk page
   desk report <id> --title T [--file F]  report body from F or stdin (Markdown)
@@ -42,7 +43,7 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSION = "2.6"
+VERSION = "2.7"
 # ADS_DESK_CONFIG points a test run at another dashboard (e.g. the local dev stack).
 CONFIG = os.environ.get("ADS_DESK_CONFIG") or os.path.expanduser("~/.config/ads-desk/config.json")
 SERVICE = "ads-desk"
@@ -218,6 +219,45 @@ def save_local_copy(cfg, task_id, title, body):
         return None
 
 
+LOGGED_KINDS = {"budget": "budget", "status": "on/off", "spend_limit": "spending limit"}
+
+
+def applied_log_lines(history, existing):
+    """reports/log.md lines for applied budget, on/off and spending-limit suggestions in `desk history` that the log
+    doesn't name yet ("[desk #<id>]"). Fixed format, one line each, words flattened, so nothing a run reads can
+    become more than a value in the log."""
+    def flat(value):
+        text = re.sub(r"\s+", " ", str(value if value is not None else "")).replace("[", "(").replace("]", ")").strip()
+        return text[:80] or "—"
+    out = []
+    for task in history or []:
+        for p in task.get("proposals") or []:
+            if p.get("status") != "applied" or p.get("kind") not in LOGGED_KINDS or f"[desk #{p.get('id')}]" in (existing or ""):
+                continue
+            day = str(p.get("decided_at") or "")[:10] or "—"
+            out.append(f"- {day} [desk #{int(p['id'])}] {LOGGED_KINDS[p['kind']]}: {flat(p.get('entity_name') or p.get('title'))}: "
+                       f"{flat(p.get('current_value'))} → {flat(p.get('proposed_value'))} (by Accept on the Claude page)")
+    return out
+
+
+def log_applied(cfg, go, task_id):
+    """Only for the owner's own requests: another business's or a teammate's run never writes the owner's log."""
+    task = go("GET", f"/api/agent/tasks/{task_id}")[1]
+    if task.get("account_id") not in (None, 1) or task.get("from_owner") is not True:
+        return "skipped: this request isn't the owner's own, so the change log stays as it is"
+    path = os.path.join(os.path.realpath(cfg["workdir"]), "reports", "log.md")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            existing = fh.read()
+    except FileNotFoundError:
+        existing = ""
+    lines = applied_log_lines(go("GET", "/api/agent/history")[1], existing)
+    if lines:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(("" if not existing or existing.endswith("\n") else "\n") + "\n".join(lines) + "\n")
+    return f"{len(lines)} line{'' if len(lines) == 1 else 's'} added to reports/log.md"
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="desk", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -226,6 +266,7 @@ def main(argv=None):
     sub.add_parser("queue")
     sp = sub.add_parser("snapshot"); sp.add_argument("range", nargs="?", default="7", choices=["7", "14", "30"])
     sub.add_parser("history")
+    sub.add_parser("log-applied").add_argument("id", type=int)
     sp = sub.add_parser("outcomes"); sp.add_argument("--days", type=int, default=60)
     sp = sub.add_parser("progress"); sp.add_argument("id", type=int); sp.add_argument("text", nargs="+")
     sp = sub.add_parser("report"); sp.add_argument("id", type=int); sp.add_argument("--title", required=True); sp.add_argument("--file")
@@ -277,6 +318,8 @@ def main(argv=None):
             print(json.dumps(go("GET", f"/api/agent/snapshot?range={a.range}")[1], indent=2))
         elif a.cmd == "history":
             print(json.dumps(go("GET", "/api/agent/history")[1], indent=2))
+        elif a.cmd == "log-applied":
+            print(log_applied(cfg, go, a.id))
         elif a.cmd == "outcomes":
             print(json.dumps(go("GET", f"/api/agent/outcomes?days={max(1, min(60, a.days))}")[1], indent=2))
         elif a.cmd == "progress":

@@ -61,6 +61,8 @@ def proposal_action(p, entity, apply_as=None):
     or None when it isn't something the dashboard can apply by itself. New words or media
     update the ad or make a new one as Claude proposed; `apply_as` ("update" / "new") overrides."""
     payload = p.get("payload") or {}
+    if p["kind"] == "spend_limit":  # FU-B: the ad account's own limit; no campaign, ad set or ad behind it
+        return money_rules.limit_action(p.get("proposed_value"), payload)
     if p["kind"] == "creative" and payload.get("update_ad") and (payload.get("vertical") or {}).get("video_id"):
         return ("vertical", payload)
     if p["kind"] == "creative" and payload.get("template_ad_id") and payload.get("body") and payload.get("title"):
@@ -1298,6 +1300,14 @@ def proposal_plan(p, apply_as=None):
     """What approving does, read fresh from Meta, for the confirmation (audit A1, A20)."""
     if p["kind"] in ("experiment", "tags"):
         return {"kind": p["kind"]}
+    if p["kind"] == "spend_limit":
+        import spend_limit
+        kind, value = proposal_action(p, None)
+        # The ad account it names must still be this account's: an admin may have pointed it at another one since.
+        wrong = money_rules.limit_account_problem(p.get("entity_id"), spend_limit.act())
+        if kind == "unclear" or wrong:
+            return {"kind": "unclear", "problem": value if kind == "unclear" else wrong}
+        return {"kind": "spend_limit", **spend_limit.plan(value, remove=value is None)}
     level, row = proposal_target(p)
     action = proposal_action(p, row, apply_as)
     if not action:
@@ -1342,6 +1352,8 @@ def check_proposal(proposal_id):
     level, row = proposal_target(p)
     if row and not can_touch(current_user(), row["campaign_id"]):
         return api_error("Suggestion not found", 404)
+    if p["kind"] == "spend_limit" and current_user()["role"] != "admin":
+        return api_error(LIMIT_ADMINS, 403)
     try:
         return jsonify(proposal_plan(p, request.args.get("as")))
     except meta_client.MetaError as exc:
@@ -1405,6 +1417,8 @@ def decide(proposal_id, decision):
     level, row = proposal_target(p)
     if row and not can_touch(user, row["campaign_id"]):
         return api_error("This campaign isn't assigned to you", 403)
+    if p["kind"] == "spend_limit" and user["role"] != "admin":
+        return api_error(LIMIT_ADMINS, 403)
     if not row and user["role"] != "admin" and p["kind"] not in ("tags",):
         return api_error("Only admins can decide account-wide suggestions", 403)
     if decision == "decline":
@@ -1483,6 +1497,8 @@ def _approve(user, p, level, row, data):
     kind, value = action
     if kind == "unclear":
         return api_error(value, 400)
+    if kind == "spend_limit":
+        return approve_spend_limit(user, p, value, data, close)
     new_id = None
     try:
         if kind == "status" and value == "ACTIVE":
@@ -1536,6 +1552,57 @@ def _approve(user, p, level, row, data):
         return api_error(f"Accepted, but Meta refused the change: {error}", 400)
     return jsonify({"status": "applied", "applied": True, "ad_id": new_id,
                     "updated_ad": value["template_ad_id"] if kind == "update" else None})
+
+
+LIMIT_ADMINS = "Only an admin of this account can change its spending limit"
+_MISSING = object()
+
+
+def _echoed_cents(data, key):
+    """An amount the confirmation echoes back: cents, None for "no limit", or _MISSING when absent or not a number."""
+    if key not in data:
+        return _MISSING
+    v = data[key]
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return _MISSING
+    try:
+        return int(v) if str(v).strip().lstrip("-").isdigit() else _MISSING
+    except (TypeError, ValueError):
+        return _MISSING
+
+
+def approve_spend_limit(user, p, value, data, close):
+    """FU-B: accepting a spend_limit suggestion. Owner or this account's admin (RLS pins the suggestion to this
+    account); the sheet echoes the old and new amounts it showed; a removal needs confirm_remove (its own dialog)."""
+    import spend_limit
+    if user["role"] != "admin":
+        return api_error(LIMIT_ADMINS, 403)
+    wrong = money_rules.limit_account_problem(p.get("entity_id"), spend_limit.act())
+    if wrong:
+        return api_error(wrong, 409)
+    remove = value is None
+    to_cents, from_cents = _echoed_cents(data, "to_cents"), _echoed_cents(data, "from_cents")
+    if bool(data.get("remove")) != remove or from_cents is _MISSING or (not remove and to_cents != value):
+        try:
+            fresh = proposal_plan(p)
+        except meta_client.MetaError:
+            fresh = None
+        return api_error("Check the amounts again: this isn't the change the suggestion makes.", 409, plan=fresh)
+    error, info = spend_limit.apply(user, value, remove=remove, confirm_remove=data.get("confirm_remove") is True,
+                                    from_cents=from_cents, proposal_id=p["id"], accept_big=data.get("accept_big") is True)
+    if error and error.startswith(NOT_SENT):
+        return api_error(error_words(error), 400 if info.get("code") else 409, **({"plan": info["plan"]} if info.get("plan") else {}))
+    if error and error.startswith(UNKNOWN):
+        close("unknown")
+        return api_error(f"{error_words(error)} This suggestion is marked “check Ads Manager” and can't be applied again.", 400)
+    close("failed" if error else "applied")
+    if error and error.startswith(CHECKED):
+        return api_error(f"Not applied: {error_words(error)}", 400)
+    if error:
+        return api_error(f"Accepted, but Meta refused the change: {error}", 400)
+    return jsonify({"status": "applied", "applied": True, "limit_cents": info.get("limit_cents")})
 
 
 def approve_experiment(user, p):

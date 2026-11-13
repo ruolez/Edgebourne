@@ -526,6 +526,28 @@ session_for(c, admin["id"], 1)
 csrf = app.test_client()
 session_for(csrf, admin["id"], 1)
 csrf_status = csrf.post("/api/refresh", data="", content_type="text/plain").status_code
+# FU-B: the account spending limit. A spend_limit suggestion in account 1 is neither seen nor accepted from account 2;
+# teammates and clients can't read or change any limit; only the console's owner clears a pause.
+with account_ctx.use(1):
+    limit_pid = db.execute("""INSERT INTO desk_proposals (task_id, kind, title, entity_type, entity_id, proposed_value, payload, status)
+                              VALUES (%s, 'spend_limit', 'LEAK QA limit', 'account', %s, '$999', %s, 'pending') RETURNING id""",
+                           (one["task"], "act_" + str(settings_store.get("meta_ad_account_id", account_id=1)),
+                            json.dumps({"proposed_cents": 99900})), returning=True)["id"]
+session_for(ac, acct_admin["id"], 1)
+session_for(mc, member["id"])
+session_for(cc, client["id"])
+fub = {"approve_from_2": ac.post(f"/api/proposals/{limit_pid}/approve", json={"from_cents": 15000, "to_cents": 99900}).status_code,
+       "read_from_2": ac.get(f"/api/proposals/{limit_pid}").status_code,
+       "check_from_2": ac.get(f"/api/proposals/{limit_pid}/check").status_code,
+       "member_get": mc.get("/api/settings/spend-limit").status_code,
+       "member_post": mc.post("/api/settings/spend-limit", json={"from_cents": 15000, "to_cents": 99900}).status_code,
+       "client_get": cc.get("/api/settings/spend-limit").status_code,
+       "client_post": cc.post("/api/settings/spend-limit", json={"from_cents": 15000, "to_cents": 99900}).status_code,
+       "account_admin_unblock": ac.post("/api/settings/spend-limit/unblock", json={}).status_code}
+with account_ctx.use(1):
+    fub["status_in_1"] = db.query("SELECT status FROM desk_proposals WHERE id = %s", (limit_pid,), one=True)["status"]
+    db.execute("DELETE FROM desk_proposals WHERE id = %s", (limit_pid,))
+session_for(c, admin["id"], 1)
 out.update({"leaks": l1 + l2 + l2b + l3, "routes_checked": [n1, n2, n3], "admin_sees_account2_on_account2": sees_own,
             "client_sees_own_leads": client_sees_own, "client_switch_status": switch, "client_stays_on_own_account": still,
             "client_writes_not_refused": writes,
@@ -535,5 +557,5 @@ out.update({"leaks": l1 + l2 + l2b + l3, "routes_checked": [n1, n2, n3], "admin_
             "app_role_bypasses_rls": app_role_bypasses,
             "resync_thread_account": seen, "account2_assignments_seen_from_1": members_seen_from_1,
             "csrf_without_header": csrf_status, "routes_showing_own_mark": shown, "routes_crashed": crashed,
-            "tenant_problems": tenant, "second_account": fua})
+            "tenant_problems": tenant, "second_account": fua, "spend_limit": fub})
 print(json.dumps(out))

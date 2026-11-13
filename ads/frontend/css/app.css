@@ -1853,3 +1853,18 @@ dialog.acp #acp-again { min-height: var(--target); }
   .ovw-wide { display: none; }
   .ovw-cards { display: grid; }
 }
+
+/* Settings → Targets → Account spending limit (FU-B). sl- = spending limit. */
+.sl-box { border-top: 1px solid var(--line); padding-top: 16px; }
+.sl-title { margin: 0; font-size: var(--t-m); font-weight: 600; }
+.sl-now b { font-variant-numeric: tabular-nums; }
+.sl-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; }
+.sl-row .field { margin: 0; }
+.sl-box > .hint { font-size: var(--t-s); color: var(--ink-3); }
+.sl-pace { display: block; color: var(--ink-3); font-size: var(--t-xs); margin-top: 2px; }
+@media (max-width: 640px) {
+  .sl-row { flex-direction: column; align-items: stretch; }
+  .sl-row .money-input { display: flex; }
+  .sl-row .money-input .input { flex: 1; width: auto; min-width: 0; }
+  .sl-row .btn { width: 100%; min-height: var(--target); }
+}

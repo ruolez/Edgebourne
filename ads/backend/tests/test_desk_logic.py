@@ -163,3 +163,43 @@ class RunsByKeyTests(unittest.TestCase):
                 {"id": 5, "status": "done", "k": None, "waiting": 0}]
         self.assertEqual(desk_api.runs_by_key(rows), {"no_leads:c1": {"id": 9, "status": "queued", "waiting": 0},
                                                       "fatigue:a3": {"id": 6, "status": "done", "waiting": 1}})
+
+
+class SpendLimitProposalTests(unittest.TestCase):
+    """FU-B: a spend_limit suggestion must aim at this account's own ad account and carry a clean amount."""
+    BASE = {"kind": "spend_limit", "title": "Raise the account spending limit to $200", "entity_type": "account",
+            "entity_id": "act_1025", "proposed_value": "$200"}
+
+    def clean(self, **kw):
+        return desk_api.clean_proposal({**self.BASE, **kw}, ad_account="1025")
+
+    def test_this_accounts_limit_keeps_its_kind_and_cents(self):
+        out = self.clean(payload={"proposed_cents": "20000"})
+        self.assertEqual((out["kind"], out["entity_type"], out["entity_id"], out["payload"]), ("spend_limit", "account", "act_1025", {"proposed_cents": 20000}))
+
+    def test_a_removal_needs_literal_true(self):
+        self.assertEqual([(o["kind"], o["payload"]) for o in (self.clean(payload={"remove": True}), self.clean(payload={"remove": "yes"}))],
+                         [("spend_limit", {"remove": True}), ("other", None)])
+
+    def test_another_ad_account_or_a_bad_payload_becomes_other(self):
+        cases = [self.clean(entity_id="act_999", payload={"proposed_cents": 20000}),
+                 desk_api.clean_proposal({**self.BASE, "payload": {"proposed_cents": 20000}}, ad_account=None),
+                 self.clean(payload={"proposed_cents": 0}), self.clean(payload={"proposed_cents": 200.5}), self.clean(payload=None),
+                 self.clean(payload={"proposed_cents": 20000, "remove": True})]
+        self.assertEqual([c["kind"] for c in cases], ["other"] * 6)
+
+
+class ProposalKindsMatchTheDatabaseTests(unittest.TestCase):
+    """Every kind clean_proposal keeps must be one the newest desk_proposals_kind_check migration allows (a kind
+    the database refuses would fail the Mac's whole batch of suggestions)."""
+
+    def test_the_newest_constraint_lists_exactly_the_kinds(self):
+        import os
+        import re
+        folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "migrations")
+        latest = None
+        for name in sorted(os.listdir(folder)):
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                m = re.search(r"desk_proposals_kind_check\s+CHECK \(kind IN \(([^)]*)\)\)", f.read())
+            latest = m.group(1) if m else latest
+        self.assertEqual(sorted(re.findall(r"'([a-z_]+)'", latest)), sorted(desk_api.PROPOSAL_KINDS))

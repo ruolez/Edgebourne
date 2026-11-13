@@ -1,7 +1,8 @@
 import { api } from "./api.js";
 import { money, currencySymbol } from "./format.js";
 import { wake } from "./alertmenu.js";
-import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when, errorState, guardLeaving, markSaved, safePath, setCrumbs } from "./ui.js";
+import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when, errorState, guardLeaving, markSaved, safePath, setCrumbs, skeleton } from "./ui.js";
+import { confirmBig, confirmRemove, limitBody, limitMoney, pausedWords } from "./spendlimit.js";
 
 const $ = (id) => document.getElementById(id);
 let s;
@@ -35,11 +36,12 @@ function showSection({ first = false } = {}) {
   $("set-scope").textContent = whole ? "Whole console · every account" : `This account · ${me.account.name}`;
   setCrumbs([{ label: "Settings", href: "/settings.html" }, { label }]);
   document.title = `${label} · Settings | Edge Bourne Ads`;
+  if (sec.id === "targets") loadLimit();
   const fold = target && (target.tagName === "DETAILS" ? target : target.closest("details"));
   if (fold) fold.open = true;
   // A section opens at the top of the page (with the list above it on phones); only something inside it,
   // like #crm-code, is scrolled to. The browser's own jump to #<section> on arrival is undone, also once the page has loaded.
-  const deep = target && target !== sec && !target.matches("[data-section] > form, [data-section] > .panel-body");
+  const deep = target && target !== sec && (!target.matches("[data-section] > form, [data-section] > .panel-body") || target.id === "spend-limit");
   const place = () => (deep ? target.scrollIntoView({ block: "start" }) : window.scrollTo(0, 0));
   if (deep || !first || location.hash) place();
   if (first && location.hash && document.readyState !== "complete") window.addEventListener("load", () => requestAnimationFrame(place), { once: true });
@@ -445,6 +447,85 @@ function renderTargets() {
   $("t-monthly").textContent = t.monthly_cents ? `${money(t.monthly_cents)} a month` : "Not set";
 }
 
+// Settings → Targets → Account spending limit (FU-B): read live from Meta each time the section opens; a change shows
+// old → new from a fresh read and waits for a yes; removing it has its own confirmation.
+let limit = null;
+const limitDays = (n) => `about <b>${n} day${n === 1 ? "" : "s"}</b> left at the current pace`;
+
+function renderLimit() {
+  const box = $("spend-limit");
+  if (!limit) return;
+  const l = limit;
+  const parts = l.limit_cents == null ? ["No spending limit."]
+    : [`Spending limit: <b>${esc(limitMoney(l.limit_cents))}</b>`, `spent <b>${esc(limitMoney(l.spent_cents))}</b>`,
+      l.days_left == null ? "not enough recent spend to tell how long it lasts" : limitDays(l.days_left)];
+  const checked = l.checked_at ? `Last change checked on Meta ${esc(when(l.checked_at))}.` : "Read from Meta just now.";
+  $("sl-state").innerHTML = `<p class="flush sl-now">${parts.join(" · ")}${l.limit_cents == null ? "" : "."}</p><p class="muted small flush">${checked}</p>`;
+  const paused = $("sl-paused");
+  paused.hidden = !l.blocked;
+  paused.innerHTML = l.blocked ? `<p class="note bad flush">${esc(pausedWords(l.blocked))}</p>${owner
+    ? '<div class="row"><button class="btn" type="button" id="sl-unblock">Clear and allow changes</button></div>'
+    : '<p class="muted small flush">The console\'s owner clears it.</p>'}` : "";
+  box.querySelectorAll("#sl-new, #sl-change, #sl-remove").forEach((el) => { el.disabled = Boolean(l.blocked); });
+  $("sl-remove").hidden = l.limit_cents == null;
+}
+
+async function loadLimit() {
+  const state = $("sl-state");
+  if (!limit) state.innerHTML = skeleton("Reading the spending limit from Meta…");
+  try {
+    limit = await api("/api/settings/spend-limit");
+    renderLimit();
+  } catch (err) {
+    limit = null;
+    errorState(state, err, loadLimit, null, { panel: false });
+  }
+}
+
+// While a limit action runs its controls stay off; the fresh read afterwards decides (a pause keeps them off).
+async function limitAction(fn) {
+  const controls = [...$("spend-limit").querySelectorAll("#sl-new, #sl-change, #sl-remove")];
+  if (controls.some((c) => c.disabled)) return;
+  try {
+    await fn(() => controls.forEach((c) => { c.disabled = true; }));
+  } catch (err) {
+    toast(err.message, "bad");
+    await loadLimit();
+  }
+}
+
+async function changeLimit(lock) {
+  const form = $("spend-limit");
+  fieldError(form);
+  const raw = $("sl-new").value.trim().replace(/[$,\s]/g, "");
+  const cents = Math.round(Number(raw) * 100);
+  if (!raw || !Number.isFinite(cents) || cents <= 0) { fieldError(form, "to", "Type the new limit, like 200"); return; }
+  const act = limit && limit.act;
+  const plan = await api("/api/settings/spend-limit/check", { method: "POST", body: { to_cents: cents, act } });
+  if (plan.problem) { fieldError(form, "to", plan.problem); return; }
+  const yes = await confirmDialog({ title: "Change the account spending limit?", body: limitBody(plan), confirm: `Change to ${limitMoney(plan.to)}` });
+  if (!yes) return;
+  if (plan.big && !(await confirmBig(plan))) return;
+  lock();
+  try {
+    limit = await api("/api/settings/spend-limit", { method: "POST", body: { from_cents: plan.from, to_cents: plan.to, act, accept_big: !!plan.big } });
+    $("sl-new").value = "";
+    toast(`Spending limit changed to ${limitMoney(plan.to)}`);
+  } finally { await loadLimit(); }
+}
+
+async function removeLimit(lock) {
+  const act = limit && limit.act;
+  const plan = await api("/api/settings/spend-limit/check", { method: "POST", body: { remove: true, act } });
+  if (plan.problem) { toast(plan.problem, "bad"); return; }
+  if (!(await confirmRemove())) return;
+  lock();
+  try {
+    limit = await api("/api/settings/spend-limit", { method: "POST", body: { from_cents: plan.from, remove: true, confirm_remove: true, act } });
+    toast("Spending limit removed");
+  } finally { await loadLimit(); }
+}
+
 // What every account shares: only the console's owner changes it, from Edge Bourne's own Settings.
 async function renderConsole() {
   const group = $("grp-console");
@@ -479,6 +560,9 @@ const ACTIONS = {
   "auth.password_changed": "Changed their password",
   "settings.meta": "Changed the Meta settings",
   "settings.targets": "Changed the targets",
+  "meta.spend_limit": "Changed the account spending limit", "meta.spend_limit_failed": "Tried to change the account spending limit",
+  "meta.spend_limit_restore": "Put the account spending limit back", "meta.spend_limit_restore_failed": "Couldn't put the account spending limit back",
+  "spend_limit.paused": "Paused spending-limit changes (Meta stored a different amount)", "spend_limit.unblocked": "Allowed spending-limit changes again",
   "settings.client_access": "Changed what clients may do",
   "account.created": "Added an account", "account.renamed": "Renamed an account", "account.archived": "Closed an account", "account.reopened": "Reopened an account",
   "report.links_revoked": "Stopped every shared report link",
@@ -537,6 +621,19 @@ if (me) {
     catch (err) { if (err.body?.field) { fieldError(e.target, err.body.field, err.message); return; } throw err; }
     saved(e.target); toast("Targets saved"); renderTargets(); renderAlerts();
   }); });
+  $("spend-limit").addEventListener("submit", (e) => { e.preventDefault(); limitAction(changeLimit); });
+  $("sl-remove").addEventListener("click", () => limitAction(removeLimit));
+  $("sl-paused").addEventListener("click", (e) => {
+    const b = e.target.closest("#sl-unblock");
+    if (!b) return;
+    run(b, async () => {
+      const yes = await confirmDialog({ title: "Allow limit changes again?", body: "<p>Ads Manager shows the limit you expect? Then changes from here and from Claude's suggestions can go through again.</p>", confirm: "Clear and allow changes" });
+      if (!yes) return;
+      await api("/api/settings/spend-limit/unblock", { method: "POST" });
+      toast("Limit changes allowed again");
+      await loadLimit();
+    });
+  });
   $("acp-open").addEventListener("click", async () => { const { openPicker } = await import("./acpicker.js"); openPicker(); });
   $("acct-list").addEventListener("click", async (e) => {
     const ren = e.target.closest("[data-acct-rename]");

@@ -181,3 +181,17 @@ class RemovalProblemTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpendLimitActionTests(unittest.TestCase):
+    """FU-B: accepting a spend_limit suggestion: words and cents must agree; per day reads as a budget."""
+
+    def act(self, words, payload):
+        return ads_api.proposal_action({"kind": "spend_limit", "entity_id": "act_1025", "proposed_value": words, "payload": payload}, None)
+
+    def test_agreeing_amount(self):
+        self.assertEqual(self.act("$200", {"proposed_cents": 20000}), ("spend_limit", 20000))
+
+    def test_daily_words_and_disagreement_are_unclear(self):
+        daily, wrong = self.act("$200/day", {"proposed_cents": 20000}), self.act("$200", {"proposed_cents": 25000})
+        self.assertEqual((daily[0], "daily budget" in daily[1], wrong[0], "isn't what its words say" in wrong[1]), ("unclear", True, "unclear", True))

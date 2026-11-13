@@ -2481,6 +2481,366 @@ print(db.query("SELECT COUNT(*) AS n FROM users WHERE email = 'acctadmin-qa@edge
     await switchTo(1);
     check('no class or id on All accounts or the picker an ad blocker would hide', risky.length === 0, risky.join());
   }
+  // FU-B: the account spending limit. Settings → Targets and Claude's suggestions change it only after a yes; the fake Meta
+  // holds it in cents and takes writes in dollars, so its stored cents prove the unit; every refusal and the read-back check.
+  {
+    const ACT = 'act_1025971549903293';
+    const fubSeen = errors.length;  // the refusals this block provokes in the page on purpose (409 / 400) are dropped at its end
+    const fakeCap = (q = '') => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/fake/_spend_cap?${q}').read().decode())"`));
+    const py = (code) => require('child_process').execSync('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', { input: code }).toString();
+    const call = (method, url, body, p = page) => p.evaluate(async ([m, u, b]) => {
+      const r = await fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b === undefined ? undefined : JSON.stringify(b) });
+      let j = null; try { j = await r.json(); } catch (e) { /* not JSON */ }
+      return { status: r.status, body: j };
+    }, [method, url, body]);
+    // Refusals go through a copy of the sign-in whose console isn't watched (each is a failed load on purpose).
+    const quietly = async (calls, state) => {
+      const qp = await (await browser.newContext({ storageState: state || await page.context().storageState() })).newPage();
+      await qp.goto(BASE + '/404.html');
+      const out = [];
+      for (const [m, u, b] of calls) out.push(await call(m, u, b, qp));
+      await qp.context().close();
+      return out;
+    };
+    const clearPause = () => py(`import settings_store, db
+settings_store.set('spend_limit_block', None)
+db.execute("UPDATE alerts SET resolved_at = now() WHERE rule = 'spend_limit_mismatch' AND resolved_at IS NULL")
+`);
+    const sql = (q) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "${q}"`).trim();
+    const openLimit = async (p = page) => {
+      await p.goto(`${BASE}/settings.html#spend-limit`);
+      await p.reload();
+      await p.waitForSelector('#targets[data-section]:not([hidden])');
+      await p.waitForSelector('#sl-state .sl-now');
+    };
+    const limitText = () => page.textContent('#sl-state');
+    const changeTo = async (dollars) => {
+      await page.fill('#sl-new', String(dollars));
+      await page.click('#sl-change');
+      await page.waitForSelector('dialog.confirm #cd-ok');
+    };
+    const toastText = async (re) => { await page.waitForFunction((src) => [...document.querySelectorAll('.toast')].some((t) => new RegExp(src).test(t.textContent)), re.source, { timeout: 15000 }); return page.evaluate(() => [...document.querySelectorAll('.toast')].map((t) => t.textContent).join(' | ')); };
+    fakeCap('mode=normal&limit=15000&amount_spent=4120&silent_readback=0');
+    clearPause();
+    sql("DELETE FROM meta_changes WHERE action LIKE 'spend_limit%'");
+
+    // 1-2. Read live; change $150 → $200 through the confirmation; Meta holds 20000 cents (we sent "200.00").
+    await openLimit();
+    const shown = await limitText();
+    check('Settings → Targets reads the spending limit live: $150.00 and $41.20 spent', /Spending limit: \$150\.00/.test(shown) && /spent \$41\.20/.test(shown), shown);
+    const [swCheck, swPost] = await quietly([['POST', '/api/settings/spend-limit/check', { to_cents: 20000, act: 'act_999' }],
+      ['POST', '/api/settings/spend-limit', { from_cents: 15000, to_cents: 20000, act: 'act_999' }]]);
+    check('a page that showed another ad account (accounts switched in another tab) is refused with "reload", nothing written',
+      swCheck.status === 409 && swPost.status === 409 && /switched accounts in another tab/.test(swPost.body.error) && fakeCap().spend_cap === 15000, `${swCheck.status} ${swPost.status}`);
+    await changeTo(200);
+    const ask = await page.textContent('dialog.confirm');
+    const askOk = await page.textContent('dialog.confirm #cd-ok');
+    await page.click('dialog.confirm #cd-ok');
+    const said = await toastText(/Spending limit changed to \$200\.00/);
+    await page.waitForFunction(() => /Spending limit: \$200\.00/.test(document.getElementById('sl-state').textContent));
+    check('changing it shows $150.00 → $200.00 with what is spent and how long it lasts, and asks "Change to $200.00"',
+      /\$150\.00\s*→\s*\$200\.00/.test(ask) && /Spent so far \$41\.20/.test(ask) && /Edge Bourne Consulting/.test(ask) && /more days?/.test(ask) && askOk === 'Change to $200.00', ask.slice(0, 200));
+    check('the console wrote dollars and Meta holds exactly 20000 cents (read back)', fakeCap().spend_cap === 20000 && metaObj(ACT).spend_cap === '20000' && /changed to \$200\.00/.test(said),
+      JSON.stringify(metaObj(ACT)));
+    const activity = (await call('GET', '/api/settings/activity')).body;
+    // Results' marks end yesterday (complete days): today's change is read through the same account-wide marks for today.
+    const perf = py(`import json, account_info, status_history
+today = account_info.today()
+print(json.dumps([i['title'] for i in status_history.changes_in({'account': True}, today, today, {'id': None, 'role': 'admin'}, account_info.tz())], ensure_ascii=False))`).trim().split('\n').pop();
+    check('the change is in meta_changes, the Activity list and the account History (Results marks)',
+      sql("SELECT count(*) FROM meta_changes WHERE action = 'spend_limit' AND ok AND old_value = '15000' AND new_value = '20000' AND level = 'account'") === '1'
+      && activity.some((r) => r.action === 'meta.spend_limit') && /Account spending limit \$150\.00 → \$200\.00/.test(perf), perf.slice(0, 200));
+
+    // 3-4. Refusals: at or below what's spent (field error and a direct POST), removing without its own yes.
+    fakeCap('amount_spent=20000');
+    await openLimit();
+    await page.fill('#sl-new', '200');
+    await page.click('#sl-change');
+    await page.waitForSelector('#spend-limit .field.error .err');
+    const fieldSaid = await page.textContent('#spend-limit .field.error .err');
+    const [atSpent, noConfirm, forged] = await quietly([['POST', '/api/settings/spend-limit', { from_cents: 20000, to_cents: 19000, act: ACT }],
+      ['POST', '/api/settings/spend-limit', { from_cents: 20000, remove: true, act: ACT }], ['POST', '/api/settings/spend-limit', { to_cents: 30000, act: ACT }]]);
+    check('a limit at or below what is already spent is refused on the field and by the server; nothing reaches Meta',
+      /at or below what's already spent \(\$200\.00\)/.test(fieldSaid) && atSpent.status === 409 && /Meta would stop every ad/.test(atSpent.body.error) && fakeCap().spend_cap === 20000, `${fieldSaid} ${atSpent.status}`);
+    check('removing the limit without its own confirmation is refused (400), and a change without the amount it was shown (409)',
+      noConfirm.status === 400 && /needs its own confirmation/.test(noConfirm.body.error) && forged.status === 409 && fakeCap().spend_cap === 20000, `${noConfirm.status} ${forged.status}`);
+    fakeCap('amount_spent=4120');
+
+    // 5. Remove through the UI (a second, danger dialog), then put $150 back.
+    await openLimit();
+    await page.click('#sl-remove');
+    await page.waitForSelector('dialog.confirm #cd-ok');
+    const rm = { title: await page.textContent('dialog.confirm h2'), ok: await page.textContent('dialog.confirm #cd-ok'), danger: await page.$eval('dialog.confirm #cd-ok', (b) => b.classList.contains('btn-danger')) };
+    await page.click('dialog.confirm #cd-ok');
+    await toastText(/Spending limit removed/);
+    await page.waitForFunction(() => /No spending limit/.test(document.getElementById('sl-state').textContent));
+    check('Remove the limit… asks "Remove the spending limit?" with a danger button; Meta then holds no limit ("0") and the block says so',
+      rm.title === 'Remove the spending limit?' && rm.ok === 'Remove the limit' && rm.danger && fakeCap().spend_cap === null && metaObj(ACT).spend_cap === '0' && await page.isHidden('#sl-remove'), JSON.stringify(rm));
+    await changeTo(150);
+    await page.click('dialog.confirm #cd-ok');
+    await toastText(/changed to \$150\.00/);
+    check('and a limit can be set again from none', fakeCap().spend_cap === 15000);
+
+    // 6. The limit moved on Meta between the dialog and the yes: refused, nothing written.
+    await openLimit();
+    await changeTo(200);
+    fakeCap('limit=17000');
+    await page.click('dialog.confirm #cd-ok');
+    const stale = await toastText(/The limit on Meta is \$170\.00 now/);
+    check('a limit that changed on Meta after the dialog opened is refused ("The limit on Meta is $170.00 now"), nothing written',
+      fakeCap().spend_cap === 17000 && sql("SELECT count(*) FROM meta_changes WHERE action = 'spend_limit' AND new_value = '20000' AND old_value = '17000'") === '0', stale);
+    fakeCap('limit=15000');
+
+    // 6b. More than doubling it is a second, separate yes, like a removal (a limit that high hardly stops anything).
+    const bigDialog = page.locator('dialog.confirm', { hasText: 'Raise the limit this much?' });
+    await openLimit();
+    await changeTo(1000);
+    await page.click('dialog.confirm #cd-ok');
+    await bigDialog.waitFor();
+    const big = { title: await bigDialog.locator('h2').textContent(), body: await bigDialog.textContent(), ok: await bigDialog.locator('#cd-ok').textContent(),
+      danger: await bigDialog.locator('#cd-ok').evaluate((b) => b.classList.contains('btn-danger')) };
+    await bigDialog.locator('#cd-cancel').click();
+    await bigDialog.waitFor({ state: 'detached' });
+    const [bigDirect] = await quietly([['POST', '/api/settings/spend-limit', { from_cents: 15000, to_cents: 100000, act: ACT }]]);
+    check('raising $150 → $1,000 asks a second time ("Raise the limit this much?", +$850.00, danger); cancelled, or sent without that yes, nothing changes',
+      big.title === 'Raise the limit this much?' && /\+\$850\.00/.test(big.body) && big.danger && big.ok === 'Raise it to $1,000.00'
+      && bigDirect.status === 400 && /more than double needs its own confirmation/.test(bigDirect.body.error) && fakeCap().spend_cap === 15000, `${JSON.stringify(big).slice(0, 300)} ${bigDirect.status}`);
+    await changeTo(1000);
+    await page.click('dialog.confirm #cd-ok');
+    await bigDialog.waitFor();
+    await bigDialog.locator('#cd-ok').click();
+    await toastText(/changed to \$1,000\.00/);
+    check('with both yeses $1,000 goes through and reads back', fakeCap().spend_cap === 100000);
+    fakeCap('limit=15000');
+
+    // 7. Meta stores a different amount (our dollars read as cents): put back, a bad alert, further changes paused.
+    fakeCap('mode=cents');
+    await openLimit();
+    await changeTo(200);
+    await page.click('dialog.confirm #cd-ok');
+    const mism = await toastText(/Meta stored/);
+    await page.waitForSelector('#sl-paused:not([hidden])');
+    const pausedNote = await page.textContent('#sl-paused');
+    const [again] = await quietly([['POST', '/api/settings/spend-limit', { from_cents: 15000, to_cents: 20000, act: ACT }]]);
+    const needs = (await call('GET', '/api/inbox?box=need')).body;
+    check('when Meta stores $2.00 for $200.00 the console puts $150.00 back, says so, and Meta ends at 15000',
+      /Meta stored \$2\.00 instead of \$200\.00, so the console put back \$150\.00/.test(mism) && fakeCap().spend_cap === 15000
+      && sql("SELECT count(*) FROM meta_changes WHERE action = 'spend_limit_restore' AND ok AND new_value = '15000'") === '1', mism);
+    check('a bad spending-limit alert is in Inbox → Needs action, and limit changes are paused (Settings note, field off, the server refuses)',
+      JSON.stringify(needs).includes('Meta stored a different spending limit') && /Limit changes are paused/.test(pausedNote) && /\$2\.00 when we sent \$200\.00/.test(pausedNote)
+      && await page.isDisabled('#sl-new') && again.status === 409 && /Spending-limit changes are paused/.test(again.body.error) && await page.isVisible('#sl-unblock'),
+      `${pausedNote} ${again.status}`);
+
+    // 8. An admin of this account sees the pause but can't clear it.
+    py(`from werkzeug.security import generate_password_hash
+import db
+pw = generate_password_hash('fub-pass-123')
+for email, role in (('acctadmin-fub@edgebourne.test', 'admin'), ('mate-fub@edgebourne.test', 'member'), ('client-fub@edgebourne.test', 'client')):
+    if db.query("SELECT 1 FROM users WHERE email = %s", (email,), one=True):
+        db.execute("UPDATE users SET role = %s, account_id = 1, password_hash = %s, must_change_password = FALSE, is_active = TRUE WHERE email = %s", (role, pw, email))
+    else:
+        db.execute("INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, %s, 1)", (email, email.split('@')[0], pw, role))
+`);
+    const signIn = async (email) => {
+      const p = await (await browser.newContext({ viewport: { width: 1360, height: 900 } })).newPage();
+      p.on('pageerror', (e) => errors.push(`${email}: ${e.message}`));
+      await p.goto(BASE + '/login.html');
+      await p.fill('#email', email);
+      await p.fill('#password', 'fub-pass-123');
+      await Promise.all([p.waitForURL('**/home.html**'), p.click('button[type=submit]')]);
+      return p;
+    };
+    const ap = await signIn('acctadmin-fub@edgebourne.test');
+    await openLimit(ap);
+    const apNote = { paused: await ap.isVisible('#sl-paused'), clear: await ap.locator('#sl-unblock').count(), text: await ap.textContent('#sl-paused') };
+    const [apUnblock] = await quietly([['POST', '/api/settings/spend-limit/unblock', {}]], await ap.context().storageState());
+    check("this account's admin sees the pause, reads that the owner clears it, and can't clear it (403)",
+      apNote.paused && apNote.clear === 0 && /owner clears it/.test(apNote.text) && apUnblock.status === 403, `${JSON.stringify(apNote)} ${apUnblock.status}`);
+    await ap.context().close();
+
+    // 9. The owner clears it: note gone, alert resolved, changes work again.
+    await page.click('#sl-unblock');
+    await page.waitForSelector('dialog.confirm #cd-ok');
+    await page.click('dialog.confirm #cd-ok');
+    await page.waitForSelector('#sl-paused', { state: 'hidden' });
+    check('the owner clears the pause: the note goes, the alert is resolved, and a change works again',
+      sql("SELECT count(*) FROM alerts WHERE rule = 'spend_limit_mismatch' AND resolved_at IS NULL") === '0' && !(await page.isDisabled('#sl-new')));
+    await changeTo(160);
+    await page.click('dialog.confirm #cd-ok');
+    await toastText(/changed to \$160\.00/);
+    check('after clearing, $150 → $160 goes through and reads back', fakeCap().spend_cap === 16000);
+
+    // 10. Meta doesn't answer the read-back: paused, no blind second write.
+    fakeCap('silent_readback=10');
+    await openLimit();
+    metaHits(true);
+    await changeTo(170);
+    await page.click('dialog.confirm #cd-ok');
+    const unread = await toastText(/Couldn't read the limit back from Meta/);
+    const writes = metaHits().filter((h) => h.includes(ACT) && h.includes('spend_cap='));
+    check("an unanswered read-back pauses limit changes and sends nothing else to Meta (one write)", writes.length === 1 && /check it in Ads Manager/.test(unread)
+      && sql("SELECT count(*) FROM alerts WHERE rule = 'spend_limit_mismatch' AND resolved_at IS NULL") === '1', `${writes.length} ${unread}`);
+    fakeCap('silent_readback=0&limit=15000');
+    await call('POST', '/api/settings/spend-limit/unblock', {});
+
+    // 10b-e. A write Meta doesn't answer is read back like any other: stored → done; still the old amount → "may still
+    // arrive", no pause; another amount → put back and paused. A read-back the console can't read is never "no limit".
+    const openMismatch = () => sql("SELECT count(*) FROM alerts WHERE rule = 'spend_limit_mismatch' AND resolved_at IS NULL");
+    const lastOk = (cents) => sql(`SELECT ok FROM meta_changes WHERE action = 'spend_limit' AND new_value = '${cents}' ORDER BY id DESC LIMIT 1`);
+    fakeCap('lose_next=1');
+    const lostKept = await call('POST', '/api/settings/spend-limit', { from_cents: 15000, to_cents: 18000, act: ACT });
+    check('a write whose answer is lost but that Meta stored is read back and counts as done (History ok, no pause)',
+      lostKept.status === 200 && fakeCap().spend_cap === 18000 && lastOk(18000) === 't' && openMismatch() === '0', JSON.stringify(lostKept).slice(0, 300));
+    fakeCap('mode=ignore&lose_next=1');
+    const [lostOld] = await quietly([['POST', '/api/settings/spend-limit', { from_cents: 18000, to_cents: 19000, act: ACT }]]);
+    const afterOld = (await call('GET', '/api/settings/spend-limit')).body;
+    check('a lost write Meta did not store says it may still arrive, adds no pause, and History records it as not done',
+      lostOld.status === 400 && /may still arrive/.test(lostOld.body.error) && fakeCap().spend_cap === 18000 && afterOld.blocked === null && lastOk(19000) === 'f',
+      JSON.stringify(lostOld).slice(0, 300));
+    fakeCap('mode=cents&lose_next=1');
+    const [lostWrong] = await quietly([['POST', '/api/settings/spend-limit', { from_cents: 18000, to_cents: 20000, act: ACT }]]);
+    check('a lost write Meta stored in the wrong unit is caught by the read-back: $180.00 put back, paused, a bad alert, History says not done',
+      lostWrong.status === 400 && /Meta stored \$2\.00 instead of \$200\.00/.test(lostWrong.body.error) && fakeCap().spend_cap === 18000 && openMismatch() === '1'
+      && lastOk(20000) === 'f', JSON.stringify(lostWrong).slice(0, 300));
+    clearPause();
+    fakeCap('mode=decimal');
+    const [unreadable] = await quietly([['POST', '/api/settings/spend-limit', { from_cents: 18000, to_cents: 20000, act: ACT }]]);
+    await openLimit();
+    await page.waitForSelector('#sl-paused:not([hidden])');
+    const unreadableNote = await page.textContent('#sl-paused');
+    check('a read-back the console can\'t read ("200.00") is named as such, never "no limit", in the reply and the paused note; $180.00 put back',
+      /an amount the console can't read \('200\.00'\)/.test(unreadable.body.error) && /an amount the console can't read \(200\.00\)/.test(unreadableNote)
+      && !/no limit/.test(unreadable.body.error + unreadableNote) && fakeCap().spend_cap === 18000, `${unreadable.body.error} | ${unreadableNote}`);
+    clearPause();
+    fakeCap('mode=normal&limit=15000');
+
+    // 11-14. Claude's suggestions: the card, the Accept sheet (never ticked), a removal on its own, daily words, another account's id.
+    const seeded = JSON.parse(py(`import db, json
+t = db.execute("INSERT INTO desk_tasks (kind, prompt, status, summary) VALUES ('question', 'QA FU-B: increase my total spending limit to $200', 'done', 'Limit') RETURNING id", returning=True)['id']
+def prop(title, words, payload, current='$150', entity='${ACT}'):
+    return db.execute("""INSERT INTO desk_proposals (task_id, kind, title, entity_type, entity_id, entity_name, field, current_value, proposed_value, payload, rationale)
+                         VALUES (%s, 'spend_limit', %s, 'account', %s, 'Edge Bourne Consulting', 'spending limit', %s, %s, %s, 'QA') RETURNING id""",
+                      (t, title, entity, current, words, json.dumps(payload)), returning=True)['id']
+raise_ = prop('Raise the account spending limit to $200', '$200', {'proposed_cents': 20000})
+daily = prop('QA daily words', '$200/day', {'proposed_cents': 20000})
+big = prop('QA raise to $5,000', '$5,000', {'proposed_cents': 500000})
+other = prop('QA another ad account', '$300', {'proposed_cents': 30000}, entity='act_999')
+print(json.dumps({'task': t, 'raise': raise_, 'daily': daily, 'big': big, 'other': other}))
+`).trim().split('\n').pop());
+    await page.goto(`${BASE}/desk.html#r/${seeded.task}`);
+    const card = page.locator(`#p-${seeded.raise}`);
+    await card.waitFor();
+    const cardText = { type: await card.locator('.sg-type').textContent(), body: (await card.textContent()).replace(/\s+/g, ' ') };
+    check('a spending-limit suggestion shows as "Spending limit" with $150 → $200', cardText.type === 'Spending limit' && /Account spending limit\s*\$150 → \$200/.test(cardText.body), JSON.stringify(cardText));
+    await card.locator(`[data-accept="${seeded.raise}"]`).click();
+    await page.waitForSelector('dialog.accept-sheet .sheet-item');
+    const sheet = await page.evaluate((id) => { const box = document.querySelector('dialog.accept-sheet [data-item]'); const li = box && box.closest('.sheet-item');
+      return { text: li ? li.textContent.replace(/\s+/g, ' ') : '', ticked: box ? box.checked : null, group: li ? li.closest('.sheet-group').querySelector('h3').textContent : '', ok: document.querySelector('dialog.accept-sheet #cd-ok').disabled }; }, seeded.raise);
+    check('the Accept sheet reads Meta again: "Account spending limit: $150.00 → $200.00" under Spending, not ticked for you',
+      /Account spending limit: \$150\.00 → \$200\.00/.test(sheet.text) && /Spent so far \$41\.20/.test(sheet.text) && sheet.ticked === false && sheet.group === 'Spending' && sheet.ok, JSON.stringify(sheet));
+    await page.check('dialog.accept-sheet [data-item]');
+    await page.click('dialog.accept-sheet #cd-ok');
+    await page.waitForSelector('dialog.accept-sheet .sheet-item[data-state="ok"], dialog.accept-sheet .sheet-item[data-state="bad"]');
+    const acceptedState = await page.$eval('dialog.accept-sheet .sheet-item', (li) => `${li.dataset.state} ${li.querySelector('.sheet-result').textContent}`);
+    await page.click('dialog.accept-sheet #cd-ok');
+    check('ticked and accepted: Meta holds 20000, the suggestion is applied and the change names it',
+      fakeCap().spend_cap === 20000 && sql(`SELECT status FROM desk_proposals WHERE id = ${seeded.raise}`) === 'applied'
+      && sql(`SELECT count(*) FROM meta_changes WHERE proposal_id = ${seeded.raise} AND action = 'spend_limit' AND ok`) === '1', acceptedState);
+    const removal = Number(py(`import db, json
+print(db.execute("""INSERT INTO desk_proposals (task_id, kind, title, entity_type, entity_id, proposed_value, payload, current_value)
+                    VALUES (${seeded.task}, 'spend_limit', 'QA remove the limit', 'account', '${ACT}', 'no limit', %s, '$200') RETURNING id""", (json.dumps({'remove': True}),), returning=True)['id'])`).trim());
+    await page.goto(`${BASE}/desk.html#r/${seeded.task}`);
+    await page.locator(`#p-${removal}`).waitFor();
+    await page.evaluate((ids) => import('/js/decide.js').then((m) => m.acceptSheet(ids, () => {})), [removal, seeded.daily, seeded.big]);
+    await page.waitForSelector('dialog.accept-sheet .sheet-item');
+    const many = await page.$$eval('dialog.accept-sheet .sheet-item', (lis) => lis.map((li) => ({ text: li.textContent.replace(/\s+/g, ' '), box: !!li.querySelector('[data-item]') })));
+    await page.click('dialog.accept-sheet #cd-cancel');
+    check('on a sheet of several, a removal and a raise past double can\'t be accepted ("accepted on its own") and daily words read as a budget; none has a box',
+      many.length === 3 && many.every((i) => !i.box) && many.filter((i) => /accepted on its own/.test(i.text)).length === 2 && many.some((i) => /reads as a daily budget/.test(i.text)), JSON.stringify(many));
+    await page.locator(`#p-${removal} [data-accept="${removal}"]`).click();
+    await page.waitForSelector('dialog.accept-sheet [data-item]');
+    const alone = await page.$eval('dialog.accept-sheet .sheet-item', (li) => li.textContent.replace(/\s+/g, ' '));
+    await page.check('dialog.accept-sheet [data-item]');
+    metaHits(true);
+    await page.click('dialog.accept-sheet #cd-ok');
+    await page.waitForSelector('dialog.confirm:not(.accept-sheet) #cd-ok');
+    const second = { title: await page.textContent('dialog.confirm:not(.accept-sheet) h2'), writes: metaHits().filter((h) => h.includes('spend_cap=')).length };
+    await page.click('dialog.confirm:not(.accept-sheet) #cd-cancel');
+    await page.waitForSelector('dialog.accept-sheet .sheet-item[data-state="bad"]');
+    await page.click('dialog.accept-sheet #cd-ok');
+    check('opened alone, a removal says what it does and asks "Remove the spending limit?" before anything is sent; cancelled, nothing changes',
+      /Removes the account spending limit/.test(alone) && second.title === 'Remove the spending limit?' && second.writes === 0 && fakeCap().spend_cap === 20000
+      && sql(`SELECT status FROM desk_proposals WHERE id = ${removal}`) === 'pending', JSON.stringify(second));
+    const otherAcct = py(`import desk_api, settings_store
+print(desk_api.clean_proposal({'kind': 'spend_limit', 'title': 'x', 'entity_id': 'act_2223334445556667', 'proposed_value': '$200', 'payload': {'proposed_cents': 20000}}, settings_store.get('meta_ad_account_id'))['kind'])`).trim();
+    const snap = JSON.parse(py(`import json, desk_api
+print(json.dumps(desk_api.limit_snapshot()))`).trim().split('\n').pop());
+    check("a suggestion naming another ad account's limit is stored as a note; Claude's snapshot carries this account's limit, spent and pace",
+      otherAcct === 'other' && snap.ad_account_id === ACT && snap.limit_cents === 20000 && snap.spent_cents === 4120 && snap.rate_cents > 0 && snap.paused === false, `${otherAcct} ${JSON.stringify(snap)}`);
+    const [otherPlan, otherApprove] = await quietly([['GET', `/api/proposals/${seeded.other}/check`], ['POST', `/api/proposals/${seeded.other}/approve`, { from_cents: 20000, to_cents: 30000 }]]);
+    check("a stored suggestion for another ad account (this account's was changed since) can't be accepted: the plan says so, the server refuses (409), nothing written",
+      otherPlan.status === 200 && otherPlan.body.kind === 'unclear' && /another ad account \(act_999\)/.test(otherPlan.body.problem) && otherApprove.status === 409
+      && fakeCap().spend_cap === 20000 && sql(`SELECT status FROM desk_proposals WHERE id = ${seeded.other}`) === 'pending', `${JSON.stringify(otherPlan.body).slice(0, 200)} ${otherApprove.status}`);
+
+    // 15-16. A teammate and a client: no reading, no changing, no accepting.
+    const mate = await signIn('mate-fub@edgebourne.test');
+    const [mGet, mPost, mAccept] = await quietly([['GET', '/api/settings/spend-limit'], ['POST', '/api/settings/spend-limit', { from_cents: 20000, to_cents: 30000 }],
+      ['POST', `/api/proposals/${removal}/approve`, { from_cents: 20000, remove: true, confirm_remove: true }]], await mate.context().storageState());
+    await mate.context().close();
+    const cl = await signIn('client-fub@edgebourne.test');
+    const [cPost, cGet] = await quietly([['POST', '/api/settings/spend-limit', { from_cents: 20000, to_cents: 30000 }], ['GET', '/api/settings/spend-limit']], await cl.context().storageState());
+    await cl.context().close();
+    check('a teammate can neither read nor change the limit, nor accept a spending-limit suggestion (403)',
+      mGet.status === 403 && mPost.status === 403 && mAccept.status === 403 && /Only an admin of this account/.test(mAccept.body.error) && fakeCap().spend_cap === 20000, `${mGet.status} ${mPost.status} ${mAccept.status}`);
+    check('a client is refused as read-only', cPost.status === 403 && /read-only/.test(cPost.body.error) && cGet.status === 403, `${cPost.status} ${cGet.status}`);
+    check('the leak test: a spending-limit suggestion of account 1 is unseen and unacceptable from account 2; teammates and clients get 403; only the owner clears a pause',
+      JSON.stringify(leak.spend_limit) === JSON.stringify({ approve_from_2: 404, read_from_2: 404, check_from_2: 404, member_get: 403, member_post: 403, client_get: 403, client_post: 403, account_admin_unblock: 403, status_in_1: 'pending' }),
+      JSON.stringify(leak.spend_limit));
+
+    // 17. Results' limit warning points to Settings → Targets, not Meta's billing settings.
+    fakeCap('amount_spent=17000');
+    py('import insights\ninsights.sync_account()\n');
+    const warn = (await call('GET', '/api/performance?range=7')).body.alerts.find((a) => /spending limit/.test(a.text)) || {};
+    await page.goto(BASE + '/performance.html?range=7');
+    await page.waitForSelector('#perf .note');
+    const link = await page.evaluate(() => [...document.querySelectorAll('#perf a[href="/settings.html#spend-limit"]')].map((a) => a.textContent));
+    check('the Results limit warning says "Change the limit in Settings → Targets, or ask Claude" and links there; no "billing settings"',
+      warn.href === '/settings.html#spend-limit' && /Settings → Targets, or ask Claude/.test(warn.text) && !/billing/.test(JSON.stringify(warn)) && link.length >= 1, `${JSON.stringify(warn)} ${link.join()}`);
+    fakeCap('amount_spent=4120');
+    py('import insights\ninsights.sync_account()\n');
+
+    // 18. Phones: 16px field, 44px buttons, nothing past the edge; no ad-blocker names.
+    const phoneLimit = [];
+    for (const width of [390, 320]) {
+      const pp = await (await browser.newContext({ viewport: { width, height: 760 }, isMobile: true, hasTouch: true, storageState: await page.context().storageState() })).newPage();
+      await openLimit(pp);
+      const r = await pp.evaluate(() => ({ font: getComputedStyle(document.getElementById('sl-new')).fontSize,
+        small: [...document.querySelectorAll('#spend-limit button:not([hidden])')].filter((b) => b.getBoundingClientRect().height < 44).map((b) => b.id),
+        right: Math.max(...[...document.querySelectorAll('#spend-limit *')].map((e) => e.getBoundingClientRect().right)), vw: innerWidth, wide: document.documentElement.scrollWidth }));
+      if (r.font !== '16px' || r.small.length || r.right > r.vw + 1 || r.wide > width) phoneLimit.push(`${width}: ${JSON.stringify(r)}`);
+      await pp.context().close();
+    }
+    check('on 390 and 320px phones the limit field is 16px, its buttons 44px, nothing past the edge', phoneLimit.length === 0, phoneLimit.join(' | '));
+    await openLimit();
+    const blockers = await page.evaluate(() => [...document.querySelectorAll('#spend-limit [class], #spend-limit [id]')].flatMap((e) => [...(typeof e.className === 'string' ? e.className.split(/\s+/) : []), e.id])
+      .filter((n) => /^(ad|ads|adset|adsets|advert|advertisement|sponsor|sponsored|banner|promo|promoted)([-_]|$)/i.test(n)));
+    check('no class or id in the spending-limit block an ad blocker would hide', blockers.length === 0, blockers.join());
+
+    errors.splice(fubSeen, errors.length - fubSeen, ...errors.slice(fubSeen).filter((e) => !/Failed to load resource: the server responded with a status of 4\d\d/.test(e)));
+    // Reset for the next run: $150 limit, $41.20 spent, no pause, the people and suggestions made here gone.
+    fakeCap('mode=normal&limit=15000&amount_spent=4120&silent_readback=0');
+    clearPause();
+    py(`import db, insights
+insights.sync_account()
+db.execute("DELETE FROM desk_proposals WHERE task_id = ${seeded.task}")
+db.execute("DELETE FROM desk_tasks WHERE id = ${seeded.task}")
+for email in ('acctadmin-fub@edgebourne.test', 'mate-fub@edgebourne.test', 'client-fub@edgebourne.test'):
+    try:
+        db.execute("DELETE FROM users WHERE email = %s", (email,))
+    except Exception:
+        db.execute("UPDATE users SET is_active = FALSE, password_hash = 'x' WHERE email = %s", (email,))
+`);
+  }
   sh(`docker exec -w /app edgebourne-ads-backend python -c "
 from werkzeug.security import generate_password_hash
 import db
@@ -4696,7 +5056,7 @@ print(r[0][0] if r else 0)`));
     // The Mac's side: read-only tools only, then one suggestion; the chip and the Inbox follow, and accepting still asks first.
     sh(`docker exec edgebourne-ads-backend mkdir -p /tmp/qa_bridge && docker cp bridge/bridge.py edgebourne-ads-backend:/tmp/qa_bridge/bridge.py && docker cp bridge/desk edgebourne-ads-backend:/tmp/qa_bridge/desk && docker cp dev/qa_agent_diagnose.py edgebourne-ads-backend:/app/qa_agent_diagnose.py`);
     const macD = JSON.parse(sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_agent_diagnose.py ${dTask.id} /tmp/qa_bridge; docker exec edgebourne-ads-backend rm -rf /app/qa_agent_diagnose.py /tmp/qa_bridge`).trim().split('\n').pop());
-    check('the Mac runs a diagnosis as a read-only kind: no web, no shell but desk, no write tools', macD.read_only_kind === true && macD.writes.length === 0
+    check('the Mac runs a diagnosis as a read-only kind: no web, no shell but desk, no write tools (edits only its JSON files and the change log)', macD.read_only_kind === true && macD.writes.length === 0
       && macD.rule === 'no_leads' && macD.playbook === 'meta-ads-doctor' && macD.alert_key === `no_leads:${C}` && macD.added.added === 1 && macD.done === 200, JSON.stringify(macD).slice(0, 240));
     await openItem(dry);
     await page.waitForSelector('#ib-detail .al-chip.btn-claude');

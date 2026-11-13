@@ -34,6 +34,8 @@ ACCOUNT_KEYS = {
     "numbers_last_check_at", "numbers_night_try", "numbers_window",
     # FU-A: "picker" when the ad account was picked from Meta's list (Settings → Accounts → Add ad account).
     "meta_ad_account_via",
+    # FU-B: the pause after a spending-limit read-back that didn't match, and when the limit was last read back.
+    "spend_limit_block", "spend_limit_last_check",
 }
 INHERITED = {"meta_system_token"}
 

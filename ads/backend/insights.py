@@ -210,12 +210,13 @@ def sync_account():
     account = settings_store.get("meta_ad_account_id")
     a = meta_client.get(f"act_{account}",
                         fields="name,currency,timezone_name,spend_cap,amount_spent,account_status")
+    import money_rules
     settings_store.set("account_snapshot", json.dumps({
         "name": a.get("name"),
         "currency": a.get("currency"),
         "timezone": a.get("timezone_name"),
-        # Meta reports both in the account currency's minor units, as strings.
-        "spend_cap_cents": int(a["spend_cap"]) if a.get("spend_cap") not in (None, "", "0") else None,
+        # Meta reports both in the account currency's minor units, as strings (FU-B: one read conversion).
+        "spend_cap_cents": money_rules.spend_cap_cents(a.get("spend_cap")),
         "amount_spent_cents": int(a.get("amount_spent") or 0),
         "account_status": a.get("account_status"),
     }))

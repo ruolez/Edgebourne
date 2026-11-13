@@ -151,8 +151,10 @@ def overview_data(user, days, campaign_id=None, span=None):
         used = cap["spent_cents"] / cap["limit_cents"]
         if used >= 0.8:
             alerts.append({"level": "warn" if used < 1 else "bad",
-                           "text": "The account spending limit is almost used up. Ads pause when it's reached."
-                           if used < 1 else "The account spending limit is reached, so every ad is paused."})
+                           "text": ("The account spending limit is almost used up. Ads pause when it's reached."
+                                    if used < 1 else "The account spending limit is reached, so every ad is paused.")
+                           + " Change the limit in Settings → Targets, or ask Claude.",
+                           "href": "/settings.html#spend-limit", "link": "Change the limit"})
 
     # The real yesterday (account clock), whatever the window: "Last month" ends weeks ago (audit A3-61).
     y = account_info.yesterday()

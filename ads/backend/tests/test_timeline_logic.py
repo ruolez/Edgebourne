@@ -247,3 +247,20 @@ class OutsideEditTests(unittest.TestCase):
     def test_switches_and_new_things_have_their_category(self):
         rows = [change("status", "PAUSED", old="ACTIVE", id=1), change("create", "N6", id=2), change("archive", "ARCHIVED", id=3)]
         self.assertEqual(sorted(i["cat"] for i in timeline.merge([], rows, [], money=self.money)), ["edit", "switch", "switch"])
+
+
+class SpendLimitLineTests(unittest.TestCase):
+    """FU-B: the account spending limit in History and on the charts, in dollars, as money."""
+
+    def item(self, **kw):
+        c = {"id": 1, "created_at": T, "action": "spend_limit", "old_value": "15000", "new_value": "20000", "ok": True,
+             "level": "account", "entity_id": "act_1025", "entity_name": "Edge Bourne Consulting", "user_name": "Eugene", **kw}
+        return timeline.merge([], [c], [], money=lambda x: f"${x / 100:,.2f}")[0]
+
+    def test_words_and_money_category(self):
+        cases = [self.item(), self.item(new_value=None), self.item(old_value=None), self.item(ok=False, error="x"),
+                 self.item(action="spend_limit_restore", old_value="20000", new_value="15000")]
+        self.assertEqual([(i["title"], i["cat"]) for i in cases],
+                         [("Account spending limit $150.00 → $200.00", "money"), ("Removed the account spending limit", "money"),
+                          ("Account spending limit: none → $200.00", "money"), ("Tried to change the account spending limit", "money"),
+                          ("Put the account spending limit back to $150.00", "money")])
