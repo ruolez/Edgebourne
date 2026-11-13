@@ -93,6 +93,11 @@ A failed suggestion carries `failure`, the exact error: read it before explainin
      tests on the Tests page (running, or closed in the last 30 days) with each arm's numbers
      and the dashboard's verdict. Don't call a running test differently from its verdict;
      a closed one's `verdict` is what Eugene concluded, so build on it.
+     `source` says where those numbers come from: `source.meta.synced_at` (when the days were read from Meta),
+     `complete_to`, `behind` (the data is older than it should be) and `check.state` (`match`, `off`,
+     `unchecked`: the stored days against Ads Manager's own account totals, read again every night).
+     If `source.meta.check.state` is `off` for the window you judge, say so and don't recommend budget
+     moves on those days. `source.leads` is Meta's lead count next to the leads received (`received`).
    - `desk history`: what earlier Desk runs concluded and proposed; build on it, don't repeat it.
    - `desk outcomes` (60 days): "Did it work?" for every change made from the console and every
      applied suggestion (before/after cost per lead over 3, 7 and 14 complete days, the state, whether

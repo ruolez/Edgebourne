@@ -13,6 +13,7 @@ import account_info
 import config
 import db
 import lead_quality as lq
+import numbers_check
 import report_logic as rl
 import settings_store
 import words
@@ -161,6 +162,12 @@ def build(kind, start=None, for_admin=False, links=False):
         # Claude's pending ideas are internal: clients and share links don't see their titles.
         "needs": [p["title"] for p in pending] if for_admin else [],
         "footnotes": rl.footnotes(s, e, booked=booked),
+        # D1: when these days were last checked against Meta's own totals (frozen with the copy that goes out); the
+        # warning and the days that differ are for admins only (W2's review bar), never clients or share links.
+        "stamp": numbers_check.stamp_for(s, e, admin=for_admin),
+        # Where the figures come from, like every figure page; clients get the check's state, never the amounts.
+        "source": numbers_check.source({"role": "admin" if for_admin else "client"}, s, e, meta_leads=now.get("meta_leads"),
+                                       received=now.get("received")),
     }
 
 
@@ -686,10 +693,7 @@ def send_row(row_id, now):
     fresh = not snap or snap.get("round") != row["round"]
     if fresh:
         try:
-            import numbers_check  # D1, once built: re-read Meta's days of this period first
-            numbers_check.ensure_period(s, row["end_day"])
-        except ImportError:
-            pass
+            numbers_check.ensure_period(s, row["end_day"])  # D1: re-read Meta's days of this period first
         except Exception:  # noqa: BLE001 - a failed check never blocks the email
             log.exception("numbers check before the report failed")
         snap = {**build(kind, s), "round": row["round"], "as_sent": local_now().date().isoformat()}

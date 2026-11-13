@@ -82,3 +82,30 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual([insights_api.activity_object(r) for r in rows],
                          [{"level": "campaign", "id": "c1"}, {"level": "adset", "id": "s1"}, {"level": "ad", "id": "a1"},
                           None, None, None])
+
+
+class DailyValuesTests(unittest.TestCase):
+    """D1 refactor: one row of Meta's daily ad insights becomes the stored columns, the same way for the hourly
+    sync and the nightly restate."""
+    ROW = {"date_start": "2026-10-14", "ad_id": "a1", "campaign_id": "c1", "adset_id": "s1", "ad_name": "N1", "spend": "12.34",
+           "impressions": "900", "reach": "700", "inline_link_clicks": "11", "clicks": "27",
+           "actions": [{"action_type": "video_view", "value": "300"}, {"action_type": "onsite_conversion.lead_grouped", "value": "3"}],
+           "video_thruplay_watched_actions": [{"action_type": "video_view", "value": "90"}],
+           "video_p25_watched_actions": [{"action_type": "video_view", "value": "200"}],
+           "video_p50_watched_actions": [{"action_type": "video_view", "value": "120"}],
+           "video_p75_watched_actions": [{"action_type": "video_view", "value": "80"}],
+           "video_p100_watched_actions": [{"action_type": "video_view", "value": "60"}]}
+
+    def test_every_column(self):
+        self.assertEqual(insights.daily_values(self.ROW), {
+            "day": "2026-10-14", "ad_id": "a1", "campaign_id": "c1", "adset_id": "s1", "ad_name": "N1", "spend_cents": 1234,
+            "impressions": 900, "reach": 700, "link_clicks": 11, "leads": 3, "clicks_all": 27, "video_3s": 300, "thruplays": 90,
+            "video_p25": 200, "video_p50": 120, "video_p75": 80, "video_p100": 60})
+
+    def test_the_insert_takes_them_in_its_column_order(self):
+        self.assertEqual(insights.daily_params(insights.daily_values(self.ROW)),
+                         ("2026-10-14", "a1", "c1", "s1", "N1", 1234, 900, 700, 11, 3, 27, 300, 90, 200, 120, 80, 60))
+
+    def test_attribution_setting_on_by_default_and_off_when_turned_off(self):
+        self.assertEqual([insights.insight_extra(v) for v in (None, "1", "0")],
+                         [{"use_unified_attribution_setting": "true"}, {"use_unified_attribution_setting": "true"}, {}])

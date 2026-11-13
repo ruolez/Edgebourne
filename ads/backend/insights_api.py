@@ -125,10 +125,11 @@ def shape_breakdown(by, rows):
     return items
 
 
-def time_params(range_key):
+def time_params(range_key, start=None, end=None):
+    """Meta's window for ?range= (custom with start and end: a day linked from the numbers check, D1)."""
     if range_key == "lifetime":
         return {"date_preset": "maximum"}, "lifetime"
-    start, end = ranges.window(range_key, account_info.today())
+    start, end = ranges.window(range_key, account_info.today(), start, end)
     return {"time_range": json.dumps({"since": start.isoformat(), "until": end.isoformat()})}, f"{start}..{end}"
 
 
@@ -153,7 +154,7 @@ def breakdown():
     err = _scoped(level, entity_id)
     if err:
         return err
-    params, period = time_params(request.args.get("range", "7"))
+    params, period = time_params(request.args.get("range", "7"), request.args.get("start"), request.args.get("end"))
     node = f"act_{settings_store.get('meta_ad_account_id')}" if level == "account" else entity_id
     key = f"bd:{node}:{by}:{period}"
 

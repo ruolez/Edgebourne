@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { acceptSheet } from "./decide.js";
-import { boot, confirmDialog, entityLink, esc, icon, leadClock, onRefresh, toast, when, editing, showLoadError, withFrom } from "./ui.js";
+import { boot, confirmDialog, entityLink, esc, icon, leadClock, onRefresh, pairNote, sourceNote, toast, when, editing, showLoadError, withFrom } from "./ui.js";
 import { money, per, plural } from "./format.js";
 import { alertButtons, moreButton, runChip, wireAlerts } from "./alertmenu.js";
 import { armDial, askMeeting, askNext } from "./followup.js";
@@ -152,9 +152,10 @@ function render(d) {
     <p class="td-note">${plural(d.today.leads, "lead")} so far. Today keeps filling in; Meta reports late.</p>
     <dl class="td-stats">
       <div><dt>Yesterday</dt><dd>${y ? `${money(y.spend_cents, { exact: true })} · ${plural(y.leads, "lead")}` : "no data yet"}</dd></div>
-      <div><dt>Leads, last 7 days</dt><dd>${d.week.leads ?? 0}</dd></div>
+      <div><dt>Leads, last 7 days</dt><dd>${d.week.leads ?? 0}${pairNote(d.source && d.source.leads)}</dd></div>
       <div><dt>Cost per lead</dt><dd>${per(d.week.spend_cents, d.week.leads)}</dd></div>
     </dl>
+    <div class="td-src" id="fig-src">${sourceNote(d.source, { today: true })}</div>
     <a class="btn" href="/performance.html">See all results</a>
   </section>`;
 

@@ -132,41 +132,64 @@ def sync_structure():
     return {"campaigns": sync.sync_campaigns(), "adsets": sync.sync_adsets(), "ads": sync_ads()}
 
 
-def sync_daily(days=30):
-    until = account_info.today()
-    return sync_days(until - timedelta(days=days - 1), until)
+def insight_extra(setting=None):
+    """Read daily results by each ad set's own attribution setting, as Ads Manager shows them (D1). Settings key
+    `insights_unified_attribution`: on unless "0". The hourly sync, the restate and the account totals all use it."""
+    return {} if setting == "0" else {"use_unified_attribution_setting": "true"}
 
 
-def sync_days(since, until):
-    """Per-ad results for each day from `since` to `until` (account days), stored in ad_daily."""
-    account = settings_store.get("meta_ad_account_id")
-    rows = 0
-    for r in meta_client.paged(
-        f"act_{account}/insights",
-        level="ad", time_increment=1, fields=INSIGHT_FIELDS, limit=500,
-        time_range=json.dumps({"since": since.isoformat(), "until": until.isoformat()}),
-    ):
-        db.execute(
-            """INSERT INTO ad_daily (day, ad_id, campaign_id, adset_id, ad_name, spend_cents, impressions,
-                                     reach, link_clicks, leads, clicks_all, video_3s, thruplays,
-                                     video_p25, video_p50, video_p75, video_p100, synced_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+def insight_params():
+    return insight_extra(settings_store.get("insights_unified_attribution"))
+
+
+DAILY_COLUMNS = ("day", "ad_id", "campaign_id", "adset_id", "ad_name", "spend_cents", "impressions", "reach", "link_clicks",
+                 "leads", "clicks_all", "video_3s", "thruplays", "video_p25", "video_p50", "video_p75", "video_p100")
+UPSERT_DAILY = f"""INSERT INTO ad_daily ({", ".join(DAILY_COLUMNS)}, synced_at)
+               VALUES ({", ".join(["%s"] * len(DAILY_COLUMNS))}, now())
                ON CONFLICT (day, ad_id) DO UPDATE SET spend_cents = EXCLUDED.spend_cents,
                    impressions = EXCLUDED.impressions, reach = EXCLUDED.reach,
                    link_clicks = EXCLUDED.link_clicks, leads = EXCLUDED.leads,
                    clicks_all = EXCLUDED.clicks_all, video_3s = EXCLUDED.video_3s, thruplays = EXCLUDED.thruplays,
                    video_p25 = EXCLUDED.video_p25, video_p50 = EXCLUDED.video_p50,
                    video_p75 = EXCLUDED.video_p75, video_p100 = EXCLUDED.video_p100,
-                   ad_name = EXCLUDED.ad_name, synced_at = now()""",
-            (r["date_start"], r["ad_id"], r.get("campaign_id"), r.get("adset_id"), r.get("ad_name"),
-             to_cents(r.get("spend")), int(r.get("impressions") or 0), int(r.get("reach") or 0),
-             int(r.get("inline_link_clicks") or 0), lead_count(r.get("actions")), int(r.get("clicks") or 0),
-             action_value(r.get("actions"), "video_view"), action_value(r.get("video_thruplay_watched_actions")),
-             action_value(r.get("video_p25_watched_actions")), action_value(r.get("video_p50_watched_actions")),
-             action_value(r.get("video_p75_watched_actions")), action_value(r.get("video_p100_watched_actions"))),
-        )
-        rows += 1
-    return rows
+                   ad_name = EXCLUDED.ad_name, synced_at = now()"""
+
+
+def daily_values(r):
+    """One row of Meta's per-ad, per-day insights as the stored columns."""
+    return {"day": r["date_start"], "ad_id": r["ad_id"], "campaign_id": r.get("campaign_id"), "adset_id": r.get("adset_id"),
+            "ad_name": r.get("ad_name"), "spend_cents": to_cents(r.get("spend")), "impressions": int(r.get("impressions") or 0),
+            "reach": int(r.get("reach") or 0), "link_clicks": int(r.get("inline_link_clicks") or 0), "leads": lead_count(r.get("actions")),
+            "clicks_all": int(r.get("clicks") or 0), "video_3s": action_value(r.get("actions"), "video_view"),
+            "thruplays": action_value(r.get("video_thruplay_watched_actions")),
+            "video_p25": action_value(r.get("video_p25_watched_actions")), "video_p50": action_value(r.get("video_p50_watched_actions")),
+            "video_p75": action_value(r.get("video_p75_watched_actions")), "video_p100": action_value(r.get("video_p100_watched_actions"))}
+
+
+def daily_params(v):
+    return tuple(v[c] for c in DAILY_COLUMNS)
+
+
+def read_days(since, until):
+    """Meta's per-ad results for each day from `since` to `until` (account days), as stored columns."""
+    account = settings_store.get("meta_ad_account_id")
+    return [daily_values(r) for r in meta_client.paged(
+        f"act_{account}/insights",
+        level="ad", time_increment=1, fields=INSIGHT_FIELDS, limit=500,
+        time_range=json.dumps({"since": since.isoformat(), "until": until.isoformat()}), **insight_params())]
+
+
+def sync_daily(days=30, since=None, until=None):
+    until = until or account_info.today()
+    return sync_days(since or until - timedelta(days=days - 1), until)
+
+
+def sync_days(since, until):
+    """Per-ad results for each day from `since` to `until` (account days), stored in ad_daily."""
+    rows = read_days(since, until)
+    for v in rows:
+        db.execute(UPSERT_DAILY, daily_params(v))
+    return len(rows)
 
 
 def sync_account():
@@ -192,7 +215,10 @@ def sync_all(days=30, structure=True):
     """structure=False: only the results (the worker's hourly week when a pull has just read the rest)."""
     sync_account()  # first: the account's time zone and currency decide how the rest is read
     out = {**(sync_structure() if structure else {}), "daily_rows": sync_daily(days)}
-    settings_store.set("last_performance_sync", __import__("datetime").datetime.utcnow().isoformat() + "Z")
+    stamp = __import__("datetime").datetime.utcnow().isoformat() + "Z"
+    settings_store.set("last_performance_sync", stamp)
+    if days >= 7:  # the hourly week and /performance/sync; the 3-day quick pull isn't a full sync (D1)
+        settings_store.set("last_full_sync", stamp)
     return out
 
 

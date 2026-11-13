@@ -713,9 +713,9 @@ dialog { max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   details > summary { min-height: var(--target); display: flex; align-items: center; gap: 6px; }
   details > summary.panel-body { display: flex; }
   /* A flex summary loses the browser's ▸, so plain ones draw their own (menus and those with a marker of their own keep theirs). */
-  details:not(.menu, .fulltext, .cv-sec, .score-row, .fold, .tech) > summary:not(.btn) { list-style: none; }
-  details:not(.menu, .fulltext, .cv-sec, .score-row, .fold, .tech) > summary:not(.btn)::-webkit-details-marker { display: none; }
-  details:not(.menu, .fulltext, .cv-sec, .score-row, .fold, .tech) > summary:not(.btn)::before {
+  details:not(.menu, .fulltext, .cv-sec, .score-row, .fold, .tech, .src-note) > summary:not(.btn) { list-style: none; }
+  details:not(.menu, .fulltext, .cv-sec, .score-row, .fold, .tech, .src-note) > summary:not(.btn)::-webkit-details-marker { display: none; }
+  details:not(.menu, .fulltext, .cv-sec, .score-row, .fold, .tech, .src-note) > summary:not(.btn)::before {
     content: "›"; flex: none; display: inline-block; width: 1em; text-align: center; font-size: var(--t-l); line-height: 1; color: var(--ink-2); transition: transform .15s ease;
   }
   details[open]:not(.menu, .fulltext, .cv-sec, .score-row, .tech) > summary:not(.btn)::before { transform: rotate(90deg); }

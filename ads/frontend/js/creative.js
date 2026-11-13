@@ -1,5 +1,5 @@
 import { api, startLoad } from "./api.js";
-import { boot, confirmDialog, emptyState, entityLink, esc, icon, onRefresh, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
+import { boot, confirmDialog, emptyState, entityLink, esc, icon, onRefresh, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, sourceNote, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
 import { CTA_LABELS, EXPLAIN, RANGES, WORDS, count, money, pct, per, plural, rangeSelect, rememberRange, sharedRange, statusOf, statusPill, moneyWhole } from "./format.js";
 import { barList, columnChart, marksPanel } from "./charts.js";
 import { editBudget, restoreVersion, toggleEntity } from "./controls.js";
@@ -232,7 +232,7 @@ function renderOverview() {
           <div class="panel-body">
             <div class="charts single"><div><h3 class="chart-title">Spend per day</h3><div class="chart" id="c-spend"></div></div>
             <div><h3 class="chart-title">Leads per day</h3><div class="chart" id="c-leads"></div></div></div>
-            <div class="fig-foot"><span class="fig-src"></span><div class="fig-marks" id="chg-panel"></div></div>
+            <div class="fig-foot"><div class="fig-src" id="fig-src"></div><div class="fig-marks" id="chg-panel"></div></div>
           </div>
         </section>
         <section class="panel">
@@ -276,7 +276,7 @@ function renderOverview() {
     <div class="cr-layout">${preview}${side}</div>`;
     loadPreview();
   }
-  if (data.series) drawDaily(data.series, data.marks, data.marks_summary, data.marks_list); else pickRange(chartRange);
+  if (data.series) drawDaily(data.series, data.marks, data.marks_summary, data.marks_list, data.source); else pickRange(chartRange);
   $("chart-range").addEventListener("change", (e) => pickRange(e.target.value));
   const asked = foldAsked && $(`fold-${foldAsked}`);
   if (asked) { asked.open = true; asked.scrollIntoView({ block: "start" }); foldAsked = null; }
@@ -302,12 +302,13 @@ function loadDiagnose() {
     .catch(() => { if ($("cs-diag") === box) box.innerHTML = diagnoseHtml({ adId: id }, null); });
 }
 
-function drawDaily(series, marks = [], marksSummary = "", marksList = null) {
+function drawDaily(series, marks = [], marksSummary = "", marksList = null, source = null) {
   columnChart({ el: $("c-spend"), series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 160,
     format: (v) => money(v, { exact: true }), axisFormat: (v) => moneyWhole(v), marks, marksSummary });
   columnChart({ el: $("c-leads"), series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true, height: 160,
     format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)), marks, marksSummary });
   marksPanel($("chg-panel"), marks, marksSummary, marksList);
+  if ($("fig-src")) $("fig-src").innerHTML = sourceNote(source);
 }
 
 // Dates picked here are the shared range: the address keeps them and the other pages open on them.
@@ -330,7 +331,7 @@ async function pickRange(r) {
     data.marks = d.marks;
     data.marks_summary = d.marks_summary;
     data.marks_list = d.marks_list;
-    drawDaily(d.series, d.marks, d.marks_summary, d.marks_list);
+    drawDaily(d.series, d.marks, d.marks_summary, d.marks_list, d.source);
   } catch (err) { if (!superseded()) toast(err.message, "bad"); }
 }
 

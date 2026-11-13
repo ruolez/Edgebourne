@@ -1,6 +1,6 @@
 // Shared UI: app frame, icons, toasts, formatting.
 import { api } from "./api.js";
-import { setCurrency, currencySymbol, money, moneyWhole, explain } from "./format.js";
+import { setCurrency, currencySymbol, money, moneyWhole, explain, sourceLine, sourceHelp, leadsPair, LEADS_PAIR_HELP, SCOPE_NOTE } from "./format.js";
 import { outcomeLine } from "./outcome.js";
 
 const ICONS = {
@@ -981,6 +981,24 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
     if (pick) return;
     if (input && lines) { input.setSelectionRange(0, 0); input.scrollTop = 0; } else if (input) input.select();
   });
+}
+
+// Where a page's numbers come from (D1): one muted line under its figures that opens to say what it means. Amber when
+// the data is older than it should be or the days differ from Ads Manager. Admins also get the way to the check.
+export function sourceNote(src, { today = false } = {}) {
+  const line = sourceLine(src, { today });
+  if (!line) return "";
+  const m = src.meta, c = m.check;
+  const tone = c && c.state === "off" ? " is-off" : m.behind || (c && c.old && c.checked_at) ? " is-behind" : "";
+  const admin = window.ebadsMe && window.ebadsMe.role === "admin";
+  const help = [...sourceHelp(src), ...(src.leads ? [LEADS_PAIR_HELP] : []), ...(src.scope_note ? [SCOPE_NOTE] : [])];
+  return `<details class="src-note${tone}"><summary><span class="src-line">${esc(line)}</span></summary>
+    <div class="src-help">${help.map((t) => `<p>${esc(t)}</p>`).join("")}${admin ? '<p><a href="/settings.html#numbers">Numbers check in Settings</a></p>' : ""}</div></details>`;
+}
+// "Meta 12 · Received 11" under a leads figure; the source note above explains why they can differ.
+export function pairNote(p) {
+  const text = leadsPair(p);
+  return text ? `<span class="src-pair" title="${esc(LEADS_PAIR_HELP)}">${esc(text)}</span>` : "";
 }
 
 // An on/off switch. data-* attributes say what it controls.

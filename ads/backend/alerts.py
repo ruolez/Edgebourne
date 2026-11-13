@@ -44,6 +44,8 @@ DEFAULTS = {
     # W1b: how the leads the team worked turned out, over the 14 days that end 2 days ago (newer leads had no fair chance).
     "qualified_low": {"on": True, "percent": 20, "min_leads": 10},
     "junk_high": {"on": True, "percent": 30, "min_leads": 10},
+    # D1: our stored days differ from Ads Manager's own totals after a night's (or a hand) pull; FYI once, warn when it stays.
+    "numbers_off": {"on": True},
 }
 # Events that stay open until someone deals with them get a Done (00-PLAN C16).
 DONE_OK = {"outside_edit", "change_result"}
@@ -185,6 +187,19 @@ def _lead_quality_alerts(lq_snap, rules, add):
                 f"{href}&status=all&junk=1", measure=round(rate, 1))
 
 
+def _numbers_alert(numbers, rule, add, money):
+    """D1: only a run that read the ad rows again judges (a Check now reads Meta's totals only); one run off is FYI,
+    two in a row need action. The figure a snooze watches is how many days differ."""
+    import numbers_check
+    s = numbers.get("summary") or {}
+    if not rule["on"] or s.get("state") != "off" or numbers.get("kind") not in numbers_check.JUDGED_KINDS:
+        return
+    lines = [numbers_check.day_line(o, money) for o in (s.get("off") or [])[:1]] + ["We pull these days again every night."]
+    add("numbers_off", "account", "warn" if (numbers.get("off_runs") or 0) >= 2 else "info",
+        f"Numbers differ from Ads Manager on {numbers_check.day_list(s['off_days'])}", lines, None, "/settings.html#numbers",
+        measure=len(s["off_days"]))
+
+
 def evaluate(snap, rules, today):
     found = []
 
@@ -291,6 +306,8 @@ def evaluate(snap, rules, today):
 
     _lead_quality_alerts(snap.get("lead_quality") or {}, rules, add)
 
+    _numbers_alert(snap.get("numbers") or {}, rules["numbers_off"], add, money)
+
     r = rules["stale_data"]
     age = snap.get("last_pull_age_h")
     if r["on"] and snap.get("connected") and age is not None and age > r["hours"]:
@@ -363,7 +380,18 @@ def snapshot(now):
         "pacing": pacing_data(None),
         "tracking": tracking_state(now),
         "lead_quality": lead_quality_groups(quality_rows),
+        "numbers": numbers_state(),
     }
+
+
+def numbers_state():
+    """D1: the verdict on the whole check window that the newest finished run left (no Meta call), the kind of that run,
+    and how many runs in a row left the window off. A pull of one day never closes an alert for the other days."""
+    import numbers_check
+    v = numbers_check.verdict()
+    if not v or not v.get("summary"):
+        return {}
+    return {"summary": v["summary"], "kind": v["kind"], "off_runs": int(settings_store.get("numbers_off_runs") or 0)}
 
 
 def tracking_state(now):
@@ -403,7 +431,12 @@ def run(now=None):
 
 def unjudged(snap):
     """Rules that couldn't be judged this time: their open alerts and snoozes stay as they are."""
-    return {"fatigue"} if snap.get("reach_7d") is None else set()
+    out = {"fatigue"} if snap.get("reach_7d") is None else set()
+    n = snap.get("numbers") or {}
+    # A Check now that finds days off neither raises nor closes: the next night or pull says whether they stay off.
+    if n.get("kind") == "check" and (n.get("summary") or {}).get("state") == "off":
+        out.add("numbers_off")
+    return out
 
 
 def end_snooze(snooze_id, reason, by=None):

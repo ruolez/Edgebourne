@@ -124,8 +124,13 @@
           </form>
         </section>
         <section class="panel" id="tracking" data-section hidden>
-          <div class="panel-head"><h2>Tracking health</h2><p id="tr-state"></p><span class="spacer"></span><button type="button" class="link-btn" id="tr-fresh">Check now</button></div>
+          <div class="panel-head"><h2>Tracking health</h2><p id="tr-state"></p><span class="spacer"></span><button type="button" class="link-btn" id="tr-fresh" aria-label="Check tracking health now">Check now</button></div>
           <div class="panel-body stack tight" id="tr-body"><p class="muted flush">Reading from Meta…</p></div>
+          <div class="nc-part" id="numbers" role="region" aria-labelledby="nc-h">
+            <div class="panel-head nc-head"><h3 id="nc-h">Numbers vs Ads Manager</h3><p id="nc-state"></p><span class="spacer"></span>
+              <button type="button" class="link-btn" id="nc-check" aria-label="Check numbers against Ads Manager now">Check now</button></div>
+            <div class="panel-body stack tight" id="nc-body"><p class="muted flush">Reading…</p></div>
+          </div>
         </section>
         <section class="panel" id="crm" data-section hidden>
           <div class="panel-head"><h2>Lead stages to Meta</h2><p id="crm-state"></p></div>

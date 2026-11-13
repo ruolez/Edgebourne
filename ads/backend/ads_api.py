@@ -658,8 +658,11 @@ def tree_data(user, start, end, prev=None, campaign_id=None, adset_id=None, arch
 def tree():
     key, start, end = window_from(request.args)
     prev = ranges.previous(start, end, key) if request.args.get("vs") == "prev" else None
-    out = tree_data(current_user(), start, end, prev=prev, archived=request.args.get("archived") == "1")
+    user = current_user()
+    out = tree_data(user, start, end, prev=prev, archived=request.args.get("archived") == "1")
     out["range"]["key"] = key
+    import numbers_check
+    out["source"] = numbers_check.source(user, start, end, scoped=visible_campaign_ids(user) is not None)
     return jsonify(out)
 
 
@@ -690,7 +693,9 @@ def ad_series(ad_id):
     if not ad or not can_touch(current_user(), ad["campaign_id"]):
         return api_error("Ad not found", 404)
     start, end = ranges.window(request.args.get("range", "30"), account_info.today(), request.args.get("from"), request.args.get("to"))
-    return jsonify({"series": _ad_series(ad_id), **status_history.marks_payload(
+    import numbers_check
+    return jsonify({"series": _ad_series(ad_id), "source": numbers_check.source(current_user(), start, end, scoped=True),
+                    **status_history.marks_payload(
         current_user(), status_history.marks_scope("ad", {"id": ad_id, "campaign_id": ad["campaign_id"], "adset_id": ad.get("adset_id")}),
         start, end)})
 
@@ -768,7 +773,9 @@ def ad_detail(ad_id):
                                               checks=change_checks_db.summary_for([c["id"] for c in changes], client=user["role"] == "client")),
                     **status_history.marks_payload(user, status_history.marks_scope("ad", ad), *ranges.window(
                         request.args.get("range", "30"), account_info.today(), request.args.get("from"), request.args.get("to"))),
-                    "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS]})
+                    "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS],
+                    "source": __import__("numbers_check").source(user, *ranges.window(
+                        request.args.get("range", "30"), account_info.today(), request.args.get("from"), request.args.get("to")), scoped=True)})
 
 
 @bp.get("/ads/ad/<ad_id>/preview")

@@ -151,7 +151,12 @@ def overview_data(user, days, campaign_id=None, span=None):
             WHERE day BETWEEN %s AND %s AND {where} GROUP BY day""", [y - timedelta(days=1), y] + params)}
     last, prev = ({"day": d.isoformat(), "spend_cents": int((two.get(d) or {}).get("spend_cents") or 0),
                    "leads": int((two.get(d) or {}).get("leads") or 0)} for d in (y, y - timedelta(days=1)))
+    import numbers_check
+    # D1: where these numbers come from, how fresh, whether Ads Manager agrees; Meta's leads next to the leads received.
+    source = numbers_check.source(user, start, end, meta_leads=int(totals["leads"]), received=sum(int(r["inbox"]) for r in quality),
+                                  scoped=bool(campaign_id) or visible_campaign_ids(user) is not None)
     return {
+        "source": source,
         "range": {"start": start.isoformat(), "end": end.isoformat(), "days": days},
         "yesterday": {"day": last["day"], "spend_cents": last["spend_cents"], "leads": last["leads"],
                       "prev_spend_cents": prev["spend_cents"], "prev_leads": prev["leads"]},
@@ -203,13 +208,21 @@ def pacing_data(scope_ids=None):
                        cap["remaining_cents"] if cap and cap["limit_cents"] else None, so_far)
 
 
+def window_args(args):
+    """(key, start, end) from ?range=, or ?range=custom&start=&end= (a day linked from Settings → Numbers vs Ads Manager)."""
+    key = args.get("range", "7")
+    if key == "custom" and args.get("start"):
+        start, end = ranges.window("custom", account_info.today(), args.get("start"), args.get("end") or args.get("start"))
+        return key, start, end
+    key = key if key in RANGE_KEYS else "7"
+    return (key, *ranges.window(key, account_info.today()))
+
+
 @bp.get("")
 @login_required
 def overview():
     user = current_user()
-    key = request.args.get("range", "7")
-    key = key if key in RANGE_KEYS else "7"
-    start, end = ranges.window(key, account_info.today())
+    key, start, end = window_args(request.args)
     days = (end - start).days + 1
     campaign_id = request.args.get("campaign") or None
     if campaign_id:
@@ -220,6 +233,7 @@ def overview():
     import status_history
     out.update(status_history.marks_payload(user, {"campaigns": [campaign_id], "ad_meta_only": True} if campaign_id
                                             else {"account": True, "ad_meta_only": True}, start, end))
+    out["range"].update(key=key, label=ranges.label(start, end))
     out["campaigns"] = campaign_choices(user, start, end)
     out["campaign"] = campaign_id
     out["pacing"] = pacing_data(visible_campaign_ids(user))
@@ -256,9 +270,7 @@ def quality():
     and campaign. Counts only (clients see it too): no names, emails, phones or notes."""
     import lead_quality_store
     user = current_user()
-    key = request.args.get("range", "7")
-    key = key if key in RANGE_KEYS else "7"
-    start, end = ranges.window(key, account_info.today())
+    key, start, end = window_args(request.args)
     ids = visible_campaign_ids(user)
     campaign_id = request.args.get("campaign") or None
     if campaign_id and ids is not None and campaign_id not in ids:
@@ -313,10 +325,16 @@ def set_target():
 @bp.post("/sync")
 @admin_required
 def sync_now():
-    try:
-        result = insights.sync_all(days=30)
-    except meta_client.MetaError as exc:
-        return api_error(str(exc), 400)
+    import account_ctx
+    import refresh_api
+    # The account's pull lock (D1): a Refresh or a numbers pull finishes first (waited for up to 30 s).
+    with refresh_api.holding_pull_lock(account_ctx.current(), wait=30) as mine:
+        if not mine:
+            return api_error("Already pulling from Meta, one moment", 409, code="busy")
+        try:
+            result = insights.sync_all(days=30)
+        except meta_client.MetaError as exc:
+            return api_error(str(exc), 400)
     log_activity("sync.performance", details=result)
     return jsonify(result)
 

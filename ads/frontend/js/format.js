@@ -138,3 +138,57 @@ export const statusPill = (s, fallback = "Unknown") => {
   const [cls, label] = s ? statusOf(s) : ["", fallback];
   return `<span class="pill ${cls}">${escText(label)}</span>`;
 };
+
+// Where every number comes from (D1): the line under a page's figures, Meta's lead count next to the leads received,
+// and the Numbers vs Ads Manager check. One wording everywhere (00-PLAN §4: Received, Matches / Differs).
+const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const clockWords = (d) => d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+export function syncedWords(iso, now = new Date()) {
+  const d = new Date(iso);
+  return sameDay(d, now) ? clockWords(d) : `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${clockWords(d)}`;
+}
+export function sinceWords(iso, now = Date.now()) {
+  const minutes = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60000));
+  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)} h ago`;
+  return agoWords(iso, now);
+}
+export const NUMBERS = { match: "Matches", off: "Differs", unchecked: "Not checked", couldnt: "Couldn't check" };
+// `today`: the page also shows today's live spend. Teammates and clients get the state of the check, never amounts.
+// Days on screen older than the nightly check reads were never compared: say how many were.
+const partlyChecked = (c) => c.days != null && c.checked_days != null && c.checked_days < c.days;
+export function sourceLine(src, { today = false } = {}) {
+  const m = src && src.meta;
+  if (!m) return "";
+  const parts = ["From Meta"];
+  if (m.behind && m.pulled_at) parts.push(`last synced ${sinceWords(m.pulled_at)}`, "numbers may be behind");
+  else if (m.behind) parts.push("not synced yet");
+  else if (m.synced_at) parts.push(`synced ${syncedWords(m.synced_at)}`);
+  if (today) parts.push("today so far, changes through the day");
+  parts.push(`complete days to ${dayLabel(m.complete_to)}`);
+  const c = m.check;
+  if (c && c.state === "off") parts.push(c.spend_off_cents == null ? "being checked again" : `differs from Ads Manager on ${plural(c.off_days, "day")}`);
+  else if (c && c.old && c.checked_at) parts.push(`not checked against Ads Manager since ${dayWords(c.checked_at)}`);
+  else if (c && c.state === "match") parts.push(partlyChecked(c) ? `${c.checked_days} of ${c.days} days checked: they match Ads Manager` : "matches Ads Manager");
+  return parts.join(" · ");
+}
+export const leadsPair = (p) => (p && p.meta != null && p.received != null ? `Meta ${count(p.meta)} · Received ${count(p.received)}` : "");
+const zoneName = () => {
+  const tz = window.ebadsMe && window.ebadsMe.account && window.ebadsMe.account.tz;
+  return tz ? ` (${tz.split("/").pop().replace(/_/g, " ")})` : "";
+};
+export function sourceHelp(src) {
+  const c = src && src.meta && src.meta.check;
+  const last = !c || !c.checked_at ? "Not checked against Ads Manager yet: the first check runs after 4 AM."
+    : c.state === "off" ? `Last checked ${dayTimeWords(c.checked_at)}: ${c.spend_off_cents == null ? "a few days are being checked again" : `${plural(c.off_days, "day")} differ, and they are read again every night`}.`
+      : partlyChecked(c) ? `Last checked ${dayTimeWords(c.checked_at)}: the ${plural(c.checked_days, "day")} checked match; the other ${plural(c.days - c.checked_days, "day")} are older than the nightly check reads.`
+        : `Last checked ${dayTimeWords(c.checked_at)}: they match.`;
+  return [
+    `Complete days only, in the ad account's time zone${zoneName()}. Today is partial and Meta reports some leads a day or two late.`,
+    "Leads are what Meta counted under each ad set's attribution setting: on the day of the ad view or click, not the day the form arrived.",
+    "Every night we read the last 28 days and last month again from Meta and compare them with Ads Manager's own totals.",
+    last,
+  ];
+}
+export const LEADS_PAIR_HELP = "Meta counts a lead on the day of the ad view or click. Received counts leads by the day they reached your leads list, and leaves out test entries; a person who filled the form twice counts once. A few can land on different days.";
+export const SCOPE_NOTE = "The Ads Manager check covers the whole account.";

@@ -153,11 +153,92 @@ def insights_rows(level):
                          "video_thruplay_watched_actions": va(thru), "video_p25_watched_actions": va(int(v3 * .7)),
                          "video_p50_watched_actions": va(int(v3 * .45)), "video_p75_watched_actions": va(int(v3 * .3)),
                          "video_p100_watched_actions": va(int(v3 * .2))})
+    rows = restated(rows)
     if level == "campaign":
         today = [r for r in rows if r["date_start"] == TODAY.isoformat()]
         return [{"campaign_id": CAMPAIGN["id"], "spend": str(round(sum(float(r["spend"]) for r in today) * .6, 2)),
                  "actions": [{"action_type": "onsite_conversion.lead_grouped", "value": "1"}]}]
     return rows
+
+
+# D1: Meta changing an older day after the console stored it (leads credited back, spend corrections), applied to
+# both the ad-level and the account-level reads, as Meta would.
+RESTATE = {}     # (day, ad id) -> {"spend": dollars to add, "leads": leads to add}
+DROPPED = set()  # (day, ad id): that ad-day no longer appears (its spend leaves the account total too)
+SHORT = {"next": False}  # the next ad-level read for a window answers with no rows (the restate guard's test)
+ACCOUNT_SHIFT = {}  # day -> {"spend": dollars, "leads": n}: Meta's account total moves while its ad rows stay (they disagree)
+
+
+def restated(rows):
+    out = []
+    for r in rows:
+        key = (r["date_start"], r["ad_id"])
+        if key in DROPPED:
+            continue
+        ch = RESTATE.get(key)
+        if ch:
+            r = {**r, "spend": str(round(float(r["spend"]) + ch["spend"], 2))}
+            acts = [dict(a) for a in r["actions"]]
+            lead = next((a for a in acts if a["action_type"] == "onsite_conversion.lead_grouped"), None)
+            if lead:
+                lead["value"] = str(max(int(lead["value"]) + ch["leads"], 0))
+            elif ch["leads"] > 0:
+                acts.append({"action_type": "onsite_conversion.lead_grouped", "value": str(ch["leads"])})
+            r["actions"] = acts
+        out.append(r)
+    return out
+
+
+def account_days(rows):
+    """level=account, time_increment=1: one row per day with spend, the per-day sums of the ads (days with nothing are left out)."""
+    by = {}
+    for r in rows:
+        d = by.setdefault(r["date_start"], {"spend": 0.0, "impressions": 0, "leads": 0})
+        d["spend"] += float(r["spend"])
+        d["impressions"] += int(r["impressions"])
+        d["leads"] += sum(int(a["value"]) for a in r["actions"] if a["action_type"] == "onsite_conversion.lead_grouped")
+    for k, ch in ACCOUNT_SHIFT.items():
+        if k in by:
+            by[k]["spend"] += ch["spend"]
+            by[k]["leads"] = max(by[k]["leads"] + ch["leads"], 0)
+    return [{"date_start": k, "date_stop": k, "spend": f"{v['spend']:.2f}", "impressions": str(v["impressions"]),
+             "actions": [{"action_type": "onsite_conversion.lead_grouped", "value": str(v["leads"])}] if v["leads"] else []}
+            for k, v in sorted(by.items())]
+
+
+@app.route("/fake/_restate")
+def fake_restate():
+    """?day=YYYY-MM-DD&ad=<id>&spend=<+-dollars>&leads=<+-n>: Meta changes an older day. ?day=&level=account&spend=&leads=:
+    only Meta's account total for the day moves (its ad rows no longer add up to it). ?clear=1 puts every day back."""
+    if request.args.get("clear"):
+        RESTATE.clear()
+        DROPPED.clear()
+        ACCOUNT_SHIFT.clear()
+        SHORT["next"] = False
+        SLOW["daily"] = 0.0
+        return jsonify({"ok": True})
+    if request.args.get("level") == "account":
+        old = ACCOUNT_SHIFT.get(request.args["day"], {"spend": 0.0, "leads": 0})
+        ACCOUNT_SHIFT[request.args["day"]] = {"spend": round(old["spend"] + float(request.args.get("spend") or 0), 2),
+                                              "leads": old["leads"] + int(request.args.get("leads") or 0)}
+        return jsonify({"ok": True, "account": ACCOUNT_SHIFT})
+    key = (request.args["day"], request.args["ad"])
+    old = RESTATE.get(key, {"spend": 0.0, "leads": 0})
+    RESTATE[key] = {"spend": old["spend"] + float(request.args.get("spend") or 0), "leads": old["leads"] + int(request.args.get("leads") or 0)}
+    return jsonify({"ok": True, "restate": {f"{d}:{a}": v for (d, a), v in RESTATE.items()}})
+
+
+@app.route("/fake/_restate_drop")
+def fake_restate_drop():
+    """?day=&ad=: that ad-day disappears from Meta's reads (credited back)."""
+    DROPPED.add((request.args["day"], request.args["ad"]))
+    return jsonify({"ok": True})
+
+
+@app.route("/fake/_short_answer")
+def fake_short_answer():
+    SHORT["next"] = True
+    return jsonify({"ok": True})
 
 
 BREAKDOWN_VALUES = {
@@ -363,7 +444,7 @@ def fake_learning():
     return jsonify(aset["learning_stage_info"])
 
 
-SLOW = {"reach": 0.0}  # seconds the unique-reach reads hang (a slow Meta), set by QA
+SLOW = {"reach": 0.0, "daily": 0.0}  # seconds the unique-reach / ad-level daily reads hang (a slow Meta), set by QA
 HITS = []  # every Graph request (path + query), for QA to count reads
 
 
@@ -383,7 +464,10 @@ def fake_hits():
 
 @app.route("/fake/_slow")
 def fake_slow():
-    SLOW["reach"] = float(request.args.get("reach", 0))
+    if "reach" in request.args or "daily" not in request.args:
+        SLOW["reach"] = float(request.args.get("reach", 0))
+    if "daily" in request.args:
+        SLOW["daily"] = float(request.args["daily"])
     return jsonify(SLOW)
 
 
@@ -577,6 +661,18 @@ def graph(path):
                     ident = ACCOUNT if level == "account" else r[key]
                     people[ident] = people.get(ident, 0) + int(r["reach"])
                 return jsonify({"data": [{key: k, "reach": str(int(v * .62))} for k, v in people.items()]})
+            if parts[0] == act and a.get("level") in ("ad", "account") and a.get("time_range"):
+                # Meta honours the window of a daily read (D1: the 3-day quick pull stores only those days).
+                tr = json.loads(a["time_range"])
+                rows = [r for r in insights_rows("ad") if tr.get("since", "") <= r["date_start"] <= tr.get("until", "9999")]
+                if a.get("level") == "account":
+                    return jsonify({"data": account_days(rows)})
+                if SHORT["next"]:
+                    SHORT["next"] = False
+                    return jsonify({"data": []})
+                if SLOW["daily"]:
+                    __import__("time").sleep(SLOW["daily"])
+                return jsonify({"data": rows})
             if parts[0] == act:
                 return jsonify({"data": insights_rows(a.get("level"))})
             if a.get("date_preset") == "maximum" and a.get("fields") == "reach":

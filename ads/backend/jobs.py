@@ -82,18 +82,32 @@ def _loop():
                 last_auto_try[acct] = now
                 log.info("account %s: automatic refresh skipped: %s", acct, exc)
         if settings_store.get("meta_ad_account_id") and time.time() - last_sync.get(acct, 0) > SYNC_EVERY:
-            last_sync[acct] = time.time()
+            synced_now = False
             try:
-                # A pull in this pass has just read the structure (and its video pictures): only the week's results are left.
-                insights.sync_all(days=7, structure=not pulled)
-                pulled = True
+                # Under the account's pull lock (D1): never alongside a Refresh or a numbers pull, whose before/after
+                # reads would count this sync's writes as Meta's corrections. A held lock: the next pass tries.
+                with refresh_api.holding_pull_lock(acct) as mine:
+                    if mine:
+                        last_sync[acct] = time.time()
+                        # A pull in this pass has just read the structure (and its video pictures): only the week's results are left.
+                        insights.sync_all(days=7, structure=not pulled)
+                        pulled = synced_now = True
             except Exception as exc:  # Meta not configured yet, network, …
+                last_sync[acct] = time.time()
                 log.info("account %s: meta sync skipped: %s", acct, exc)
-            else:
+            if synced_now:
                 try:
                     insights.backfill_daily()  # once per ad account: results from before the first sync
                 except Exception as exc:
                     log.info("account %s: older results not read yet: %s", acct, exc)
+        try:
+            # D1: once a night (4 AM, account time) read the older days again and compare with Ads Manager's totals;
+            # the alerts right below then say so in the same pass.
+            import numbers_check
+            if numbers_check.run_nightly():
+                pulled = True
+        except Exception as exc:
+            log.info("account %s: numbers check skipped: %s", acct, exc)
         if pulled or time.time() - last_alerts.get(acct, 0) > ALERTS_EVERY:
             last_alerts[acct] = time.time()
             try:
@@ -198,6 +212,7 @@ PRUNE = (
     ("meta_cache", "fetched_at < now() - interval '30 days'"),
     ("alerts", "resolved_at IS NOT NULL AND resolved_at < now() - interval '180 days'"),
     ("alert_snoozes", "ended_at IS NOT NULL AND ended_at < now() - interval '180 days'"),
+    ("numbers_runs", "started_at < now() - interval '180 days'"),
     # Read marks of alerts (30 days in the Inbox) and leads (7) whose item has left the feed. A pending proposal
     # stays in it however old, so its mark stays (audit A3-131).
     ("inbox_reads", "item_key NOT LIKE 'proposal:%' AND read_at < now() - interval '35 days'"),

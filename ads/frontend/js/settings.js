@@ -11,7 +11,7 @@ let owner = false;
 // #mt-form, #tg-targets… from the days of the long page, and the links stored in alerts), or a short alias.
 // Anything else, or a whole-console section for someone who isn't the console's owner, opens Meta connection.
 const SECTION_ALIASES = { "lead-quality": "lead-quality", repeats: "lead-quality", junk: "lead-quality", reports: "reports-panel", activity: "activity-panel", accounts: "accounts-panel", refresh: "auto",
-  smtp: "email", "ab-tests": "ab", stages: "crm", numbers: "tracking" };
+  smtp: "email", "ab-tests": "ab", stages: "crm" };
 
 function sectionFor(hash) {
   let id = hash;
@@ -167,6 +167,83 @@ async function loadTracking(fresh = false) {
   } catch (err) { $("tr-body").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
+// Numbers vs Ads Manager (D1): our stored days against Meta's own totals, with the way to read them again.
+// Everything here only reads from Meta; nothing in the ads changes.
+const signed = (n, text) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${text}`;
+const leadsWords = (n) => `${n} lead${Math.abs(n) === 1 ? "" : "s"}`;
+const both = (spend, leads) => `${money(spend, { exact: true })} · ${leadsWords(leads)}`;
+function numbersHtml(n) {
+  const rows = n.days.map((d) => {
+    const newer = d.state === "newer";
+    const diff = [d.diff_spend_cents ? signed(d.diff_spend_cents, money(Math.abs(d.diff_spend_cents), { exact: true })) : "",
+      d.diff_leads ? signed(d.diff_leads, leadsWords(Math.abs(d.diff_leads))) : ""].filter(Boolean).join(" · ");
+    return `<tr class="nc-day${newer ? " is-newer" : ""}" data-day="${esc(d.day)}"><td><a class="ent-link" href="${esc(d.href)}">${esc(d.label)}</a>${newer ? ' <small class="muted">Updated since the check</small>' : ""}</td>
+      <td class="num" data-label="Ads Manager">${both(d.meta.spend_cents, d.meta.leads)}</td><td class="num" data-label="Here">${both(d.here.spend_cents, d.here.leads)}</td>
+      <td class="num nc-diff" data-label="Difference">${esc(diff)}</td></tr>`;
+  }).join("");
+  const runs = n.runs.map((r) => `<li>${esc(when(r.at))} · ${esc(r.kind_label)}${r.by && r.kind !== "nightly" ? ` by ${esc(r.by)}` : ""} · ${esc(r.ok ? (r.changed || "nothing changed") : r.error || "didn't finish")}</li>`).join("");
+  const busy = Boolean(n.running);
+  return `${n.running ? `<p class="flush nc-running" id="nc-running" role="status">${esc(n.running.line)}</p>` : ""}
+    ${n.lines.map((l) => `<p class="flush">${esc(l)}</p>`).join("")}
+    ${n.restated ? `<p class="flush muted" id="nc-restated">${esc(n.restated)}</p>` : ""}
+    ${rows ? `<table class="table nc-days" id="nc-days"><thead><tr><th>Day</th><th class="num">Ads Manager</th><th class="num">Here</th><th class="num">Difference</th></tr></thead><tbody>${rows}</tbody></table>` : ""}
+    ${n.connected && n.pull ? `<div class="nc-acts"><button class="btn btn-primary" type="button" id="nc-pull" data-start="${esc(n.pull.start)}" data-end="${esc(n.pull.end)}" data-label="${esc(n.pull.label)}"${busy ? " disabled" : ""}>${busy ? "Pulling from Meta…" : "Pull these days again"}</button>
+      <button class="btn btn-quiet" type="button" id="nc-again"${busy ? " disabled" : ""}>Check again</button></div>` : ""}
+    ${n.connected ? `<label class="check"><input type="checkbox" id="nc-night" data-no-guard ${n.enabled ? "checked" : ""}> <span>Check every night <span class="explain">Reads from Meta only. Nothing in your ads changes.</span></span></label>
+    <details class="tech" id="nc-adv"><summary>Advanced <small>How leads are counted, recent checks</small></summary>
+      <label class="check"><input type="checkbox" id="nc-unified" data-no-guard ${n.unified ? "checked" : ""}> <span>Count leads the way Ads Manager does <span class="explain">Each ad set's own attribution setting, on the day of the ad view or click. Turning it off counts Meta's default instead; older days change once at the next nightly check.</span></span></label>
+      ${runs ? `<ul class="nc-runs" id="nc-runs">${runs}</ul>` : ""}</details>` : ""}
+    <p class="muted small flush">${esc(n.footer)}</p>`;
+}
+
+// A pull Meta takes long over goes on by itself after the answer (202): follow it until it's done, then say how it ended.
+let ncPoll = null;
+let ncFollowing = false;
+function paintNumbers(n) {
+  $("nc-state").innerHTML = `<span class="pill ${esc(n.pill[0])}">${esc(n.pill[1])}</span>`;
+  $("nc-body").innerHTML = numbersHtml(n);
+  $("nc-check").hidden = !n.connected;
+  $("nc-check").disabled = Boolean(n.running);
+  clearTimeout(ncPoll);
+  if (n.running || n.running_pull) {
+    ncFollowing = true;
+    ncPoll = setTimeout(loadNumbers, 3000);
+  } else if (ncFollowing) {
+    ncFollowing = false;
+    toast(`Done reading from Meta. ${n.headline}.`);
+  }
+}
+
+async function loadNumbers() {
+  try { paintNumbers(await api("/api/numbers")); } catch (err) { $("nc-body").innerHTML = `<p class="note warn flush">${esc(err.message)}</p>`; }
+}
+
+async function checkNumbers(b) {
+  const label = b.textContent;
+  b.disabled = true;
+  b.textContent = "Checking…";
+  try {
+    const n = await api("/api/numbers/check", { method: "POST", body: {} });
+    paintNumbers(n);
+    toast(n.ran === false ? n.message : n.headline);
+  } catch (err) { toast(err.message, "bad"); }
+  finally { if (b.isConnected) { b.disabled = false; b.textContent = label; } }
+}
+
+async function pullNumbers(b) {
+  b.disabled = true;
+  b.textContent = `Pulling ${b.dataset.label} from Meta…`;
+  try {
+    const n = await api("/api/numbers/pull", { method: "POST", body: { start: b.dataset.start, end: b.dataset.end } });
+    paintNumbers(n);
+    toast(n.message, n.ok ? "" : "bad");
+    if (n.running_pull) ncFollowing = true;
+  } catch (err) {
+    toast(err.message, "bad");
+    if (b.isConnected) { b.disabled = false; b.textContent = "Pull these days again"; }
+  }
+}
+
 function renderLeadQuality() {
   const q = s.lead_quality || { repeats: true, junk: true };
   $("lq-repeats").checked = q.repeats;
@@ -269,6 +346,7 @@ const RULE_UI = [
   ["qualified_low", "Few leads qualify", [["percent", "below", "% qualified,"], ["min_leads", "with at least", "leads"]]],
   ["junk_high", "Many leads look like junk", [["percent", "above", "%,"], ["min_leads", "with at least", "leads"]]],
   ["tracking", "Leads Meta counted aren't reaching the inbox", []],
+  ["numbers_off", "Our numbers differ from Ads Manager", []],
   ["stale_data", "Meta stops answering", [["hours", "for", "hours"]]],
   ["events_quiet", "Lead stages stop reaching Meta's dataset (two days)", []],
 ];
@@ -287,6 +365,7 @@ function renderAlerts() {
         : "Off until a target is set in Targets."} <a href="#targets">Change</a></small>`
       : id === "qualified_low" ? '<small class="muted">Over the 14 days that end 2 days ago, counting only leads someone has worked (past New, or Lost).</small>'
       : id === "junk_high" ? '<small class="muted">Junk = marked Spam or fake, or fake-looking details and never contacted.</small>'
+      : id === "numbers_off" ? '<small class="muted">After the nightly check, when older days still differ from Ads Manager\'s own totals. One night is a note; two in a row need action. <a href="#numbers">See the check</a></small>'
       : id === "change_result" ? '<small class="muted">After a budget, on/off or new-version change, tell me when cost per lead got worse. Checked after 3, 7 and 14 full days.</small>'
       : id === "outside_edit" ? '<small class="muted">A note when someone changes these in Ads Manager. It\'s marked as needing action when the change breaks a money rule. Turning it off stops the note only: changes are still recorded and the 3-day rule still holds.</small>' : "";
     return `<li><label class="check"><input type="checkbox" data-rule="${id}" data-key="on" ${r.on ? "checked" : ""}> ${esc(label)}</label>${inputs ? `<div class="al-fields">${inputs}</div>` : ""}${hint}</li>`;
@@ -329,6 +408,7 @@ async function load() {
   renderMetaTests();
   renderLeadQuality();
   loadTracking();
+  loadNumbers();
   loadReports();
   document.querySelectorAll("[data-acct-name]").forEach((el) => { el.textContent = s.account.name; });
   renderTelegram();
@@ -567,6 +647,20 @@ if (me) {
     saved(e.target); toast(`The latest now comes from Meta ${every(s.auto_refresh_minutes).toLowerCase()}`); renderAuto();
   }); });
   $("tr-fresh").addEventListener("click", () => loadTracking(true));
+  $("nc-check").addEventListener("click", (e) => checkNumbers(e.currentTarget));
+  $("nc-body").addEventListener("click", (e) => {
+    const b = e.target.closest("#nc-pull, #nc-again");
+    if (b && b.id === "nc-pull") pullNumbers(b);
+    else if (b) checkNumbers(b);
+  });
+  $("nc-body").addEventListener("change", async (e) => {
+    if (!["nc-night", "nc-unified"].includes(e.target.id)) return;
+    const key = e.target.id === "nc-night" ? "on" : "unified";
+    try {
+      paintNumbers(await api("/api/numbers/settings", { method: "PUT", body: { [key]: e.target.checked } }));
+      toast(key === "on" ? (e.target.checked ? "Checked every night from now on" : "No nightly check") : "Saved. It applies from the next pull.");
+    } catch (err) { e.target.checked = !e.target.checked; toast(err.message, "bad"); }
+  });
   $("rep-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     fieldError(e.target, null);

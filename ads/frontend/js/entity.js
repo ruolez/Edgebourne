@@ -1,7 +1,7 @@
 // Campaign and ad set pages: their numbers with "vs before", a daily chart, (ad sets) learning progress
 // and who sees it, the ad sets / ads inside in the manager table, and one History timeline.
 import { api, startLoad } from "./api.js";
-import { boot, emptyState, esc, icon, onRefresh, setCrumbs, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
+import { boot, emptyState, esc, icon, onRefresh, setCrumbs, sourceNote, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
 import { columnChart, marksPanel } from "./charts.js";
 import { count, dayLabel, explain, money, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
@@ -63,7 +63,7 @@ function render() {
   $("cr-all").innerHTML = `${figuresHtml(e.m, state.vs ? e.prev : null, data.target_qualified_cents, { today: e.today, ever: e.ever })}
     <div class="charts"><section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
       <section class="panel"><div class="panel-head"><h2>Leads per day</h2></div><div class="chart" id="c-leads"></div></section></div>
-    <div class="fig-foot"><span class="fig-src"></span><div class="fig-marks" id="chg-panel"></div></div>
+    <div class="fig-foot"><div class="fig-src" id="fig-src"></div><div class="fig-marks" id="chg-panel"></div></div>
     ${LEVEL === "adset" ? audienceCard(e) : ""}
     <div class="cr-toolbar"><div class="tabs" role="tablist" aria-label="Show" data-tabpanel="en-panel">${tabs.map(([k, l, n]) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${state.tab === k}">${l}<span class="n">${n}</span></button>`).join("")}</div>
       <span class="spacer"></span>
@@ -79,6 +79,7 @@ function render() {
   columnChart({ el: $("c-leads"), series: data.series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true, height: 170,
     format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)), marks, marksSummary });
   marksPanel($("chg-panel"), marks, marksSummary, data.marks_list);
+  $("fig-src").innerHTML = sourceNote(data.source);
   if (LEVEL === "adset" && $("estimate")) api(`/api/insights/adset/${encodeURIComponent(e.id)}/estimate`).then((x) => { if (x.lower && x.upper) $("estimate").textContent = `Meta estimates ${count(x.lower)}–${count(x.upper)} people could see these ads.`; }).catch(() => {});
   $("bulk").innerHTML = bulkBarHtml(childLevel(), picked(), canControl);
   document.body.classList.toggle("has-bulk", selected.size > 0);

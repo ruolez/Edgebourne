@@ -29,6 +29,9 @@ ACCOUNT_KEYS = {
     "kpi_target_cents", "report_email", "report_last_sent", "meta_token_error", "account_tz", "account_currency", "report_sent_to", "client_lead_updates", "report_link_epoch", "max_daily_budget_cents", "lead_target_cents", "meta_status_webhooks", "meta_status_webhook_at",
     "video_pictures_day", "daily_backfill_for", "report_review",
     "lead_repeat_check", "lead_junk_flags", "lead_quality_backfill_v1",
+    # D1 numbers check: per account, so one account's night or check never stands in for another's.
+    "numbers_check", "insights_unified_attribution", "last_full_sync", "numbers_last_night", "numbers_off_runs",
+    "numbers_last_check_at", "numbers_night_try", "numbers_window",
 }
 INHERITED = {"meta_system_token"}
 

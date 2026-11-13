@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, entityLink, esc, fieldError, guardLeaving, markSaved, toast } from "./ui.js";
+import { boot, confirmDialog, entityLink, esc, fieldError, guardLeaving, markSaved, pairNote, sourceNote, toast } from "./ui.js";
 import { EXPLAIN, WORDS, count, dayLabel, money, setCurrency } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
@@ -66,8 +66,9 @@ function reportHtml(r) {
         <div><span>Cost per qualified lead</span><b>${cpq ? money(cpq, { exact: true }) : "—"}</b>${r.target_cents ? `<small>target ${money(r.target_cents)}</small>` : ""}</div>
       </div>
       <table class="table r-funnel"><thead><tr><th>Step</th><th class="num">People</th><th class="num">Share</th></tr></thead>
-        <tbody>${r.funnel.map((f) => `<tr><th scope="row">${esc(f.step)}</th><td class="num">${count(f.n)}</td><td class="num">${f.rate == null ? "" : `${f.rate}% <span class="muted r-of">of ${esc(f.of)}</span>`}</td></tr>`).join("")}</tbody></table>
+        <tbody>${r.funnel.map((f, i) => `<tr><th scope="row">${esc(f.step)}</th><td class="num">${count(f.n)}${i === 0 && n.meta_leads != null ? pairNote({ meta: n.meta_leads, received }) : ""}</td><td class="num">${f.rate == null ? "" : `${f.rate}% <span class="muted r-of">of ${esc(f.of)}</span>`}</td></tr>`).join("")}</tbody></table>
       ${r.lost_line ? `<p class="small flush r-lost" id="r-lost">${esc(r.lost_line)}</p>` : ""}
+      ${r.source ? `<div class="r-src" id="r-src">${sourceNote(r.source)}</div>` : ""}
       ${gap ? `<p class="muted small flush r-gap">${esc(gap.text)}${bigGap && r.review ? ` If this stays, check that new leads reach the console: <a href="/settings.html#meta">Settings → Meta</a>.` : ""}</p>` : ""}
       ${n.median_minutes != null ? `<p class="muted flush small">Half of the leads got a first call or email within ${n.median_minutes < 90 ? `${n.median_minutes} minutes` : `${Math.round(n.median_minutes / 60)} hours`}.</p>` : ""}
     </section>
@@ -86,7 +87,7 @@ function reportHtml(r) {
     <section class="r-sec"><h3>5. What we need from you</h3>
       ${r.needs.length ? `<ul class="r-list">${r.needs.map((x) => `<li>A decision on: ${esc(x)}</li>`).join("")}</ul>` : '<p class="flush">Nothing this time. Keep marking leads Contacted, Qualified or Won: it is how we judge which ads bring real customers.</p>'}
     </section>
-    <footer class="r-foot">${r.footnotes.map((f) => `<p>${esc(f)}</p>`).join("")}${r.shared_until ? `<p>This link works until ${esc(dayLabel(r.shared_until))}.</p>` : ""}</footer>`;
+    <footer class="r-foot">${r.footnotes.map((f) => `<p>${esc(f)}</p>`).join("")}${r.stamp ? `<p class="r-stamp" id="r-stamp">${esc(r.stamp.text)}</p>` : ""}${r.shared_until ? `<p>This link works until ${esc(dayLabel(r.shared_until))}.</p>` : ""}</footer>`;
 }
 
 // A client of an account that reviews reports first, on a period not sent yet.
@@ -138,6 +139,36 @@ function paintNotePreview() {
   const by = shown && shown.note && !noteDirty ? shown.note.by : firstName(me && me.name);
   box.innerHTML = noteHtml($("rv-note").value, by);
   box.hidden = !$("rv-note").value.trim();
+}
+
+// D1: the days of this period that differ from Ads Manager's own totals, with the way to read them again (admins,
+// in the review bar only: never in the report body, a client's view or a copy that goes out).
+function paintNumbers(stamp) {
+  const box = $("rv-numbers");
+  if (!box) return;
+  box.hidden = !(stamp && stamp.warning);
+  box.innerHTML = box.hidden ? "" : `<p class="note warn flush" id="rv-numbers-say">${esc(stamp.warning)}</p>
+    <div class="row"><button class="btn" type="button" id="rv-pull">Pull these days again</button></div>`;
+}
+
+async function pullPeriod(b) {
+  b.disabled = true;
+  b.textContent = "Pulling from Meta…";
+  try {
+    const r = await api("/api/numbers/pull", { method: "POST", body: { period: kind, start: shown.start } });
+    toast(r.message, r.ok ? "" : "bad");
+    // A long pull goes on by itself after the answer: wait for it (up to 15 minutes), then show the report again.
+    for (let i = 0; (r.running_pull || r.running) && i < 300; i += 1) {
+      await new Promise((ok) => { setTimeout(ok, 3000); });
+      const n = await api("/api/numbers");
+      if (!n.running) { toast(`Done reading from Meta. ${n.headline}.`); break; }
+    }
+    await load();
+  } catch (err) {
+    toast(err.message, "bad");
+    b.disabled = false;
+    b.textContent = "Pull these days again";
+  }
 }
 
 function paintBar(rv) {
@@ -273,6 +304,7 @@ function wireBar() {
   $("rv-skip").addEventListener("click", () => act("skip", {}, () => toast("This report won't be sent.", "", { undo: () => act("unskip", {}) })));
   $("rv-unskip").addEventListener("click", () => act("unskip", {}, () => toast("It waits for you again.")));
   $("rv-sent").addEventListener("click", () => { location.href = `/report.html?kind=${kind}&start=${shown.start}&sent=1`; });
+  $("rv-numbers").addEventListener("click", (e) => { const b = e.target.closest("#rv-pull"); if (b) pullPeriod(b); });
 }
 
 let arrived = location.hash === "#review";
@@ -289,6 +321,7 @@ async function load() {
     document.title = `${r.account} · ${r.kind === "week" ? "Week" : "Month"} of ${dayLabel(r.start)} | Report`;
     if (r.review && !sentView) {
       paintBar(r.review);
+      paintNumbers(r.stamp);
       if (noteDirty) paintNotePreview();
     } else if ($("rv-bar")) $("rv-bar").hidden = true;
     if (sentView) {

@@ -231,3 +231,14 @@ class SweepTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NumbersOffSnoozeTests(unittest.TestCase):
+    """D1: days that differ from Ads Manager snooze until 3 more days differ."""
+
+    def test_three_more_days_wake_it(self):
+        self.assertEqual([snooze.worse("numbers_off", 2, m, "warn", "warn") for m in (2, 4, 5)], [False, False, True])
+
+    def test_hint_and_figure(self):
+        self.assertEqual((snooze.worse_hint("numbers_off", 2), snooze.measure_words("numbers_off", 2), snooze.measure_words("numbers_off", 1)),
+                         ("You'll hear again if 3 more days differ.", "2 days that differ", "1 day that differs"))

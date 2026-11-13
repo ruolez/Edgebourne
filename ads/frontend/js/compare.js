@@ -2,7 +2,7 @@
 // change against the period before, a verdict that waits for enough data, and one chart with a line
 // per ad. Reached from the Ads manager's selection bar (Compare) or Insights → Compare.
 import { api, startLoad } from "./api.js";
-import { boot, entityLink, esc, icon, onRefresh, toast, errorState } from "./ui.js";
+import { boot, entityLink, esc, icon, onRefresh, sourceNote, toast, errorState } from "./ui.js";
 import { lineChart, marksPanel } from "./charts.js";
 import { count, money, per, statusOf, statusPill, moneyWhole, rangeSelect, rememberCampaign, rememberRange, sharedCampaign, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
@@ -98,13 +98,14 @@ function render() {
         <div class="segmented" role="group" aria-label="Chart">${charts.map(([k, l]) => `<button type="button" data-chart="${k}" aria-pressed="${state.chart === k}">${l.split(",")[0]}</button>`).join("")}</div></div>
         <div class="chart" id="cmp-chart"></div>
         <ul class="cmp-legend">${data.items.map((it, i) => `<li>${keyHtml(i, true)}${esc(it.name)}</li>`).join("")}</ul></section></div>
-    <div class="fig-foot"><span class="fig-src"></span><div class="fig-marks" id="chg-panel"></div></div>
+    <div class="fig-foot"><div class="fig-src" id="fig-src"></div><div class="fig-marks" id="chg-panel"></div></div>
     <p class="muted small flush">“Lowest” and “Highest” describe this window only; the verdict above says when the difference is big enough to act on.</p>`;
   const money2 = (v) => money(v, { exact: true });
   lineChart({ el: $("cmp-chart"), series: chartSeries(), title: charts.find(([k]) => k === state.chart)[1], height: 240, integer: state.chart === "leads", dashes: DASH,
     format: state.chart === "leads" ? (v) => `${v} leads` : money2,
     axisFormat: state.chart === "leads" ? (v) => String(Math.round(v)) : (v) => moneyWhole(v), marks: data.marks || [], marksSummary: data.marks_summary || "" });
   marksPanel($("chg-panel"), data.marks || [], data.marks_summary || "", data.marks_list);
+  $("fig-src").innerHTML = sourceNote(data.source);
 }
 
 // No ads yet (or one): pick 2 to 6, each shown with its picture and its numbers for the dates, biggest spend first.

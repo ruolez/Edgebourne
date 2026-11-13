@@ -206,6 +206,7 @@ def home():
         "ad_strip": strip,
         "changes": changes,
         "updated_at": settings_store.get("last_refresh_at") or settings_store.get("last_performance_sync"),
+        "source": perf["source"],  # D1: the week's figures come from Meta's stored days; today's spend is live
     }
     if user["role"] == "admin":
         out["desk"] = db.query("""SELECT id, kind, prompt, status, summary, finished_at FROM desk_tasks

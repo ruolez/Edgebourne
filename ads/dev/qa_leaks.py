@@ -69,6 +69,9 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
     db.execute("UPDATE activity SET at = now() WHERE id = %s", (activity["id"],))  # History lists the latest 200 only
     once("inbox_reads", {"user_id": admin_id, "item_key": f"{mark}read", "account_id": acct}, "item_key")
     swipe = once("swipes", {"page_name": f"{mark} rival", "body": f"{mark} rival words", "source": "manual", "account_id": acct}, "page_name")
+    # D1: a numbers check that stopped (its words show in Settings → Numbers vs Ads Manager's recent checks).
+    once("numbers_runs", {"kind": "check", "start_day": "2026-10-01", "end_day": "2026-10-02", "finished_at": "2026-10-03T04:10:00Z", "ok": False,
+                          "error": f"{mark} run", "account_id": acct}, "error")
     return {"proposal": proposal["id"], "view": view["id"], "build": build["id"], "swipe": swipe["id"], "alert": problem["id"],
             "change": change["id"]}
 
@@ -119,7 +122,7 @@ with account_ctx.all_accounts():
             for t, col in (("desk_proposals", "title"), ("desk_reports", "title"), ("status_events", "new_value"), ("meta_changes", "new_value"),
                            ("ad_versions", "label"), ("saved_views", "name"), ("campaign_builds", "client_key"), ("alerts", "dedupe_key"),
                            ("lead_notes", "body"), ("lead_replies", "subject"), ("activity", "subject"), ("inbox_reads", "item_key"),
-                           ("desk_tasks", "prompt"), ("swipes", "page_name")):
+                           ("desk_tasks", "prompt"), ("swipes", "page_name"), ("numbers_runs", "error")):
                 db.execute(f"DELETE FROM {t} WHERE account_id = 1 AND {col} LIKE %s", (MARK1 + "%",))
             db.execute("DELETE FROM lead_events WHERE account_id = 1 AND details->>'ad' LIKE %s", (MARK1 + "%",))
     drop_mark1()

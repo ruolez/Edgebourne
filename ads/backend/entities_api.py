@@ -9,6 +9,7 @@ import change_checks_db
 import compare
 import db
 import followup
+import numbers_check
 import ranges
 import search as search_logic
 import status_history
@@ -96,6 +97,7 @@ def _detail(level, entity_id):
     data.update({"level": level, "entity": node, "campaign": {k: v for k, v in (camp or {}).items() if k != "adsets"},
                  "crumbs": crumbs(level, row), "timeline": timeline_for(level, entity_id),
                  "series": _series(f"{col} = %s", [entity_id], start, end),
+                 "source": numbers_check.source(current_user(), start, end, scoped=True),
                  **status_history.marks_payload(current_user(), status_history.marks_scope(level, row), start, end)})
     return jsonify(data)
 
@@ -169,7 +171,8 @@ def compare_ads():
     shaped = compare.shape(items, targets.qualified(), targets.lead(), booked=followup.tracks_bookings())
     parents = list({p for i in ids for p in (rows[i].get("adset_id"), rows[i].get("campaign_id")) if p})
     out = {"range": {"key": key, "start": start.isoformat(), "end": end.isoformat(), "label": ranges.label(start, end)},
-           "items": items, **shaped, **status_history.marks_payload(user, {"entities": ids, "parents": parents}, start, end)}
+           "items": items, **shaped, **status_history.marks_payload(user, {"entities": ids, "parents": parents}, start, end),
+           "source": numbers_check.source(user, start, end, scoped=True)}
     if prev:
         out["prev_range"] = {"start": prev[0].isoformat(), "end": prev[1].isoformat(), "label": ranges.label(*prev)}
     return jsonify(out)

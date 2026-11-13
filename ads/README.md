@@ -91,6 +91,27 @@ dialog (`js/outcome.js`, `?check=<change id>` opens it from a link, Back closes 
 Inbox and Today item until **Put it back** or **Done**; Put it back only opens the usual budget, on/off or version
 dialog filled in with what it was before (`undo_of` is recorded). Claude reads it with `desk outcomes`.
 
+Numbers vs Ads Manager (D1, `backend/numbers_check.py` pure + database part, `numbers_api.py`, tables `meta_day_totals` and
+`numbers_runs`): Meta keeps correcting older days, so once a night after 4 AM (account time) the worker reads the last 28 days and
+last month again (`check_window`; 7-day parts at ad level, under the same per-account pull lock as Refresh,
+`refresh_api.pull_lock`) and compares our day sums with Meta's own account totals. A stored ad-day Meta no longer returns is zeroed
+only when the rest of that day adds up to Meta's total (`restate_plan`); an empty or short answer changes nothing. Daily reads pass
+`use_unified_attribution_setting=true` (Ads Manager's counting; Settings key `insights_unified_attribution`). Settings → Tracking
+health → Numbers vs Ads Manager (`#numbers`, admins): Matches / Differs / Not checked / Couldn't check, the days that differ,
+Check now (Meta's totals only, once a minute), Pull these days again, Check every night. Every figure endpoint returns `source`
+(when its days were read, complete days to, behind, the check's state, Meta's leads next to the leads received); pages show it as
+one line under their figures (`ui.sourceNote`, "Meta 12 · Received 11" via `ui.pairNote`), teammates and clients without the amounts.
+After each run the whole check window is judged again and kept as the account's verdict (settings `numbers_window`; a day the
+verdict found off stays off until Meta's total for it is read again, and a restate stamps the totals after its rows so its own days
+are judged at once). That verdict raises `numbers_off` (FYI once, Needs action after two runs in a row that read the whole window,
+snoozable, closes when the window matches; a pull of one day never closes it for the others). The hourly sync and Settings' full
+sync take the same pull lock. A Pull runs in a thread of its own: the request waits up to 45 s, then answers 202 and the page
+follows `running` on `GET /api/numbers`. Reports carry a stamp (frozen with the copy that goes out; "Checked N of M days" when
+only part of the period was compared) and the source line; an admin's review bar warns about the days that differ with Pull these
+days again, and `send_row` pulls the period before freezing it (`ensure_period`). Fake Meta: `/fake/_restate` (`level=account`
+moves only the account total), `/fake/_restate_drop`, `/fake/_short_answer`, `/fake/_slow?daily=<s>`; daily reads honour
+`time_range`.
+
 Status history (`backend/status_history.py`, table `status_events`): every sync compares what Meta
 says with what was stored and records the change (poll, webhook, console or first sighting); alerts
 for approvals, rejections, learning limited and outside changes come from those changes. Meta's

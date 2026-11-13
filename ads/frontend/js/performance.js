@@ -1,5 +1,5 @@
 import { api, startLoad } from "./api.js";
-import { boot, entityLink, esc, icon, onRefresh, rememberList, skeleton, toast, when, showLoadError } from "./ui.js";
+import { boot, entityLink, esc, icon, onRefresh, pairNote, rememberList, skeleton, sourceNote, toast, when, showLoadError } from "./ui.js";
 import { barList, columnChart, marksPanel } from "./charts.js";
 import { EXPLAIN, FOLLOW, LOST_REASONS, RANGES, STATUS as FORMAT_STATUS, WORDS, count, plural, dayLabel, money, pct, per, moneyWhole, currencySymbol, rangeSelect, rememberCampaign, rememberRange, sharedCampaign, sharedRange, statusPill } from "./format.js";
 
@@ -16,6 +16,14 @@ if (qs.has("idea")) {
   await new Promise(() => {});
 }
 if (RANGE_KEYS.includes(qs.get("range"))) range = qs.get("range");
+// One day or a few, linked from Settings → Numbers vs Ads Manager (D1): ?range=custom&start=&end=, this page only.
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+let custom = qs.get("range") === "custom" && ISO.test(qs.get("start") || "")
+  ? { start: qs.get("start"), end: ISO.test(qs.get("end") || "") ? qs.get("end") : qs.get("start") } : null;
+if (custom) range = "custom";
+const rangeQs = () => (custom ? `range=custom&start=${custom.start}&end=${custom.end}` : `range=${encodeURIComponent(range)}`);
+const customLabel = () => (custom.start === custom.end ? dayLabel(custom.start) : `${dayLabel(custom.start)} – ${dayLabel(custom.end)}`);
+const rangeChoices = () => (custom ? [["custom", customLabel()], ...RANGES] : RANGES);
 // The campaign picked last in this tab (Results or Compare), unless the link names its own ("" = all).
 let campaign = qs.has("campaign") ? qs.get("campaign") : sharedCampaign();
 // Lead quality (L2): by ad, form or answer, and which question, kept in the address (?lq_by=&lq_q=).
@@ -68,7 +76,7 @@ function yesterdayLine(y) {
 // "▲ 18% vs prior 7 days": `better` says which direction is good news (null: neither).
 function change(now, before, better, prev) {
   const span = `${dayLabel(prev.start)} – ${dayLabel(prev.end)}`;
-  const prior = ["mtd", "lastmonth"].includes(range) ? "the month before" : `prior ${data.range.days} days`;
+  const prior = ["mtd", "lastmonth"].includes(range) ? "the month before" : data.range.days === 1 ? "the day before" : `prior ${data.range.days} days`;
   const vs = `vs ${prior}`;
   if (now == null) return "";
   if (before == null || before === 0) return `<span class="delta" title="${esc(span)}">none in ${prior}</span>`;
@@ -88,7 +96,7 @@ function render() {
   const cap = pacingPanel(data);
 
   if (noData) {
-    $("perf").innerHTML = alerts + cap + `<section class="panel empty"><h3>No results yet</h3><p>Once the ads have run for a full day, spend, leads and cost per lead show up here.${me.role === "admin" ? " Connect Meta in Settings, then use Refresh from Meta." : ""}</p>${me.role === "admin" ? '<a class="btn" href="/settings.html">Open Settings</a>' : ""}</section>`;
+    $("perf").innerHTML = alerts + cap + `<div class="src-alone" id="fig-src">${sourceNote(data.source)}</div><section class="panel empty"><h3>No results yet</h3><p>Once the ads have run for a full day, spend, leads and cost per lead show up here.${me.role === "admin" ? " Connect Meta in Settings, then use Refresh from Meta." : ""}</p>${me.role === "admin" ? '<a class="btn" href="/settings.html">Open Settings</a>' : ""}</section>`;
     fixInlineWidths();
     wirePacing();
     return;
@@ -98,7 +106,7 @@ function render() {
   const figures = `<section class="panel figures${data.tracks_bookings ? " booked" : ""}" aria-label="Totals for the period">
     <div class="figure hero"><span class="label">Cost per lead</span><span class="value">${cpl ? money(cpl, { exact: true }) : "—"}</span>${change(cpl, ratio(p.spend_cents, p.leads), "down", p)}<span class="sub">${count(t.leads)} lead${t.leads === 1 ? "" : "s"} from ${money(t.spend_cents)}</span>${yesterdayLine(data.yesterday)}</div>
     <div class="figure"><span class="label">Spent</span><span class="value">${money(t.spend_cents)}</span>${change(t.spend_cents, p.spend_cents, null, p)}</div>
-    <div class="figure"><span class="label">Leads</span><span class="value">${count(t.leads)}</span>${change(t.leads, p.leads, "up", p)}</div>
+    <div class="figure" id="fig-leads"><span class="label">Leads</span><span class="value">${count(t.leads)}</span>${change(t.leads, p.leads, "up", p)}${pairNote(data.source && data.source.leads)}</div>
     <div class="figure"><span class="label">Qualified or won</span><span class="value">${count(t.qualified)}</span>${change(t.qualified, p.qualified, "up", p)}<span class="sub">got that far · from your leads</span></div>
     <div class="figure"><span class="label">Cost per qualified lead</span><span class="value">${per(t.spend_cents, t.qualified)}</span>${change(ratio(t.spend_cents, t.qualified), ratio(p.spend_cents, p.qualified), "down", p)}<span class="sub">the number that matters most</span></div>
     ${data.tracks_bookings ? `<div class="figure" id="fig-booked"><span class="label">${FOLLOW.booked}</span><span class="value">${count(t.booked)}</span>${change(t.booked, p.booked, "up", p)}<span class="sub">${count(t.held)} held, ${plural(t.no_show, "no-show")}</span></div>
@@ -109,7 +117,7 @@ function render() {
     <section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
     <section class="panel"><div class="panel-head"><h2>Leads per day</h2></div><div class="chart" id="c-leads"></div></section>
   </div>
-  <div class="fig-foot"><span class="fig-src"></span><div class="fig-marks" id="chg-panel"></div></div>
+  <div class="fig-foot"><div class="fig-src" id="fig-src"></div><div class="fig-marks" id="chg-panel"></div></div>
   <details class="table-view panel"><summary class="panel-body">Show the days as a table</summary><div class="panel-body scroll-x"><table class="table">
     <thead><tr><th>Day</th><th class="num">Spent</th><th class="num">Leads</th></tr></thead>
     <tbody>${data.series.map((d) => `<tr><td>${dayLabel(d.day)}</td><td class="num">${money(d.spend_cents, { exact: true })}</td><td class="num">${d.leads}</td></tr>`).join("")}</tbody></table></div></details>`;
@@ -130,7 +138,7 @@ function render() {
     ${me.role === "admin" ? `<section class="panel"><div class="panel-head"><h2>What changed on Meta</h2><p>Last 14 days, from Meta's own history: Ads Manager, this dashboard and Meta's automatic changes</p></div><div class="panel-body" id="activity">${skeleton()}</div></section>` : ""}`;
   // By idea lives in Creative › Ideas; here one line on the hooks for the same dates, and the way there.
   const ideas = `<section class="panel" id="ideas-panel"><div class="panel-head wrap"><h2>By idea</h2><p>Which hooks, angles and offers bring the cheapest leads</p><span class="spacer"></span>
-      <a class="btn btn-quiet btn-small" id="ideas-open" href="/ideas.html?range=${encodeURIComponent(range)}">Open Ideas</a></div>
+      <a class="btn btn-quiet btn-small" id="ideas-open" href="/ideas.html?range=${encodeURIComponent(custom ? sharedRange() : range)}">Open Ideas</a></div>
       <div class="panel-body" id="ideas-sum">${skeleton()}</div></section>`;
   $("perf").innerHTML = alerts + cap + figures + charts + ads + quality + ideas + extra;
   loadQuality();
@@ -146,6 +154,7 @@ function render() {
   columnChart({ el: $("c-leads"), series: data.series, key: "leads", color: "var(--chart-leads)", title: "Leads per day", integer: true,
     format: (v) => `${v} lead${v === 1 ? "" : "s"}`, axisFormat: (v) => String(Math.round(v)), marks, marksSummary });
   marksPanel($("chg-panel"), marks, marksSummary, data.marks_list);
+  $("fig-src").innerHTML = sourceNote(data.source);
 }
 
 function adsShown() {
@@ -277,7 +286,8 @@ function campaignPicker() {
 
 // Ads opened from here: the same days and campaign, with "vs before", on the view that matches the filter.
 function adsHref() {
-  const u = new URLSearchParams({ range, vs: "1" });
+  const u = new URLSearchParams({ range: custom ? "custom" : range, vs: "1" });
+  if (custom) { u.set("from", custom.start); u.set("to", custom.end); }
   if (campaign) u.set("campaign", campaign);
   if (table.filter === "running") u.set("view", "delivering");
   if (showDeleted) u.set("archived", "1");
@@ -287,6 +297,8 @@ function adsHref() {
 function syncUrl() {
   const u = new URL(location.href);
   u.searchParams.set("range", range);
+  if (custom) { u.searchParams.set("start", custom.start); u.searchParams.set("end", custom.end); }
+  else { u.searchParams.delete("start"); u.searchParams.delete("end"); }
   if (campaign) u.searchParams.set("campaign", campaign); else u.searchParams.delete("campaign");
   if (showDeleted) u.searchParams.set("deleted", "1"); else u.searchParams.delete("deleted");
   if (qBy !== "ad") u.searchParams.set("lq_by", qBy); else u.searchParams.delete("lq_by");
@@ -296,6 +308,8 @@ function syncUrl() {
   // range picked later on another page isn't overruled by an old one kept here.
   const kept = new URL(u);
   kept.searchParams.delete("range");
+  kept.searchParams.delete("start");
+  kept.searchParams.delete("end");
   rememberList(kept.pathname + kept.search);
   rememberCampaign(campaign);
 }
@@ -412,7 +426,8 @@ async function loadQuality() {
   const box = $("quality-body");
   if (!box) return;
   const superseded = startLoad("quality");
-  const u = new URLSearchParams({ range, by: qBy });
+  const u = new URLSearchParams(rangeQs());
+  u.set("by", qBy);
   if (campaign) u.set("campaign", campaign);
   if (qBy === "answer" && qQ) u.set("question", qQ);
   try {
@@ -425,6 +440,8 @@ async function loadQuality() {
     }
     sel.hidden = qBy !== "answer" || !d.questions.length;
     $("quality-body").innerHTML = qualityHtml(d);
+    // Opened on By idea (below this panel), already scrolled there: the table drawn above it must not push it away.
+    if (ideaShown && location.hash === "#ideas-panel" && $("ideas-panel")) $("ideas-panel").scrollIntoView({ block: "start" });
     syncUrl();
   } catch (err) { if (!superseded() && $("quality-body")) $("quality-body").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
@@ -438,7 +455,7 @@ async function loadIdeas() {
   if (!box) return;
   const superseded = startLoad("ideas");
   try {
-    const d = await api(`/api/concepts?by=hook&range=${encodeURIComponent(range)}`);
+    const d = await api(`/api/concepts?by=hook&${rangeQs()}`);
     if (superseded()) return;
     const tagged = d.groups.filter((g) => g.value !== "Not tagged");
     const best = d.groups.find((g) => g.best);
@@ -462,7 +479,7 @@ async function loadAccountBreakdown() {
   const superseded = startLoad("who-where");
   try {
     const scope = campaign ? `level=campaign&id=${encodeURIComponent(campaign)}` : "level=account";
-    const d = await api(`/api/insights/breakdown?${scope}&by=${accBy}&range=${range}`);
+    const d = await api(`/api/insights/breakdown?${scope}&by=${accBy}&${rangeQs()}`);
     if (superseded() || !$("acc-spend")) return;
     const total = d.items.reduce((s, i) => s + i.spend_cents, 0);
     barList($("acc-spend"), d.items, { key: "spend_cents", format: (v) => (total ? `${Math.round((v / total) * 100)}%` : "—"), extra: (i) => money(i.spend_cents) });
@@ -484,12 +501,13 @@ async function loadActivity() {
 }
 
 async function load() {
-  if ($("range-pick")) $("range-pick").value = range; else $("range-box").outerHTML = rangeSelect("range-pick", range);
+  if ($("range-pick") && $("range-pick").options.length === rangeChoices().length) $("range-pick").value = range;
+  else ($("range-pick") || $("range-box")).outerHTML = rangeSelect("range-pick", range, rangeChoices());
   syncUrl();
   const superseded = startLoad("performance");
   let d;
   try {
-    d = await api(`/api/performance?range=${range}${campaign ? `&campaign=${encodeURIComponent(campaign)}` : ""}`);
+    d = await api(`/api/performance?${rangeQs()}${campaign ? `&campaign=${encodeURIComponent(campaign)}` : ""}`);
   } catch (err) {
     if (superseded()) return;
     if (campaign) { campaign = ""; return load(); }
@@ -526,8 +544,9 @@ if (me) {
   });
   $("campaign").addEventListener("change", () => { campaign = $("campaign").value; load(); });
   document.querySelector(".page-head").addEventListener("change", (e) => {
-    if (e.target.id !== "range-pick") return;
+    if (e.target.id !== "range-pick" || e.target.value === "custom") return;
     range = e.target.value;
+    custom = null; // the dates linked from the numbers check give way to the ones picked here
     rememberRange(range);
     load();
   });

@@ -1,7 +1,7 @@
 // Ads page: the manager table at three levels with views, saved views, range + "vs before",
 // columns, search, selection → bulk bar / compare, and a peek drawer. Everything is in the URL.
 import { api, startLoad } from "./api.js";
-import { boot, confirmDialog, emptyState, esc, icon, onRefresh, toast, showLoadError, rememberList, withFrom } from "./ui.js";
+import { boot, confirmDialog, emptyState, esc, icon, onRefresh, sourceNote, toast, showLoadError, rememberList, withFrom } from "./ui.js";
 import { count, dayLabel, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
 import { COLUMN_SETS, LEVEL_WORDS, columnLabel, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, setBooked, listHtml, narrow, peek, tableHtml, hasTrack, trackLegend, unlistedNote, wire } from "./manager.js";
@@ -110,7 +110,7 @@ function render() {
     : state.level === "ad" && state.display === "cards" ? cardsHtml(list)
     : narrow() ? listHtml({ rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), selected, sort: state.sort, dir: state.dir })
     : tableHtml({ level: state.level, rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: state.cols, sort: state.sort, dir: state.dir, selected, selectable: true, range: state.range });
-  $("cr-all").innerHTML = buildsNote() + headerFigures() + toolbar() + body + (table && hasTrack(list) ? trackLegend() : "")
+  $("cr-all").innerHTML = buildsNote() + headerFigures() + toolbar() + `<div class="cr-src" id="fig-src">${sourceNote(data.source)}</div>` + body + (table && hasTrack(list) ? trackLegend() : "")
     + `<p class="muted small flush cr-foot">Complete days only (${esc(dayLabel(data.range.start))} to ${esc(dayLabel(data.range.end))}); today is left out because Meta reports late.${esc(unlistedNote(headerTotals().m, (rows.ad || []).filter((a) => !state.campaign || a.campaign?.id === state.campaign)))} Click a row for a quick look.</p>`;
   if (state.level === "campaign" && me.role === "admin") {
     document.querySelectorAll('#cr-all tr[data-row^="campaign:"] .c-name small').forEach((sm) => {

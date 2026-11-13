@@ -487,6 +487,45 @@ body.chg-off .chg-mark, body.chg-off .chg-guide { display: none; }
 /* The row under the charts: where the numbers come from on the left (D1), the changes on the right. */
 .fig-foot { display: flex; gap: 12px 24px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
 .fig-foot .fig-src:empty { display: none; }
+.fig-src { flex: 1 1 280px; min-width: 0; }
+/* Where the numbers come from (D1): one muted line under the figures; it opens to say what it means. */
+.src-note { font-size: var(--t-xs); color: var(--ink-3); min-width: 0; max-width: 100%; }
+.src-note > summary { display: flex; align-items: center; gap: 6px; padding: 4px 0; cursor: pointer; list-style: none; min-width: 0; }
+.src-note > summary::-webkit-details-marker { display: none; }
+.src-note > summary::after { content: "›"; flex: none; color: var(--ink-3); transition: transform .15s var(--ease); }
+.src-note[open] > summary::after { transform: rotate(90deg); }
+.src-note > summary:hover .src-line { color: var(--ink-2); }
+.src-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.src-note.is-behind > summary, .src-note.is-off > summary { color: var(--amber-ink); }
+.src-note.is-behind > summary::before, .src-note.is-off > summary::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+.src-note.is-behind > summary:hover .src-line, .src-note.is-off > summary:hover .src-line { color: var(--amber-ink); }
+.src-help { display: grid; gap: 4px; padding: 2px 0 8px; max-width: 680px; color: var(--ink-2); line-height: 1.45; }
+.src-help p { margin: 0; }
+.src-pair { display: block; max-width: 100%; font-size: var(--t-xs); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.src-alone { margin: 8px 0 0; }
+.cr-src { margin: -2px 0 6px; }
+.td-src { margin: 4px 0 8px; }
+.r-stamp { font-style: italic; }
+.r-src { margin-top: 4px; }
+.nc-running { color: var(--ink-2); }
+@media (prefers-reduced-motion: reduce) { .src-note > summary::after { transition: none; } }
+@media (pointer: coarse) { .src-note > summary { min-height: var(--target); } .src-help a { display: inline-flex; align-items: center; min-height: var(--target); } }
+/* Settings → Tracking health → Numbers vs Ads Manager (D1). */
+.nc-part { border-top: 1px solid var(--line); }
+.nc-head h3 { margin: 0; font-size: var(--t-l); }
+.nc-days { width: 100%; }
+.nc-days .nc-diff { font-weight: 600; color: var(--amber-ink); }
+.nc-days tr.is-newer td { color: var(--ink-3); }
+.nc-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.nc-runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: var(--t-s); color: var(--ink-2); }
+@media (max-width: 720px) {
+  .nc-days thead { display: none; }
+  .nc-days, .nc-days tbody, .nc-days tr, .nc-days td { display: block; width: 100%; }
+  .nc-days tr { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .nc-days td, .nc-days td.num { padding: 2px 0; border: 0; text-align: left; }
+  .nc-days td[data-label]::before { content: attr(data-label) " "; color: var(--ink-3); }
+  .nc-acts .btn { flex: 1 1 100%; }
+}
 .fig-marks { flex: 1 1 320px; min-width: 0; display: flex; justify-content: flex-end; }
 .fig-marks > p { margin: 0; }
 .chg-fold { width: 100%; max-width: 640px; }

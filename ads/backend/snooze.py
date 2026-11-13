@@ -32,6 +32,7 @@ WORSE = {
     "tracking": ("level", None),          # Meta's leads in two days; "Remind me tomorrow" only
     "qualified_low": ("share_down", 10),  # % of the worked leads that qualified
     "junk_high": ("share_up", 15),        # % of the leads that look like junk
+    "numbers_off": ("plus", 3),           # D1: days that differ from Ads Manager
 }
 DAY_AT_MOST = {"tracking"}  # leads may be getting lost: one day at most, like a red money alert
 EPS = 1e-9
@@ -146,6 +147,7 @@ def worse_hint(rule, measure, money=_money):
         "stale_data": lambda: "You'll hear again if Meta is still silent a day from now.",
         "qualified_low": lambda: _qualified_hint(m),
         "junk_high": lambda: _junk_hint(m),
+        "numbers_off": lambda: "You'll hear again if 3 more days differ.",
     }.get(rule, lambda: "You'll hear again if it turns red.")()
 
 
@@ -186,6 +188,7 @@ def measure_words(rule, m, money=_money):
         "ad_rejected": lambda: "rejected" if m >= 2 else "has issues",
         "qualified_low": lambda: f"{int(m + 0.5)}% qualified",  # rounded half up, as the alert's title
         "junk_high": lambda: f"{int(m + 0.5)}% junk",
+        "numbers_off": lambda: f"{m:.0f} day that differs" if round(m) == 1 else f"{m:.0f} days that differ",
     }.get(rule, lambda: None)()
 
 

@@ -96,6 +96,8 @@ def by_concept():
     if key == "90":
         end = today - timedelta(days=1)
         start = end - timedelta(days=89)
+    elif key == "custom" and request.args.get("start"):
+        start, end = ranges.window("custom", today, request.args.get("start"), request.args.get("end") or request.args.get("start"))
     else:
         key = key if key in SHARED else "30"
         start, end = ranges.window(key, today)

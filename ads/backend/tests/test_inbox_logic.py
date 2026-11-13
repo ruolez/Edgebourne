@@ -238,3 +238,16 @@ class SnoozeAndDiagnoseTests(unittest.TestCase):
         got = self.build([], proposals=[{"id": 4, "summary": "Pause N3", "created_at": NOW, "entity_name": "N3",
                                          "alert_title": "No leads for 5 days in “Leads”"}])
         self.assertEqual(got[0]["lines"], ["From: No leads for 5 days in “Leads”"])
+
+
+class NumbersOffTests(unittest.TestCase):
+    """D1: our numbers differing from Ads Manager is a system item; one night is FYI, two in a row need action."""
+
+    def test_category(self):
+        self.assertEqual(inbox.category("numbers_off"), "system")
+
+    def test_info_is_for_information_and_warn_needs_action(self):
+        rows = [dict(alert(1, "numbers_off", 5, "info"), kind="condition", entity_id="account"),
+                dict(alert(2, "numbers_off", 5, "warn"), kind="condition", entity_id="account2")]
+        got = {i["key"]: i["need"] for i in inbox.build(rows, [], [], set())}
+        self.assertEqual(got, {"alert:1": False, "alert:2": True})

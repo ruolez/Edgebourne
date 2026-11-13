@@ -7,6 +7,7 @@ refresh); open pages notice the newer data and reload it.
 """
 import logging
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify
@@ -60,10 +61,31 @@ def auto_due(last_pull, last_try, now, minutes):
     return now < last_pull or now - last_pull >= minutes * 60
 
 
+def pull_lock(account_id):
+    """One pull from Meta at a time per account: the quick pass, and the numbers check's restate (D1)."""
+    return LOCK_KEY * 1000 + account_id
+
+
+@contextmanager
+def holding_pull_lock(account_id, wait=0.0):
+    """This account's pull lock on a connection of its own for the block (closing it releases the lock). Yields
+    whether it was got, waiting up to `wait` seconds for a pull that holds it."""
+    conn = db.connect()
+    try:
+        deadline = time.time() + wait
+        got = jobs._locked(conn, pull_lock(account_id))
+        while not got and time.time() < deadline:
+            time.sleep(0.5)
+            got = jobs._locked(conn, pull_lock(account_id))
+        yield got
+    finally:
+        conn.close()
+
+
 def pull_latest(conn):
     """The quick pass. Returns None when another pass holds the lock; MetaError propagates."""
     import account_ctx
-    lock = LOCK_KEY * 1000 + account_ctx.current()  # one pull at a time per account
+    lock = pull_lock(account_ctx.current())
     if not jobs._locked(conn, lock):
         return None
     try:

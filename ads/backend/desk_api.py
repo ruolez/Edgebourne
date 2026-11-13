@@ -1049,6 +1049,10 @@ def snapshot():
         days = 7
     days = days if days in (7, 14, 30) else 7
     perf = overview_data({"id": None, "role": "admin"}, days)
+    # D1 (00-PLAN): the snapshot carries the check's state and how many days differ, never the amounts.
+    check = (perf.get("source") or {}).get("meta", {}).get("check")
+    if check:
+        check.update(spend_off_cents=None, leads_off=None)
     # Lead quality over the same complete account days as the spend (audit A3-45, A3-56), per ad id:
     # ad names repeat across versions.
     window = (account_info.tz_name(), perf["range"]["start"], perf["range"]["end"])
@@ -1093,7 +1097,7 @@ def snapshot():
     import accounts_api
     import change_checks_db
     return jsonify({"account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current())},
-                    "performance": perf, "lead_stages_by_ad": stages, "lead_business_types": types,
+                    "performance": perf, "source": perf["source"], "lead_stages_by_ad": stages, "lead_business_types": types,
                     "speed_to_lead": speed, "follow_ups": follow,
                     "lead_quality_by_ad": quality_rows, "lead_quality_totals": quality_totals, "lead_quality_notes": lq.SNAPSHOT_NOTES, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
                     "experiments": tests, **budget_snapshot(perf["range"]),

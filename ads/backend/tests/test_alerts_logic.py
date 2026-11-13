@@ -299,3 +299,36 @@ class RulesWithTests(unittest.TestCase):
     def test_saved_values_override_defaults_and_unknown_keys_are_dropped(self):
         r = alerts.rules_with({"no_leads": {"days": 5}, "bogus": {"on": True}, "spend_cap": {"percent": "90"}})
         self.assertEqual((r["no_leads"], r["spend_cap"]["percent"], "bogus" in r), ({"on": True, "days": 5}, 90, False))
+
+
+class NumbersOffTests(unittest.TestCase):
+    """D1: our stored days differ from Ads Manager's own totals after a night's pull (or a pull by hand)."""
+    OFF = {"state": "off", "off_days": ["2026-10-14", "2026-10-20"], "spend_off_cents": 30, "leads_off": 1,
+           "off": [{"day": "2026-10-14", "meta_spend_cents": 1234, "meta_leads": 3, "here_spend_cents": 1204, "here_leads": 2},
+                   {"day": "2026-10-20", "meta_spend_cents": 500, "meta_leads": 0, "here_spend_cents": 500, "here_leads": 0}]}
+
+    def found(self, summary, kind="nightly", off_runs=1, rules=RULES):
+        got = alerts.evaluate(snap(numbers={"summary": summary, "kind": kind, "off_runs": off_runs}), rules, TODAY)
+        return [a for a in got if a["rule"] == "numbers_off"]
+
+    def test_one_night_off_is_for_information(self):
+        got = self.found(self.OFF)
+        self.assertEqual([(a["level"], a["title"], a["lines"], a["href"], a["entity_id"], a["measure"]) for a in got],
+                         [("info", "Numbers differ from Ads Manager on Oct 14 and Oct 20",
+                           ["Ads Manager says $12.34 and 3 leads for Oct 14; we have $12.04 and 2.",
+                            "We pull these days again every night."], "/settings.html#numbers", "account", 2)])
+
+    def test_two_runs_in_a_row_need_action(self):
+        self.assertEqual([a["level"] for a in self.found(self.OFF, off_runs=2)], ["warn"])
+        self.assertEqual([a["level"] for a in self.found(self.OFF, kind="pull", off_runs=3)], ["warn"])
+
+    def test_nothing_when_it_matches_when_unchecked_or_when_the_rule_is_off(self):
+        off_rule = alerts.rules_with({"numbers_off": {"on": False}})
+        self.assertEqual([self.found({"state": "match"}), self.found({"state": "unchecked"}), self.found(self.OFF, rules=off_rule),
+                          self.found(None)], [[], [], [], []])
+
+    def test_a_check_now_neither_raises_nor_closes_it(self):
+        self.assertEqual(self.found(self.OFF, kind="check"), [])
+        opened = [{"id": 7, "rule": "numbers_off", "entity_id": "account"}]
+        self.assertEqual(alerts.to_resolve(opened, [], snap(numbers={"summary": self.OFF, "kind": "check", "off_runs": 1})), [])
+        self.assertEqual(alerts.to_resolve(opened, [], snap(numbers={"summary": {"state": "match"}, "kind": "check", "off_runs": 0})), [7])

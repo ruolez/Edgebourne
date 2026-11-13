@@ -696,7 +696,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   // Alerts: rules in Settings; a rejected ad raises one alert (Telegram + Today), not twice, and it clears by itself.
   await openSettings('alerts');
   await page.waitForSelector('#al-rules li');
-  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 20);
+  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 21);
   check('W1b: Settings lists the two lead-quality rules, on by default, with their numbers and what junk means',
     /Few leads qualify/.test(await page.textContent('#al-rules')) && /counting only leads someone has worked \(past New, or Lost\)/.test(await page.textContent('#al-rules')) && /Many leads look like junk/.test(await page.textContent('#al-rules'))
     && await page.isChecked('[data-rule="qualified_low"][data-key="on"]') && await page.isChecked('[data-rule="junk_high"][data-key="on"]')
@@ -2194,8 +2194,8 @@ print(a[0][1] if a else '-', b[0][1] if b else '-')"`).trim();
     leak.client_writes_not_refused.slice(0, 4).join(' | '));
   check('each account still sees its own data', leak.admin_sees_account2_on_account2 && leak.client_sees_own_leads);
   // The walk only finds a leak where the other account has a marked row: each screen must show its own account's marks.
-  const markShown = { 'admin on account 1': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity'],
-    'admin on account 2, own ids': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/timeline/<level>/<entity_id>',
+  const markShown = { 'admin on account 1': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers'],
+    'admin on account 2, own ids': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/timeline/<level>/<entity_id>',
       '/api/proposals/<int:proposal_id>', '/api/leads/<int:lead_id>', '/api/ads/ad/<ad_id>/tags', '/api/experiments/<int:exp_id>', '/api/builds/<int:build_id>'] };
   const unmarked = Object.entries(markShown).flatMap(([who, routes]) => routes.filter((r) => !(leak.routes_showing_own_mark[who] || []).includes(r)).map((r) => `${who}: ${r}`));
   check('the leak walk has marked rows to find in Inbox, Claude, saved views, builds, History and the timeline', unmarked.length === 0, unmarked.join(' | '));
@@ -3813,12 +3813,24 @@ db.execute('DELETE FROM settings WHERE key = %s', (settings_store.stored_key('qa
       tagged.groups.length >= 1 && tagged.groups.every((x) => x.tags_all.some(([d, v]) => d === 'hook' && v === tagWord))
       && (await page.locator('.gal-card').count()) === tagged.groups.length && (await page.inputValue('#tag-pick')) === `hook:${tagWord}`, `${tagWord}: ${tagged.groups.length}`);
     await page.selectOption('#tag-pick', '');
+    // A deleted ad that spent yesterday (its own row: the nightly check zeroes ad-days Meta no longer reports, D1).
+    py(`import db, account_info
+from datetime import timedelta
+db.execute('DELETE FROM ad_daily WHERE ad_id = %s', ('qa-gal-del',))
+db.execute('DELETE FROM ads WHERE id = %s', ('qa-gal-del',))
+db.execute('''INSERT INTO ads (id, name, campaign_id, adset_id, status, effective_status, creative_id, object_type, title, body, created_time)
+  SELECT 'qa-gal-del', 'QA gallery deleted', campaign_id, adset_id, 'DELETED', 'DELETED', 'qa-gal-del-creative', 'SHARE', 'Gone', 'Deleted words', created_time
+  FROM ads WHERE id = %s''', ('${N2}',))
+db.execute('INSERT INTO ad_daily (day, ad_id, spend_cents, impressions, leads, video_3s) VALUES (%s, %s, 200, 500, 0, 0)', (account_info.today() - timedelta(days=1), 'qa-gal-del'))`);
     await page.selectOption('#status-pick', 'deleted');
     await page.waitForFunction(() => new URL(location.href).searchParams.get('status') === 'deleted');
     await page.waitForTimeout(300);
     const del = await gal('&status=deleted');
     check('Gallery: the status picker shows only that status (Deleted here)', del.groups.length > 0 && del.groups.every((x) => x.bucket === 'deleted')
       && (await page.locator('.gal-card').count()) === del.groups.length);
+    py(`import db
+db.execute('DELETE FROM ad_daily WHERE ad_id = %s', ('qa-gal-del',))
+db.execute('DELETE FROM ads WHERE id = %s', ('qa-gal-del',))`);
     // Compare from two cards: each card's top-spending ad, on the same dates.
     await page.goto(BASE + '/gallery.html?range=14');
     await page.waitForSelector('.gal-card [data-pick]');
@@ -4709,7 +4721,7 @@ db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users
       await sp.goto(BASE + '/settings.html#alerts');
       await sp.waitForSelector('#al-rules input[data-key="on"]');
       const widths = await sp.evaluate(() => [...document.querySelectorAll('#al-rules input[data-key="on"]')].map((i) => Math.round(i.getBoundingClientRect().width)));
-      check('Settings → Alerts on a phone: every rule\'s tick box is 18px wide', widths.length === 20 && widths.every((w) => w === 18), JSON.stringify(widths));
+      check('Settings → Alerts on a phone: every rule\'s tick box is 18px wide', widths.length === 21 && widths.every((w) => w === 18), JSON.stringify(widths));
       await sp.context().close();
     }
     // Gone again: without those leads both alerts close by themselves at the next check.
@@ -5586,6 +5598,229 @@ finally:
     }
     // The seeded campaigns and their spend go, so later checks see the account as it was.
     sh('docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python /tmp/seed_checks.py --clean');
+  }
+  // D1 Match Ads Manager: Meta's own day totals against ours (Settings → Numbers vs Ads Manager), Check now, Pull these
+  // days again (and its guard against a short answer), the Inbox item, the source line on every figure page, the pair
+  // Meta N · Received M, the report stamp and the review bar's warning, who sees what, phones. Fake Meta only.
+  {
+    const d1py = (code) => sh(`docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -c "${code}"`).trim();
+    const fakeD1 = (p) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/fake/${p}').read().decode())"`));
+    const post = (url, body) => page.evaluate(async ([u, b]) => { const r = await fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); return { code: r.status, body: await r.json() }; }, [url, body]);
+    const unthrottle = () => d1py("import settings_store;settings_store.set('numbers_last_check_at', None)");
+    const stored = (day, ad) => Number(d1py(`import db;r=db.query('SELECT spend_cents FROM ad_daily WHERE day=%s AND ad_id=%s',('${day}','${ad}'),one=True);print(r['spend_cents'] if r else -1)`));
+    const openNumbers = async (p = page) => {
+      await p.goto(`${BASE}/settings.html#numbers`);
+      await p.reload();
+      await p.waitForSelector('#tracking[data-section]:not([hidden]) #nc-state .pill');
+    };
+    // A clean start: Meta as it was, our stored days read again from it, no earlier checks. Stored days start at nothing spent,
+    // which is what the fake says about anything it doesn't know (it keeps 11 days); the sync below writes its days back. The rows
+    // stay, so reports keep their earlier weeks.
+    fakeD1('_restate?clear=1');
+    d1py(`import db
+db.execute(\\"UPDATE ad_daily SET spend_cents = 0, leads = 0, impressions = 0, reach = 0, link_clicks = 0 WHERE day > CURRENT_DATE - 70\\")
+db.execute(\\"INSERT INTO ad_daily (day, ad_id, ad_name, spend_cents) SELECT d::date, 'qa-d1-quiet', 'QA quiet days', 0 FROM generate_series(CURRENT_DATE - 60, CURRENT_DATE - 12, interval '1 day') d ON CONFLICT DO NOTHING\\")
+db.execute('DELETE FROM meta_day_totals'); db.execute('DELETE FROM numbers_runs')
+db.execute(\\"DELETE FROM alerts WHERE rule = 'numbers_off'\\")
+import settings_store
+for k in ('numbers_off_runs', 'numbers_last_check_at', 'numbers_check'): settings_store.set(k, None)`);
+    const synced = await post('/api/performance/sync', {});
+    const today = d1py('import account_info;print(account_info.today())');
+    const dayBack = (n) => { const d = new Date(`${today}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
+    const D = dayBack(5), D2 = dayBack(6);
+    const perf = await getJson('/api/performance?range=14');
+    const n1 = perf.ads.find((a) => /^N1/.test(a.name)).id, n2 = perf.ads.find((a) => /^N2/.test(a.name)).id;
+    // 1. Check now: everything matches, for the window it names.
+    await openNumbers();
+    check('D1: #numbers opens Settings on Tracking health with the Numbers vs Ads Manager part, not checked yet', synced.code === 200
+      && /Not checked/.test(await page.textContent('#nc-state')) && /first check runs tonight after 4 AM/.test(await page.textContent('#nc-body')));
+    await page.click('#nc-check');
+    await page.waitForFunction(() => /Matches/.test(document.getElementById('nc-state').textContent));
+    const win = (await getJson('/api/numbers')).window;
+    check('D1: Check now reads Meta\'s totals and says they match, naming the window', new RegExp(`for ${win.label}\\. Both say \\$[\\d,.]+ spent and \\d+ leads?\\.`).test(await page.textContent('#nc-body')),
+      await page.textContent('#nc-body'));
+    // 2. Meta changes an older day: the check finds it, with the day linked to Results for that day.
+    fakeD1(`_restate?day=${D}&ad=${n1}&spend=0.5&leads=1`);
+    unthrottle();
+    const n1Before = stored(D, n1);
+    await page.click('#nc-check');
+    await page.waitForFunction(() => /Differs/.test(document.getElementById('nc-state').textContent));
+    const offBody = await page.textContent('#nc-body');
+    const dayLink = await page.getAttribute(`.nc-day[data-day="${D}"] a`, 'href');
+    check('D1: a changed day shows as Differs by $0.50 and 1 lead on 1 day, in the day table', /Differs by \$0\.50 and 1 lead on 1 day\./.test(offBody)
+      && (await page.locator('.nc-day').count()) === 1 && /\+\$0\.50 · \+1 lead/.test(await page.textContent(`.nc-day[data-day="${D}"] .nc-diff`)), offBody.slice(0, 200));
+    check('D1: the check read Meta only: our stored day is unchanged', stored(D, n1) === n1Before);
+    await page.screenshot({ path: `${OUT}/d1-numbers-off.png`, fullPage: true });
+    await page.goto(BASE + dayLink);
+    await page.waitForSelector('#fig-src .src-note');
+    const oneDay = await page.evaluate(() => ({ pick: document.getElementById('range-pick').value, opt: document.querySelector('#range-pick option:checked').textContent, url: location.search }));
+    check('D1: the day links to Results for just that day', dayLink === `/performance.html?range=custom&start=${D}&end=${D}` && oneDay.pick === 'custom'
+      && /start=/.test(oneDay.url) && (await getJson(`/api/performance?range=custom&start=${D}&end=${D}`)).range.days === 1, JSON.stringify(oneDay));
+    // 3. Pull these days again: the day is read again and matches.
+    await openNumbers();
+    await page.click('#nc-pull');
+    await page.waitForFunction(() => /Matches/.test(document.getElementById('nc-state').textContent));
+    const pulledToast = await page.textContent('.toast');
+    check('D1: Pull these days again reads the day again: Matches, with what Meta changed', /Pulled 1 day again\. Matches Ads Manager now\./.test(pulledToast)
+      && /Meta changed 1 older day; we updated it: \+1 lead, \+\$0\.50\./.test(await page.textContent('#nc-restated')) && stored(D, n1) === n1Before + 50,
+      `${pulledToast} | ${stored(D, n1)} vs ${n1Before}`);
+    // 4. An ad-day Meta credited back: zeroed, because the rest adds up to Meta's total.
+    fakeD1(`_restate_drop?day=${D2}&ad=${n2}`);
+    const dropped = await post('/api/numbers/pull', { start: D2, end: D2 });
+    check('D1: an ad-day Meta no longer reports is zeroed when the rest adds up to its total, and the check matches', dropped.code === 200 && stored(D2, n2) === 0
+      && dropped.body.state === 'match', `${dropped.code} ${stored(D2, n2)} ${dropped.body.state}`);
+    // 4b. Meta's own account total moves while its ad rows stay the same: right after a pull the day is off (not "updated
+    // since the check"), and the FYI alert goes up.
+    const D3 = dayBack(4);
+    fakeD1(`_restate?day=${D3}&level=account&spend=0.4`);
+    const acctOff = await post('/api/numbers/pull', { start: D3, end: D3 });
+    await openNumbers();
+    const d3Row = page.locator(`.nc-day[data-day="${D3}"]`);
+    check('D1: when Meta\'s ad rows don\'t add up to its own total, a pull leaves the day Differs, not "updated since the check"', acctOff.code === 200
+      && acctOff.body.state === 'off' && /Still off by \$0\.40 on \w{3} \d+/.test(acctOff.body.message) && /Differs/.test(await page.textContent('#nc-state'))
+      && (await d3Row.count()) === 1 && !/Updated since the check/.test(await d3Row.textContent()), `${acctOff.code} ${acctOff.body.state} ${acctOff.body.message}`);
+    d1py('import alerts;alerts.run()');
+    const acctAlert = (await getJson('/api/inbox?box=all')).items.find((i) => i.rule === 'numbers_off' && i.open);
+    check('D1: that pull raises the FYI alert', !!acctAlert && acctAlert.level === 'info' && acctAlert.need === false, JSON.stringify(acctAlert));
+    // 4c. A pull Meta is slow over answers at once (202) and goes on by itself; Settings follows it to the end. It matches,
+    // but another day still differs, so the alert stays open.
+    fakeD1('_slow?daily=6');
+    const slow = await post('/api/numbers/pull', { start: D2, end: D2, wait: 0.5 });
+    await openNumbers();
+    const runningSeen = await page.textContent('#nc-running').catch(() => '');
+    const pullBusy = await page.isDisabled('#nc-pull').catch(() => false);
+    await page.waitForFunction(() => !document.getElementById('nc-running'), null, { timeout: 40000 }).catch(() => {});
+    fakeD1('_slow?daily=0');
+    const slowEnd = await getJson('/api/numbers');
+    check('D1: a slow pull answers at once and goes on by itself; Settings shows it reading, then how it ended', slow.code === 202 && slow.body.running_pull === true
+      && /^Reading .+ again from Meta\./.test(runningSeen) && pullBusy && !slowEnd.running && slowEnd.runs[0].kind === 'pull' && slowEnd.runs[0].ok === true
+      && slowEnd.runs[0].start === D2 && /Differs/.test(await page.textContent('#nc-state')), `${slow.code} ${runningSeen} ${pullBusy} ${JSON.stringify(slowEnd.runs[0])}`);
+    d1py('import alerts;alerts.run()');
+    check('D1: a matching pull of one day keeps the alert open while another day still differs',
+      (await getJson('/api/inbox?box=all')).items.some((i) => i.rule === 'numbers_off' && i.open));
+    // 4d. Meta's total back as it was, read again.
+    fakeD1(`_restate?day=${D3}&level=account&spend=-0.4`);
+    const d3Back = await post('/api/numbers/pull', { start: D3, end: D3 });
+    check('D1: once Meta\'s total adds up again, the pull matches', d3Back.code === 200 && d3Back.body.state === 'match', `${d3Back.code} ${d3Back.body.state}`);
+    // 5. A short answer from Meta is no proof: nothing is zeroed or overwritten, the day stays off, and that is no error.
+    fakeD1(`_restate?day=${D}&ad=${n1}&spend=0.25`);
+    const kept = stored(D, n1);
+    fakeD1('_short_answer?part=1');
+    const shortPull = await post('/api/numbers/pull', { start: D, end: D });
+    check('D1: a short answer from Meta changes nothing: stored days stay, the day stays off, no error', shortPull.code === 200 && stored(D, n1) === kept
+      && shortPull.body.state === 'off' && shortPull.body.runs[0].ok === true && shortPull.body.runs[0].error === null,
+      `${shortPull.code} ${stored(D, n1)}/${kept} ${shortPull.body.state} ${JSON.stringify(shortPull.body.runs[0])}`);
+    // 9. The night's alert: one pull off is for information, in the Inbox with the days it names.
+    d1py('import alerts;alerts.run()');
+    const fyi = (await getJson('/api/inbox?box=all')).items.find((i) => i.rule === 'numbers_off' && i.open);
+    check('D1: days still off after a pull are an FYI Inbox item that names them and links to the check', fyi && fyi.need === false && fyi.level === 'info'
+      && /^Numbers differ from Ads Manager on \w{3} \d+$/.test(fyi.title) && fyi.href === '/settings.html#numbers', JSON.stringify(fyi));
+    // The Settings → Alerts row.
+    await openSettings('alerts');
+    await page.waitForSelector('#al-rules li');
+    const ruleRow = page.locator('#al-rules li', { hasText: 'Our numbers differ from Ads Manager' });
+    check('D1: Settings → Alerts has "Our numbers differ from Ads Manager", on', (await ruleRow.count()) === 1 && await ruleRow.locator('input[data-key="on"]').isChecked());
+    // 6–7. The source line under every figure page, the pair on Results.
+    await page.goto(`${BASE}/performance.html?range=7`);
+    await page.waitForSelector('#fig-src .src-note summary');
+    const srcLine = await page.textContent('#fig-src .src-note summary');
+    await page.click('#fig-src .src-note summary');
+    const help = await page.textContent('#fig-src .src-help');
+    const pairText = await page.textContent('#fig-leads .src-pair');
+    const perf7 = await getJson('/api/performance?range=7');
+    const oracle = d1py(`import db,json;from datetime import date;r=db.query('SELECT MIN(m) AS t FROM (SELECT MAX(synced_at) AS m FROM ad_daily WHERE day BETWEEN %s AND %s GROUP BY day) x',(date.fromisoformat('${perf7.range.start}'),date.fromisoformat('${perf7.range.end}')),one=True);print(r['t'].isoformat())`);
+    check('D1: Results says where its numbers come from: From Meta, synced, complete days, and the days that differ (admins)', /^From Meta · synced .+ · complete days to \w{3} \d+ · differs from Ads Manager on 1 day/.test(srcLine.trim())
+      && /attribution setting/.test(help) && /Numbers check in Settings/.test(help), srcLine);
+    check('D1: "synced" is when the oldest of the days on screen was last read', new Date(perf7.source.meta.synced_at).getTime() === new Date(oracle).getTime(), `${perf7.source.meta.synced_at} ${oracle}`);
+    check('D1: the Leads figure shows Meta N · Received M, from the counts on the server', pairText === `Meta ${perf7.totals.leads} · Received ${perf7.source.leads.received}`, pairText);
+    const pagesWithNote = [];
+    for (const [p, sel] of [['/home.html', '#fig-src .src-note'], ['/ads.html', '#fig-src .src-note'], ['/campaign.html?id=120252638288040312', '#fig-src .src-note'],
+      ['/adset.html?id=120252672227950312', '#fig-src .src-note'], [`/ad.html?id=${n1}`, '#fig-src .src-note'],
+      [`/compare.html?ids=${n1},${n2}`, '#fig-src .src-note'], [`/report.html?kind=week&start=${D}`, '#r-stamp'], [`/report.html?kind=week&start=${D}`, '#r-src .src-note']]) {
+      await page.goto(BASE + p);
+      const ok = await page.waitForSelector(sel, { timeout: 8000 }).then(() => true, () => false);
+      if (!ok) pagesWithNote.push(p);
+    }
+    check('D1: Today, Ads, Campaign, Ad set, Ad, Compare and the report carry the source line, and the report its stamp', pagesWithNote.length === 0, pagesWithNote.join(' '));
+    check('D1: Today says today\'s spend is live', /today so far, changes through the day/.test(await (async () => { await page.goto(`${BASE}/home.html`); await page.waitForSelector('#fig-src .src-note'); return page.textContent('#fig-src .src-note summary'); })()));
+    // 10–11. A teammate and a client: the state in words, never the amounts, no check, no buttons.
+    d1py(`import db
+from werkzeug.security import generate_password_hash as h
+for email, role in (('qa-d1-client@example.com', 'client'), ('qa-d1-mate@example.com', 'member')):
+    db.execute(\\"INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, %s, 1) ON CONFLICT (email) DO UPDATE SET is_active = TRUE, password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, account_id = 1, must_change_password = FALSE\\", (email, 'QA D1 ' + role, h('d1-pass-12345'), role))
+db.execute(\\"INSERT INTO campaign_members (campaign_id, user_id, account_id) SELECT '120252638288040312', id, 1 FROM users WHERE email = 'qa-d1-mate@example.com' ON CONFLICT DO NOTHING\\")`);
+    for (const [email, who] of [['qa-d1-mate@example.com', 'mate'], ['qa-d1-client@example.com', 'client']]) {
+      const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+      const p = await ctx.newPage();
+      p.on('pageerror', (e) => errors.push(e.message));
+      await p.goto(BASE + '/login.html');
+      await p.fill('#email', email); await p.fill('#password', 'd1-pass-12345');
+      await Promise.all([p.waitForURL('**/home.html**'), p.click('button[type=submit]')]);
+      const res = await p.evaluate(async () => ({ get: (await fetch('/api/numbers')).status,
+        pull: (await fetch('/api/numbers/pull', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ebads' }, body: '{}' })).status,
+        src: (await (await fetch('/api/performance?range=7')).json()).source }));
+      await p.goto(`${BASE}/performance.html?range=7`);
+      await p.waitForSelector('#fig-src .src-note');
+      const line = await p.textContent('#fig-src .src-note');
+      check(`D1: a ${who === 'mate' ? 'teammate' : 'client'} can't read or pull the check (403), sees the state in words and no amounts`, res.get === 403 && res.pull === 403
+        && res.src.meta.check.state === 'off' && res.src.meta.check.spend_off_cents === null && res.src.meta.check.leads_off === null
+        && /being checked again/.test(line) && !/\$/.test(line) && !/Numbers check in Settings/.test(line) && (await p.locator('.src-note button, [id^="nc-"]').count()) === 0,
+        `${res.get} ${res.pull} ${line.replace(/\s+/g, ' ').slice(0, 160)}`);
+      if (who === 'client') {
+        await p.goto(`${BASE}/report.html?kind=week&start=${D}`);
+        await p.waitForSelector('#r-stamp');
+        check('D1: a client\'s report says when it was checked against Meta\'s totals, with no warning or Pull button', /^Checked against Meta's own totals on .+: a few days are being checked again\.$/.test(await p.textContent('#r-stamp'))
+          && !(await p.$('#rv-numbers')) && !(await p.$('#rv-pull')), await p.textContent('#r-stamp'));
+      }
+      await ctx.close();
+    }
+    d1py(`import db
+db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users WHERE email = 'qa-d1-mate@example.com')\\")
+db.execute(\\"UPDATE users SET is_active = FALSE WHERE email IN ('qa-d1-client@example.com', 'qa-d1-mate@example.com')\\")`);
+    // 12. Phones: the line is one 44px row, the day table becomes cards, nothing past the edge.
+    for (const width of [390, 320]) {
+      const pctx = await browser.newContext({ viewport: { width, height: 760 }, isMobile: true, hasTouch: true });
+      await pctx.addCookies(await page.context().cookies());
+      const pp = await pctx.newPage();
+      pp.on('pageerror', (e) => errors.push(e.message));
+      await pp.goto(`${BASE}/performance.html?range=7`);
+      await pp.waitForSelector('#fig-src .src-note summary');
+      const res = await pp.evaluate(() => { const s = document.querySelector('#fig-src .src-note summary').getBoundingClientRect(); const l = document.querySelector('#fig-src .src-line');
+        return { h: Math.round(s.height), right: Math.round(s.right), one: l.scrollHeight <= l.clientHeight + 1, wide: document.documentElement.scrollWidth <= innerWidth }; });
+      await openNumbers(pp);
+      const cards = await pp.evaluate(() => ({ head: getComputedStyle(document.querySelector('.nc-days thead')).display, wide: document.documentElement.scrollWidth <= innerWidth,
+        btn: Math.round(document.getElementById('nc-pull').getBoundingClientRect().height) }));
+      check(`D1 phone ${width}: the source line is one 44px row, the day table is cards, nothing past the edge`, res.h >= 44 && res.one && res.wide && res.right <= width
+        && cards.head === 'none' && cards.wide && cards.btn >= 44, JSON.stringify([res, cards]));
+      if (width === 390) await pp.screenshot({ path: `${OUT}/d1-numbers-off-390.png`, fullPage: true });
+      await pctx.close();
+    }
+    // 11b. The admin's report: the warning and Pull these days again sit in the review bar, never in the report body.
+    await page.goto(`${BASE}/report.html?kind=week&start=${D}`);
+    await page.waitForSelector('#rv-numbers:not([hidden]) #rv-pull');
+    const warn = await page.textContent('#rv-numbers');
+    check('D1: an admin\'s report warns in the review bar which days differ, with Pull these days again', /Meta's totals differ for \w{3} \d+ \(\$0\.25\)\. Pull these days again before sharing\./.test(warn)
+      && !(await page.$('#report #rv-pull')) && !/Pull these days again/.test(await page.textContent('#report')), warn);
+    await page.click('#rv-pull');
+    await page.waitForFunction(() => /they match/.test(document.getElementById('r-stamp')?.textContent || ''), null, { timeout: 20000 });
+    check('D1: pulled from the report, the warning goes and the stamp says they match', await page.isHidden('#rv-numbers'));
+    // 9b. Matching again closes the alert by itself.
+    d1py('import alerts;alerts.run()');
+    check('D1: once the days match, the Inbox item closes by itself', !(await getJson('/api/inbox?box=all')).items.some((i) => i.rule === 'numbers_off' && i.open));
+    // 14. Meta as it was, and our days read again from it.
+    fakeD1('_restate?clear=1');
+    const back = await post('/api/numbers/pull', { start: D2, end: D });
+    check('D1: put back, the days match Ads Manager again', back.code === 200 && back.body.state === 'match', `${back.code} ${back.body.state}`);
+    // A window reaching past the checked days says how many were checked, never that all of them match.
+    const longStart = dayBack(70), yday = dayBack(1);
+    const longCheck = (await getJson(`/api/performance?range=custom&start=${longStart}&end=${yday}`)).source.meta.check;
+    const checkedOracle = Number(d1py(`import db;print(db.query('SELECT COUNT(*) AS n FROM meta_day_totals WHERE day BETWEEN %s AND %s',('${longStart}','${yday}'),one=True)['n'])`));
+    await page.goto(`${BASE}/performance.html?range=custom&start=${longStart}&end=${yday}`);
+    await page.waitForSelector('#fig-src .src-note summary');
+    const longLine = await page.textContent('#fig-src .src-note summary');
+    check('D1: a window reaching past the checked days says how many were checked, not that they all match', longCheck.days === 70
+      && longCheck.checked_days === checkedOracle && checkedOracle < 70 && new RegExp(`${checkedOracle} of 70 days checked: they match Ads Manager`).test(longLine)
+      && !/· matches Ads Manager/.test(longLine), `${JSON.stringify(longCheck)} ${checkedOracle} ${longLine}`);
   }
   await page.goto(BASE + '/desk.html#list');
   await page.waitForSelector('#cv[data-state]');
