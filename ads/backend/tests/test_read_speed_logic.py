@@ -262,6 +262,24 @@ class BulkReadTests(unittest.TestCase):
         self.assertEqual(([o["daily_cents"] for o in out], [o["holder"] for o in out], calls), ([2000, 2000], ["s1", "s1"], ["a1", "s1", "a2"]))
 
 
+    def test_a_campaign_budget_is_read_with_stop_time_not_end_time(self):
+        nodes = {"a1": {"adset_id": "s1", "campaign_id": "c1"}, "s1": {},
+                 "c1": {"lifetime_budget": "50000", "stop_time": "2026-12-01T07:59:00-0800"}}
+        asked = []
+
+        def get(eid, fields=None, **kw):
+            asked.append((eid, fields))
+            if eid == "c1" and "end_time" in fields:
+                raise meta_client.MetaError("(#100) Tried accessing nonexisting field (end_time)")
+            return nodes[eid]
+        with mock.patch.object(ads_api.meta_client, "get", side_effect=get), \
+                mock.patch.object(ads_api, "entity", return_value={"name": "Camp"}):
+            out = ads_api.spend_context("ad", {"id": "a1"})
+        self.assertEqual(((out["lifetime_cents"], out["end_time"], out["holder"]), asked[1:]),
+                         ((50000, "2026-12-01T07:59:00-0800", "c1"),
+                          [("s1", "daily_budget,lifetime_budget,end_time"), ("c1", "daily_budget,lifetime_budget,stop_time")]))
+
+
 class ArmSumsTests(unittest.TestCase):
     ROWS = [{"ad_id": "a1", "adset_id": "s1", "spend_cents": 100, "impressions": 10, "link_clicks": 1, "leads": 1, "video_3s": 2},
             {"ad_id": "a2", "adset_id": "s1", "spend_cents": 50, "impressions": 5, "link_clicks": 0, "leads": 0, "video_3s": 1},

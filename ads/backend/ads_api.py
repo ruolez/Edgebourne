@@ -380,11 +380,12 @@ def spend_context(level, row, memo=None):
     for lvl, eid in chain:
         if not eid:
             continue
-        node = read(eid, "daily_budget,lifetime_budget,end_time")
+        end_key = "stop_time" if lvl == "campaign" else "end_time"  # Meta: a campaign has stop_time, an ad set end_time
+        node = read(eid, f"daily_budget,lifetime_budget,{end_key}")
         daily, lifetime = _cents_of(node.get("daily_budget")), _cents_of(node.get("lifetime_budget"))
         if daily or lifetime:
             name = (entity(lvl, eid) or {}).get("name") or eid
-            return {"daily_cents": daily, "lifetime_cents": lifetime, "end_time": node.get("end_time") if lifetime else None,
+            return {"daily_cents": daily, "lifetime_cents": lifetime, "end_time": node.get(end_key) if lifetime else None,
                     "where": f"{'the ad set' if lvl == 'adset' else 'the campaign'} “{name}”", "holder": eid}
     if level == "campaign":
         if (row["id"], "adsets") not in memo:
