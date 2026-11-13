@@ -294,7 +294,7 @@ def evaluate(snap, rules, today):
     meta = sum(snap["meta_leads"].get(d, 0) for d in two)
     inbox = sum(snap["inbox_leads"].get(d, 0) for d in two)
     if r["on"] and meta >= 2 and inbox == 0:
-        add("tracking", "account", "bad", "Leads aren't reaching the inbox",
+        add("tracking", "account", "bad", "Leads aren't reaching your leads list",
             [f"Meta counted {meta} leads in the last two days, but none arrived here. Check the Page connection in Settings → Meta."],
             None, "/settings.html#meta", measure=meta)
 

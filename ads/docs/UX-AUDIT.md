@@ -137,6 +137,36 @@ Each phase ships on its own and follows ROADMAP §4: tests first for pure logic,
 
 ### 9.6 Finish
 - Full QA and screenshot pass, feature inventory ticked, README and memory updated, list of what's still unverified on real Meta and real phones.
+- Done 2026-11-12: `qa/shots.cjs` takes every tab and every Settings section, light and dark, desktop and 390 px (240 shots, no console errors). Fixed from them: Claude's phone tabs drawn 52 px low over New conversation, the report funnel's Share column cut at phone width, account marks wrapping in Settings → Accounts, a Settings explanation in a column of its own, "inbox" used for the leads list. The inventory below is ticked; the unverified lists are in ROADMAP §2 under Audit 3 → What Eugene does after the Update.
+
+## Feature inventory (ticked at 9.6)
+
+Every action from the Phase 8 inventory (`REDESIGN.md`) and where it lives after Phase 9. Nothing was dropped; moved items name their new place. Checked against the code, `qa/flows.cjs` (all green) and the 9.6 screenshots.
+
+| Before Phase 9 | Action | Where it is now |
+|---|---|---|
+| Today | Needs attention, call / email a lead, Money, Ads strip, Claude card, console changes, Meta's advice + Apply + Fix with Claude, benchmarks, Ask Claude, New ad | Today: one ranked queue (leads to call, problems, follow-ups, decisions through the Accept sheet, money, upkeep, later today), Money / leads this week / Ads / Claude / Changes made from the console beside it, advice and benchmarks below [x] |
+| Inbox | Feed, read / unread, kinds, detail, j / k / e | Needs action / For your information / All with one badge rule, Got it… (snooze), Diagnose with Claude, Done, `#item=` that Back closes [x] |
+| Leads | Stages, owner, notes, call, email + templates, history, test leads, filter by ad / campaign | Same, plus ad set / form filters, Clear filters, Undo on stage moves, sentence history, one urgency rule with Today; call outcomes, next steps, booked calls, lost reasons, highest stage, repeats, junk [x] |
+| Ads | Levels, views, saved views, ranges + vs before, columns, bulk on / off / budget / archive, Compare, quick look, cards, New ▾, unfinished builds | Same; sticky header and name column, delivery legend, one primary New, Clear filters, phone sort + campaign picker, bulk bar that fits at 320 [x] |
+| Lead forms | Builder, list, copy, use in a new ad | Ads › Lead forms; field errors, leave warning, leads per form linked to Leads [x] |
+| Campaign / Ad set | Figures, charts, learning, who sees it, children, History, quick look | Same; shared dates, Its leads, Results link, empty-state New, chart marks [x] |
+| Ad | Status, preview, Claude, results, words, where it runs, tags, versions, Meta's automatic changes, leads, on / off, duplicate, new from this, polish, archive / delete, Audience, Video, Comments reply / hide, History | Overview: status card first, kept-in-view preview that renews itself, remembered folds; Polish / Audience / Video / Comments with loading and Try again; History one timeline with filters and "Did it work?" lines [x] |
+| Results | Range, campaign, pacing + monthly target, figures, charts + day table, ads table, By idea, who and where, what changed | Insights › Results; deleted ads hidden unless asked, Open in Ads with days and campaign, Lead quality panel, By idea → one line + Open Ideas (Creative › Ideas) [x] |
+| Compare | 2–6 ads, best per row, verdict, tags, lines, picker | Insights › Compare; picker cards with pictures and numbers, sticky metric column, numbered and dashed lines [x] |
+| Tests | Running / finished, sides, verdict, A/B on Meta, new / edit / finish / reopen | Insights › Tests; plain words, a Next step on a winner through the usual confirmations, Make more like this [x] |
+| Reports | Week / month, share link, PDF | Insights › Reports; earlier periods, Print or save as PDF, confirm before a share link, review before sending [x] |
+| Claude | Conversations, By ad, Schedules, Accept / Decline + Undo, Stop, queue, Mac status, Mac key | Same three tabs; one Mac sentence everywhere, polls keep focus, schedules name the time zone, one Suggestion card [x] |
+| Research | Ad Library search, Ask Claude to research, swipe file, watched Pages, past research | Creative › Research (same address) in four parts; Make something like this, Write a brief [x] |
+| New ad / ad set / campaign | Builders, upload, everything created off, typed-budget publish, partial-build recovery | Same pages; stepper beside the form, field errors before any confirmation, one uploader with Cancel / Try again, `?from=` Cancel [x] |
+| Settings | 14+ sections on one page | One section at a time, This account / Whole console, specific Saves, Advanced folds, old anchors still open their section [x] |
+| Team, Your account, sign-in, offline, 404 | Members, roles, passwords; password, theme, alerts, Telegram, device + push; sign-in; offline page | Team phone cards + Copy password; Your account holds the one theme control (⌘K Switch theme too); field-level sign-in errors; offline reopens the page; friendly 404 [x] |
+| Frame | Sidebar, account switcher, badges, refresh, spending limit, banners, ⌘K, breadcrumbs, phone tabs + More | Work / Run groups with Creative; ⌘K reaches every page, tab, Settings section, saved view, action, form, test and swipe; `?` shortcuts; More with Claude's count, Claude then Creative first [x] |
+| New in Phase 9 | Creative › Gallery (copies merged, Top / Just launched / Tired, Compare from cards) | `gallery.html` [x] |
+| New in Phase 9 | Creative › Ideas (idea groups with pictures, See in Gallery) | `ideas.html` [x] |
+| New in Phase 9 | Gallery: "Make more like these" from picked cards (mockup) | Not built yet; the brief loop runs from Research and from a test's winner [ ] |
+
+**Audit 3 features (the 11 Eugene picked), all shipped:** follow-up queue [x] · booked-call tracking [x] · lost reasons and lead quality [x] · repeat and junk leads [x] · snooze and lead-quality alerts [x] · Diagnose with Claude [x] · client report review [x] · edits made in Ads Manager [x] · change markers on charts [x] · "Did it work?" [x] · match Ads Manager [x] (commits in ROADMAP §2, Audit 3; where each lives in the README's Features section).
 
 ## Critical files
 

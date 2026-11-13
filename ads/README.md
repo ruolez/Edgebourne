@@ -1,9 +1,14 @@
 # Ads console (ads.edgebourne.com)
 
-Private dashboard for the Edge Bourne Meta ads: new leads arrive by webhook, get emailed to
-the team, and are worked in an inbox (stage, owner, notes); the Performance page shows spend,
-leads and cost per lead from Meta next to what the team did with those leads. Plan and phases:
-`docs/PLAN.md`. Meta app setup: `docs/META-APP-SETUP.md`.
+Private console for Meta lead ads, one business or several (accounts with row-level security,
+read-only client logins). New leads arrive by webhook, are emailed to the team and worked on the
+Leads page (calls and how they went, next steps, booked calls, stages, quality); Today puts what
+needs someone first; the Ads manager, Creative (Gallery, Ideas, Research) and Insights (Results,
+Compare, Tests, Reports) show spend, leads and cost per lead from Meta next to what the team did
+with those leads; Claude, running on Eugene's Mac, answers requests and suggests changes that only
+happen after an Accept. Plan and phases: `docs/PLAN.md`, progress and what's open:
+`docs/ROADMAP.md`, the Phase 9 UI/UX plan: `docs/UX-AUDIT.md`, the Audit 3 feature specs:
+`docs/features/`. Meta app setup: `docs/META-APP-SETUP.md`.
 
 Stack: Flask + gunicorn, vanilla JS/CSS (no build step). It runs inside the EdgeBourne
 Compose stack:
@@ -33,7 +38,10 @@ docker exec edgebourne-ads-backend python dev_seed.py   # optional sample data (
 ```
 
 Tests: `docker exec -e WORKERS_ENABLED=0 edgebourne-ads-backend python -m unittest discover -s tests -v`.
-Screenshots (light/dark, desktop/phone, fails on console errors): `node ads/qa/shots.cjs <out-dir>`.
+End to end: `sh ads/qa/run.sh` (fresh fake Meta, then `qa/flows.cjs`; exits non-zero on any FAIL or console
+error; it stops at its first missing selector, so a UI change updates it in the same commit). Leak test:
+`dev/qa_leaks.py` (every GET route, each account and role). Screenshots of every tab and Settings section
+(light/dark, desktop/390 px, reports console errors): `node ads/qa/shots.cjs <out-dir>`.
 
 ## How it works
 
@@ -82,6 +90,26 @@ look, a lead on a phone and an Inbox item push one history step, so the phone's 
 | Settings (`settings.html`), Team, Your account, sign-in | **Settings** shows one section at a time from a list grouped This account / Whole console (phones: one row that scrolls sideways). The address names the section: `#<section id>`, the id of anything inside it (`#meta-form`, `#mt-form`, `#tg-targets`… and the links stored in alerts) or an alias (`SECTION_ALIASES` in `js/settings.js`); anything else opens Meta connection. Each Save says what it saves; technical parts fold under Advanced (`details.tech`: instant status updates, a test event, Graph API version, the console's own mailbox); a section with typed, unsaved work keeps a dot in the list. **Team** is one card per person on phones; a temporary password has Copy. **Your account** opens on who is signed in with Sign out, and holds the one theme control (⌘K Switch theme steps through the same three). **Sign-in** marks each empty or malformed field on its own (`auth.login_problems`, mirrored in `login.js`); a wrong email or password, too many tries (nginx answers 429) or no connection is one line above Sign in |
 | Claude / Research | Directions for Claude. Research (Creative › Research, admins, same address) in four parts (`#tab=swipes|search|watched|past`; `#swipe=<id>` opens the swipe file on that ad): Swipe file, Search (Ad Library links, Ask Claude to research), Watched Pages, Past research. The loop (`js/brief.js`): "Make something like this" on a saved ad, or tick several and "Write a brief" (10 at most) → `GET /api/swipes/brief` drafts the request from everything saved about them, trimmed under 3,500 characters (pure `swipes.brief`, the prompt limit is 4,000) → an editable dialog (the shared `confirmDialog` with a multi-line field) → `POST /api/desk/tasks {kind: "creative"}` → the conversation opens (`desk.html#r/<id>`). Claude's ads come back as suggestions, accepted the usual way; no new money path. The Mac's status is one sentence from the server (`desk_view.mac_status`), the same in the sidebar, the phone bar, the Claude page, Today and Research; polls keep the keyboard where it was (`ui.keepFocus`); Schedules say the account's time zone; By ad shows waiting suggestions as the one Suggestion card |
 
+## Features added in Audit 3 (Nov 2026)
+
+Eugene picked eleven (specs and his answers in `docs/features/`, `00-PLAN.md` §7). Where each one lives:
+
+| Feature | Where people see it | Code |
+|---|---|---|
+| Follow-up queue | Leads: Call → how it went → What's next?; Log a call; row chips and `?due=`; Today's lead rows and "N open leads have no next step"; owner reminders and the 8 AM digest | `followup.py`, `lead_history.py`, `reminders.py`, `js/followup.js`, migration 039 (L1) |
+| Booked-call tracking | "Booked a call" with its time, Did the call happen?; Calls booked and Cost per booked call on Results, the Ads manager, Compare and the report funnel | `followup.py` (`tracks_bookings`), `report_logic.funnel` (L1 Phase B; no booking tool, by Eugene's choice) |
+| Lost reasons and lead quality | Lost asks why; "Got as far as"; Results → Lead quality by ad, form or answer; the report's Lost line; Settings → Lead quality | `lead_quality.py`, `lead_quality_store.py`, migration 040 (L2) |
+| Repeat and junk leads | "Asked 2×", "Asked before", Same person as… / Not the same person; "Looks like junk", Only junk (N) | `contact.py`, `lead_quality.py` (L2) |
+| Snooze and lead-quality alerts | Got it… on a problem in the Inbox, on Today and on Settings → Alerts → Snoozed now; Wake it now. Few leads qualify, Many leads look like junk (Inbox kind Leads, Today's problems, Settings → Alerts) | `snooze.py`, `alert_actions_api.py`, `js/alertmenu.js`, migration 038 (W1a); `alerts.lead_quality_groups` (W1b) |
+| Diagnose with Claude | On a problem in the Inbox, on Today and on a rejected ad: an editable read-only request to the Mac | `diagnose.py`, bridge `READ_ONLY_KINDS` (W1a) |
+| Client report review | Insights → Reports: Our note, Preview the email, Send now / at 8 AM / Hold / Don't send; Settings → Clients and reports | `report_logic.py`, `reports_api.py`, migration 037 (W2) |
+| Edits made in Ads Manager | "Changed in Ads Manager" in History and the Inbox; the 3-day rule on every budget path (Raise anyway) | `status_history.py` (`SETUP`, `OUTSIDE_FIELDS`), `money_rules.recency`, migration 036 (D2) |
+| Change markers on charts | Marks under each day on Campaign, Ad set, Ad, Results, Compare and the quick look; "N changes in this period" | `marks.py`, `charts.js marksPanel` (D2) |
+| "Did it work?" | Below |
+| Match Ads Manager | Below |
+
+### Did it work? (D3)
+
 Did it work? (`backend/change_checks.py` pure, `change_checks_db.py`, table `change_checks`): every budget, on/off, new
 version, Meta's advice or automatic change and new ad made from the console is compared over equal windows of complete
 days before and after it (3, 7 and 14), cut short by any other change on it, above it or inside it (console or Ads
@@ -90,6 +118,8 @@ History and under Claude's applied suggestions (with what Claude expected and wh
 dialog (`js/outcome.js`, `?check=<change id>` opens it from a link, Back closes it). "Didn't help" is a Needs-action
 Inbox and Today item until **Put it back** or **Done**; Put it back only opens the usual budget, on/off or version
 dialog filled in with what it was before (`undo_of` is recorded). Claude reads it with `desk outcomes`.
+
+### Numbers vs Ads Manager (D1)
 
 Numbers vs Ads Manager (D1, `backend/numbers_check.py` pure + database part, `numbers_api.py`, tables `meta_day_totals` and
 `numbers_runs`): Meta keeps correcting older days, so once a night after 4 AM (account time) the worker reads the last 28 days and
@@ -111,6 +141,8 @@ only part of the period was compared) and the source line; an admin's review bar
 days again, and `send_row` pulls the period before freezing it (`ensure_period`). Fake Meta: `/fake/_restate` (`level=account`
 moves only the account total), `/fake/_restate_drop`, `/fake/_short_answer`, `/fake/_slow?daily=<s>`; daily reads honour
 `time_range`.
+
+## Under the hood
 
 Status history (`backend/status_history.py`, table `status_events`): every sync compares what Meta
 says with what was stored and records the change (poll, webhook, console or first sighting); alerts
@@ -217,9 +249,19 @@ secrets can't be read (paste them again in Settings).
 
 ## Design
 
-"Signal" (chosen 2026-11-10, `.superdesign/design-system.md`, mockups in `.superdesign/redesign/`):
-graphite neutrals, one signal green that means delivering, Geist + Geist Mono (numbers),
-borders-only depth, light and dark. Stylesheets: `css/tokens.css` (colours with `--*-ink` for text,
+"Signal" (chosen 2026-11-10, `.superdesign/design-system.md`, the first mockups in `.superdesign/redesign/`),
+refined in Phase 9 from the clickable mockup Eugene approved on 2026-11-11 (`.superdesign/audit/`): graphite
+neutrals, one signal green that means delivering, violet only for Claude, Geist + Geist Mono (numbers),
+borders-only depth, light and dark. Desktop stays dense (smallest label 12 px); phones get 44 px targets, 16 px
+fields (iOS never zooms in), nothing past the edge at 320 px, and pinch zoom off (Eugene's choice, 8.11).
+One component each, defined once in `css/app.css`: Tabs (`.tabs`, the section `.subnav` shares it), Segmented,
+Filter chips (`.filters` + `.view-chip`), Status (`.pill`, `format.statusPill`), Date range
+(`format.rangeSelect`), Table, Empty state (`ui.emptyState`), Skeleton (`ui.skeleton`), Error with Try again
+(`ui.errorState`), Dialog (`confirmDialog`: confirm label, choices, multi-line field), Suggestion card
+(`js/suggest.js`), Timeline (`ui.timelineHtml`), stepper (`js/builder.js`), uploader (`js/uploader.js`). One
+vocabulary in `format.js` (`WORDS`, `EXPLAIN`: Views, People reached, Hook rate, Cost per lead, Delivering / Off /
+In review / Rejected, Suggestion, Accept, Conversation, Received for the console's own lead count), mirrored in
+the server's messages; QA's `vocabularyLeaks` and `componentDrift` keep it that way. Stylesheets: `css/tokens.css` (colours with `--*-ink` for text,
 `--on-*` for text on a fill, and the spacing, radius, type and shadow scales; the Seal & ledger names
 `--seal`, `--rust`, `--pine`, `--fog`, `--lift` are gone), `css/app.css` (components), `css/shell.css`
 (frame, manager, Inbox, compare, palette, accessibility and the phone 44px rules). QA (`qa/guards.cjs`)

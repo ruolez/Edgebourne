@@ -264,6 +264,7 @@ dialog.accept-sheet form { display: grid; gap: 12px; }
   body.conv-page { overflow: hidden; overscroll-behavior: none; }
   .cv-scroll, .cl-list { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   body.conv-page.in-conv .tabbar, body.conv-page.in-conv .subnav { display: none; }
+  body.conv-page .subnav { position: static; }
   .convs { grid-template-columns: minmax(0, 1fr); }
   .convs[data-mode="list"] .cv { display: none; }
   .convs[data-mode="conv"] .cl { display: none; }

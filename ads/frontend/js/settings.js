@@ -345,7 +345,7 @@ const RULE_UI = [
   ["no_leads", "No leads while the ads spend", [["days", "for", "days in a row"]]],
   ["qualified_low", "Few leads qualify", [["percent", "below", "% qualified,"], ["min_leads", "with at least", "leads"]]],
   ["junk_high", "Many leads look like junk", [["percent", "above", "%,"], ["min_leads", "with at least", "leads"]]],
-  ["tracking", "Leads Meta counted aren't reaching the inbox", []],
+  ["tracking", "Leads Meta counted aren't reaching your leads list", []],
   ["numbers_off", "Our numbers differ from Ads Manager", []],
   ["stale_data", "Meta stops answering", [["hours", "for", "hours"]]],
   ["events_quiet", "Lead stages stop reaching Meta's dataset (two days)", []],

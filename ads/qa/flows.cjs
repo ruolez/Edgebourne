@@ -4399,7 +4399,7 @@ print(r[0][0] if r else 0)`));
     await page.waitForFunction(() => /Nothing is snoozed/.test(document.querySelector('#snoozed')?.textContent || ''));
     check('Wake it now in Settings ends it by hand', live().end_reason === 'by_hand');
     // What can't be snoozed for long, or at all.
-    const track = raise('tracking', 'bad', 4, 'account', 'Leads are not reaching the inbox');
+    const track = raise('tracking', 'bad', 4, 'account', 'Leads are not reaching your leads list');
     await openItem(track, 'need');
     await page.click('#ib-detail [data-al-snooze]');
     await page.waitForSelector('dialog.al-choice .cd-choice');
@@ -6445,6 +6445,29 @@ with account_ctx.all_accounts():
     const r = { shown: Math.round(el.getBoundingClientRect().width), natural: Math.round(twin.getBoundingClientRect().width), right: Math.round(el.getBoundingClientRect().right), vw: innerWidth };
     twin.remove(); return r; });
   check('on a 320px phone the dates on Ideas keep their full width, so "Last 7 days" is not cut', ideaRange.shown >= ideaRange.natural && ideaRange.right <= ideaRange.vw, JSON.stringify(ideaRange));
+  await narrow.goto(BASE + '/report.html');
+  await narrow.waitForSelector('.r-funnel');
+  const funnelFit = await narrow.evaluate(() => { const t = document.querySelector('.r-funnel'), box = t.parentElement, share = [...t.querySelectorAll('td:last-child')].map((c) => c.getBoundingClientRect().right);
+    return { table: Math.round(t.getBoundingClientRect().width), box: box.clientWidth, right: Math.round(Math.max(...share)), boxRight: Math.round(box.getBoundingClientRect().right) }; });
+  check('on a 320px phone the report funnel shows its Share column whole, next to "Meta N · Received M"', funnelFit.table <= funnelFit.box + 1 && funnelFit.right <= funnelFit.boxRight + 1, JSON.stringify(funnelFit));
+  await narrow.goto(BASE + '/settings.html#accounts');
+  await narrow.waitForSelector('#acct-list li');
+  const acctPills = await narrow.evaluate(() => [...document.querySelectorAll('#acct-list .pill')].map((p) => Math.round(p.getBoundingClientRect().height)).filter((h) => h > 26));
+  check('on a 320px phone every account\'s Closed / Open now mark stays on one line', acctPills.length === 0, JSON.stringify(acctPills));
+  const acctNames = await narrow.evaluate(() => [...document.querySelectorAll('#acct-list li b')].map((b) => { const lh = parseFloat(getComputedStyle(b).lineHeight) || 20, r = b.getBoundingClientRect();
+    return { name: b.textContent, w: Math.round(r.width), h: Math.round(r.height), lh: Math.round(lh) }; }).filter((n) => n.w < 80 || n.h > 2 * n.lh + 1));
+  check('on a 320px phone every account name in Settings → Accounts is readable (at least 80px wide, at most two lines)', acctNames.length === 0, JSON.stringify(acctNames));
+  await narrow.goto(BASE + '/settings.html#reports');
+  await narrow.waitForSelector('#rep-leads');
+  const repLeads = await narrow.evaluate(() => { const label = document.getElementById('rep-leads').closest('label'), ex = label.querySelector('.explain'), text = ex && ex.parentElement;
+    return ex ? { textLeft: Math.round(text.getBoundingClientRect().left), explainLeft: Math.round(ex.getBoundingClientRect().left), below: ex.getBoundingClientRect().top > text.getBoundingClientRect().top } : null; });
+  check('on a 320px phone "Clients may move leads" has its explanation under the words, not in a column of its own', repLeads && repLeads.textLeft === repLeads.explainLeft && repLeads.below, JSON.stringify(repLeads));
+  await narrow.goto(BASE + '/desk.html');
+  await narrow.waitForSelector('.cl-new');
+  const clTop = await narrow.evaluate(() => { const top = document.querySelector('.topbar').getBoundingClientRect(), tabs = document.querySelector('.subnav').getBoundingClientRect(),
+    btn = document.querySelector('.cl-new').getBoundingClientRect();
+    return { topbar: Math.round(top.bottom), tabs: [Math.round(tabs.top), Math.round(tabs.bottom)], button: Math.round(btn.top) }; });
+  check('on a phone Claude\'s tabs sit right under the top bar and New conversation shows whole below them', Math.abs(clTop.tabs[0] - clTop.topbar) <= 1 && clTop.button >= clTop.tabs[1], JSON.stringify(clTop));
   await narrow.goto(BASE + '/desk.html#new');
   await narrow.waitForSelector('#cv-seeds:not([hidden])');
   await narrow.waitForTimeout(300);

@@ -2,7 +2,7 @@
 // shows a small offline page when there is no connection. Pages and data always come from the
 // network (the console is live data), so nothing stale is ever shown as current.
 const OFFLINE = "/offline.html";
-const CACHE = "ebads-offline-v8";
+const CACHE = "ebads-offline-v9";
 const OFFLINE_FILES = [OFFLINE, "/img/favicon.svg", "/css/tokens.css", "/css/app.css", "/css/shell.css", "/js/theme.js", "/js/offline.js"];
 
 self.addEventListener("install", (e) => {

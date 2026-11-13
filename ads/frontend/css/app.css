@@ -1658,7 +1658,7 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .r-funnel tbody tr:last-child th, .r-ads tbody tr:last-child th { border-bottom: 0; }
 .r-gap { margin-top: 4px; }
 .r-funnel .r-of { font-family: var(--font-ui); font-variant-numeric: normal; font-size: var(--t-s); }
-@media (max-width: 720px) { .r-funnel td.num { white-space: normal; } .r-funnel .r-of { display: block; } }
+@media (max-width: 720px) { .r-funnel td.num { white-space: normal; } .r-funnel .r-of { display: block; } .r-funnel .src-pair { white-space: normal; overflow: visible; } .r-funnel th, .r-funnel td { padding-left: 6px; padding-right: 6px; } }
 .rv-text { white-space: pre-line; font-size: var(--t-l); line-height: 1.55; }
 .rv-sign { margin-top: 6px; }
 
@@ -1695,6 +1695,12 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .acct-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .acct-list li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .acct-list .spacer { flex: 1; }
+.acct-list b { min-width: 0; overflow-wrap: anywhere; }
+.acct-list .pill, .acct-list .btn { flex: none; }
+@media (max-width: 480px) {
+  .acct-list li { flex-wrap: wrap; row-gap: 4px; }
+  .acct-list b { flex: 1 1 100%; }
+}
 [hidden] { display: none !important; }
 
 /* Phone width (audit A18): nothing may make the page wider than the screen. Grid and flex children
