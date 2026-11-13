@@ -95,6 +95,12 @@ class LeadGapTests(unittest.TestCase):
     def test_one_lead_is_singular(self):
         self.assertTrue(rl.lead_gap(0, 1)["text"].startswith("Meta counted 1 lead; 1 of them didn't reach your leads list."))
 
+    def test_repeats_are_said_once(self):
+        self.assertEqual(rl.lead_gap(20, 22, repeats=2)["text"],
+                         "Meta counted 22 leads; 2 of them didn't reach your leads list. Meta can count a lead on the day the ad "
+                         "was seen, and test entries are left out here, and a person who filled the form twice counts once.")
+        self.assertEqual(rl.lead_gap(5, 5, repeats=1), None)
+
 
 def at(day, hour, minute=0):
     return datetime(2026, 11, day, hour, minute, tzinfo=timezone.utc)

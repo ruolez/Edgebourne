@@ -93,6 +93,7 @@ def get_settings():
         "auto_refresh_minutes": refresh_api.auto_minutes(settings_store.get("auto_refresh_minutes")),
         "auto_refresh_choices": list(refresh_api.AUTO_CHOICES),
         "meta_ab_tests": settings_store.get("meta_ab_tests") == "on",
+        "lead_quality": {"repeats": settings_store.get("lead_repeat_check") != "0", "junk": settings_store.get("lead_junk_flags") != "0"},
     })
 
 
@@ -190,6 +191,19 @@ def save_meta_tests():
     on = bool((request.get_json(silent=True) or {}).get("on"))
     settings_store.set("meta_ab_tests", "on" if on else None)
     log_activity("settings.meta_ab_tests", details={"on": on})
+    return get_settings()
+
+
+@bp.put("/lead-quality")
+@admin_required
+def save_lead_quality():
+    """Settings → Lead quality (L2): spot repeats and flag junk, both on unless switched off. Switching repeats off
+    links nothing new; links already made stay and still count once, so past numbers don't change."""
+    data = request.get_json(silent=True) or {}
+    for field, key in (("repeats", "lead_repeat_check"), ("junk", "lead_junk_flags")):
+        if field in data:
+            settings_store.set(key, None if data[field] else "0")
+    log_activity("settings.lead_quality", details={k: bool(data[k]) for k in ("repeats", "junk") if k in data})
     return get_settings()
 
 

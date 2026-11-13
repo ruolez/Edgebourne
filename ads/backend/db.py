@@ -110,7 +110,9 @@ def _owner_conn():
     return connect(), True
 
 
-def _run(sql, params, fetch):
+def _pick():
+    """(connection, close_after) for one statement or transaction. Refused while a transaction() block is open on
+    the same connection: committing there would commit half the block and release its locks."""
     if account_ctx.seeing_all():
         conn, owned = _owner_conn()
     else:
@@ -118,7 +120,22 @@ def _run(sql, params, fetch):
         owned = conn is None
         if owned:
             conn = connect_app()
+    if conn in _open_tx.get():
+        raise TransactionOpen("a db.transaction() block is open on this connection")
+    if not account_ctx.seeing_all():
         _scope(conn)
+    return conn, owned
+
+
+class TransactionOpen(RuntimeError):
+    """A db helper was called on a connection that has a transaction() block open."""
+
+
+_open_tx = __import__("contextvars").ContextVar("db_open_tx", default=frozenset())
+
+
+def _run(sql, params, fetch):
+    conn, owned = _pick()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(sql, params)
@@ -148,14 +165,7 @@ def run_in_transaction(steps):
     upsert). steps = [(sql, params)] or [(sql, params, True)] for a step that must return a row, or the
     whole transaction rolls back with NothingChanged(step index). Returns each step's rows (None when it
     returns nothing)."""
-    if account_ctx.seeing_all():
-        conn, owned = _owner_conn()
-    else:
-        conn = get_db()
-        owned = conn is None
-        if owned:
-            conn = connect_app()
-        _scope(conn)
+    conn, owned = _pick()
     try:
         out = []
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -172,6 +182,29 @@ def run_in_transaction(steps):
             conn.account_id = None
         raise
     finally:
+        if owned:
+            conn.close()
+
+
+@contextmanager
+def transaction():
+    """One transaction for a block that decides as it goes (take a lock, insert, look up, link): yields a cursor
+    (rows as dicts) on the same connection the other helpers would use; commits at the end, rolls back on any
+    error. Nothing else may touch the database inside the block: db.query/execute commit on their own, which would
+    commit half of it and release its transaction locks, so they raise TransactionOpen here instead."""
+    conn, owned = _pick()
+    token = _open_tx.set(_open_tx.get() | {conn})
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            yield cur
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        if isinstance(conn, AppConnection):
+            conn.account_id = None
+        raise
+    finally:
+        _open_tx.reset(token)
         if owned:
             conn.close()
 

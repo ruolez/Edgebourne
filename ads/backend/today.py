@@ -19,8 +19,9 @@ DECIDE_RULES = {"proposal", "report_review"}
 
 def waiting(lead):
     """New, not a test, nobody tried yet (a call, an email or a stage move), and no call booked (L1)."""
+    # A repeat (L2) is worked on its first lead: it never waits for a call of its own.
     return (lead.get("status") == "new" and not lead.get("is_test") and not lead.get("first_contacted_at")
-            and lead.get("meeting_status") != "scheduled")
+            and lead.get("meeting_status") != "scheduled" and not lead.get("repeat_of"))
 
 
 def _age_minutes(lead, now):

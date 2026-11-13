@@ -45,3 +45,16 @@ class PhoneDisplayTests(unittest.TestCase):
     def test_writes_us_numbers_the_way_people_read_them_and_leaves_others(self):
         self.assertEqual([replies.phone_display(p) for p in ("+15551234567", "555-123-4567", "(555) 123 4567", "+44 20 7946 0958", None)],
                          ["(555) 123-4567", "(555) 123-4567", "(555) 123-4567", "+44 20 7946 0958", ""])
+
+
+class AutoReasonQualityTests(unittest.TestCase):
+    """L2: no second automatic reply to someone asking again, none to a test or throwaway address."""
+
+    def test_repeat_and_fake_addresses(self):
+        base = {"email": "m@shop.com", "is_test": False}
+        self.assertEqual([replies.auto_reason({**base, "repeat_of": 3}, True),
+                          replies.auto_reason({**base, "junk_flags": ["throwaway_email"]}, True),
+                          replies.auto_reason({**base, "junk_flags": ["test_email", "short_name"]}, True),
+                          replies.auto_reason({**base, "junk_flags": ["fake_phone"]}, True),
+                          replies.auto_reason({**base, "junk_flags": ["short_name"]}, True)],
+                         ["repeat", "looks fake", "looks fake", None, None])

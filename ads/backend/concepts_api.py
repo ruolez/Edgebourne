@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, request
 import concepts as c
 import account_info
 import db
+import lead_quality as lq
 import ranges
 from auth import current_user, login_required, visible_campaign_ids
 from util import api_error, log_activity
@@ -55,7 +56,7 @@ def qualified_by_ad(start, end):
     """{ad id: qualified or won leads that arrived in these days} (account's days, test entries left out); shared
     by By idea and the client report (W2) so both judge ideas on the same people."""
     return {r["ad_id"]: int(r["n"]) for r in db.query(
-        """SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND status IN ('qualified', 'won')
+        f"""SELECT ad_id, COUNT(*) AS n FROM leads l WHERE {lq.counted()} AND {lq.qualified()}
            AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s GROUP BY ad_id""",
         (account_info.tz_name(), start, end))}
 

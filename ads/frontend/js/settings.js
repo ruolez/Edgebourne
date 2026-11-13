@@ -10,7 +10,7 @@ let owner = false;
 // One section at a time (9.4f). The address names it: #<section id>, the id of anything inside it (#meta-form,
 // #mt-form, #tg-targets… from the days of the long page, and the links stored in alerts), or a short alias.
 // Anything else, or a whole-console section for someone who isn't the console's owner, opens Meta connection.
-const SECTION_ALIASES = { reports: "reports-panel", activity: "activity-panel", accounts: "accounts-panel", refresh: "auto",
+const SECTION_ALIASES = { "lead-quality": "lead-quality", repeats: "lead-quality", junk: "lead-quality", reports: "reports-panel", activity: "activity-panel", accounts: "accounts-panel", refresh: "auto",
   smtp: "email", "ab-tests": "ab", stages: "crm", numbers: "tracking" };
 
 function sectionFor(hash) {
@@ -167,6 +167,14 @@ async function loadTracking(fresh = false) {
   } catch (err) { $("tr-body").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
+function renderLeadQuality() {
+  const q = s.lead_quality || { repeats: true, junk: true };
+  $("lq-repeats").checked = q.repeats;
+  $("lq-junk").checked = q.junk;
+  $("lq-repeats-off").hidden = q.repeats;
+  $("lq-state").innerHTML = q.repeats && q.junk ? '<span class="pill ok">On</span>' : !q.repeats && !q.junk ? '<span class="pill">Off</span>' : '<span class="pill">Partly on</span>';
+}
+
 function renderMetaTests() {
   $("mt-on").checked = !!s.meta_ab_tests;
   $("mt-state").innerHTML = s.meta_ab_tests ? '<span class="pill ok">On</span>' : '<span class="pill">Off</span>';
@@ -313,6 +321,7 @@ async function load() {
   renderCrm();
   renderAuto();
   renderMetaTests();
+  renderLeadQuality();
   loadTracking();
   loadReports();
   document.querySelectorAll("[data-acct-name]").forEach((el) => { el.textContent = s.account.name; });
@@ -564,6 +573,10 @@ if (me) {
       loadReports();
     } catch (err) { if (err.body && err.body.field) fieldError(e.target, err.body.field, err.message); else toast(err.message, "bad"); }
   });
+  $("lq-form").addEventListener("submit", (e) => { e.preventDefault(); run(e.submitter, async () => {
+    s = await api("/api/settings/lead-quality", { method: "PUT", body: { repeats: $("lq-repeats").checked, junk: $("lq-junk").checked } });
+    saved(e.target); toast("Lead quality saved"); renderLeadQuality();
+  }); });
   $("mt-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const on = $("mt-on").checked;

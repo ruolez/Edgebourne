@@ -114,7 +114,7 @@ def status():
     ids = visible_campaign_ids(user)
     lw, lp = ("TRUE", []) if ids is None else ("campaign_id = ANY(%s)", [ids])
     out = {**_status(),
-           "new_leads": int(db.query(f"SELECT COUNT(*) AS n FROM leads WHERE status = 'new' AND NOT is_test AND {lw}", lp, one=True)["n"])}
+           "new_leads": int(db.query(f"SELECT COUNT(*) AS n FROM leads WHERE status = 'new' AND NOT is_test AND repeat_of IS NULL AND {lw}", lp, one=True)["n"])}
     import inbox
     counts = inbox.counts(inbox.items_for(user))
     out["inbox_unread"] = counts["unread"]

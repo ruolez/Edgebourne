@@ -65,6 +65,10 @@ def auto_reason(lead, enabled):
         return "test lead"
     if not EMAIL.match((lead.get("email") or "").strip()):
         return "no email"
+    if lead.get("repeat_of"):
+        return "repeat"     # they had the first reply already (L2)
+    if {"test_email", "throwaway_email"} & set(lead.get("junk_flags") or []):
+        return "looks fake"  # a bounce hurts the sender's name
     return None
 
 

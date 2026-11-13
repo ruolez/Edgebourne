@@ -56,6 +56,19 @@ export const FOLLOW = {
   due: [["", "Any follow-up"], ["today", "Due today"], ["overdue", "Overdue"], ["none", "No next step"], ["booked", "Calls booked"]],
 };
 
+// A lead's stages and lead quality (L2), in the words every page uses (Leads, Today, Inbox, Report). The server sends the
+// same reasons with each lead (`reasons`); these let a list render before a lead loads.
+export const STAGE_LABELS = { new: "New", contacted: "Contacted", qualified: "Qualified", won: "Won", lost: "Lost" };
+export const LOST_REASONS = {
+  no_response: "No response", not_fit: "Not a fit", too_small: "Too small", price: "Price",
+  went_elsewhere: "Went with someone else", spam: "Spam or fake", duplicate: "Duplicate", other: "Other",
+};
+// [pill class, words] for a lead row's lead-quality chips.
+export const LEAD_CHIPS = {
+  repeat: ["", "Repeat"], asked: ["", (n) => `Asked ${n}×`], before: ["info", "Asked before"], junk: ["warn", "Looks like junk"],
+  page: ["", "From the Page"], test: ["", "Test"],
+};
+
 // Plain explanations of Meta's own terms, shown next to the term wherever it appears.
 export const EXPLAIN = {
   impressions: "How many times the ad was shown, counting repeats.",

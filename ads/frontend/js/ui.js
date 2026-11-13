@@ -908,14 +908,15 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
     const box = lines
       ? `<textarea class="input" id="cd-input" rows="${Number(lines) || 8}" autocomplete="off" aria-describedby="cd-hint">${esc(field.value ?? "")}</textarea>`
       : field ? `<div class="affix">${field.prefix ? `<span>${esc(field.prefix)}</span>` : ""}<input class="input" id="cd-input" inputmode="${field.inputmode || "text"}" value="${esc(field.value ?? "")}" autocomplete="off" aria-describedby="cd-hint">${field.suffix ? `<span>${esc(field.suffix)}</span>` : ""}</div>` : "";
+    // Choices come before the field: a Lost reason first, then "Anything to add?" (L2). choices.value preselects one.
     dlg.innerHTML = `<form method="dialog" novalidate>
       <h2>${esc(title)}</h2>
       ${body ? `<div class="confirm-body">${body}</div>` : ""}
+      ${choices ? `<div class="cd-choices" role="group" aria-label="${esc(title)}">${choices.options.map((o) => `<button type="button" class="cd-choice" data-value="${esc(o.value)}"${choices.submitOnPick ? "" : ` aria-pressed="${String(o.value) === String(choices.value ?? "")}"`}><b>${esc(o.label)}</b>${o.hint ? `<small>${esc(o.hint)}</small>` : ""}</button>`).join("")}</div>
+        <span class="err" id="cd-perr" role="alert" hidden></span>` : ""}
       ${field ? `<div class="field"><label for="cd-input">${esc(field.label)}</label>
         ${box}
         <span class="hint" id="cd-hint" aria-live="polite"></span><span class="err" id="cd-err" role="alert" hidden></span></div>` : ""}
-      ${choices ? `<div class="cd-choices" role="group" aria-label="${esc(title)}">${choices.options.map((o) => `<button type="button" class="cd-choice" data-value="${esc(o.value)}"${choices.submitOnPick ? "" : ' aria-pressed="false"'}><b>${esc(o.label)}</b>${o.hint ? `<small>${esc(o.hint)}</small>` : ""}</button>`).join("")}</div>
-        <span class="err" id="cd-perr" role="alert" hidden></span>` : ""}
       <div class="row end">${cancel ? `<button class="btn" type="button" value="cancel" id="cd-cancel">${esc(cancel)}</button>` : ""}
         ${confirm ? `<button class="btn ${danger ? "btn-danger" : claude ? "btn-claude" : "btn-primary"}" type="submit" id="cd-ok">${esc(confirm)}</button>` : ""}</div>
     </form>`;
@@ -940,7 +941,7 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
     if (input) { input.addEventListener("input", () => { err.hidden = true; invalid(false); refresh(); }); refresh(); }
     else if (confirmLabel || confirmDanger) refresh();
     let result = false;
-    let picked = null;
+    let picked = choices && choices.value != null && choices.options.some((o) => String(o.value) === String(choices.value)) ? String(choices.value) : null;
     dlg.querySelector("#cd-cancel")?.addEventListener("click", () => dlg.close());
     dlg.querySelector(".cd-choices")?.addEventListener("click", (e) => {
       const b = e.target.closest(".cd-choice");
@@ -956,6 +957,8 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
         const perr = dlg.querySelector("#cd-perr");
         perr.textContent = typeof choices.required === "string" ? choices.required : "Pick one";
         perr.hidden = false;
+        perr.scrollIntoView({ block: "nearest" });
+        dlg.querySelector(".cd-choice")?.focus({ preventScroll: true });
         return;
       }
       if (field) {
@@ -968,7 +971,10 @@ export function confirmDialog({ title, body = "", confirm = "Confirm", danger = 
     dlg.showModal();
     // Safe default: a stray Enter or Space never confirms. With a field, focus is on it (typing is deliberate);
     // otherwise on Cancel, never on the button that acts.
-    (input || dlg.querySelector("#cd-cancel") || dlg.querySelector("#cd-ok")).focus();
+    // Choices to pick from (a Lost reason) take focus before the note, so a phone's keyboard doesn't cover them.
+    const pick = choices && !choices.submitOnPick ? dlg.querySelector('.cd-choice[aria-pressed="true"]') || dlg.querySelector(".cd-choice") : null;
+    (pick || input || dlg.querySelector("#cd-cancel") || dlg.querySelector("#cd-ok")).focus();
+    if (pick) return;
     if (input && lines) { input.setSelectionRange(0, 0); input.scrollTop = 0; } else if (input) input.select();
   });
 }

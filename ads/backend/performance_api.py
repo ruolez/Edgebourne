@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, request
 import config
 import account_info
 import db
+import lead_quality as lq
 import followup
 import insights
 import pacing
@@ -90,13 +91,13 @@ def overview_data(user, days, campaign_id=None, span=None):
     quality = db.query(
         f"""SELECT l.ad_id,
                    COUNT(*) AS inbox,
-                   COUNT(*) FILTER (WHERE l.status IN ('qualified','won')) AS qualified,
-                   COUNT(*) FILTER (WHERE l.status = 'won') AS won,
+                   COUNT(*) FILTER (WHERE {lq.qualified()}) AS qualified,
+                   COUNT(*) FILTER (WHERE {lq.won()}) AS won,
                    COUNT(*) FILTER (WHERE l.booked_at IS NOT NULL) AS booked,
                    COUNT(*) FILTER (WHERE l.meeting_status = 'held') AS held,
                    COUNT(*) FILTER (WHERE l.meeting_status = 'no_show') AS no_show
             FROM leads l
-            WHERE NOT l.is_test AND (l.created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {lwhere}
+            WHERE {lq.counted()} AND (l.created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {lwhere}
             GROUP BY l.ad_id""",
         [account_info.tz_name(), start, end] + lparams,
     )
@@ -107,9 +108,9 @@ def overview_data(user, days, campaign_id=None, span=None):
             FROM ad_daily d WHERE day BETWEEN %s AND %s AND {where}""",
         [prev_start, prev_end] + params, one=True)
     before_q = db.query(
-        f"""SELECT COUNT(*) FILTER (WHERE l.status IN ('qualified','won')) AS qualified,
+        f"""SELECT COUNT(*) FILTER (WHERE {lq.qualified()}) AS qualified,
                   COUNT(*) FILTER (WHERE l.booked_at IS NOT NULL) AS booked FROM leads l
-            WHERE NOT l.is_test AND (l.created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {lwhere}""",
+            WHERE {lq.counted()} AND (l.created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {lwhere}""",
         [account_info.tz_name(), prev_start, prev_end] + lparams, one=True)
 
     per_ad = db.query(
@@ -223,6 +224,71 @@ def overview():
     out["campaign"] = campaign_id
     out["pacing"] = pacing_data(visible_campaign_ids(user))
     out["can_set_target"] = user["role"] == "admin"
+    return jsonify(out)
+
+
+QUALITY_BY = ("ad", "form", "answer")
+
+
+def question_label(key):
+    """'what_kind_of_business_do_you_run?' → 'What kind of business do you run?'"""
+    text = str(key or "").replace("_", " ").strip()
+    return text[:1].upper() + text[1:] if text else "Question"
+
+
+def questions_in(leads):
+    """The form questions seen in these leads (contact fields left out), with how many different answers each has."""
+    seen = {}
+    for l in leads:
+        for a in l.get("answers") or []:
+            name = a.get("name")
+            if not name or str(name).strip().lower() in lq.CONTACT_FIELDS:
+                continue
+            value = ", ".join(str(v) for v in a.get("values") or [] if v not in (None, "")).strip().lower()
+            seen.setdefault(name, set()).add(value)
+    return [{"name": k, "label": question_label(k), "distinct": len(v)} for k, v in seen.items()]
+
+
+@bp.get("/quality")
+@login_required
+def quality():
+    """Results → Lead quality (L2): what happened to the leads from each ad, form or answer over the page's range
+    and campaign. Counts only (clients see it too): no names, emails, phones or notes."""
+    import lead_quality_store
+    user = current_user()
+    key = request.args.get("range", "7")
+    key = key if key in RANGE_KEYS else "7"
+    start, end = ranges.window(key, account_info.today())
+    ids = visible_campaign_ids(user)
+    campaign_id = request.args.get("campaign") or None
+    if campaign_id and ids is not None and campaign_id not in ids:
+        return api_error("Not found", 404)
+    by = request.args.get("by") if request.args.get("by") in QUALITY_BY else "ad"
+    leads = lead_quality_store.leads_for_window(ids, start, end, campaign_id)
+    where, params = _scope_sql(user, "d.campaign_id")
+    if campaign_id:
+        where, params = f"{where} AND d.campaign_id = %s", params + [campaign_id]
+    spent = db.query(f"""SELECT d.ad_id, COALESCE(MAX(a.name), MAX(d.ad_name)) AS name, MAX(a.effective_status) AS status,
+                                COALESCE(SUM(d.spend_cents), 0) AS spend_cents, COALESCE(SUM(d.leads), 0) AS leads
+                         FROM ad_daily d LEFT JOIN ads a ON a.id = d.ad_id
+                         WHERE d.day BETWEEN %s AND %s AND {where} GROUP BY d.ad_id""", [start, end] + params)
+    ad_spend = {r["ad_id"]: int(r["spend_cents"]) for r in spent}
+    with_leads = {l["ad_id"] for l in leads}
+    # A deleted ad shows only when it brought leads in the range; its spend stays in the totals.
+    shown = {k: v for k, v in ad_spend.items() if k in with_leads or next(r["status"] for r in spent if r["ad_id"] == k) != "DELETED"}
+    questions = questions_in(leads)
+    question = request.args.get("question") if by == "answer" else None
+    if by == "answer" and question not in {q["name"] for q in questions}:
+        fits = [q for q in questions if q["distinct"] <= lq.ANSWER_GROUPS_MAX]
+        question = (fits or questions or [{"name": None}])[0]["name"]
+    spend = shown if by == "ad" else lq.form_spend(leads, ad_spend) if by == "form" else {}
+    target = settings_store.get("kpi_target_cents")
+    target = int(target) if target else None
+    out = lq.summarize(leads, spend, by, question, target, meta_leads=sum(int(r["leads"]) for r in spent),
+                       total_spend_cents=sum(ad_spend.values()), labels={r["ad_id"]: r["name"] for r in spent} if by == "ad" else None)
+    currency = account_info.currency()
+    out.update(verdict=lq.verdict(out, target, currency), junk_note=lq.junk_note(out["totals"], currency), questions=questions,
+               reasons=[{"value": k, "label": label} for k, label, _ in lq.LOST_REASONS], range={"start": start.isoformat(), "end": end.isoformat()})
     return jsonify(out)
 
 

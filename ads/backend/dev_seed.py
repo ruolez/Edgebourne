@@ -9,27 +9,42 @@ now = datetime.now(timezone.utc)
 db.execute("""INSERT INTO campaigns (id, name, status, effective_status, objective, daily_budget_cents)
               VALUES ('120252638288040312', 'Edge Bourne - Free intro call - Leads', 'ACTIVE', 'ACTIVE',
                       'OUTCOME_LEADS', 2000) ON CONFLICT (id) DO NOTHING""")
+# Contacts on a domain and numbers that aren't reserved for tests: lead quality (L2) flags .example addresses and
+# 555-01xx numbers as junk. Three deliberate samples: Maria asking again from N3 (a repeat), Kevin back after
+# Lost: No response (returning) and one junk lead. The worker links and flags them on its next pass.
 samples = [
-    ("Maria Lopez", "+16195550101", "maria@lopezbakery.example", "Wholesale bakery, 14 staff", "N2 - Order portal", 6, "new"),
-    ("Daniel Kim", "+13105550144", "dan@kimhvac.example", "HVAC service, 3 trucks", "N5 - Quote to invoice", 42, "new"),
-    ("Priya Nair", "+19495550188", "priya@nairlogistics.example", "Freight brokerage", "N3 - Same work twice", 190, "new"),
-    ("Tom Alvarez", "+17605550123", "tom@alvarezlandscape.example", "Landscaping, 2 crews", "N1 - One simple system", 1650, "new"),
-    ("Grace Chen", "+16265550199", "grace@chencpa.example", "Accounting practice", "N4 - Weekly report", 2900, "contacted"),
-    ("Robert Hayes", "+18185550111", "rob@hayesparts.example", "Auto parts distributor", "N2 - Order portal", 7400, "qualified"),
-    ("Sofia Ramirez", "+16195550177", "sofia@ramirezcleaning.example", "Commercial cleaning", "N5 - Quote to invoice", 12000, "won"),
-    ("Kevin Brooks", "+19515550155", "kevin@brooksfit.example", "Gym, one location", "N1 - One simple system", 15000, "lost"),
+    ("Maria Lopez", "+16195552101", "maria@demo.edgebourne.com", "Wholesale bakery, 14 staff", "N2 - Order portal", 6, "new"),
+    ("Daniel Kim", "+13105552144", "dan@demo.edgebourne.com", "HVAC service, 3 trucks", "N5 - Quote to invoice", 42, "new"),
+    ("Priya Nair", "+19495552188", "priya@demo.edgebourne.com", "Freight brokerage", "N3 - Same work twice", 190, "new"),
+    ("Tom Alvarez", "+17605552123", "tom@demo.edgebourne.com", "Landscaping, 2 crews", "N1 - One simple system", 1650, "new"),
+    ("Grace Chen", "+16265552199", "grace@demo.edgebourne.com", "Accounting practice", "N4 - Weekly report", 2900, "contacted"),
+    ("Robert Hayes", "+18185552111", "rob@demo.edgebourne.com", "Auto parts distributor", "N2 - Order portal", 7400, "qualified"),
+    ("Sofia Ramirez", "+16195552177", "sofia@demo.edgebourne.com", "Commercial cleaning", "N5 - Quote to invoice", 12000, "won"),
+    ("Kevin Brooks", "+19515552155", "kevin@demo.edgebourne.com", "Gym, one location", "N1 - One simple system", 15000, "lost"),
+    ("Maria Lopez", "+16195552101", "maria@demo.edgebourne.com", "Wholesale bakery, 14 staff", "N3 - Same work twice", 3, "new"),
+    ("Kevin Brooks", "+19515552155", "kevin@demo.edgebourne.com", "Gym, two locations now", "N4 - Weekly report", 20, "new"),
+    ("a", "1234567890", "test@test.com", "asdf", "N5 - Quote to invoice", 9, "new"),
 ]
 for i, (name, phone, email, biz, ad, mins, status) in enumerate(samples):
     answers = [{"name": "full_name", "values": [name]}, {"name": "email", "values": [email]},
                {"name": "phone_number", "values": [phone]},
                {"name": "what_kind_of_business_do_you_run?", "values": [biz]}]
+    if biz == "asdf":
+        answers.append({"name": "how_many_people_work_there?", "values": ["asdf"]})
+    ad_id = f"ad-{['N2 - Order portal', 'N5 - Quote to invoice', 'N3 - Same work twice', 'N1 - One simple system', 'N4 - Weekly report'].index(ad)}"
     db.execute("""INSERT INTO leads (meta_lead_id, created_time, form_id, form_name, ad_id, ad_name, campaign_id,
-                                     campaign_name, full_name, email, phone, business_type, answers, status)
+                                     campaign_name, full_name, email, phone, business_type, answers, status, max_stage, lost_reason)
                   VALUES (%s,%s,'1132280359202136','EB | Free intro call | Higher intent',%s,%s,
-                          '120252638288040312','Edge Bourne - Free intro call - Leads',%s,%s,%s,%s,%s,%s)
-                  ON CONFLICT (meta_lead_id) DO NOTHING""",
-               (f"demo-{i}", now - timedelta(minutes=mins), f"ad-{i}", ad, name, email, phone, biz,
-                json.dumps(answers), status))
+                          '120252638288040312','Edge Bourne - Free intro call - Leads',%s,%s,%s,%s,%s,%s,%s,%s)
+                  ON CONFLICT (meta_lead_id) DO UPDATE SET email = EXCLUDED.email, phone = EXCLUDED.phone, answers = EXCLUDED.answers,
+                      quality_checked = FALSE, junk_flags = '{}', email_key = NULL, phone_key = NULL""",
+               (f"demo-{i}", now - timedelta(minutes=mins), ad_id, ad, name, email, phone, biz,
+                json.dumps(answers), status, status if status != "lost" else "contacted", "no_response" if status == "lost" else None))
+# Lead quality (L2): keys, junk flags and the repeat / returning links for the rows inserted above.
+import lead_quality_store
+
+while lead_quality_store.backfill_once(force=True) == lead_quality_store.BATCH:
+    pass
 # Follow-ups (L1): Grace has an overdue call back after a no-answer, Robert a call booked for tomorrow.
 for meta_id, outcome, sql in (
         ("demo-4", "no_answer", "next_step_kind = 'call_back', next_step_at = now() - interval '2 hours'"),

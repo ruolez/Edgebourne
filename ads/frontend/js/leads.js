@@ -1,31 +1,26 @@
 import { api, startLoad } from "./api.js";
-import { boot, entityLink, esc, fieldError, icon, leadClock, onRefresh, phoneDisplay, rememberList, setNewCount, toast, when, showLoadError } from "./ui.js";
+import { boot, confirmDialog, entityLink, esc, fieldError, icon, leadClock, onRefresh, phoneDisplay, rememberList, setNewCount, toast, when, showLoadError } from "./ui.js";
 import { closeLayer, openLayer } from "./urlstate.js";
-import { FOLLOW, plural } from "./format.js";
+import { FOLLOW, LEAD_CHIPS, LOST_REASONS, STAGE_LABELS, dayWords, plural } from "./format.js";
 import { armDial, askMeeting, askNext, boxHtml, chipHtml, logCall, resumePending } from "./followup.js";
 
-const STAGES = [
-  { id: "new", label: "New" },
-  { id: "contacted", label: "Contacted" },
-  { id: "qualified", label: "Qualified" },
-  { id: "won", label: "Won" },
-  { id: "lost", label: "Lost" },
-];
+const STAGES = Object.entries(STAGE_LABELS).map(([id, label]) => ({ id, label }));
 const FILTERS = [{ id: "open", label: "Open" }, ...STAGES, { id: "all", label: "All" }];
 
-const state = { loaded: false, me: null, filter: "open", q: "", tests: false, due: "", leads: [], counts: {}, selected: null, seen: new Set(), lead: null };
+const state = { loaded: false, me: null, filter: "open", q: "", tests: false, due: "", why: "", leads: [], counts: {}, whyCounts: null, selected: null, seen: new Set(), lead: null };
 const $ = (id) => document.getElementById(id);
 
 // What "filtered" means here: anything other than open leads of every campaign, no search, no test leads.
 // Where a lead came from, kept in the URL: the picker offers campaigns and ads; an ad set or a form comes from a link.
 const SOURCE_KEYS = ["campaign", "adset", "ad", "form"];
-const filtered = () => state.filter !== "open" || Boolean(state.q) || state.tests || Boolean(state.due) || SOURCE_KEYS.some((k) => new URLSearchParams(location.search).get(k));
+const filtered = () => state.filter !== "open" || Boolean(state.q) || state.tests || Boolean(state.due) || Boolean(state.why) || SOURCE_KEYS.some((k) => new URLSearchParams(location.search).get(k));
+const WHY_KEYS = [...Object.keys(LOST_REASONS), "none"];
 const DUE_KEYS = FOLLOW.due.map(([k]) => k).filter(Boolean);
 
 function renderFilters() {
   const c = state.counts;
   const open = (c.new || 0) + (c.contacted || 0) + (c.qualified || 0);
-  const all = Object.values(c).reduce((a, b) => a + b, 0);
+  const all = Object.values(c).reduce((a, b) => a + b, 0) + (state.repeats || 0);
   const n = { open, all, ...c };
   $("filters").innerHTML = FILTERS.map((f) =>
     `<button type="button" class="view-chip" data-f="${f.id}" aria-pressed="${state.filter === f.id}">${f.label}<span class="n">${n[f.id] || 0}</span></button>`
@@ -47,6 +42,25 @@ function renderResponse(r) {
   el.hidden = false;
 }
 
+// Why Lost leads were lost (L2): shown only on the Lost view, kept in the address (?why=), with a nudge for
+// leads that have no reason yet.
+function renderWhy() {
+  const sel = $("why"), note = $("why-note");
+  const on = state.filter === "lost" && state.whyCounts;
+  sel.hidden = !on;
+  note.hidden = true;
+  if (!on) return;
+  const n = state.whyCounts;
+  const all = Object.values(n).reduce((a, b) => a + b, 0);
+  const label = (k) => (k === "none" ? "No reason given" : LOST_REASONS[k]);
+  sel.innerHTML = `<option value="">All reasons (${all})</option>` + WHY_KEYS.filter((k) => n[k] || state.why === k)
+    .map((k) => `<option value="${k}" ${state.why === k ? "selected" : ""}>${esc(label(k))} (${n[k] || 0})</option>`).join("");
+  if (n.none && state.why !== "none") {
+    note.hidden = false;
+    note.textContent = `${plural(n.none, "lost lead")} ${n.none === 1 ? "has" : "have"} no reason yet. Open one and tap Change to add it.`;
+  }
+}
+
 // The follow-up filter: its counts beside each choice, kept in the address (?due=).
 function renderFollow(counts) {
   const n = { today: counts.due_today, overdue: counts.overdue, none: counts.no_next, booked: counts.booked };
@@ -60,17 +74,25 @@ const DUE_EMPTY = {
   booked: ["No calls booked yet", "Tap Booked a call after a call and it shows up here."],
 };
 
+// Lead quality chips (L2): a repeat, the first lead of someone who asked again, someone who asked before, junk.
+const chip = ([cls, words], n) => `<span class="pill ${cls}">${esc(typeof words === "function" ? words(n) : words)}</span> `;
+function qualityChips(lead) {
+  if (lead.repeat_of) return chip(LEAD_CHIPS.repeat);
+  return (lead.repeats ? chip(LEAD_CHIPS.asked, Number(lead.repeats) + 1) : "") + (lead.earlier_lead_id ? chip(LEAD_CHIPS.before) : "")
+    + (!lead.is_test && lead.junk ? chip(LEAD_CHIPS.junk) : "");  // the server's one junk rule
+}
+
 function rowHtml(lead) {
   const isNew = lead.status === "new";
-  // One urgency rule with Today and the reminders (the server's today.urgency).
+  // One urgency rule with Today and the reminders (the server's today.urgency); a repeat never waits.
   const clock = leadClock(lead);
-  return `<li><button type="button" class="lead-row${state.seen.has(lead.id) ? "" : " arrived"}" data-id="${lead.id}" ${state.selected === lead.id ? 'aria-current="true"' : ""}>
+  return `<li><button type="button" class="lead-row${state.seen.has(lead.id) ? "" : " arrived"}${lead.repeat_of ? " is-repeat" : ""}" data-id="${lead.id}" ${state.selected === lead.id ? 'aria-current="true"' : ""}>
     ${clock}
     <span class="who">
       <b>${esc(lead.full_name || "No name given")}</b>
       <span>${esc(lead.business_type || "Business not given")}</span>
-      <small>${lead.is_test ? '<span class="pill">Test</span> ' : ""}${isNew ? "" : `<span class="pill ${lead.status}">${esc(STAGES.find((s) => s.id === lead.status).label)}</span> `}${esc(lead.ad_name || (lead.is_organic ? "No ad (organic)" : ""))}${lead.owner_name ? `, ${esc(lead.owner_name)}` : ""}</small>
-      ${chipHtml(lead.chip)}
+      <small>${lead.is_test ? chip(LEAD_CHIPS.test) : ""}${isNew || lead.repeat_of ? "" : `<span class="pill ${lead.status}">${esc(STAGE_LABELS[lead.status])}</span> `}${qualityChips(lead)}${esc(lead.ad_name || (lead.is_organic ? "No ad (organic)" : ""))}${lead.owner_name ? `, ${esc(lead.owner_name)}` : ""}</small>
+      ${lead.repeat_of ? "" : chipHtml(lead.chip)}
     </span>
   </button></li>`;
 }
@@ -78,7 +100,9 @@ function rowHtml(lead) {
 function renderList() {
   const list = $("list");
   $("clear-filters").hidden = !filtered();
-  if (!state.leads.length && DUE_EMPTY[state.due]) {
+  if (!state.leads.length && state.filter === "lost" && state.why) {
+    list.innerHTML = `<li class="empty"><h3>Nothing lost for this reason</h3><p>Try another reason or All reasons.</p><button type="button" class="btn" data-clear-why>All reasons</button></li>`;
+  } else if (!state.leads.length && DUE_EMPTY[state.due]) {
     const [h, p] = DUE_EMPTY[state.due];
     list.innerHTML = `<li class="empty"><h3>${h}</h3><p>${p}</p><button type="button" class="btn" data-clear-filters>Clear filters</button></li>`;
   } else if (!state.leads.length) {
@@ -113,6 +137,7 @@ async function load({ quiet = false } = {}) {
   if (state.q) params.set("q", state.q);
   if (state.tests) params.set("tests", "1");
   if (state.due) params.set("due", state.due);
+  if (state.filter === "lost" && state.why) params.set("why", state.why);
   const src = new URLSearchParams(location.search);
   for (const k of SOURCE_KEYS) if (src.get(k)) params.set(k, src.get(k));
   const superseded = startLoad("leads");
@@ -122,11 +147,14 @@ async function load({ quiet = false } = {}) {
     renderSources(data.sources || [], src, data.narrowed);
     state.leads = data.leads;
     state.counts = data.counts;
+    state.whyCounts = data.why_counts;
+    state.repeats = data.repeats;
     state.newEverywhere = data.new_everywhere;
     renderResponse(data.response);
     renderFollow(data.follow || {});
     if (!state.loaded) { data.leads.forEach((l) => state.seen.add(l.id)); state.loaded = true; }
     renderFilters();
+    renderWhy();
     renderList();
     if (!state.selected && state.leads.length && window.matchMedia("(min-width: 961px)").matches) {
       select(state.leads[0].id, { push: false });
@@ -134,6 +162,54 @@ async function load({ quiet = false } = {}) {
   } catch (err) {
     if (!quiet && !superseded()) showLoadError($("list"), err, load);
   }
+}
+
+// Who may do what on a lead: the team links leads; a client works stages only when Settings lets them.
+const isStaff = () => state.me.role !== "client";
+const canWrite = () => isStaff() || Boolean(state.me.account && state.me.account.clients_update_leads);
+const reasonLabel = (k) => LOST_REASONS[k] || "No reason given";
+
+// Above the stage: someone asking again (the stage lives on their first lead), someone back after a closed lead,
+// or a lead that looks like junk (L2).
+function qualityNotes(lead) {
+  const out = [];
+  const fam = lead.family || {};
+  if (lead.repeat_of) {
+    const root = fam.root;
+    const from = lead.ad_name ? ` from ${esc(lead.ad_name)}` : "";
+    out.push(`<div class="note repeat-note" id="repeat-note"><p class="flush">${esc(lead.full_name || "Someone")} asked again on ${esc(dayWords(lead.created_time))}${from}.
+      ${fam.can_see_root ? "Work it on the first lead; this one doesn't count twice." : "They asked before in another campaign; this one doesn't count twice."}</p>
+      <div class="row">${fam.can_see_root && root ? `<a class="btn btn-small" id="repeat-open" href="#lead=${root.id}">Open the first lead</a>` : ""}
+      ${isStaff() ? '<button type="button" class="btn btn-small btn-quiet" id="repeat-unlink">Not the same person</button>' : ""}</div></div>`);
+  } else if (lead.earlier) {
+    const e = lead.earlier;
+    out.push(`<p class="note repeat-before" id="repeat-before">${e.visible
+      ? `${esc(e.line)} <a href="#lead=${e.id}">Open that lead</a>${e.ad_name ? ` <span class="muted">(${esc(e.ad_name)})</span>` : ""}`
+      : "They asked before in another campaign."}${isStaff() ? ' <button type="button" class="link-btn" id="before-unlink">Not the same person</button>' : ""}</p>`);
+  }
+  if (lead.junk && lead.junk_text && !lead.is_test && !lead.repeat_of && lead.status !== "lost") {
+    out.push(`<div class="note warn junk-note" id="junk-note"><p class="flush">This looks like junk. ${esc(lead.junk_text)}</p>
+      ${canWrite() ? `<div class="row"><button type="button" class="btn btn-small" id="junk-lost">Mark as lost: spam or fake</button>
+        <button type="button" class="btn btn-small btn-quiet" id="junk-real">It's real</button></div>` : ""}</div>`);
+  }
+  return out.join("");
+}
+
+// Everything else from this person ("Also asked"): each fill folded, with their answers inside.
+function familyHtml(lead) {
+  const reps = (lead.family && lead.family.repeats) || [];
+  const hidden = (lead.family && lead.family.hidden) || 0;
+  if (!reps.length && !hidden) return "";
+  const CONTACT = new Set(["full_name", "first_name", "last_name", "email", "work_email", "phone_number", "phone"]);
+  const items = reps.map((r) => {
+    const answers = (r.answers || []).filter((a) => !CONTACT.has(String(a.name).toLowerCase()))
+      .map((a) => `<dt>${esc(prettyQuestion(a.name))}</dt><dd>${esc((a.values || []).join(", ") || "—")}</dd>`).join("");
+    return `<li><details class="family-item"><summary>${esc(when(r.created_time))}${r.ad_name ? ` · ${esc(r.ad_name)}` : ""}</summary>
+      ${answers ? `<dl class="facts">${answers}</dl>` : '<p class="muted small flush">No other answers.</p>'}
+      <a class="small" href="#lead=${r.id}">Open this request</a></details></li>`;
+  }).join("");
+  return `<h3 class="section-title">Also asked</h3><ul class="family-list" id="family-list">${items}</ul>
+    ${hidden ? `<p class="muted small flush">${plural(hidden, "more request")} in a campaign you don't see.</p>` : ""}`;
 }
 
 function detailHtml(lead) {
@@ -155,23 +231,27 @@ function detailHtml(lead) {
       ${clock}
     </div>
     ${lead.is_test ? '<p class="note warn">This is a test lead from Meta\'s testing tool.</p>' : ""}
+    ${qualityNotes(lead)}
     <div class="reach">
       ${lead.phone ? `<a class="btn btn-call" id="call-link" href="tel:${esc(lead.phone)}">${icon("phone")} Call ${esc(phoneDisplay(lead.phone))}</a>` : ""}
-      <button type="button" class="btn" id="log-call">Log a call</button>
+      ${lead.repeat_of ? "" : '<button type="button" class="btn" id="log-call">Log a call</button>'}
       ${lead.email ? `<button type="button" class="btn" id="reply-open" aria-expanded="false" aria-controls="reply-form">${icon("mail")} Email them</button>` : ""}
     </div>
+    ${lead.no_auto_reply ? '<p class="muted small flush" id="no-auto-reply">No automatic reply went out because it looked like a repeat.</p>' : ""}
     ${lead.email ? replyForm(lead) : ""}
-    ${boxHtml(lead)}
-    <div class="stage">
+    ${lead.repeat_of ? "" : boxHtml(lead)}
+    ${lead.repeat_of ? "" : `<div class="stage">
       <span class="stage-label" id="stage-label">Stage</span>
       <div class="segmented" role="group" aria-labelledby="stage-label" id="stages">
         ${STAGES.map((s) => `<button type="button" data-stage="${s.id}" aria-pressed="${lead.status === s.id}">${s.label}</button>`).join("")}
       </div>
-    </div>
+    </div>`}
     ${metaStages(lead)}
     <dl class="facts">
       <dt>Owner</dt><dd>${state.me.role === "client" ? esc(lead.owner_name || "Nobody yet") : `<label class="sr-only" for="owner">Owner</label><select class="input" id="owner">${owners}</select>`}</dd>
       <dt>Asked</dt><dd>${when(lead.created_time)}</dd>
+      ${lead.status === "lost" ? `<dt>Lost because</dt><dd id="lost-why">${esc(reasonLabel(lead.lost_reason))}${lead.lost_note ? ` — “${esc(lead.lost_note)}”` : ""}${canWrite() ? ' <button type="button" class="link-btn" id="lost-change">Change</button>' : ""}</dd>` : ""}
+      ${!lead.repeat_of && lead.max_stage && lead.max_stage !== "new" && lead.max_stage !== lead.status ? `<dt>Got as far as</dt><dd id="max-stage">${esc(STAGE_LABELS[lead.max_stage])}${lead.can_correct ? ' <button type="button" class="link-btn" id="max-correct">Correct</button>' : ""}</dd>` : ""}
       <dt>Phone</dt><dd>${esc(phoneDisplay(lead.phone) || "—")}</dd>
       <dt>Email</dt><dd>${esc(lead.email || "—")}</dd>
       <dt>Ad</dt><dd>${lead.ad_name ? entityLink("ad", lead.ad_id, lead.ad_name) : esc(lead.is_organic ? "None: filled in without an ad (organic)" : "—")}</dd>
@@ -179,7 +259,9 @@ function detailHtml(lead) {
       <dt>Campaign</dt><dd>${lead.campaign_name ? entityLink("campaign", lead.campaign_id, lead.campaign_name) : "—"}</dd>
       ${lead.form_name ? `<dt>Form</dt><dd>${entityLink("form", lead.form_id, lead.form_name)}</dd>` : ""}
     </dl>
+    ${isStaff() && !lead.is_test && !lead.repeat_of ? '<div class="row family-actions"><button type="button" class="btn btn-quiet btn-small" id="same-person">Same person as…</button></div>' : ""}
     ${answers ? `<h3 class="section-title">Their answers</h3><dl class="facts">${answers}</dl>` : ""}
+    ${familyHtml(lead)}
     ${emailsHtml(lead)}
     <h3 class="section-title">Notes</h3>
     <ul class="notes">${lead.notes.map((n) => `<li><div class="meta">${esc(n.author || "Someone")}, ${when(n.created_at)}</div>${esc(n.body)}</li>`).join("") || `<li class="muted">${state.me.role === "client" && !state.me.account.clients_update_leads ? "No notes yet." : "No notes yet. Write down what you learned on the call."}</li>`}</ul>
@@ -311,7 +393,11 @@ function renderDetail(lead, { keep = false } = {}) {
     closeLayer(listUrl());
   });
   wireReply(lead);
-  detail.querySelectorAll("[data-stage]").forEach((b) => b.addEventListener("click", () => patch(lead.id, { status: b.dataset.stage })));
+  detail.querySelectorAll("[data-stage]").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.stage === "lost" && lead.status !== "lost") return markLost(lead);
+    return patch(lead.id, { status: b.dataset.stage });
+  }));
+  wireQuality(lead);
   $("owner")?.addEventListener("change", (e) => patch(lead.id, { owner_id: e.target.value ? Number(e.target.value) : null }));
   $("note-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -368,7 +454,9 @@ function wireFollow(lead) {
       } else if (what === "lost") {
         await patch(lead.id, { status: "lost", lost_reason: "no_response", lost_note: lead.follow.lost_notes[lead.follow.suggestion] });
       } else if (what === "lost-wrong") {
-        await patch(lead.id, { status: "lost" });
+        // Wrong number: why it was lost is asked; Spam or fake is picked already only when the lead looks fake (00-PLAN C13).
+        await markLost(lead, { preset: (lead.junk_flags || []).length ? "spam" : null });
+        b.disabled = false;
       }
     } catch (err) { toast(err.message, "bad"); b.disabled = false; }
   });
@@ -414,16 +502,119 @@ async function undoMove(id, eventId) {
     const lead = await api(`/api/leads/${id}/events/${eventId}/undo`, { method: "POST" });
     if (state.selected === id) renderDetail(lead, { keep: true });
     const sent = (lead.undone?.meta_has || []).map(stageLabel);
-    toast(`Back to ${stageLabel(lead.status)}${sent.length ? `. Meta already has ${sent.join(", ")}` : ""}`);
+    toast(`Back to ${stageLabel(lead.status)}${sent.length ? `. Meta already has ${sent.join(", ")} and keeps it.` : ""}`);
     changed(null);
   } catch (err) { toast(err.message, "bad"); }
 }
 
+// ---------- Lead quality (L2): why it was lost, how far it got, the same person, junk
+
+async function lostDialog(lead, { title = "Why was this lead lost?", confirm = "Mark as lost", preset = null, note = "" } = {}) {
+  const options = lead.reasons || Object.entries(LOST_REASONS).map(([value, label]) => ({ value, label }));
+  const r = await confirmDialog({ title, confirm, extra: "lost-dialog",
+    choices: { options, value: preset, required: "Pick a reason" },
+    field: { label: "Anything to add? (optional)", rows: 2, value: note || "" } });
+  return r === false ? null : { reason: r.choice, note: r.value.trim() || null };
+}
+
+async function markLost(lead, opts = {}) {
+  const r = await lostDialog(lead, opts);
+  if (r) await patch(lead.id, { status: "lost", lost_reason: r.reason, lost_note: r.note });
+}
+
+async function changeReason(lead) {
+  const r = await lostDialog(lead, { title: "Change why it was lost", confirm: "Save", preset: lead.lost_reason, note: lead.lost_note });
+  if (!r) return;
+  try {
+    const updated = await api(`/api/leads/${lead.id}`, { method: "PATCH", body: { lost_reason: r.reason, lost_note: r.note } });
+    toast(`Lost because: ${reasonLabel(updated.lost_reason)}`);
+    changed(updated);
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+async function correctMax(lead) {
+  const stage = await confirmDialog({ title: "Correct how far this lead got", confirm: "Save", extra: "lost-dialog",
+    body: '<p class="muted flush">Use this only to fix a wrong click. Meta keeps any stage it was already sent.</p>',
+    choices: { options: ["new", "contacted", "qualified", "won"].map((v) => ({ value: v, label: STAGE_LABELS[v] })), value: lead.max_stage, required: "Pick a stage" } });
+  if (!stage) return;
+  try {
+    const updated = await api(`/api/leads/${lead.id}`, { method: "PATCH", body: { max_stage: stage } });
+    toast(`Got as far as: ${STAGE_LABELS[updated.max_stage]}`);
+    changed(updated);
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+// "Same person as…": search this account's leads, pick one, link. The older one stays the first lead.
+async function samePerson(lead) {
+  let picked = null;
+  const done = confirmDialog({ title: "Which lead is the same person?", confirm: "Link them", extra: "family-dialog",
+    body: '<p class="muted flush">The older one stays the first lead; the newer one counts once, with it.</p>',
+    field: { label: "Name, phone or email", inputmode: "search", validate: () => (picked ? null : "Pick the lead to link") } });
+  const dlg = document.querySelector("dialog.family-dialog");
+  const input = dlg.querySelector("#cd-input");
+  const list = document.createElement("ul");
+  list.className = "family-pick";
+  list.id = "family-pick";
+  list.setAttribute("aria-label", "Matching leads");
+  dlg.querySelector(".field").after(list);
+  let timer;
+  const search = async () => {
+    const q = input.value.trim();
+    if (!q) { list.innerHTML = ""; return; }
+    try {
+      const d = await api(`/api/leads?q=${encodeURIComponent(q)}`);
+      if (input.value.trim() !== q) return;
+      const rows = d.leads.filter((l) => l.id !== lead.id && l.repeat_of !== lead.id).slice(0, 8);
+      list.innerHTML = rows.length ? rows.map((l) => `<li><button type="button" class="family-row" data-id="${l.id}" aria-pressed="false">
+          <b>${esc(l.full_name || "No name given")}</b><span>${esc(l.business_type || "Business not given")} · ${esc(dayWords(l.created_time))} · ${esc(STAGE_LABELS[l.status])}${l.repeat_of ? " · repeat" : ""}</span></button></li>`).join("")
+        : '<li class="muted small">No lead matches that.</li>';
+    } catch (err) { list.innerHTML = `<li class="muted small">${esc(err.message)}</li>`; }
+  };
+  input.addEventListener("input", () => { picked = null; clearTimeout(timer); timer = setTimeout(search, 250); });
+  list.addEventListener("click", (e) => {
+    const b = e.target.closest(".family-row");
+    if (!b) return;
+    picked = Number(b.dataset.id);
+    list.querySelectorAll(".family-row").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    dlg.querySelector("#cd-err").hidden = true;
+  });
+  if ((await done) === false || !picked) return;
+  try {
+    const updated = await api(`/api/leads/${lead.id}/same-person`, { method: "POST", body: { other_id: picked } });
+    toast(`Linked to ${updated.linked.root_name ? `${updated.linked.root_name}'s` : "their"} first lead`);
+    changed(updated);
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+function wireQuality(lead) {
+  const on = (id, fn) => $(id)?.addEventListener("click", fn);
+  const unlink = async () => {
+    try {
+      const updated = await api(`/api/leads/${lead.id}/same-person`, { method: "DELETE" });
+      toast("Unlinked: counted as a separate lead");
+      changed(updated);
+    } catch (err) { toast(err.message, "bad"); }
+  };
+  on("repeat-unlink", unlink);
+  on("before-unlink", unlink);
+  on("junk-lost", () => patch(lead.id, { status: "lost", lost_reason: "spam" }));
+  on("junk-real", async () => {
+    try {
+      const updated = await api(`/api/leads/${lead.id}/not-junk`, { method: "POST" });
+      toast("Marked as real");
+      changed(updated);
+    } catch (err) { toast(err.message, "bad"); }
+  });
+  on("lost-change", () => changeReason(lead));
+  on("max-correct", () => correctMax(lead));
+  on("same-person", () => samePerson(lead));
+}
+
 function clearFilters() {
-  state.filter = "open"; state.q = ""; state.tests = false; state.due = ""; state.selected = null;
+  state.filter = "open"; state.q = ""; state.tests = false; state.due = ""; state.why = ""; state.selected = null;
   $("q").value = ""; $("tests").checked = false;
   const u = new URL(location.href);
-  [...SOURCE_KEYS, "status", "due"].forEach((k) => u.searchParams.delete(k));
+  [...SOURCE_KEYS, "status", "due", "why"].forEach((k) => u.searchParams.delete(k));
   history.replaceState(null, "", u.pathname + u.search);
   rememberList(u.pathname + u.search);
   load();
@@ -439,6 +630,19 @@ async function main() {
   $("search-icon").outerHTML = icon("search");
   const askedStage = new URLSearchParams(location.search).get("status");
   if (FILTERS.some((f) => f.id === askedStage)) state.filter = askedStage;
+  const askedWhy = new URLSearchParams(location.search).get("why");
+  if (state.filter === "lost" && WHY_KEYS.includes(askedWhy)) state.why = askedWhy;
+  const setWhy = (why) => {
+    state.why = why;
+    const u = new URL(location.href);
+    if (why) u.searchParams.set("why", why); else u.searchParams.delete("why");
+    history.replaceState(null, "", u.pathname + u.search + u.hash);
+    rememberList(u.pathname + u.search);
+    state.selected = null;
+    load();
+  };
+  $("why").addEventListener("change", (e) => setWhy(e.target.value));
+  $("list").addEventListener("click", (e) => { if (e.target.closest("[data-clear-why]")) setWhy(""); });
   const askedDue = new URLSearchParams(location.search).get("due");
   if (DUE_KEYS.includes(askedDue)) {
     state.due = askedDue;
@@ -461,6 +665,7 @@ async function main() {
     // The stage is kept in the address too (?status=), so a link can open on All and Back keeps it.
     const u = new URL(location.href);
     if (state.filter === "open") u.searchParams.delete("status"); else u.searchParams.set("status", state.filter);
+    if (state.filter !== "lost") { state.why = ""; u.searchParams.delete("why"); }
     history.replaceState(null, "", u.pathname + u.search + u.hash);
     rememberList(u.pathname + u.search);
     load();

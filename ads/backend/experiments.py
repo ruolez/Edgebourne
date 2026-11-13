@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 
 import account_info
 import db
+import lead_quality as lq
 
 METRICS = {
     # key: (label, what one result is, cost or rate, numerator for rates)
@@ -174,8 +175,8 @@ def arms_numbers(arms, start, end, tz=None):
            FROM ad_daily WHERE day BETWEEN %s AND %s AND (ad_id = ANY(%s) OR adset_id = ANY(%s)) GROUP BY ad_id, adset_id""",
         (start, end, ads, sets))
     lead_rows = db.query(
-        """SELECT ad_id, adset_id, COUNT(*) FILTER (WHERE status IN ('qualified','won')) AS qualified FROM leads
-           WHERE NOT is_test AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s
+        f"""SELECT ad_id, adset_id, COUNT(*) FILTER (WHERE {lq.qualified()}) AS qualified FROM leads l
+           WHERE {lq.counted()} AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s
              AND (ad_id = ANY(%s) OR adset_id = ANY(%s)) GROUP BY ad_id, adset_id""",
         (tz or account_info.tz_name(), start, end, ads, sets))
     return arm_sums(arms, daily, lead_rows)

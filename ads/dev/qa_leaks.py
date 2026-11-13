@@ -447,6 +447,31 @@ with account_ctx.use(A2):
     db.execute("DELETE FROM client_reports WHERE note = %s", (W2_NOTE,))
 if w2 != {"note": 200, "hold": 200, "member_get": 403, "member_note": 403, "member_send": 403} or w2_in_1 or w2_in_2 != 1:
     tenant.append(f"report review writes: {w2}, rows in account 1: {w2_in_1}, in account 2: {w2_in_2}")
+# L2: the same person in two accounts is two people. A lead stored in account 2 with the email and phone of an
+# account-1 lead is never linked to it (explicit account_id in the match, RLS, composite foreign keys), and
+# account 2's Lead quality names none of account 1's ads.
+import leads as leads_mod
+from datetime import datetime, timezone
+SAME = {"field_data": [{"name": "full_name", "values": ["Leak QA Person"]}, {"name": "email", "values": ["leak-qa@qa.edgebourne.com"]},
+                       {"name": "phone_number", "values": ["+16195557790"]}], "is_organic": True,
+        "created_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000")}
+l2_ids = {}
+for acct, key in ((1, "LEAKQAl2a"), (A2, "LEAKQAl2b")):
+    with account_ctx.use(acct):
+        db.execute("DELETE FROM leads WHERE meta_lead_id = %s", (key,))
+        l2_ids[acct], _ = leads_mod.store_lead({**SAME, "id": key})
+        db.execute("UPDATE leads SET alerted_at = now() WHERE id = %s", (l2_ids[acct],))
+with account_ctx.all_accounts():
+    linked = db.query("SELECT id, repeat_of, earlier_lead_id FROM leads WHERE meta_lead_id IN ('LEAKQAl2a', 'LEAKQAl2b') AND (repeat_of IS NOT NULL OR earlier_lead_id IS NOT NULL)")
+    a1_ads = [r["id"] for r in db.query("SELECT id FROM ads WHERE account_id = 1")]
+session_for(c, admin["id"], A2)
+q2 = c.get("/api/performance/quality?range=30&by=ad").get_data(as_text=True)
+seen_ads = [a for a in a1_ads if a in q2]
+cross_link = c.post(f"/api/leads/{l2_ids[A2]}/same-person", json={"other_id": l2_ids[1]}).status_code
+if linked or seen_ads or cross_link != 404:
+    tenant.append(f"lead quality across accounts: linked {linked}, account 1 ads in account 2's Lead quality {seen_ads}, link across {cross_link}")
+with account_ctx.all_accounts():
+    db.execute("DELETE FROM leads WHERE meta_lead_id IN ('LEAKQAl2a', 'LEAKQAl2b')")
 session_for(c, admin["id"], 1)
 csrf = app.test_client()
 session_for(csrf, admin["id"], 1)

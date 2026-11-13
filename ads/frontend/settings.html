@@ -23,7 +23,7 @@
       <div class="content set-layout">
         <nav class="settings-nav" aria-label="Settings sections">
           <span class="set-group">This account</span>
-          <a href="#meta" data-set="meta">Meta connection</a><a href="#targets" data-set="targets">Targets</a><a href="#alerts" data-set="alerts">Alerts</a><a href="#reports-panel" data-set="reports-panel">Clients and reports</a><a href="#replies" data-set="replies">Lead replies</a><a href="#tracking" data-set="tracking">Tracking health</a><a href="#crm" data-set="crm">Lead stages to Meta</a><a href="#ab" data-set="ab">Meta A/B tests</a><a href="#activity-panel" data-set="activity-panel">Activity</a>
+          <a href="#meta" data-set="meta">Meta connection</a><a href="#targets" data-set="targets">Targets</a><a href="#alerts" data-set="alerts">Alerts</a><a href="#reports-panel" data-set="reports-panel">Clients and reports</a><a href="#replies" data-set="replies">Lead replies</a><a href="#lead-quality" data-set="lead-quality">Lead quality</a><a href="#tracking" data-set="tracking">Tracking health</a><a href="#crm" data-set="crm">Lead stages to Meta</a><a href="#ab" data-set="ab">Meta A/B tests</a><a href="#activity-panel" data-set="activity-panel">Activity</a>
           <span class="set-group console-only" hidden>Whole console</span>
           <a class="console-only" href="#meta-app" data-set="meta-app" hidden>Meta app</a><a class="console-only" href="#auto" data-set="auto" hidden>Automatic refresh</a><a class="console-only" href="#email" data-set="email" hidden>Email</a><a class="console-only" href="#telegram" data-set="telegram" hidden>Telegram</a><a class="console-only" href="#accounts-panel" data-set="accounts-panel" hidden>Accounts</a>
         </nav>
@@ -113,6 +113,15 @@
             <div><button class="btn" type="button" id="tpl-add">Add a template</button></div>
             <div id="rp-result"></div>
           </div>
+        </section>
+        <section class="panel" id="lead-quality" data-section hidden>
+          <div class="panel-head"><h2>Lead quality</h2><p id="lq-state"></p></div>
+          <form class="panel-body stack" id="lq-form" novalidate>
+            <label class="check"><input type="checkbox" id="lq-repeats"> <span>Spot repeats <span class="explain">The same email or phone within 90 days is linked to the first lead and counted once. No second automatic reply goes out.</span></span></label>
+            <p class="hint flush" id="lq-repeats-off" hidden>Leads already linked stay linked and still count once, so past numbers don't change.</p>
+            <label class="check"><input type="checkbox" id="lq-junk"> <span>Flag leads that look like junk <span class="explain">Made-up phone numbers, test or throwaway emails, one-letter names. A flag never hides a lead or stops an alert.</span></span></label>
+            <div class="row"><button class="btn btn-primary" type="submit">Save lead quality</button></div>
+          </form>
         </section>
         <section class="panel" id="tracking" data-section hidden>
           <div class="panel-head"><h2>Tracking health</h2><p id="tr-state"></p><span class="spacer"></span><button type="button" class="link-btn" id="tr-fresh">Check now</button></div>

@@ -70,6 +70,7 @@ const SETTINGS = [
   S("Alerts", "alerts", "rules warnings notifications"),
   S("Clients and reports", "reports-panel", "client logins report email"),
   S("Lead replies", "replies", "automatic reply templates email answer"),
+  S("Lead quality", "lead-quality", "repeats duplicates junk spam fake same person"),
   S("Tracking health", "tracking", "pixel dataset conversions api capi events"),
   S("Lead stages to Meta", "crm", "crm conversion leads quality"),
   S("Meta A/B tests", "ab", "split tests"),

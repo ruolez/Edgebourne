@@ -225,6 +225,13 @@ class QueueTests(unittest.TestCase):
         l = lead(1, "new", created_time=NOW - timedelta(hours=3), first_contacted_at=None, next_step_kind="call_back", next_step_at=NOW - timedelta(hours=1))
         self.assertEqual([(r["id"], r["bucket"], r["kind"]) for r in fu.queue([l], NOW, LA)], [(1, 2, "call")])
 
+    def test_junk_waits_behind_real_leads_and_repeats_never_wait(self):
+        real = lead(1, "new", created_time=NOW - timedelta(minutes=20), first_contacted_at=None)
+        junk = lead(2, "new", created_time=NOW - timedelta(minutes=40), first_contacted_at=None, junk_flags=["fake_phone"])
+        dismissed = lead(3, "new", created_time=NOW - timedelta(minutes=30), first_contacted_at=None, junk_flags=["fake_phone"], junk_dismissed=True)
+        repeat = lead(4, "new", created_time=NOW - timedelta(minutes=50), first_contacted_at=None, repeat_of=1)
+        self.assertEqual([r["id"] for r in fu.queue([junk, repeat, dismissed, real], NOW, LA)], [3, 1, 2])
+
     def test_a_new_lead_with_a_booked_call_is_not_waiting(self):
         l = lead(1, "new", first_contacted_at=None, meeting_status="scheduled", meeting_at=NOW + timedelta(hours=5), booked_at=NOW)
         self.assertEqual(fu.queue([l], NOW, LA), [])
@@ -284,6 +291,16 @@ class DueTextTests(unittest.TestCase):
                  next_step_at=la(2026, 11, 11, 15), last_outcome="no_answer", last_call_at=la(2026, 11, 10, 15, 10))
         self.assertEqual(fu.due_text(l, LA), ("Call back Maria Lopez: due 3:00 PM",
                                              ["Bakery", "Phone: (619) 555-7788", "Last try: no answer, Tue 3:10 PM"]))
+
+
+
+class DueWhereTests(unittest.TestCase):
+    def test_every_filter_leaves_repeats_out(self):
+        self.assertEqual([("l.repeat_of IS NULL" in fu.due_where(k, NOW, LA)[0]) for k in ("today", "overdue", "none", "booked")],
+                         [True, True, True, True])
+
+    def test_alias_is_used(self):
+        self.assertIn("o.repeat_of IS NULL", fu.due_where("booked", NOW, LA, alias="o")[0])
 
 
 if __name__ == "__main__":

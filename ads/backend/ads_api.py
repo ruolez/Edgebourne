@@ -18,6 +18,7 @@ import account_info
 import money_rules
 import ranges
 import db
+import lead_quality as lq
 import delivery
 import desk_view
 import followup
@@ -495,7 +496,7 @@ def window_from(args):
 
 def _quality(aw, ap, start, end):
     return {r["ad_id"]: int(r["n"]) for r in db.query(
-        f"""SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND status IN ('qualified','won')
+        f"""SELECT ad_id, COUNT(*) AS n FROM leads l WHERE {lq.counted()} AND {lq.qualified()}
             AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {aw} GROUP BY ad_id""",
         [account_info.tz_name(), start, end] + ap)}
 
@@ -503,7 +504,7 @@ def _quality(aw, ap, start, end):
 def _booked(aw, ap, start, end):
     """Leads that booked a call, by the day the lead arrived (L1), per ad."""
     return {r["ad_id"]: int(r["n"]) for r in db.query(
-        f"""SELECT ad_id, COUNT(*) AS n FROM leads WHERE NOT is_test AND booked_at IS NOT NULL
+        f"""SELECT ad_id, COUNT(*) AS n FROM leads l WHERE {lq.counted()} AND booked_at IS NOT NULL
             AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s AND {aw} GROUP BY ad_id""",
         [account_info.tz_name(), start, end] + ap)}
 

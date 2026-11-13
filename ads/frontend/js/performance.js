@@ -1,7 +1,7 @@
 import { api, startLoad } from "./api.js";
 import { boot, entityLink, esc, icon, onRefresh, rememberList, skeleton, toast, when, showLoadError } from "./ui.js";
 import { barList, columnChart, marksPanel } from "./charts.js";
-import { EXPLAIN, FOLLOW, RANGES, STATUS as FORMAT_STATUS, WORDS, count, plural, dayLabel, money, pct, per, moneyWhole, currencySymbol, rangeSelect, rememberCampaign, rememberRange, sharedCampaign, sharedRange, statusPill } from "./format.js";
+import { EXPLAIN, FOLLOW, LOST_REASONS, RANGES, STATUS as FORMAT_STATUS, WORDS, count, plural, dayLabel, money, pct, per, moneyWhole, currencySymbol, rangeSelect, rememberCampaign, rememberRange, sharedCampaign, sharedRange, statusPill } from "./format.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
@@ -18,6 +18,10 @@ if (qs.has("idea")) {
 if (RANGE_KEYS.includes(qs.get("range"))) range = qs.get("range");
 // The campaign picked last in this tab (Results or Compare), unless the link names its own ("" = all).
 let campaign = qs.has("campaign") ? qs.get("campaign") : sharedCampaign();
+// Lead quality (L2): by ad, form or answer, and which question, kept in the address (?lq_by=&lq_q=).
+const Q_BY = [["ad", "By ad"], ["form", "By form"], ["answer", "By answer"]];
+let qBy = Q_BY.some(([k]) => k === qs.get("lq_by")) ? qs.get("lq_by") : "ad";
+let qQ = qs.get("lq_q") || "";
 
 // The ads table: which ads, in what order. Kept per browser.
 const FILTERS = {
@@ -112,6 +116,12 @@ function render() {
 
   const ads = `<section class="panel" id="cr-panel" aria-label="Ads"></section>
     <p class="muted small flush">Complete days only (${dayLabel(data.range.start)} to ${dayLabel(data.range.end)}): today is left out because Meta reports late. A cost in grey comes from fewer than ${EARLY} leads, too few to judge the ad on.</p>`;
+  const quality = `<section class="panel quality-panel" id="quality-panel" aria-labelledby="quality-h">
+      <div class="panel-head wrap"><h2 id="quality-h">Lead quality</h2><p>What happened to the leads from each ad, same period</p><span class="spacer"></span>
+        <div class="quality-tools"><div class="segmented" id="quality-by" role="group" aria-label="Lead quality by">${Q_BY.map(([k, l]) =>
+          `<button type="button" data-qby="${k}" aria-pressed="${k === qBy}">${l}</button>`).join("")}</div>
+          <label class="sr-only" for="quality-question">Question</label><select class="input tool" id="quality-question" hidden></select></div></div>
+      <div class="panel-body" id="quality-body">${skeleton()}</div></section>`;
 
   const extra = `<section class="panel"><div class="panel-head wrap"><h2>Who and where</h2><p>${campaign ? "This campaign" : "All ads"}, same period</p><span class="spacer"></span>
       <div class="format-scroll"><div class="segmented" id="acc-by">${[["placement", "Placement"], ["age", "Age"], ["gender", "Gender"], ["device", "Device"], ["region", "Region"], ["hour", "Hour"]].map(([k, l]) => `<button type="button" data-by="${k}" aria-pressed="${k === accBy}">${l}</button>`).join("")}</div></div></div>
@@ -122,7 +132,8 @@ function render() {
   const ideas = `<section class="panel" id="ideas-panel"><div class="panel-head wrap"><h2>By idea</h2><p>Which hooks, angles and offers bring the cheapest leads</p><span class="spacer"></span>
       <a class="btn btn-quiet btn-small" id="ideas-open" href="/ideas.html?range=${encodeURIComponent(range)}">Open Ideas</a></div>
       <div class="panel-body" id="ideas-sum">${skeleton()}</div></section>`;
-  $("perf").innerHTML = alerts + cap + figures + charts + ads + ideas + extra;
+  $("perf").innerHTML = alerts + cap + figures + charts + ads + quality + ideas + extra;
+  loadQuality();
   loadIdeas();
   renderAds();
   wirePacing();
@@ -278,6 +289,8 @@ function syncUrl() {
   u.searchParams.set("range", range);
   if (campaign) u.searchParams.set("campaign", campaign); else u.searchParams.delete("campaign");
   if (showDeleted) u.searchParams.set("deleted", "1"); else u.searchParams.delete("deleted");
+  if (qBy !== "ad") u.searchParams.set("lq_by", qBy); else u.searchParams.delete("lq_by");
+  if (qBy === "answer" && qQ) u.searchParams.set("lq_q", qQ); else u.searchParams.delete("lq_q");
   history.replaceState(null, "", u);
   // The tabs and breadcrumbs reopen Results on this campaign; the dates come from the shared range, so a
   // range picked later on another page isn't overruled by an old one kept here.
@@ -334,6 +347,86 @@ function wirePacing() {
 // The CSP forbids inline style attributes, so meter widths are applied from JS.
 function fixInlineWidths() {
   document.querySelectorAll(".meter i[data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
+}
+
+// ---------- Lead quality (L2): what happened to the leads from each ad, form or answer
+
+const rate = (r) => (r == null ? "—" : `${Math.round(r * 100)}%`);
+const lostText = (lost) => {
+  const parts = Object.entries(lost || {}).map(([k, n]) => `${n} ${(k === "none" ? "no reason given" : LOST_REASONS[k] || k).toLowerCase()}`);
+  return parts.length ? parts.join(" · ") : "—";
+};
+const early = (text, enough, why) => (enough ? text : `<span class="early" title="${esc(why)}">${text}</span>`);
+
+function qualityName(d, r) {
+  if (r.is_page) return `<span class="quality-name"><b>${esc(r.label)}</b></span>`;
+  const best = d.best === r.key ? ' <span class="pill ok">cheapest qualified</span>' : "";
+  if (d.by === "ad") {
+    return `<span class="quality-name">${entityLink("ad", r.key, r.label)}${best}<small><a href="/leads.html?ad=${encodeURIComponent(r.key)}&status=all">Its leads</a></small></span>`;
+  }
+  if (d.by === "form") {
+    return r.key === "none" ? `<span class="quality-name">${esc(r.label)}</span>`
+      : `<span class="quality-name"><a href="/leads.html?form=${encodeURIComponent(r.key)}&status=all">${esc(r.label)}</a>${best}</span>`;
+  }
+  return `<span class="quality-name">${esc(r.label)}</span>`;
+}
+
+function qualityCells(d, r) {
+  const few = `Only ${plural(r.leads, "lead")} so far: too early to judge`;
+  const judge = `Needs 3 qualified leads${d.target_cents ? ` and twice the ${money(d.target_cents, { exact: true })} target in spend` : ""} before it means much`;
+  return {
+    qualified: early(`${count(r.qualified)} · ${rate(r.qualified_rate)}`, r.rates_enough, few),
+    junk: early(`${count(r.junk)} · ${rate(r.junk_rate)}`, r.rates_enough, few),
+    cpq: r.cpq_cents == null ? "—" : early(money(r.cpq_cents, { exact: true }), r.cpq_enough, judge),
+  };
+}
+
+function qualityHtml(d) {
+  const v = d.verdict || {};
+  const verdict = `<p class="quality-verdict" id="quality-verdict">${v.name ? `<b>${esc(v.name)}</b> ` : ""}${esc(v.text || "")}</p>`;
+  if (!d.rows.length) return verdict;
+  const head = d.by === "ad" ? "Ad" : d.by === "form" ? "Form" : "Answer";
+  const rows = d.rows.map((r) => {
+    const c = qualityCells(d, r);
+    return `<tr data-key="${esc(r.key)}"><td>${qualityName(d, r)}</td><td class="num">${count(r.leads)}</td><td class="num">${count(r.repeats)}</td>
+      <td class="num">${c.qualified}</td><td class="num">${c.junk}</td><td class="num">${c.cpq}</td><td class="why">${esc(lostText(r.lost))}</td></tr>`;
+  }).join("");
+  const cards = d.rows.map((r) => {
+    const c = qualityCells(d, r);
+    return `<li class="quality-card" data-key="${esc(r.key)}"><h3>${qualityName(d, r)}</h3>
+      <dl><div><dt>Leads</dt><dd>${count(r.leads)}${r.repeats ? ` <small>+${count(r.repeats)} repeat${r.repeats === 1 ? "" : "s"}</small>` : ""}</dd></div>
+        <div><dt>Qualified</dt><dd>${c.qualified}</dd></div><div><dt>Looks like junk</dt><dd>${c.junk}</dd></div>
+        <div><dt>${WORDS.cpql}</dt><dd>${c.cpq}</dd></div></dl>
+      <p class="why">Why lost: ${esc(lostText(r.lost))}</p></li>`;
+  }).join("");
+  return `${verdict}<div class="quality-wide scroll-x"><table class="table middle quality-table">
+      <thead><tr><th>${head}</th><th class="num" title="People who filled in the form; repeats counted once">Leads</th><th class="num">Repeats</th>
+        <th class="num" title="Got to Qualified or Won, ÷ leads">Qualified</th><th class="num" title="Marked spam, or looks fake and was never contacted, ÷ leads">Looks like junk</th>
+        <th class="num">${WORDS.cpql}</th><th class="why">Why lost</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <ul class="quality-cards" id="quality-cards">${cards}</ul>
+    <p class="quality-note" id="quality-junk">${esc(d.junk_note || "")}</p>`;
+}
+
+async function loadQuality() {
+  const box = $("quality-body");
+  if (!box) return;
+  const superseded = startLoad("quality");
+  const u = new URLSearchParams({ range, by: qBy });
+  if (campaign) u.set("campaign", campaign);
+  if (qBy === "answer" && qQ) u.set("question", qQ);
+  try {
+    const d = await api(`/api/performance/quality?${u}`);
+    if (superseded() || !$("quality-body")) return;
+    const sel = $("quality-question");
+    if (qBy === "answer") {
+      qQ = d.question || "";
+      sel.innerHTML = d.questions.map((q) => `<option value="${esc(q.name)}" ${q.name === qQ ? "selected" : ""}>${esc(q.label)}</option>`).join("");
+    }
+    sel.hidden = qBy !== "answer" || !d.questions.length;
+    $("quality-body").innerHTML = qualityHtml(d);
+    syncUrl();
+  } catch (err) { if (!superseded() && $("quality-body")) $("quality-body").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
 let accBy = "placement";
@@ -419,6 +512,18 @@ if (me) {
     loadAccountBreakdown();
   });
   wireAds();
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("#quality-by [data-qby]");
+    if (!b || b.dataset.qby === qBy) return;
+    qBy = b.dataset.qby;
+    document.querySelectorAll("#quality-by [data-qby]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    loadQuality();
+  });
+  document.addEventListener("change", (e) => {
+    if (e.target.id !== "quality-question") return;
+    qQ = e.target.value;
+    loadQuality();
+  });
   $("campaign").addEventListener("change", () => { campaign = $("campaign").value; load(); });
   document.querySelector(".page-head").addEventListener("change", (e) => {
     if (e.target.id !== "range-pick") return;

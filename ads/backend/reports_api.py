@@ -12,6 +12,7 @@ import account_ctx
 import account_info
 import config
 import db
+import lead_quality as lq
 import report_logic as rl
 import settings_store
 import words
@@ -23,8 +24,8 @@ log = logging.getLogger(__name__)
 bp = Blueprint("reports", __name__, url_prefix="/api/reports")
 KINDS = ("week", "month")
 REVIEW_MODES = ("auto", "wait")
-# Which leads count, everywhere in the report (L2 swaps in lead_quality.counted()).
-LEAD_SCOPE = "NOT is_test"
+# Which leads count, everywhere in the report: no tests, a repeat once (L2, lead_quality.counted()).
+LEAD_SCOPE = lq.counted()
 STALE_CLAIM = timedelta(minutes=10)
 RETRY_AFTER = timedelta(hours=1)
 SHOWN_CHANGES = 15
@@ -41,23 +42,30 @@ def stage_counts(start, end):
     # Contacted is stage-based (00-PLAN C5): a call nobody answered is a try, not contact. Booked calls (L1) count
     # by the day the lead arrived.
     row = db.query(f"""SELECT COUNT(*) AS received,
-                              COUNT(*) FILTER (WHERE status <> 'new') AS contacted,
+                              COUNT(*) FILTER (WHERE {lq.contacted()}) AS contacted,
                               COUNT(*) FILTER (WHERE booked_at IS NOT NULL) AS booked,
-                              COUNT(*) FILTER (WHERE status IN ('qualified', 'won')) AS qualified,
-                              COUNT(*) FILTER (WHERE status = 'won') AS won,
+                              COUNT(*) FILTER (WHERE {lq.qualified()}) AS qualified,
+                              COUNT(*) FILTER (WHERE {lq.won()}) AS won,
                               percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM first_contacted_at - created_time) / 60)
                                   FILTER (WHERE first_contacted_at IS NOT NULL) AS median_minutes
-                       FROM leads WHERE {LEAD_SCOPE} AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s""",
+                       FROM leads l WHERE {LEAD_SCOPE} AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s""",
                    (account_info.tz_name(), start, end), one=True)
+    window = (account_info.tz_name(), start, end)
+    lost = {r["k"]: int(r["n"]) for r in db.query(
+        f"""SELECT COALESCE(lost_reason, 'none') AS k, COUNT(*) AS n FROM leads l
+            WHERE {LEAD_SCOPE} AND status = 'lost' AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s GROUP BY 1""", window)}
+    repeats = db.query("""SELECT COUNT(*) AS n FROM leads l WHERE NOT is_test AND repeat_of IS NOT NULL
+                          AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s""", window, one=True)["n"]
     return {"received": int(row["received"]), "contacted": int(row["contacted"]), "booked": int(row["booked"]),
-            "qualified": int(row["qualified"]), "won": int(row["won"]),
+            "qualified": int(row["qualified"]), "won": int(row["won"]), "repeats": int(repeats),
+            "lost": {k: lost[k] for k in lq.REASON_KEYS + ("none",) if k in lost},
             "median_minutes": round(float(row["median_minutes"])) if row["median_minutes"] is not None else None}
 
 
 def received_by_ad(start, end):
     """{ad id: leads received in these days}, counted like stage_counts (the report's ideas divide by it)."""
     return {r["ad_id"]: int(r["n"]) for r in db.query(
-        f"""SELECT ad_id, COUNT(*) AS n FROM leads WHERE {LEAD_SCOPE} AND ad_id IS NOT NULL
+        f"""SELECT ad_id, COUNT(*) AS n FROM leads l WHERE {LEAD_SCOPE} AND ad_id IS NOT NULL
             AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s GROUP BY ad_id""", (account_info.tz_name(), start, end))}
 
 
@@ -145,7 +153,8 @@ def build(kind, start=None, for_admin=False, links=False):
         "previous": {"start": ps.isoformat(), "end": pe.isoformat()}, "complete": rl.complete(e, t),
         "headline": rl.headline(now, before, target, account_info.currency()), "target_cents": target, "now": now, "before": before,
         "funnel": rl.funnel(rl.funnel_steps(now, booked)),
-        "lead_gap": rl.lead_gap(now["received"], now["meta_leads"]),
+        "lead_gap": rl.lead_gap(now["received"], now["meta_leads"], now["repeats"]),
+        "lost_line": rl.lost_line(now["lost"]),
         "ads": ads, "ads_total": len(every), "ideas": ideas,
         "changes": changes[-SHOWN_CHANGES:], "changes_more": max(0, len(changes) - SHOWN_CHANGES),
         "tests": [{"name": x["name"], **({"id": x["id"]} if links else {}), "status": x["status"], "note": x["judgement"]["note"] if x["status"] == "running" else (x["verdict"] or "")} for x in tests],

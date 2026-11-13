@@ -102,29 +102,40 @@ def source_named(args):
 
 
 def store_lead(data):
-    """Insert a lead from Graph API data, not yet announced. Returns (lead_id, created_new)."""
+    """Insert a lead from Graph API data, not yet announced. Returns (lead_id, created_new). In the same transaction,
+    under a per-account lock, it is matched against the person's earlier leads (L2): a repeat or a returning lead is
+    linked before anyone is told about it, so every path (webhook, catch-up, Refresh) classifies it the same way."""
+    import lead_quality_store as lqs
     data = without_nul(data)
     is_test = is_test_lead(data)
     parsed = parse_field_data(data.get("field_data"))
-    row = db.execute(
-        """INSERT INTO leads (meta_lead_id, created_time, form_id, ad_id, ad_name,
-                              adset_id, campaign_id, campaign_name, full_name, email, phone,
-                              business_type, answers, is_test, is_organic, alerted_at)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL)
-           ON CONFLICT (meta_lead_id) DO NOTHING
-           RETURNING id""",
-        (str(data["id"]), _parse_time(data.get("created_time")), data.get("form_id"),
-         data.get("ad_id"), data.get("ad_name"), data.get("adset_id"), data.get("campaign_id"),
-         data.get("campaign_name"), parsed["full_name"], parsed["email"], parsed["phone"],
-         parsed["business_type"], json.dumps(data.get("field_data") or []), is_test, bool(data.get("is_organic"))),
-        returning=True,
-    )
+    prep = lqs.prepare(parsed, data.get("field_data"), is_test)
+    created = _parse_time(data.get("created_time"))
+    check = not is_test and lqs.repeat_check_on()
+    with db.transaction() as cur:
+        lqs.lock(cur)
+        cur.execute(
+            """INSERT INTO leads (meta_lead_id, created_time, form_id, ad_id, ad_name,
+                                  adset_id, campaign_id, campaign_name, full_name, email, phone,
+                                  business_type, answers, is_test, is_organic, alerted_at,
+                                  email_key, phone_key, junk_flags, quality_checked)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s,%s,%s,TRUE)
+               ON CONFLICT (meta_lead_id) DO NOTHING
+               RETURNING id""",
+            (str(data["id"]), created, data.get("form_id"),
+             data.get("ad_id"), data.get("ad_name"), data.get("adset_id"), data.get("campaign_id"),
+             data.get("campaign_name"), parsed["full_name"], parsed["email"], parsed["phone"],
+             parsed["business_type"], json.dumps(data.get("field_data") or []), is_test, bool(data.get("is_organic")),
+             prep["email_key"], prep["phone_key"], prep["junk_flags"]))
+        row = cur.fetchone()
+        links = lqs.link_in(cur, {"id": row["id"], "created": created, **prep}, check) if row and not is_test else []
     if row:
         if not is_test:
             crm_events.enqueue(row["id"], "new", _parse_time(data.get("created_time")))
         # The first line of its history (never pruned); `announce` writes the activity line once it is told about.
-        lead_history.record(row["id"], "received", actor="meta", at=_parse_time(data.get("created_time")), mirror=False,
+        lead_history.record(row["id"], "received", actor="meta", at=created, mirror=False,
                             details={"ad": data.get("ad_name"), "test": is_test, "organic": bool(data.get("is_organic"))})
+        lqs.record(links)
         return row["id"], True
     existing = db.query("SELECT id FROM leads WHERE meta_lead_id = %s", (str(data["id"]),), one=True)
     # Not visible here: the lead id is unique across accounts and another account already has it.
@@ -145,46 +156,86 @@ def recipients_for(lead):
     return [r["email"] for r in _staff(lead["campaign_id"]) if r["notify_new_leads"]]
 
 
-def render_email(lead):
+def _email_html(title_html, rows, link, link_label, footer):
+    e = html.escape
+    cells = "".join(
+        f"<tr><td style='padding:4px 16px 4px 0;color:#5b6b78'>{e(k)}</td>"
+        f"<td style='padding:4px 0'>{v}</td></tr>" for k, v in rows)
+    return ("<div style='font-family:-apple-system,Segoe UI,sans-serif;color:#15212b;max-width:520px'>"
+            f"{title_html}<table style='font-size:15px;border-collapse:collapse'>{cells}</table>"
+            f"<p style='margin:20px 0'><a href='{e(link)}' style='background:#15212b;color:#fff;"
+            f"padding:10px 16px;border-radius:8px;text-decoration:none'>{e(link_label)}</a></p>"
+            f"<p style='color:#5b6b78;font-size:13px'>{e(footer)}</p></div>")
+
+
+def _contact_rows(lead, ad):
+    e = html.escape
+    return (("Phone", f"<a href='tel:{e(lead['phone'] or '')}'>{e(lead['phone'] or '-')}</a>"),
+            ("Email", f"<a href='mailto:{e(lead['email'] or '')}'>{e(lead['email'] or '-')}</a>"),
+            ("Business", e(lead["business_type"] or "business not given")), ("From ad", e(ad)))
+
+
+def render_email(lead, context_line=None):
+    """The new-lead email. context_line: a returning lead's "Asked before: …" (L2). A lead that looks like junk
+    still alerts, and says so in the subject."""
     name = lead["full_name"] or "Someone"
     business = lead["business_type"] or "business not given"
     link = __import__("notify").link(f"/leads.html#lead={lead['id']}")
     test = " (test lead)" if lead["is_test"] else ""
+    junk = " (looks like junk)" if lead.get("junk_flags") and not lead["is_test"] else ""
     ad = lead["ad_name"] or ("none, filled in without an ad" if lead.get("is_organic") else "-")
-    subject = f"New lead{test}: {name}, {business}"
-    lines = [
-        f"{name} asked for a free intro call{test}.",
-        "",
-        f"Phone:    {lead['phone'] or '-'}",
-        f"Email:    {lead['email'] or '-'}",
-        f"Business: {business}",
-        f"From ad:  {ad}",
-        "",
-        f"Open the lead: {link}",
-        "",
-        "Call within the hour if you can. Leads that hear back fast are the ones that turn into calls.",
-    ]
+    subject = f"New lead{test}{junk}: {name}, {business}"
+    footer = "Call within the hour if you can. Leads that hear back fast are the ones that turn into calls."
+    extra = [context_line] if context_line else []
+    if junk:
+        extra.append(f"This looks like junk: {__import__('lead_quality').flag_text(lead['junk_flags'])}")
+    lines = [f"{name} asked for a free intro call{test}.", *extra, "",
+             f"Phone:    {lead['phone'] or '-'}", f"Email:    {lead['email'] or '-'}", f"Business: {business}", f"From ad:  {ad}",
+             "", f"Open the lead: {link}", "", footer]
     e = html.escape
-    rows = "".join(
-        f"<tr><td style='padding:4px 16px 4px 0;color:#5b6b78'>{e(k)}</td>"
-        f"<td style='padding:4px 0'>{v}</td></tr>"
-        for k, v in (
-            ("Phone", f"<a href='tel:{e(lead['phone'] or '')}'>{e(lead['phone'] or '-')}</a>"),
-            ("Email", f"<a href='mailto:{e(lead['email'] or '')}'>{e(lead['email'] or '-')}</a>"),
-            ("Business", e(business)),
-            ("From ad", e(ad)),
-        )
-    )
-    body_html = (
-        "<div style='font-family:-apple-system,Segoe UI,sans-serif;color:#15212b;max-width:520px'>"
-        f"<p style='font-size:18px;margin:0 0 12px'><b>{e(name)}</b> asked for a free intro call{e(test)}.</p>"
-        f"<table style='font-size:15px;border-collapse:collapse'>{rows}</table>"
-        f"<p style='margin:20px 0'><a href='{e(link)}' style='background:#15212b;color:#fff;"
-        "padding:10px 16px;border-radius:8px;text-decoration:none'>Open the lead</a></p>"
-        "<p style='color:#5b6b78;font-size:13px'>Call within the hour if you can. Leads that hear "
-        "back fast are the ones that turn into calls.</p></div>"
-    )
-    return subject, "\n".join(lines), body_html
+    title = (f"<p style='font-size:18px;margin:0 0 12px'><b>{e(name)}</b> asked for a free intro call{e(test)}.</p>"
+             + "".join(f"<p style='margin:0 0 12px'>{e(x)}</p>" for x in extra))
+    return subject, "\n".join(lines), _email_html(title, _contact_rows(lead, ad), link, "Open the lead", footer)
+
+
+def render_repeat_email(lead, root, can_see_root, owner_name):
+    """'Asked again: Maria Lopez, Wholesale bakery': no automatic reply went out, and the work goes on the first lead.
+    A person who can't see the first lead's campaign learns only that they asked before."""
+    import lead_quality
+    import notify
+    subject, first = lead_quality.asked_again(lead, root, owner_name, can_see_root)
+    ad = lead["ad_name"] or "none, filled in without an ad"
+    target = root["id"] if can_see_root else lead["id"]
+    link = notify.link(f"/leads.html#lead={target}")
+    label = "Open the first lead" if can_see_root else "Open the lead"
+    footer = "No automatic reply went out: they got one the first time. Work it on the first lead; this one doesn't count twice."
+    lines = [first, "", f"Phone:    {lead['phone'] or '-'}", f"Email:    {lead['email'] or '-'}", f"From ad:  {ad}", "",
+             f"{label}: {link}", "", footer]
+    rows = _contact_rows(lead, ad)
+    return subject, "\n".join(lines), _email_html(f"<p style='font-size:18px;margin:0 0 12px'>{html.escape(first)}</p>",
+                                                  (rows[0], rows[1], rows[3]), link, label, footer)
+
+
+def repeat_recipients(lead, root):
+    """The repeat's usual people plus the first lead's owner (active, wanting lead emails, of this account), each
+    with whether they can see the first lead's campaign."""
+    import notify as notify_mod
+    people = {r["id"]: r for r in _staff(lead["campaign_id"])}
+    if root.get("owner_id") and root["owner_id"] not in people:
+        o = db.query("SELECT id, name, email, account_id, notify_new_leads, role FROM users WHERE id = %s AND is_active",
+                     (root["owner_id"],), one=True)
+        if o and notify_mod.serves(o, __import__("account_ctx").current()):
+            people[o["id"]] = o
+    ids = list(people)
+    roles = {r["id"]: r for r in db.query(
+        """SELECT u.id, u.role, EXISTS (SELECT 1 FROM campaign_members cm WHERE cm.user_id = u.id AND cm.campaign_id = %s) AS member
+           FROM users u WHERE u.id = ANY(%s)""", (root.get("campaign_id"), ids))} if ids else {}
+    out = []
+    for uid, p in people.items():
+        r = roles.get(uid) or {}
+        see = r.get("role") == "admin" or bool(r.get("member")) or uid == root.get("owner_id") or root.get("campaign_id") == lead["campaign_id"]
+        out.append({**p, "can_see_root": see})
+    return out
 
 
 def _staff(campaign_id):
@@ -210,31 +261,62 @@ def recipient_ids(lead):
     return [r["id"] for r in staff_for(lead["campaign_id"])]
 
 
-def alert_phones(lead):
+def alert_phones(lead, context_line=None, root=None):
     """A phone alert for everyone who gets the lead email: Telegram when they linked it, otherwise
-    a push to each of their devices with notifications on. The email goes out as well."""
+    a push to each of their devices with notifications on. The email goes out as well. With `root` the
+    lead is a repeat: "Asked again: Maria Lopez", to the usual people plus the first lead's owner."""
+    import lead_quality
     import notify
     import push
-    title, lines = notify.lead_alert(lead)
-    url = notify.link(f"/leads.html#lead={lead['id']}")
-    ids = recipient_ids(lead)
+    if root:
+        people = {p["id"]: p for p in repeat_recipients(lead, root)}
+        owner = _owner_name(root)
+        ids = list(people)
+    else:
+        title, lines = notify.lead_alert(lead)
+        if context_line:
+            lines = [context_line] + lines
+        ids = recipient_ids(lead)
     by_tg = set(notify.telegram_people(ids))
     by_push = push.has_devices(ids)
     wanted = {r["id"] for r in db.query("SELECT id FROM users WHERE id = ANY(%s) AND notify_new_leads", (ids,))} if ids else set()
     for uid in ids:
         channel = "telegram" if uid in by_tg else "push" if uid in by_push and uid in wanted else None
-        if channel:
-            notify.queue(uid, channel, "lead", title, lines, url, "Open the lead", ref=str(lead["id"]),
-                         dedupe_key=f"lead:{lead['id']}:{channel}:{uid}")
+        if not channel:
+            continue
+        url, label = notify.link(f"/leads.html#lead={lead['id']}"), "Open the lead"
+        if root:
+            see = people[uid]["can_see_root"]
+            title = f"Asked again: {lead.get('full_name') or 'Someone'}"
+            lines = [lead_quality.asked_again(lead, root, owner, see)[1]]
+            if see:
+                url, label = notify.link(f"/leads.html#lead={root['id']}"), "Open the first lead"
+        notify.queue(uid, channel, "lead", title, lines, url, label, ref=str(lead["id"]),
+                     dedupe_key=f"lead:{lead['id']}:{channel}:{uid}")
 
 
-def queue_emails(lead):
+def _owner_name(root):
+    if not root.get("owner_id"):
+        return None
+    row = db.query("SELECT name FROM users WHERE id = %s", (root["owner_id"],), one=True)
+    return row["name"] if row else None
+
+
+def queue_emails(lead, context_line=None, root=None):
     """The new-lead email, one per person who wants it (nobody sees who else gets the lead), sent
-    and retried by the notification queue."""
+    and retried by the notification queue. With `root` it is the "Asked again" email of a repeat."""
     import notify
     if not mailer.configured():
         return
-    subject, text, body_html = render_email(lead)
+    if root:
+        owner = _owner_name(root)
+        for r in repeat_recipients(lead, root):
+            if r["notify_new_leads"]:
+                subject, text, body_html = render_repeat_email(lead, root, r["can_see_root"], owner)
+                notify.queue(r["id"], "email", "lead", subject, text.split("\n"), ref=str(lead["id"]), html=body_html,
+                             dedupe_key=f"lead:{lead['id']}:email:{r['id']}")
+        return
+    subject, text, body_html = render_email(lead, context_line)
     for r in _staff(lead["campaign_id"]):
         if r["notify_new_leads"]:
             notify.queue(r["id"], "email", "lead", subject, text.split("\n"), ref=str(lead["id"]), html=body_html,
@@ -255,8 +337,20 @@ def announce(lead_id):
                     (lead_id, ANNOUNCE_WITHIN), one=True)
     if not lead:
         return False
+    # L2: a repeat tells the team "Asked again" (no automatic reply, no reminders); a returning lead is a new chance
+    # with a line about the first time.
+    import account_info
+    import lead_quality
+    first = lead.get("repeat_of") or lead.get("earlier_lead_id")
+    root = db.query("SELECT * FROM leads WHERE id = %s", (first,), one=True) if first else None
+    if lead.get("repeat_of") and root:
+        steps = (("email", lambda l: queue_emails(l, root=root)), ("phone alerts", lambda l: alert_phones(l, root=root)))
+    else:
+        context = lead_quality.asked_before(root, account_info.tz()) if root else None
+        steps = (("email", lambda l: queue_emails(l, context)), ("phone alerts", lambda l: alert_phones(l, context)),
+                 ("automatic reply", replies.queue_auto))
     failed = False
-    for name, step in (("email", queue_emails), ("phone alerts", alert_phones), ("automatic reply", replies.queue_auto)):
+    for name, step in steps:
         try:
             step(lead)
         except Exception:

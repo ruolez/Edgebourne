@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify
 
 import account_info
 import db
+import lead_quality as lq
 import followup
 import insights
 import meta_client
@@ -113,13 +114,13 @@ def lead_rows(scope_ids, now):
     tz = account_info.tz()
     lw = "TRUE" if scope_ids is None else "campaign_id = ANY(%s)"
     lp = [] if scope_ids is None else [scope_ids]
-    waiting = f"""status = 'new' AND NOT is_test AND first_contacted_at IS NULL AND meeting_status IS DISTINCT FROM 'scheduled' AND {lw}"""
-    total = db.query(f"SELECT COUNT(*) AS n FROM leads WHERE {waiting}", lp, one=True)["n"]
+    waiting = f"""status = 'new' AND first_contacted_at IS NULL AND meeting_status IS DISTINCT FROM 'scheduled' AND {lw}"""
+    total = db.query(f"SELECT COUNT(*) AS n FROM leads l WHERE {lq.counted()} AND {waiting}", lp, one=True)["n"]
     end_of_day = followup.due_where("today", now, tz)[1][1]
     leads = db.query(f"""SELECT id, full_name, business_type, ad_id, ad_name, phone, email, created_time, status, status_changed_at,
                                 first_contacted_at, is_test, next_step_kind, next_step_text, next_step_at, meeting_at, meeting_status,
-                                booked_at, call_attempts, ever_reached
-                         FROM leads WHERE NOT is_test AND status IN ('new', 'contacted', 'qualified') AND {lw}
+                                booked_at, call_attempts, ever_reached, repeat_of, junk_flags, junk_dismissed
+                         FROM leads WHERE NOT is_test AND repeat_of IS NULL AND status IN ('new', 'contacted', 'qualified') AND {lw}
                          AND ((status = 'new' AND first_contacted_at IS NULL) OR next_step_at < %s
                               OR (meeting_status = 'scheduled' AND meeting_at < %s))
                          ORDER BY created_time ASC LIMIT 300""", lp + [end_of_day, now + followup.MEETING_GRACE])
@@ -133,7 +134,7 @@ def lead_rows(scope_ids, now):
                      "lead": {k: l[k] for k in ("id", "full_name", "phone", "email", "ad_id", "ad_name", "created_time", "status",
                                                 "next_step_kind", "next_step_text", "next_step_at", "meeting_at")}})
     sql, params = followup.due_where("none", now, tz)
-    no_next = db.query(f"SELECT COUNT(*) AS n FROM leads l WHERE {sql} AND NOT l.is_test AND {lw.replace('campaign_id', 'l.campaign_id')}",
+    no_next = db.query(f"SELECT COUNT(*) AS n FROM leads l WHERE {sql} AND {lq.counted()} AND {lw.replace('campaign_id', 'l.campaign_id')}",
                        params + lp, one=True)["n"]
     follow = {"no_next": int(no_next), "due_today": sum(1 for r in rows if r["rule"] == "followup_today"),
               "overdue": sum(1 for r in rows if r["rule"] == "followup_overdue"), "presets": followup.presets(now, tz)}
@@ -151,17 +152,17 @@ def home():
     lw = "TRUE" if scope_ids is None else "campaign_id = ANY(%s)"
     lp = [] if scope_ids is None else [scope_ids]
     leads = db.query(f"""SELECT id, full_name, business_type, ad_name, status, created_time, is_test FROM leads
-                         WHERE {lw} ORDER BY created_time DESC LIMIT 6""", lp)
+                         WHERE {lw} AND repeat_of IS NULL ORDER BY created_time DESC LIMIT 6""", lp)
     cw = "TRUE" if scope_ids is None else "m.campaign_id = ANY(%s)"
     changes = db.query(f"""SELECT m.id, m.level, m.entity_id, m.entity_name, m.action, m.old_value, m.new_value, m.ok,
                                   m.error, m.created_at, u.name AS user_name
                            FROM meta_changes m LEFT JOIN users u ON u.id = m.user_id
                            WHERE {cw} ORDER BY m.id DESC LIMIT 6""", lp)
     ads = db.query(f"SELECT effective_status, COUNT(*) AS n FROM ads WHERE {lw} GROUP BY 1", lp)
-    stages = db.query(f"""SELECT status, COUNT(*) AS n FROM leads
-                          WHERE NOT is_test AND status_changed_at > now() - interval '7 days' AND {lw}
+    stages = db.query(f"""SELECT status, COUNT(*) AS n FROM leads l
+                          WHERE {lq.counted()} AND status_changed_at > now() - interval '7 days' AND {lw}
                           GROUP BY status""", lp)
-    waiting = db.query(f"SELECT COUNT(*) AS n FROM leads WHERE status = 'new' AND NOT is_test AND {lw}", lp, one=True)["n"]
+    waiting = db.query(f"SELECT COUNT(*) AS n FROM leads WHERE status = 'new' AND NOT is_test AND repeat_of IS NULL AND {lw}", lp, one=True)["n"]
     budget = daily_budget_cents(scope_ids)
     strip = [{"id": a["id"], "name": a["name"], "status": a["effective_status"], "thumbnail_url": a.get("thumbnail_url"),
               "spend_cents": int(a["spend_cents"]), "leads": int(a["leads"])}

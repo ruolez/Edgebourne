@@ -428,6 +428,30 @@ def fake_refuse_next_ad():
 FORM_LEADS = {}
 
 
+def _lead_from(lead_id, ad, fields):
+    return {"id": lead_id, "created_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000"),
+            "ad_id": REAL_AD_IDS[ad], "ad_name": list(TEXTS)[ad], "adset_id": ADSET["id"],
+            "campaign_id": CAMPAIGN["id"], "campaign_name": CAMPAIGN["name"], "form_id": FORM, "is_organic": False,
+            "field_data": [{"name": k, "values": [v]} for k, v in fields]}
+
+
+# Leads a QA webhook names, by id prefix. 7700: a new person each time (its own email and phone from the id, on
+# addresses that aren't reserved for tests, so lead quality neither flags nor folds them). 7711: the same person
+# every time ("Repeat QA", from N3), so a second one is a repeat. 7713: a lead that looks like junk.
+WEBHOOK_LEADS = {
+    "7700": lambda i: _lead_from(i, 1, [("full_name", "Telegram QA Lead"), ("phone_number", f"+16197{i[-6:]}"),
+                                        ("email", f"tgqa+{i[-6:]}@qa.edgebourne.com")]),
+    "7711": lambda i: _lead_from(i, 2, [("full_name", "Repeat QA"), ("phone_number", "+16195557701"),
+                                        ("email", "repeat-qa@qa.edgebourne.com"), ("what_kind_of_business_do_you_run?", "Machine shop")]),
+    "7713": lambda i: _lead_from(i, 4, [("full_name", "a"), ("phone_number", "1234567890"), ("email", "test@test.com"),
+                                        ("what_kind_of_business_do_you_run?", "asdf"), ("how_many_people_work_there?", "asdf")]),
+}
+
+
+def webhook_lead(lead_id):
+    return WEBHOOK_LEADS[lead_id[:4]](lead_id)
+
+
 @app.route("/fake/_form_lead")
 def fake_form_lead():
     """A lead on the first form that only the catch-up sees until a webhook names it (QA)."""
@@ -435,7 +459,7 @@ def fake_form_lead():
     lead = {"id": a["id"], "created_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000"),
             "form_id": FORM, "is_organic": a.get("organic") == "1",
             "field_data": [{"name": "full_name", "values": [a.get("name", "Form QA Lead")]},
-                           {"name": "email", "values": [a.get("email", "formqa@example.com")]}]}
+                           {"name": "email", "values": [a.get("email", "formqa@qa.edgebourne.com")]}]}
     if a.get("organic") != "1":
         lead.update({"ad_id": REAL_AD_IDS[1], "ad_name": "N2 - Order portal", "adset_id": ADSET["id"],
                      "campaign_id": CAMPAIGN["id"], "campaign_name": CAMPAIGN["name"]})
@@ -600,14 +624,9 @@ def graph(path):
             return jsonify({"data": [l for l in FORM_LEADS.values() if l["form_id"] == parts[0]]})
         if len(parts) == 1 and parts[0] in FORM_LEADS:
             return jsonify(FORM_LEADS[parts[0]])
-        if len(parts) == 1 and parts[0].startswith("7700") and len(parts[0]) == 16:
-            # A form lead the webhook announced (QA uses 7700…); shaped like Meta's.
-            return jsonify({"id": parts[0], "created_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000"),
-                            "ad_id": REAL_AD_IDS[1], "ad_name": "N2 - Order portal", "adset_id": ADSET["id"],
-                            "campaign_id": CAMPAIGN["id"], "campaign_name": CAMPAIGN["name"], "form_id": FORM, "is_organic": False,
-                            "field_data": [{"name": "full_name", "values": ["Telegram QA Lead"]},
-                                           {"name": "phone_number", "values": ["+15550001111"]},
-                                           {"name": "email", "values": ["tgqa@example.com"]}]})
+        if len(parts) == 1 and parts[0][:4] in WEBHOOK_LEADS and len(parts[0]) == 16:
+            # A form lead the webhook announced (QA uses 7700…, 7711…, 7713…); shaped like Meta's.
+            return jsonify(webhook_lead(parts[0]))
         if parts == [PAGE]:
             return jsonify({"id": PAGE, "name": "Edge Bourne Consulting", "access_token": "fake-page-token"})
         if len(parts) == 2 and parts[0] in STUDIES and parts[1] == "objectives":

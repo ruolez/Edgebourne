@@ -63,7 +63,28 @@ class DescribeTests(unittest.TestCase):
             "No-show",
             "Eugene removed the booked call",
             "Eugene called: no answer (undone)",
-            "Repeat",
+            "Asked again: linked to their first lead",
+        ])
+
+    def test_lead_quality_lines(self):
+        rows = [ev(1, **{"from": "qualified", "to": "lost", "reason": "price", "note": "went with a cheaper quote"}),
+                ev(2, **{"from": "contacted", "to": "lost", "reason": "no_response"}),
+                ev(3, "lost_reason", to="not_fit", note="Sells retail only"), ev(4, "lost_reason", to=None),
+                ev(5, "max_stage", **{"from": "won", "to": "contacted"}),
+                ev(6, "returning", user=None, actor="system", of=3), ev(7, "linked", of=3), ev(8, "linked", repeat=9),
+                ev(9, "unlinked", of=3), ev(10, "not_junk"), ev(11, "repeat", user=None, actor="system", repeat=12)]
+        self.assertEqual([lh.describe(r, LA) for r in rows], [
+            "Eugene moved it from Qualified to Lost (Price): went with a cheaper quote",
+            "Eugene moved it from Contacted to Lost (No response)",
+            "Eugene changed why it was lost: Not a fit · ‘Sells retail only’",
+            "Eugene changed why it was lost: no reason given",
+            "Eugene corrected how far it got: Won → Contacted",
+            "Asked before: linked to their earlier lead",
+            "Eugene marked it as the same person as an earlier lead",
+            "Eugene linked a later lead from the same person",
+            "Eugene said it's not the same person",
+            "Eugene marked it as real, not junk",
+            "They asked again: the new request is linked here",
         ])
 
     def test_a_person_who_left_is_someone(self):

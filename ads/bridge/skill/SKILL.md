@@ -86,7 +86,10 @@ A failed suggestion carries `failure`, the exact error: read it before explainin
 2. Context, in parallel where possible:
    - `desk snapshot 7` (and 14/30 if the question spans longer): spend, leads, cost per lead,
      per-ad results, the spending limit, plus what Meta doesn't know: lead stages from the
-     inbox (qualified/won), business types, speed to first contact, and `experiments`: the
+     inbox (qualified/won), business types, speed to first contact, `lead_quality_by_ad`: per ad,
+     repeats, junk and why leads were lost (judge an ad's cost per qualified lead on these, never on
+     Meta's lead count alone; qualified/won count the highest stage a lead reached, a repeat counts
+     once, `lead_quality_notes` says how), and `experiments`: the
      tests on the Tests page (running, or closed in the last 30 days) with each arm's numbers
      and the dashboard's verdict. Don't call a running test differently from its verdict;
      a closed one's `verdict` is what Eugene concluded, so build on it.

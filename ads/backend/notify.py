@@ -33,7 +33,8 @@ def lead_alert(lead):
         if lead.get(key):
             lines.append(f"{label}: {lead[key]}")
     lines += ["", "Call within the hour if you can."]
-    return f"New{test} lead: {lead.get('full_name') or 'Someone'}", lines
+    junk = " (looks like junk)" if lead.get("junk_flags") and not lead.get("is_test") else ""  # L2: still alerts, says so
+    return f"New{test} lead{junk}: {lead.get('full_name') or 'Someone'}", lines
 
 
 def link(path, account_id=None):

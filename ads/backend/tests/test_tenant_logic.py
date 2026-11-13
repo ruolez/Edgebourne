@@ -205,8 +205,16 @@ class MailHeaderTest(unittest.TestCase):
 
 class LeadQueueTest(unittest.TestCase):
     def test_a_lead_already_filed_under_another_account_is_not_a_crash(self):
-        with mock.patch.object(leads.db, "execute", return_value=None), mock.patch.object(leads.db, "query", return_value=None):
+        # The insert finds the id taken (another account has it) and returns nothing; the lookup can't see that row.
+        cur = mock.MagicMock()
+        cur.fetchone.return_value = None
+        tx = mock.MagicMock()
+        tx.__enter__.return_value = cur
+        with mock.patch.object(leads.db, "transaction", return_value=tx), mock.patch.object(leads.db, "execute", return_value=None), \
+                mock.patch.object(leads.db, "query", return_value=None), mock.patch("lead_quality_store.junk_flags_on", return_value=True), \
+                mock.patch("lead_quality_store.repeat_check_on", return_value=True):
             self.assertEqual(leads.store_lead({"id": "991", "field_data": []}), (None, False))
+        self.assertIn("ON CONFLICT (meta_lead_id) DO NOTHING", cur.execute.call_args_list[1].args[0])
 
     def test_one_broken_event_does_not_hold_up_the_rest(self):
         now = datetime.now(timezone.utc)

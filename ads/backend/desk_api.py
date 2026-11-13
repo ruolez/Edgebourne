@@ -22,6 +22,7 @@ from flask import Blueprint, g, jsonify, request
 import account_info
 import config
 import db
+import lead_quality as lq
 import desk_view
 import money_rules
 import schedules
@@ -1043,14 +1044,14 @@ def snapshot():
     # Lead quality over the same complete account days as the spend (audit A3-45, A3-56), per ad id:
     # ad names repeat across versions.
     window = (account_info.tz_name(), perf["range"]["start"], perf["range"]["end"])
-    in_window = "NOT is_test AND (created_time AT TIME ZONE %s)::date BETWEEN %s AND %s"
+    in_window = "(created_time AT TIME ZONE %s)::date BETWEEN %s AND %s"
     stages = db.query(
-        f"""SELECT ad_id, COALESCE(MAX(ad_name), 'unknown ad') AS ad, status, COUNT(*) AS n FROM leads
-            WHERE {in_window} GROUP BY ad_id, status ORDER BY 2, 1, 3""", window)
+        f"""SELECT ad_id, COALESCE(MAX(ad_name), 'unknown ad') AS ad, status, COUNT(*) AS n FROM leads l
+            WHERE {lq.counted()} AND {in_window} GROUP BY ad_id, status ORDER BY 2, 1, 3""", window)
     types = db.query(
         f"""SELECT COALESCE(NULLIF(business_type, ''), 'not given') AS business_type, COUNT(*) AS n,
-                  COUNT(*) FILTER (WHERE status IN ('qualified', 'won')) AS qualified
-           FROM leads WHERE {in_window} GROUP BY 1 ORDER BY 2 DESC LIMIT 15""", window)
+                  COUNT(*) FILTER (WHERE {lq.qualified()}) AS qualified
+           FROM leads l WHERE {lq.counted()} AND {in_window} GROUP BY 1 ORDER BY 2 DESC LIMIT 15""", window)
     # first_contacted_at is the first try (any logged call, a No answer too, an email or a move out of New), not
     # proof the lead heard back (L1).
     speed = db.query(
@@ -1058,7 +1059,7 @@ def snapshot():
                   COUNT(*) AS total,
                   percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM first_contacted_at - created_time) / 60)
                       FILTER (WHERE first_contacted_at IS NOT NULL) AS median_minutes_to_first_try
-           FROM leads WHERE {in_window}""", window, one=True)
+           FROM leads l WHERE {lq.counted()} AND {in_window}""", window, one=True)
     # Calls and follow-ups (L1), counts only: no names, phones or notes.
     calls = db.query(
         f"""SELECT COUNT(*) FILTER (WHERE e.outcome IS NOT NULL) AS calls,
@@ -1067,8 +1068,12 @@ def snapshot():
            WHERE e.kind = 'call' AND e.undone_at IS NULL AND NOT l.is_test
            AND (e.at AT TIME ZONE %s)::date BETWEEN %s AND %s""", window, one=True)
     follow = {"calls": int(calls["calls"]), "talked": int(calls["talked"]),
-              "follow_ups_overdue": int(db.query("""SELECT COUNT(*) AS n FROM leads WHERE NOT is_test AND next_step_at <= now()
+              "follow_ups_overdue": int(db.query(f"""SELECT COUNT(*) AS n FROM leads l WHERE {lq.counted()} AND next_step_at <= now()
                                                     AND status IN ('new', 'contacted', 'qualified')""", one=True)["n"])}
+    # L2: per ad, repeats, junk and why leads were lost. Counts and reason keys only: no names, emails, phones,
+    # answers or notes ever leave for the Mac.
+    import lead_quality_store
+    quality_rows, quality_totals = lq.snapshot(lead_quality_store.leads_for_window(None, perf["range"]["start"], perf["range"]["end"]))
     import experiments_api
     tests = experiments_api.summaries(db.query(
         f"SELECT {experiments_api.COLS} FROM experiments WHERE status = 'running' OR closed_at > now() - interval '30 days' ORDER BY start_day DESC"))
@@ -1080,7 +1085,8 @@ def snapshot():
     import accounts_api
     return jsonify({"account": {"id": account_ctx.current(), "name": accounts_api.name_of(account_ctx.current())},
                     "performance": perf, "lead_stages_by_ad": stages, "lead_business_types": types,
-                    "speed_to_lead": speed, "follow_ups": follow, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
+                    "speed_to_lead": speed, "follow_ups": follow,
+                    "lead_quality_by_ad": quality_rows, "lead_quality_totals": quality_totals, "lead_quality_notes": lq.SNAPSHOT_NOTES, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
                     "experiments": tests, **budget_snapshot(perf["range"])})
 
 

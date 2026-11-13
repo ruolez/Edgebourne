@@ -460,7 +460,7 @@ sig = 'sha256=' + hmac.new(settings_store.get('meta_app_secret').encode(), body,
 print(requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'X-Hub-Signature-256': sig, 'Content-Type': 'application/json'}).status_code)"`);
   let alert = null;
   for (let i = 0; i < 30 && !alert; i++) { await page.waitForTimeout(1000); alert = tgSent().find((m) => /New lead: Telegram QA Lead/.test(m.text)); }
-  check('a new lead reaches Telegram in under 30 s, with a link to it', Boolean(alert) && /Phone: \+15550001111/.test(alert.text), alert ? `${Math.round((Date.now() - t0) / 1000)} s` : 'not sent');
+  check('a new lead reaches Telegram in under 30 s, with a link to it', Boolean(alert) && /Phone: \+16197\d{6}/.test(alert.text), alert ? `${Math.round((Date.now() - t0) / 1000)} s` : 'not sent');
   await page.screenshot({ path: `${OUT}/flow-telegram-account.png` });
 
   // Lead replies: templates in Settings, an email from the lead page, then the automatic reply.
@@ -493,12 +493,12 @@ print(requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'
   await page.click('#reply-open');
   await page.waitForFunction(() => /Hi Telegram,/.test(document.querySelector('#reply-body')?.value || ''));
   const draft = await page.inputValue('#reply-body');
-  check('Email them opens a draft filled in for this lead', /\(555\) 000-1111/.test(draft) && /https:\/\/cal\.com\/eugene/.test(draft), draft.split('\n')[0]);
+  check('Email them opens a draft filled in for this lead', /\(619\) 7\d\d-\d{4}/.test(draft) && /https:\/\/cal\.com\/eugene/.test(draft), draft.split('\n')[0]);
   await page.fill('#reply-body', draft.replace('Thanks for asking', 'Thanks a lot for asking'));
   const mailsBefore = mailSent().length;
   await page.click('#reply-send');
   await page.waitForSelector('.email-sent');
-  const mail = mailSent().slice(mailsBefore).find((m) => m.to.includes('tgqa@example.com'));
+  const mail = mailSent().slice(mailsBefore).find((m) => m.to.includes(`tgqa+${tgLead.slice(-6)}@qa.edgebourne.com`));
   check('the email goes out with the edits, from Eugene, answers back to him', Boolean(mail) && /Thanks a lot for asking/.test(mail.text) && /Eugene/.test(mail.from) && mail.reply_to === 'eugene@edgebourne.com', mail ? `${mail.from} / ${mail.reply_to}` : 'no mail');
   check('sending moves the lead to Contacted and lists the email', (await page.getAttribute('[data-stage="contacted"]', 'aria-pressed')) === 'true' && /emailed them/.test(await page.textContent('.history')));
   await page.screenshot({ path: `${OUT}/flow-lead-reply.png`, fullPage: true });
@@ -548,7 +548,7 @@ requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'X-Hub-
   sh(`docker exec edgebourne-ads-backend python -c "
 import db, requests
 db.execute(\\"DELETE FROM leads WHERE full_name = 'Organic QA Lead'\\")
-requests.get('http://fake-meta:5001/fake/_form_lead', params={'id': '${formLead}', 'organic': '1', 'name': 'Organic QA Lead', 'email': 'organicqa@example.com'})"`);
+requests.get('http://fake-meta:5001/fake/_form_lead', params={'id': '${formLead}', 'organic': '1', 'name': 'Organic QA Lead', 'email': 'organicqa@qa.edgebourne.com'})"`);
   const mailsBeforeForm = mailSent().length, tgBeforeForm = tgSent().length;
   const caughtUp = sh(`docker exec edgebourne-ads-backend python -c "import leads; print(leads.backfill(days=1))"`).trim();
   check('the catch-up stores a form lead whose webhook has not been handled', caughtUp === '1', caughtUp);
@@ -562,14 +562,14 @@ import db
 r = db.query(\\"SELECT processed_at IS NOT NULL AS done FROM webhook_events WHERE leadgen_id = '${formLead}'\\", one=True)
 print(bool(r and r['done']))"`).trim() === 'True';
   let formReply = null;
-  for (let i = 0; i < 30 && !(formReply && pingDone()); i++) { await page.waitForTimeout(1000); formReply = mailSent().slice(mailsBeforeForm).find((m) => m.to.includes('organicqa@example.com')); }
+  for (let i = 0; i < 30 && !(formReply && pingDone()); i++) { await page.waitForTimeout(1000); formReply = mailSent().slice(mailsBeforeForm).find((m) => m.to.includes('organicqa@qa.edgebourne.com')); }
   await page.waitForTimeout(4000); // one more worker pass: anything sent twice shows up here
   const formMails = mailSent().slice(mailsBeforeForm);
   const formAlerts = formMails.filter((m) => /^New lead: Organic QA Lead/.test(m.subject || '')).map((m) => m.to.join(','));
   check('a lead the catch-up found first gets its email, once per person, after its webhook too',
     formAlerts.includes('eugene@edgebourne.com') && new Set(formAlerts).size === formAlerts.length, JSON.stringify(formAlerts));
-  check('...and one automatic reply', formMails.filter((m) => m.to.includes('organicqa@example.com')).length === 1,
-    formMails.filter((m) => m.to.includes('organicqa@example.com')).map((m) => m.subject).join(' | '));
+  check('...and one automatic reply', formMails.filter((m) => m.to.includes('organicqa@qa.edgebourne.com')).length === 1,
+    formMails.filter((m) => m.to.includes('organicqa@qa.edgebourne.com')).map((m) => m.subject).join(' | '));
   const formTg = tgSent().slice(tgBeforeForm).filter((m) => /New lead: Organic QA Lead/.test(m.text)).length;
   check('...and at most one Telegram alert', formTg <= 1, `${formTg} alerts`);
   const formRow = (await getJson('/api/leads?q=Organic%20QA%20Lead&status=all')).leads;
@@ -2496,7 +2496,7 @@ base = reports_api.totals(s, e)
 mid = datetime.combine(s + timedelta(days=2), time(18), timezone.utc)
 db.execute('INSERT INTO ad_daily (day, ad_id, ad_name, spend_cents, impressions, leads) VALUES (%s, %s, %s, %s, %s, %s)', (s + timedelta(days=2), 'W2QA-ad', 'W2QA ad', 4800, 3000, 6))
 for i, st in enumerate(['new', 'contacted', 'qualified', 'new']):
-    db.execute('INSERT INTO leads (meta_lead_id, created_time, status, ad_id, ad_name, full_name) VALUES (%s, %s, %s, %s, %s, %s)', ('W2QA-%d' % i, mid, st, 'W2QA-ad', 'W2QA ad', 'W2QA person %d' % i))
+    db.execute('INSERT INTO leads (meta_lead_id, created_time, status, max_stage, ad_id, ad_name, full_name) VALUES (%s, %s, %s, %s, %s, %s, %s)', ('W2QA-%d' % i, mid, st, st, 'W2QA-ad', 'W2QA ad', 'W2QA person %d' % i))
 db.execute('INSERT INTO ad_tags (ad_id, dimension, value) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING', ('W2QA-ad', 'hook', 'W2 hook'))
 db.execute('INSERT INTO status_events (level, entity_id, entity_name, field, old_value, new_value, source, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)', ('ad', '920000000000003', 'ACCT2MARK ad', 'configured_status', 'ACTIVE', 'PAUSED', 'poll', mid))
 print(json.dumps({'start': s.isoformat(), 'prev': (s - timedelta(days=7)).isoformat(), 'base': base}))`);
@@ -3391,6 +3391,8 @@ db.execute(\\"UPDATE users SET is_active = FALSE WHERE email IN ('qa-d2-client@e
       pp.on('pageerror', (e) => errors.push('d2 phone: ' + e.message));
       await pp.goto(`${BASE}/campaign.html?id=${DC}&range=14`);
       await pp.waitForSelector('#c-spend svg .chg-mark');
+      // The chart can sit under the fold (more figures above it): scroll it to the middle so the tap lands on it.
+      await pp.$eval('#c-spend', (el) => el.scrollIntoView({ block: 'center' }));
       const box = await pp.locator('#c-spend .hit').last().boundingBox();
       await pp.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
       const tapped = await pp.waitForSelector('#c-spend .tip:not([hidden]) .tip-chg', { timeout: 3000 }).then(() => true).catch(() => false);
@@ -4693,7 +4695,7 @@ print(r['id'])`));
     await page.waitForFunction(() => document.querySelector('#stages [data-stage="lost"]')?.getAttribute('aria-pressed') === 'true');
     const lostLead = await leadJson(fuId);
     check('L1: Lost: couldn\'t reach moves it to Lost with the reason and closes the next step', lostLead.status === 'lost' && !lostLead.next_step_at
-      && lostLead.history.some((h) => h.text === 'Next step closed: lead is Lost') && lostLead.history.some((h) => /to Lost: Couldn't reach after 3 tries$/.test(h.text)),
+      && lostLead.history.some((h) => h.text === 'Next step closed: lead is Lost') && lostLead.history.some((h) => /to Lost \(No response\): Couldn't reach after 3 tries$/.test(h.text)),
       JSON.stringify(lostLead.history.slice(0, 3).map((h) => h.text)));
     // Undo of the Lost move brings the next step back and takes back the "Next step closed" line with it.
     const unLost = await post(`/api/leads/${fuId}/events/${lostUndo}/undo`, {});
@@ -4843,6 +4845,364 @@ print(json.dumps([bool(db.query('SELECT 1 FROM lead_events WHERE id = %s', (e,),
     check('L1: a lead older than the kept history says "History before <date> was not kept." and a recent one says nothing', /^History before \w{3} \d{1,2}, \d{4} was not kept\.$/.test(gapText) && recentGap === null, `${gapText} | ${recentGap}`);
     // Booked figures show only for accounts that booked a call: these QA leads go, so later checks see the account as before.
     py(`import db;db.execute(\\"DELETE FROM leads WHERE meta_lead_id IN ('qa-follow-1', 'qa-follow-2')\\")`);
+  }
+  // L2 Lead quality: why a lead was lost, the highest stage reached, repeats, junk, Results → Lead quality, and
+  // the snapshot without people. Every check reads the server's state too, never the page alone.
+  {
+    const C1 = "'120252638288040312', 'Edge Bourne - Free intro call - Leads'";
+    const post = (url, body, method = 'POST') => page.evaluate(async ([u, b, m]) => { const r = await fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); return { code: r.status, body: await r.json() }; }, [url, body, method]);
+    const leadJson = (id) => getJson(`/api/leads/${id}`);
+    const hook = (id) => sh(`docker exec edgebourne-ads-backend python -c "
+import json, hmac, hashlib, requests, settings_store
+body = json.dumps({'entry': [{'changes': [{'field': 'leadgen', 'value': {'leadgen_id': '${id}'}}]}]}).encode()
+sig = 'sha256=' + hmac.new(settings_store.get('meta_app_secret').encode(), body, hashlib.sha256).hexdigest()
+requests.post('http://localhost:5000/webhooks/meta', data=body, headers={'X-Hub-Signature-256': sig, 'Content-Type': 'application/json'})"`);
+    const storedRow = async (metaId) => {
+      for (let i = 0; i < 40; i++) {
+        const r = py(`import db, json;r=db.query(\\"SELECT id, repeat_of, earlier_lead_id, repeat_checked, junk_flags, alerted_at IS NOT NULL AS told FROM leads WHERE meta_lead_id = '${metaId}'\\", one=True);print(json.dumps(r) if r else '')`);
+        if (r && JSON.parse(r).told) return JSON.parse(r);
+        await page.waitForTimeout(1000);
+      }
+      return null;
+    };
+    py(`import db
+db.execute(\\"DELETE FROM leads WHERE meta_lead_id LIKE 'qa-l2-%%' OR meta_lead_id LIKE '7713%%' OR full_name IN ('Repeat QA', 'Late QA')\\")`);
+    const insert = (key, name, days, status, maxStage) => Number(py(`import db, json
+answers = json.dumps([{'name': 'what_kind_of_business_do_you_run?', 'values': ['QA shop']}])
+r = db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, phone, ad_id, ad_name, campaign_id, campaign_name, status, max_stage, quality_checked, answers) VALUES ('${key}', now() - interval '${days} days', '${name}', '+16195557789', '120252672229400312', 'N2 - Order portal', ${C1}, '${status}', '${maxStage}', TRUE, %s) RETURNING id\\", (answers,), returning=True)
+print(r['id'])`));
+    const lqId = insert('qa-l2-1', 'QA Quality Lead', 2, 'contacted', 'contacted');
+    const moved = await post(`/api/leads/${lqId}`, { status: 'qualified' }, 'PATCH');
+    check('L2: a move to Qualified raises the highest stage reached', moved.code === 200 && moved.body.max_stage === 'qualified', JSON.stringify([moved.code, moved.body.max_stage]));
+    const qBefore = (await getJson('/api/performance?range=7')).totals.qualified;
+    await page.goto(`${BASE}/leads.html#lead=${lqId}`);
+    await page.reload();
+    await page.waitForSelector('#stages [data-stage="lost"]');
+    // 1. Lost asks why; Cancel changes nothing.
+    await page.click('#stages [data-stage="lost"]');
+    await page.waitForSelector('dialog.lost-dialog .cd-choice');
+    const dlg = await page.evaluate(() => ({ title: document.querySelector('dialog.lost-dialog h2').textContent, n: document.querySelectorAll('dialog.lost-dialog .cd-choice').length,
+      label: document.querySelector('dialog.lost-dialog label[for="cd-input"]').textContent, ok: document.querySelector('dialog.lost-dialog #cd-ok').textContent }));
+    await page.screenshot({ path: `${OUT}/flow-l2-lost-dialog.png` });
+    await page.click('dialog.lost-dialog #cd-cancel');
+    await page.waitForSelector('dialog.lost-dialog', { state: 'detached' });
+    check('L2: Lost opens "Why was this lead lost?" with 8 reasons and a note; Cancel leaves the stage', dlg.title === 'Why was this lead lost?' && dlg.n === 8
+      && dlg.label === 'Anything to add? (optional)' && dlg.ok === 'Mark as lost' && (await leadJson(lqId)).status === 'qualified', JSON.stringify(dlg));
+    // 2. No reason picked: "Pick a reason", and nothing is sent.
+    let patches = 0;
+    const countPatch = (r) => { if (r.method() === 'PATCH' && /\/api\/leads\/\d+$/.test(r.url())) patches += 1; };
+    page.on('request', countPatch);
+    await page.click('#stages [data-stage="lost"]');
+    await page.waitForSelector('dialog.lost-dialog .cd-choice');
+    await page.click('dialog.lost-dialog #cd-ok');
+    await page.waitForSelector('dialog.lost-dialog #cd-perr:not([hidden])');
+    check('L2: Mark as lost without a reason says "Pick a reason" and sends nothing', (await page.textContent('#cd-perr')) === 'Pick a reason' && patches === 0, String(patches));
+    // 3. Price with a note: stored, and the facts say so.
+    await page.click('dialog.lost-dialog .cd-choice[data-value="price"]');
+    await page.fill('dialog.lost-dialog #cd-input', 'went with a cheaper quote');
+    const [lostRes] = await Promise.all([page.waitForResponse((r) => r.request().method() === 'PATCH'), page.click('dialog.lost-dialog #cd-ok')]);
+    page.off('request', countPatch);
+    const lostBody = await lostRes.json();
+    await page.waitForSelector('#lost-why');
+    const lost = await leadJson(lqId);
+    check('L2: Price with a note is stored, the facts say "Lost because: Price" and "Got as far as: Qualified"', lost.status === 'lost' && lost.lost_reason === 'price'
+      && lost.lost_note === 'went with a cheaper quote' && lost.max_stage === 'qualified' && /^Price — “went with a cheaper quote”/.test((await page.textContent('#lost-why')).trim())
+      && /^Qualified/.test((await page.textContent('#max-stage')).trim()) && /Moved to Lost/.test(await page.textContent('.toast')), JSON.stringify([lost.status, lost.lost_reason, lost.max_stage]));
+    // 4. Qualified then lost still counts as qualified.
+    const qAfter = (await getJson('/api/performance?range=7')).totals.qualified;
+    check('L2: a qualified lead later lost still counts in Qualified on Results', qBefore >= 1 && qAfter === qBefore, `${qBefore} → ${qAfter}`);
+    // 5. Undo: the stage, the highest stage and the reason come back; a Lost stage still waiting for Meta is taken back.
+    const pendingLost = () => Number(py(`import db;print(db.query(\\"SELECT COUNT(*) AS n FROM crm_events WHERE lead_id = %s AND stage = 'lost' AND status = 'pending'\\", (${lqId},), one=True)['n'])`));
+    const undo = await post(`/api/leads/${lqId}/events/${lostBody.undo.event_id}/undo`, {});
+    check('L2: Undo puts back Qualified, takes the reason away and leaves no Lost waiting for Meta', undo.code === 200 && undo.body.status === 'qualified'
+      && undo.body.lost_reason === null && undo.body.max_stage === 'qualified' && pendingLost() === 0, JSON.stringify([undo.code, undo.body.status, undo.body.lost_reason]));
+    // Change the reason later: the dialog opens on the current one.
+    await post(`/api/leads/${lqId}`, { status: 'lost', lost_reason: 'no_response' }, 'PATCH');
+    await page.reload();
+    await page.waitForSelector('#lost-change');
+    await page.click('#lost-change');
+    await page.waitForSelector('dialog.lost-dialog .cd-choice[data-value="no_response"][aria-pressed="true"]');
+    const changeTitle = await page.textContent('dialog.lost-dialog h2');
+    await page.click('dialog.lost-dialog .cd-choice[data-value="went_elsewhere"]');
+    await Promise.all([page.waitForResponse((r) => r.request().method() === 'PATCH'), page.click('dialog.lost-dialog #cd-ok')]);
+    await page.waitForFunction(() => /Went with someone else/.test(document.querySelector('#lost-why')?.textContent || ''));
+    const changed = await leadJson(lqId);
+    check('L2: Change opens "Change why it was lost" on the current reason and saves the new one, with a history line', changeTitle === 'Change why it was lost'
+      && changed.lost_reason === 'went_elsewhere' && changed.history.some((h) => h.text === 'Eugene changed why it was lost: Went with someone else'), changed.lost_reason);
+    // 6. The Why filter on Lost.
+    await page.goto(`${BASE}/leads.html?status=lost&why=went_elsewhere`);
+    await page.waitForSelector('#why:not([hidden])');
+    await page.waitForSelector(`.lead-row[data-id="${lqId}"]`);
+    const why = await getJson('/api/leads?status=lost&why=went_elsewhere');
+    check('L2: Leads → Lost → Why lists only that reason, and the select counts it', why.leads.length >= 1 && why.leads.every((l) => l.lost_reason === 'went_elsewhere')
+      && /^Went with someone else \(\d+\)$/.test(await page.$eval('#why', (s) => s.selectedOptions[0].textContent)) && await page.isVisible('#clear-filters'), String(why.leads.length));
+    // Correct how far it got (admins): back to Contacted.
+    await page.goto(`${BASE}/leads.html#lead=${lqId}`);
+    await page.reload();
+    await page.waitForSelector('#max-correct');
+    await page.click('#max-correct');
+    await page.waitForSelector('dialog.lost-dialog .cd-choice[data-value="qualified"][aria-pressed="true"]');
+    await page.click('dialog.lost-dialog .cd-choice[data-value="contacted"]');
+    await Promise.all([page.waitForResponse((r) => r.request().method() === 'PATCH'), page.click('dialog.lost-dialog #cd-ok')]);
+    await page.waitForFunction(() => /^Contacted/.test((document.querySelector('#max-stage')?.textContent || '').trim()));
+    check('L2: an admin corrects how far a lead got, and History says so', (await leadJson(lqId)).max_stage === 'contacted'
+      && (await leadJson(lqId)).history.some((h) => h.text === 'Eugene corrected how far it got: Qualified → Contacted'));
+    // Same person by hand: the newer lead got further, so the first lead's highest stage rises to it.
+    const spId = insert('qa-l2-2', 'QA Same Person', 1, 'won', 'won');
+    await page.click('#same-person');
+    await page.waitForSelector('dialog.family-dialog #cd-input');
+    await page.fill('dialog.family-dialog #cd-input', 'QA Same Person');
+    await page.waitForSelector(`dialog.family-dialog .family-row[data-id="${spId}"]`);
+    await page.click(`dialog.family-dialog .family-row[data-id="${spId}"]`);
+    await Promise.all([page.waitForResponse((r) => /same-person$/.test(r.url())), page.click('dialog.family-dialog #cd-ok')]);
+    await page.waitForSelector('#family-list');
+    const sp = await leadJson(spId), root = await leadJson(lqId);
+    check('L2: Same person as… links the newer lead to the older one, whose highest stage rises to Won', sp.repeat_of === lqId && root.max_stage === 'won'
+      && /Linked to QA Quality Lead's first lead/.test(await page.textContent('.toast')) && /QA|N2/.test(await page.textContent('#family-list')), JSON.stringify([sp.repeat_of, root.max_stage]));
+    // 7. The same person fills the form twice: a repeat, one automatic reply, "Asked again", the Open count unchanged.
+    await page.evaluate(() => fetch('/api/settings/replies', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto: true }) }));
+    const sfx = String(Date.now()).slice(-11);
+    const firstId = `7711${sfx}0`, secondId = `7711${sfx}1`;
+    const mailsBefore = mailSent().length;
+    hook(firstId);
+    const first = await storedRow(firstId);
+    const openBefore = (await getJson('/api/leads?status=open')).counts;
+    hook(secondId);
+    const second = await storedRow(secondId);
+    await page.waitForTimeout(4000); // one more worker pass: a second reply or alert would show up here
+    const openAfter = (await getJson('/api/leads?status=open')).counts;
+    const mails = mailSent().slice(mailsBefore);
+    const replies = mails.filter((m) => m.to.includes('repeat-qa@qa.edgebourne.com'));
+    const askedAgain = mails.filter((m) => /^Asked again: Repeat QA/.test(m.subject || ''));
+    check('L2: a second fill from the same person is a repeat of the first, with one automatic reply in all', Boolean(first) && Boolean(second) && second.repeat_of === first.id
+      && replies.length === 1, JSON.stringify({ first, second, replies: replies.length }));
+    check('L2: the team hears "Asked again", and the Open count stays the same', askedAgain.length >= 1 && askedAgain.every((m) => /asked again \(from N3 - Same work twice\)/.test(m.text))
+      && JSON.stringify(openBefore) === JSON.stringify(openAfter), JSON.stringify({ subjects: askedAgain.map((m) => m.subject), openBefore, openAfter }));
+    await page.goto(`${BASE}/leads.html`);
+    await page.waitForSelector(`.lead-row[data-id="${first.id}"]`);
+    check('L2: the first lead\'s row says "Asked 2×" and the repeat is not listed under Open', /Asked 2×/.test(await page.textContent(`.lead-row[data-id="${first.id}"]`))
+      && !(await page.$(`.lead-row[data-id="${second.id}"]`)));
+    // 8. The repeat's page: a note instead of the stage; Not the same person makes it a lead of its own.
+    await page.goto(`${BASE}/leads.html?status=all#lead=${second.id}`);
+    await page.reload();
+    await page.waitForSelector('#repeat-note');
+    const repeatPage = { stages: await page.$('#stages'), text: await page.textContent('#repeat-note'), open: await page.getAttribute('#repeat-open', 'href'),
+      muted: await page.$eval(`.lead-row[data-id="${second.id}"]`, (r) => r.classList.contains('is-repeat') && /Repeat/.test(r.textContent)) };
+    await page.screenshot({ path: `${OUT}/flow-l2-repeat.png`, fullPage: true });
+    check('L2: a repeat shows "asked again" with Open the first lead instead of the stage, muted in All', !repeatPage.stages && /Repeat QA asked again on .* from N3 - Same work twice\./.test(repeatPage.text)
+      && repeatPage.open === `#lead=${first.id}` && repeatPage.muted, JSON.stringify({ ...repeatPage, stages: Boolean(repeatPage.stages) }));
+    const refused = await post(`/api/leads/${second.id}`, { status: 'contacted' }, 'PATCH');
+    check('L2: a repeat\'s stage can\'t be moved (409)', refused.code === 409, String(refused.code));
+    // Nor worked on its own: no call, next step or booked call on a lead that doesn't count; no Log a call button.
+    const callRefused = await post(`/api/leads/${second.id}/calls`, { outcome: 'reached' });
+    const nextRefused = await post(`/api/leads/${second.id}`, { next_step: { kind: 'call_back', preset: 'tomorrow_9' } }, 'PATCH');
+    const meetRefused = await post(`/api/leads/${second.id}`, { meeting: { unscheduled: true } }, 'PATCH');
+    const stillNew = await leadJson(second.id);
+    check('L2: a repeat refuses Log a call, a next step and a booked call (409), stays New, and shows no Log a call', callRefused.code === 409 && nextRefused.code === 409
+      && meetRefused.code === 409 && stillNew.status === 'new' && stillNew.max_stage === 'new' && !stillNew.next_step_at && !stillNew.booked_at && !(await page.$('#log-call')),
+      JSON.stringify([callRefused.code, nextRefused.code, meetRefused.code, stillNew.status, stillNew.max_stage]));
+    const firstLead = await leadJson(first.id);
+    check('L2: the first lead\'s history says they asked again', firstLead.history.some((h) => h.text === 'They asked again: the new request is linked here'),
+      JSON.stringify(firstLead.history.map((h) => h.text)));
+    const fyi = (await getJson('/api/inbox?kind=leads')).items.find((i) => i.key === `lead:${second.id}`);
+    check('L2: the Inbox lists "Repeat QA asked again" for your information, pointing at the first lead', Boolean(fyi) && fyi.title === 'Repeat QA asked again'
+      && fyi.rule === 'lead_repeat' && fyi.level === 'info' && fyi.need === false && fyi.href === `/leads.html#lead=${first.id}`, JSON.stringify(fyi));
+    await page.click('#repeat-unlink');
+    await page.waitForSelector('#stages');
+    const unlinked = await leadJson(second.id);
+    const openUnlinked = (await getJson('/api/leads?status=open')).counts;
+    check('L2: Not the same person makes it a lead of its own, never linked again, and the Open count rises by 1', unlinked.repeat_of === null && unlinked.repeat_checked === true
+      && openUnlinked.new === (openAfter.new || 0) + 1 && /Unlinked: counted as a separate lead/.test(await page.textContent('.toast'))
+      && await page.isVisible('#no-auto-reply'), JSON.stringify({ r: unlinked.repeat_of, c: unlinked.repeat_checked, before: openAfter.new, after: openUnlinked.new }));
+    // 9. A lead that looks like junk: flagged, no automatic reply to a test address, one tap to Lost: spam or fake.
+    const junkId = `7713${sfx}0`, junk2Id = `7713${sfx}1`;
+    const mailsJunk = mailSent().length;
+    hook(junkId);
+    const junk = await storedRow(junkId);
+    await page.waitForTimeout(3000);
+    const junkMails = mailSent().slice(mailsJunk);
+    check('L2: a junk lead is flagged, still alerts (saying so), and gets no automatic reply', junk && ['fake_phone', 'test_email', 'short_name'].every((f) => junk.junk_flags.includes(f))
+      && !junkMails.some((m) => m.to.includes('test@test.com')) && junkMails.some((m) => /^New lead \(looks like junk\): a,/.test(m.subject || '')), JSON.stringify({ flags: junk && junk.junk_flags, subjects: junkMails.map((m) => m.subject) }));
+    await page.goto(`${BASE}/leads.html#lead=${junk.id}`);
+    await page.reload();
+    await page.waitForSelector('#junk-note');
+    check('L2: the junk lead\'s row and page say "Looks like junk", with the reasons', /Looks like junk/.test(await page.textContent(`.lead-row[data-id="${junk.id}"]`))
+      && /This looks like junk\. The phone number looks made up/.test(await page.textContent('#junk-note')));
+    await page.click('#junk-lost');
+    await page.waitForFunction(() => document.querySelector('#stages [data-stage="lost"]')?.getAttribute('aria-pressed') === 'true');
+    check('L2: Mark as lost: spam or fake is one tap, with Undo', (await leadJson(junk.id)).lost_reason === 'spam' && await page.isVisible('.toast .toast-act'));
+    // 10. It's real: the chip goes.
+    hook(junk2Id);
+    const junk2 = await storedRow(junk2Id);
+    await page.goto(`${BASE}/leads.html#lead=${junk2.id}`);
+    await page.reload();
+    await page.waitForSelector('#junk-real');
+    await page.click('#junk-real');
+    await page.waitForSelector('#junk-note', { state: 'detached' });
+    await page.waitForFunction((id) => !/Looks like junk/.test(document.querySelector(`.lead-row[data-id="${id}"]`)?.textContent || 'Looks like junk'), junk2.id);
+    check("L2: It's real takes the chip away and the lead isn't junk any more", (await leadJson(junk2.id)).junk_dismissed === true && /Marked as real/.test(await page.textContent('.toast')));
+    await page.evaluate(() => fetch('/api/settings/replies', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto: false }) }));
+    // A catch-up that stores an older fill late links the newer one to it, with no second alert.
+    const late = JSON.parse(py(`import leads, db, json
+from datetime import datetime, timedelta, timezone
+now = datetime.now(timezone.utc)
+def data(i, mins):
+    return {'id': i, 'created_time': (now - timedelta(minutes=mins)).strftime('%Y-%m-%dT%H:%M:%S+0000'), 'ad_id': '120252672229400312', 'ad_name': 'N2 - Order portal',
+            'campaign_id': '120252638288040312', 'campaign_name': 'Edge Bourne - Free intro call - Leads', 'form_id': '1132280359202136',
+            'field_data': [{'name': 'full_name', 'values': ['Late QA']}, {'name': 'email', 'values': ['late-qa@qa.edgebourne.com']}]}
+newer, _ = leads.store_lead(data('qa-l2-late-new', 30))
+older, _ = leads.store_lead(data('qa-l2-late-old', 90))
+db.execute('UPDATE leads SET alerted_at = now() WHERE id IN (%s, %s)', (newer, older))
+r = db.query('SELECT repeat_of FROM leads WHERE id = %s', (newer,), one=True)
+print(json.dumps({'older': older, 'newer': newer, 'newer_repeat_of': r['repeat_of']}))`));
+    check('L2: an older fill stored late becomes the first lead, and the newer one folds into it', late.newer_repeat_of === late.older, JSON.stringify(late));
+    // A won client asks again: a returning lead of its own, pointing at the earlier one ("Already a client").
+    const lqData = (i, mins, name, email) => `{'id': '${i}', 'created_time': (now - timedelta(minutes=${mins})).strftime('%Y-%m-%dT%H:%M:%S+0000'), 'ad_id': '120252672229400312', 'ad_name': 'N2 - Order portal',
+            'campaign_id': '120252638288040312', 'campaign_name': 'Edge Bourne - Free intro call - Leads', 'form_id': '1132280359202136',
+            'field_data': [{'name': 'full_name', 'values': ['${name}']}, {'name': 'email', 'values': ['${email}']}]}`;
+    const back = JSON.parse(py(`import leads, db, json
+from datetime import datetime, timedelta, timezone
+now = datetime.now(timezone.utc)
+old, _ = leads.store_lead(${lqData('qa-l2-back-old', 600, 'Back QA', 'back-qa@qa.edgebourne.com')})
+db.execute(\\"UPDATE leads SET status = 'won', max_stage = 'won', status_changed_at = now() - interval '5 hours' WHERE id = %s\\", (old,))
+new, _ = leads.store_lead(${lqData('qa-l2-back-new', 20, 'Back QA', 'back-qa@qa.edgebourne.com')})
+db.execute('UPDATE leads SET alerted_at = now() WHERE id IN (%s, %s)', (old, new))
+r = db.query('SELECT repeat_of, earlier_lead_id FROM leads WHERE id = %s', (new,), one=True)
+print(json.dumps({'old': old, 'new': new, 'repeat_of': r['repeat_of'], 'earlier': r['earlier_lead_id']}))`));
+    await page.goto(`${BASE}/leads.html#lead=${back.new}`);
+    await page.reload();
+    await page.waitForSelector('#repeat-before');
+    check('L2: a client who asks again is a lead of its own that says "Already a client", with the "Asked before" chip', back.repeat_of === null && back.earlier === back.old
+      && /Already a client: Won on/.test(await page.textContent('#repeat-before')) && (await page.getAttribute('#repeat-before a', 'href')) === `#lead=${back.old}`
+      && /Asked before/.test(await page.textContent(`.lead-row[data-id="${back.new}"]`)) && Boolean(await page.$('#stages')), JSON.stringify(back));
+    // Settings → Lead quality: Spot repeats off links nothing new (links already made stay); on again links again.
+    const saveLq = async (on) => {
+      await page.goto(`${BASE}/settings.html#lead-quality`);
+      await page.waitForSelector('#lq-form #lq-repeats');
+      await page.setChecked('#lq-repeats', on);
+      await Promise.all([page.waitForResponse((r) => /\/api\/settings\/lead-quality$/.test(r.url()) && r.request().method() === 'PUT'), page.click('#lq-form button[type=submit]')]);
+      await page.waitForFunction((want) => document.getElementById('lq-repeats').checked === want, on);
+    };
+    await saveLq(false);
+    const offHint = await page.isVisible('#lq-repeats-off');
+    const off = JSON.parse(py(`import leads, db, json
+from datetime import datetime, timedelta, timezone
+now = datetime.now(timezone.utc)
+a, _ = leads.store_lead(${lqData('qa-l2-off-1', 50, 'Off QA', 'off-qa@qa.edgebourne.com')})
+b, _ = leads.store_lead(${lqData('qa-l2-off-2', 40, 'Off QA', 'off-qa@qa.edgebourne.com')})
+db.execute('UPDATE leads SET alerted_at = now() WHERE id IN (%s, %s)', (a, b))
+print(json.dumps({'repeat_of': db.query('SELECT repeat_of FROM leads WHERE id = %s', (b,), one=True)['repeat_of'],
+                  'kept': db.query('SELECT repeat_of FROM leads WHERE id = %s', (${late.newer},), one=True)['repeat_of']}))`));
+    await saveLq(true);
+    const on = JSON.parse(py(`import leads, db, json
+from datetime import datetime, timedelta, timezone
+now = datetime.now(timezone.utc)
+c, _ = leads.store_lead(${lqData('qa-l2-off-3', 30, 'Off QA', 'off-qa@qa.edgebourne.com')})
+db.execute('UPDATE leads SET alerted_at = now() WHERE id = %s', (c,))
+print(json.dumps({'repeat_of': db.query('SELECT repeat_of FROM leads WHERE id = %s', (c,), one=True)['repeat_of']}))`));
+    check('L2: Settings → Spot repeats off links no new fill, keeps links already made; on again links the next one', off.repeat_of === null && off.kept === late.older
+      && offHint && on.repeat_of !== null && (await getJson('/api/settings')).lead_quality.repeats === true, JSON.stringify({ off, on, offHint }));
+    // Lost with no reason: the Lost view nudges, and the report's Lost line counts it.
+    const rep = await getJson('/api/reports?kind=week');
+    const noWhy = Number(py(`import db, account_info
+r = db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, ad_id, ad_name, campaign_id, campaign_name, status, max_stage, quality_checked) VALUES ('qa-l2-nowhy', (%s::date + time '12:00') AT TIME ZONE %s, 'QA No Reason', '120252672229400312', 'N2 - Order portal', ${C1}, 'lost', 'contacted', TRUE) RETURNING id\\", ('${rep.start}', account_info.tz_name()), returning=True)
+print(r['id'])`));
+    await page.goto(`${BASE}/leads.html?status=lost`);
+    await page.waitForSelector('#why-note:not([hidden])');
+    const whyNote = await page.textContent('#why-note');
+    await page.goto(`${BASE}/report.html?kind=week&start=${rep.start}`);
+    await page.waitForSelector('#r-lost');
+    const lostText = await page.textContent('#r-lost');
+    const repAfter = await getJson(`/api/reports?kind=week&start=${rep.start}`);
+    check('L2: Lost says how many lost leads have no reason yet, and the report has a "Lost:" line counting them', /\d+ lost leads? (has|have) no reason yet\. Open one and tap Change to add it\./.test(whyNote)
+      && /^Lost: \d+/.test(lostText.trim()) && /no reason given/.test(lostText) && lostText.trim() === repAfter.lost_line && noWhy > 0, JSON.stringify({ whyNote, lostText, line: repAfter.lost_line }));
+    // 11. Results → Lead quality: by ad, form and answer; cards on a phone.
+    await page.goto(`${BASE}/performance.html?range=7`);
+    await page.waitForSelector('#quality-body .quality-verdict');
+    const byAd = await page.textContent('#quality-panel');
+    await page.click('#quality-by [data-qby="form"]');
+    await page.waitForFunction(() => document.querySelector('#quality-body thead th')?.textContent === 'Form' && /lq_by=form/.test(location.search));
+    await page.click('#quality-by [data-qby="answer"]');
+    await page.waitForSelector('#quality-question:not([hidden])');
+    await page.waitForFunction(() => /lq_by=answer/.test(location.search) && /lq_q=/.test(location.search));
+    const q = await getJson('/api/performance/quality?range=7&by=ad');
+    check('L2: Results → Lead quality shows By ad, By form and By answer, kept in the address', /Lead quality/.test(byAd) && /What happened to the leads from each ad, same period/.test(byAd)
+      && q.rows.length >= 1 && q.rows.every((r) => r.leads >= 0 && r.fills >= r.leads) && typeof q.junk_note === 'string', JSON.stringify(q.totals));
+    await page.screenshot({ path: `${OUT}/flow-l2-results.png`, fullPage: true });
+    const lqPhone = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await page.context().storageState() })).newPage();
+    lqPhone.on('pageerror', (e) => errors.push(e.message));
+    await lqPhone.goto(`${BASE}/performance.html?range=7`);
+    await lqPhone.waitForSelector('#quality-body .quality-verdict');
+    await lqPhone.$eval('#quality-panel', (el) => el.scrollIntoView());
+    const fitQ = await lqPhone.evaluate(() => ({ wide: document.documentElement.scrollWidth <= innerWidth, small: [...document.querySelectorAll('#quality-by button')].filter((b) => b.getBoundingClientRect().height < 44).length,
+      cards: getComputedStyle(document.querySelector('#quality-cards') || document.body).display, table: document.querySelector('.quality-wide') ? getComputedStyle(document.querySelector('.quality-wide')).display : 'none' }));
+    await lqPhone.screenshot({ path: `${OUT}/flow-l2-results-phone.png` });
+    check('L2 phone: Lead quality is cards, no sideways scroll, 44px By buttons', fitQ.wide && fitQ.small === 0 && (fitQ.cards === 'grid' || !q.rows.length) && fitQ.table === 'none', JSON.stringify(fitQ));
+    // The Lost dialog on a phone: at the bottom, the reasons thumb-sized, the note 16px.
+    await lqPhone.goto(`${BASE}/leads.html#lead=${lqId}`);
+    await lqPhone.waitForSelector('#lost-change');
+    await lqPhone.click('#lost-change');
+    await lqPhone.waitForSelector('dialog.lost-dialog .cd-choice');
+    const fitL = await lqPhone.evaluate(() => ({ small: [...document.querySelectorAll('dialog.lost-dialog button')].filter((b) => b.getBoundingClientRect().height < 44).map((b) => b.textContent),
+      font: getComputedStyle(document.querySelector('dialog.lost-dialog #cd-input')).fontSize, wide: document.documentElement.scrollWidth <= innerWidth,
+      okInView: document.querySelector('dialog.lost-dialog #cd-ok').getBoundingClientRect().bottom <= innerHeight }));
+    await lqPhone.screenshot({ path: `${OUT}/flow-l2-lost-phone.png` });
+    check('L2 phone: the Lost dialog has 44px reasons, a 16px note and its buttons in view', fitL.small.length === 0 && fitL.font === '16px' && fitL.wide && fitL.okInView, JSON.stringify(fitL));
+    await lqPhone.context().close();
+    // 12–13. A client sees Lead quality but can't link or correct; a teammate can't correct.
+    py(`import db
+from werkzeug.security import generate_password_hash as h
+for email, role in (('qa-l2-client@example.com', 'client'), ('qa-l2-mate@example.com', 'member')):
+    db.execute(\\"INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, %s, 1) ON CONFLICT (email) DO UPDATE SET is_active = TRUE, password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, account_id = 1, must_change_password = FALSE\\", (email, 'QA L2 ' + role, h('l2-pass-12345'), role))
+db.execute(\\"INSERT INTO campaign_members (campaign_id, user_id, account_id) SELECT '120252638288040312', id, 1 FROM users WHERE email = 'qa-l2-mate@example.com' ON CONFLICT DO NOTHING\\")`);
+    // A repeat the teammate can see whose first lead sits in a campaign they can't see.
+    const hidden = JSON.parse(py(`import db, json
+root = db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, campaign_id, campaign_name, ad_id, status, quality_checked) VALUES ('qa-l2-hidden-root', now() - interval '12 hours', 'QA Hidden Root', 'qa-l2-hidden-camp', 'QA hidden', 'qa-l2-hidden-ad', 'new', TRUE) RETURNING id\\", returning=True)['id']
+rep = db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, campaign_id, campaign_name, ad_id, ad_name, status, repeat_of, earlier_lead_id, repeat_source, quality_checked) VALUES ('qa-l2-hidden-rep', now() - interval '1 hour', 'QA Hidden Root', ${C1}, '120252672229400312', 'N2 - Order portal', 'new', %s, %s, 'auto', TRUE) RETURNING id\\", (root, root), returning=True)['id']
+print(json.dumps({'root': root, 'rep': rep}))`));
+    for (const [email, who] of [['qa-l2-client@example.com', 'client'], ['qa-l2-mate@example.com', 'mate']]) {
+      const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+      const p = await ctx.newPage();
+      p.on('pageerror', (e) => errors.push(e.message));
+      await p.goto(BASE + '/login.html');
+      await p.fill('#email', email); await p.fill('#password', 'l2-pass-12345');
+      await Promise.all([p.waitForURL('**/home.html**'), p.click('button[type=submit]')]);
+      const res = await p.evaluate(async ([id, other, h]) => {
+        const send = (u, m, b) => fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.status);
+        return { link: await send(`/api/leads/${id}/same-person`, 'POST', { other_id: other }), correct: await send(`/api/leads/${id}`, 'PATCH', { max_stage: 'new' }),
+          quality: (await fetch('/api/performance/quality?range=7')).status, canCorrect: (await (await fetch(`/api/leads/${id}`)).json()).can_correct,
+          seesRep: (await fetch(`/api/leads/${h.rep}`)).status, hiddenLink: await send(`/api/leads/${h.rep}/same-person`, 'POST', { other_id: id }) };
+      }, [lqId, who === 'client' ? first.id : lqId, hidden]);
+      if (who === 'client') {
+        await p.goto(`${BASE}/performance.html?range=7`);
+        await p.waitForSelector('#quality-body .quality-verdict');
+        await p.goto(`${BASE}/leads.html#lead=${lqId}`);
+        await p.waitForSelector('#detail h2');
+        check('L2: a client reads Lead quality but can\'t link leads or correct a stage', res.quality === 200 && res.link === 403 && res.correct === 403 && res.canCorrect === false
+          && !(await p.$('#max-correct')) && !(await p.isVisible('#same-person').catch(() => false)), JSON.stringify(res));
+      } else {
+        check('L2: a teammate can\'t correct how far a lead got (403), and linking a lead to itself is refused (400)', res.correct === 403 && res.canCorrect === false
+          && res.quality === 200 && res.link === 400, JSON.stringify(res));
+        const rootAfter = JSON.parse(py(`import db, json;print(json.dumps(db.query('SELECT repeat_of FROM leads WHERE id = %s', (${hidden.root},), one=True)))`));
+        check('L2: a teammate can\'t link through a first lead in a campaign they don\'t see (404), and that lead is left alone', res.seesRep === 200 && res.hiddenLink === 404
+          && rootAfter.repeat_of === null, JSON.stringify({ seesRep: res.seesRep, hiddenLink: res.hiddenLink, rootAfter }));
+      }
+      await ctx.close();
+    }
+    py(`import db
+db.execute(\\"UPDATE users SET is_active = FALSE WHERE email IN ('qa-l2-client@example.com', 'qa-l2-mate@example.com')\\")
+db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users WHERE email = 'qa-l2-mate@example.com')\\")`);
+    // 14. Claude's snapshot: lead quality per ad, never a person's name, email, phone or note.
+    const snap = JSON.parse(py(`import json, account_ctx, desk_api
+from app import create_app
+app = create_app(run_migrations=False)
+with app.test_request_context('/api/agent/snapshot?range=30'), account_ctx.use(1):
+    body = desk_api.snapshot.__wrapped__().get_data(as_text=True)
+d = json.loads(body)
+print(json.dumps({'by_ad': 'lead_quality_by_ad' in d, 'totals': d.get('lead_quality_totals'), 'pii': [w for w in ('QA Quality Lead', 'Repeat QA', 'repeat-qa@qa', '5557701', '1234567890', 'test@test.com', 'went with a cheaper quote') if w in body]}))`));
+    check('L2: the snapshot carries lead quality per ad and no names, emails, phones, answers or notes', snap.by_ad && snap.totals && snap.pii.length === 0, JSON.stringify(snap));
+    py(`import db
+db.execute(\\"DELETE FROM leads WHERE meta_lead_id LIKE 'qa-l2-%%' OR meta_lead_id LIKE '7713%%' OR full_name IN ('Repeat QA', 'Late QA')\\")`);
   }
   await page.goto(BASE + '/desk.html#list');
   await page.waitForSelector('#cv[data-state]');

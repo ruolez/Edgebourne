@@ -58,7 +58,11 @@ def _wait(lead, now):
 
 def reminder_text(lead, kind, now):
     name = lead.get("full_name") or "Someone"
-    title = f"Nobody has called {name} yet (5 min)" if kind == "5m" else f"{name} has waited {_wait(lead, now)} for a call"
+    junk = bool(lead.get("junk_flags")) and not lead.get("junk_dismissed")
+    if kind == "5m":
+        title = f"Nobody has called {name} yet (5 min{', looks like junk' if junk else ''})"
+    else:
+        title = f"{name} has waited {_wait(lead, now)} for a call" + (" (looks like junk)" if junk else "")
     lines = [lead.get("business_type") or "Business not given"]
     if lead.get("phone"):
         lines.append(f"Phone: {replies.phone_display(lead['phone'])}")
@@ -66,9 +70,9 @@ def reminder_text(lead, kind, now):
 
 
 LEADS_SQL = """SELECT l.* FROM leads l
-               WHERE l.status = 'new' AND NOT l.is_test AND l.first_contacted_at IS NULL
+               WHERE l.status = 'new' AND NOT l.is_test AND l.repeat_of IS NULL AND l.first_contacted_at IS NULL
                AND l.meeting_status IS DISTINCT FROM 'scheduled'"""
-OPEN_SQL = "l.status IN ('new', 'contacted', 'qualified') AND NOT l.is_test"
+OPEN_SQL = "l.status IN ('new', 'contacted', 'qualified') AND NOT l.is_test AND l.repeat_of IS NULL"
 
 
 def followups(now):
@@ -146,7 +150,7 @@ def stats(where="TRUE", params=()):
     """The response line on Leads: how fast leads got a first try, and the calls logged, last 30 days."""
     rows = db.query(
         f"SELECT EXTRACT(EPOCH FROM (l.first_contacted_at - l.created_time)) / 60 AS wait_minutes FROM leads l "
-        f"WHERE {where} AND NOT l.is_test AND l.created_time > now() - interval '30 days'", list(params))
+        f"WHERE {where} AND NOT l.is_test AND l.repeat_of IS NULL AND l.created_time > now() - interval '30 days'", list(params))
     calls = db.query(
         f"""SELECT e.outcome, e.undone_at IS NOT NULL AS undone FROM lead_events e JOIN leads l ON l.id = e.lead_id
             WHERE e.kind = 'call' AND e.at > now() - interval '30 days' AND {where} AND NOT l.is_test""", list(params))

@@ -59,7 +59,7 @@ def stored_leads(form_ids):
     if not form_ids:
         return {}
     import db
-    rows = db.query("SELECT form_id, COUNT(*) AS n FROM leads WHERE form_id = ANY(%s) AND NOT is_test GROUP BY form_id",
+    rows = db.query("SELECT form_id, COUNT(*) /* every fill */ AS n FROM leads WHERE form_id = ANY(%s) AND NOT is_test GROUP BY form_id",
                     [list(form_ids)])
     return {r["form_id"]: r["n"] for r in rows}
 

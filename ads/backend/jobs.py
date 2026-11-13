@@ -44,6 +44,7 @@ def _loop():
         emails. Done for every account before any slow Meta pull. Errors stay inside the job."""
         for name, job in (("new leads", leads.process_pending_events),
                           ("announcing new leads", leads.announce_pending),
+                          ("lead quality backfill", lambda: __import__("lead_quality_store").backfill_once()),
                           ("Meta status webhooks", lambda: __import__("status_history").process_webhooks()),
                           ("lead replies", lambda: __import__("replies").process_pending()),
                           ("Desk schedules", lambda: __import__("schedules").run()),

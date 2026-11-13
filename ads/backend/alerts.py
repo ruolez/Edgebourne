@@ -266,7 +266,8 @@ def snapshot(now):
     meta_leads = {r["day"]: int(r["n"]) for r in db.query(
         "SELECT day, SUM(leads) AS n FROM ad_daily WHERE day >= %s AND day < %s GROUP BY day", (today - timedelta(days=3), today))}
     inbox = {r["day"]: int(r["n"]) for r in db.query(
-        "SELECT (created_time AT TIME ZONE %s)::date AS day, COUNT(*) AS n FROM leads WHERE NOT is_test "
+        # Meta counts a repeat fill too, but never a form filled in without an ad (L2): repeats stay, organic goes.
+        "SELECT (created_time AT TIME ZONE %s)::date AS day, COUNT(*) /* every fill */ AS n FROM leads WHERE NOT is_test AND NOT is_organic "
         "AND created_time > now() - interval '4 days' GROUP BY 1", (account_info.tz_name(),))}
     updated = refresh_api.last_updated(settings_store.get("last_refresh_at"), settings_store.get("last_performance_sync"))
     return today, {

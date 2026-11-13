@@ -42,6 +42,17 @@ def _next(d):
     return (d.get("next_text") or "Something else") if kind == "other" else NEXT_WORDS.get(kind, "Follow up")
 
 
+def _reason(key):
+    import lead_quality
+    return lead_quality.REASON_LABELS.get(key, str(key))
+
+
+def _quoted(note):
+    if not note:
+        return ""
+    return f" · ‘{note[:NOTE_CHARS].rstrip() + '…' if len(note) > NOTE_CHARS else note}’"
+
+
 def describe(ev, tz, names=None):
     """One plain sentence per event. names: {user id: name} for people named by id only."""
     names = names or {}
@@ -62,7 +73,22 @@ def describe(ev, tz, names=None):
             note = note[:NOTE_CHARS].rstrip() + "…"
         text = f"{who} called: {what}" + (f" · ‘{note}’" if note else "")
     elif kind == "stage":
-        text = f"{who} moved it from {stage(d.get('from'))} to {stage(d.get('to'))}" + (f": {d['note']}" if d.get("note") else "")
+        reason = f" ({_reason(d['reason'])})" if d.get("reason") else ""
+        text = f"{who} moved it from {stage(d.get('from'))} to {stage(d.get('to'))}{reason}" + (f": {d['note']}" if d.get("note") else "")
+    elif kind == "lost_reason":
+        text = f"{who} changed why it was lost: {_reason(d.get('to')) if d.get('to') else 'no reason given'}" + _quoted(d.get("note"))
+    elif kind == "max_stage":
+        text = f"{who} corrected how far it got: {stage(d.get('from'))} → {stage(d.get('to'))}"
+    elif kind == "repeat":
+        text = "They asked again: the new request is linked here" if d.get("repeat") else "Asked again: linked to their first lead"
+    elif kind == "returning":
+        text = "Asked before: linked to their earlier lead"
+    elif kind == "linked":
+        text = f"{who} linked a later lead from the same person" if d.get("repeat") else f"{who} marked it as the same person as an earlier lead"
+    elif kind == "unlinked":
+        text = f"{who} said it's not the same person"
+    elif kind == "not_junk":
+        text = f"{who} marked it as real, not junk"
     elif kind == "owner":
         to_id = d.get("to_id", d.get("owner_id"))
         if to_id:

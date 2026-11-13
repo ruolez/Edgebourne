@@ -94,8 +94,9 @@ def funnel_steps(counts, tracks_bookings):
     return steps + [("Qualified", counts["qualified"]), ("Won", counts["won"])]
 
 
-def lead_gap(received, meta):
-    """Meta's lead count beside the leads that reached the console, in plain words; None when they agree."""
+def lead_gap(received, meta, repeats=0):
+    """Meta's lead count beside the leads that reached the console, in plain words; None when they agree. Repeats
+    (L2: the same person again) count once here and every time at Meta."""
     if received == meta:
         return None
     if meta == 0:
@@ -107,7 +108,23 @@ def lead_gap(received, meta):
     else:
         text = (f"Meta counted {meta} lead{'s' if meta != 1 else ''}; your leads list has {received - meta} more (someone used the "
                 "form outside an ad, or Meta counted it on another day).")
+    if repeats:
+        text = text[:-1] + ", and a person who filled the form twice counts once."
     return {"meta": meta, "received": received, "diff": received - meta, "text": text}
+
+
+def lost_line(counts):
+    """'Lost: 4 (2 no response, 1 not a fit, 1 spam or fake).' from lead_quality.lost_counts; None when nothing was lost.
+    Reasons only: a lost lead's note never reaches a report."""
+    import lead_quality
+    total = sum(n for n in counts.values() if n)
+    if not total:
+        return None
+    parts = [f"{counts[k]} {lead_quality.reason_words(k if k != 'none' else None).lower()}"
+             for k in lead_quality.REASON_KEYS + ("none",) if counts.get(k)]
+    if list(counts) == ["none"] or (len(parts) == 1 and counts.get("none")):
+        return f"Lost: {total} (no reason given)."
+    return f"Lost: {total} ({', '.join(parts)})."
 
 
 def headline(now, before, target_cents=None, currency="USD"):

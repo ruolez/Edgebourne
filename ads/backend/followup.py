@@ -189,7 +189,7 @@ def is_open(lead):
 def waiting(lead):
     """The one urgency rule (today.waiting): New, not a test, nobody tried yet, no call booked."""
     return (lead.get("status") == "new" and not lead.get("is_test") and not lead.get("first_contacted_at")
-            and lead.get("meeting_status") != "scheduled")
+            and lead.get("meeting_status") != "scheduled" and not lead.get("repeat_of"))
 
 
 def meeting_state(lead, now):
@@ -277,7 +277,8 @@ def queue(leads, now, tz):
         if found:
             bucket, at, kind = min(found, key=lambda f: f[0])
             rows.append({"id": l["id"], "bucket": bucket, "at": at, "kind": kind, "lead": l})
-    return sorted(rows, key=lambda r: (r["bucket"], r["at"], r["id"]))
+    # Leads that look like junk (L2) wait behind the real ones inside their bucket.
+    return sorted(rows, key=lambda r: (r["bucket"], bool(r["lead"].get("junk_flags")) and not r["lead"].get("junk_dismissed"), r["at"], r["id"]))
 
 
 def call_stats(rows):
@@ -338,9 +339,10 @@ def digest_text(waiting_leads, due, calls_today, now, tz):
 
 def due_where(due, now, tz, alias="l"):
     """The ?due= filter of the leads list: (SQL, params). today = due on the account's today; overdue = past due;
-    none = open leads already tried with no next step and no call booked; booked = a call was ever booked."""
+    none = open leads already tried with no next step and no call booked; booked = a call was ever booked. A repeat
+    is never followed up on its own (one linked after it was worked keeps its old step), so none of them list it."""
     a = alias
-    open_sql = f"{a}.status IN ('new', 'contacted', 'qualified')"
+    open_sql = f"{a}.repeat_of IS NULL AND {a}.status IN ('new', 'contacted', 'qualified')"
     if due == "today":
         day = now.astimezone(tz).date()
         return f"{open_sql} AND {a}.next_step_at >= %s AND {a}.next_step_at < %s", [_local_at(day, 0, tz), _local_at(day + timedelta(days=1), 0, tz)]
@@ -350,7 +352,7 @@ def due_where(due, now, tz, alias="l"):
         return (f"{open_sql} AND {a}.next_step_at IS NULL AND {a}.meeting_status IS DISTINCT FROM 'scheduled' "
                 f"AND ({a}.first_contacted_at IS NOT NULL OR {a}.status <> 'new')"), []
     if due == "booked":
-        return f"{a}.booked_at IS NOT NULL", []
+        return f"{a}.repeat_of IS NULL AND {a}.booked_at IS NOT NULL", []
     return None, []
 
 

@@ -25,6 +25,7 @@
       </header>
       <div class="leads-bar">
         <div class="filters" id="filters" role="group" aria-label="Show leads"></div>
+        <select class="input tool" id="why" aria-label="Why they were lost" hidden></select>
         <div class="search">
           <span id="search-icon"></span>
           <label class="sr-only" for="q">Search leads</label>
@@ -35,6 +36,7 @@
         <label class="check"><input type="checkbox" id="tests"> Show test leads</label>
         <button type="button" class="btn btn-quiet" id="clear-filters" hidden>Clear filters</button>
       </div>
+      <p class="why-note" id="why-note" hidden></p>
       <div class="leads-layout" id="layout">
         <section class="panel lead-list" aria-label="Lead list"><ol id="list"></ol></section>
         <section class="lead-detail-wrap"><div class="panel lead-detail" id="detail" aria-live="polite"></div></section>

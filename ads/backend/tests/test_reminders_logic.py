@@ -59,3 +59,17 @@ class TextTests(unittest.TestCase):
                                                                ["Wholesale bakery", "Phone: (555) 123-4567"]))
         self.assertEqual(reminders.reminder_text({**l, "full_name": None}, "5m", NOW)[0], "Nobody has called Someone yet (5 min)")
 
+
+
+class RepeatQualityTests(unittest.TestCase):
+    def test_a_repeat_never_waits_for_a_call(self):
+        self.assertEqual([reminders.untouched(lead(7)), reminders.untouched({**lead(7), "repeat_of": 3}),
+                          reminders.due({**lead(70), "repeat_of": 3}, NOW)], [True, False, []])
+
+    def test_flagged_reminder_says_it_looks_like_junk(self):
+        l = {**lead(7), "full_name": "a", "junk_flags": ["short_name"]}
+        self.assertEqual(reminders.reminder_text(l, "5m", NOW)[0], "Nobody has called a yet (5 min, looks like junk)")
+
+    def test_follow_up_reminders_and_digest_skip_repeats(self):
+        # A lead linked after it was worked keeps its old next step; only its first lead is followed up.
+        self.assertIn("l.repeat_of IS NULL", reminders.OPEN_SQL)
