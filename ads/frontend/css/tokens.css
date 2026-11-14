@@ -84,7 +84,7 @@
   --target: 44px;                /* smallest touch target on phones */
 
   --ease: cubic-bezier(.23, 1, .32, 1);
-  --rail-w: 232px;
+  --rail-w: 248px;
   color-scheme: light;
 }
 @media (max-width: 960px) { :root { --gutter: 16px; } }

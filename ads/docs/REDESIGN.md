@@ -274,5 +274,5 @@ Every action on every current page and where it lives after the redesign. Nothin
 | Team | Members, roles, campaigns, passwords | Settings → Team [x] |
 | Settings | 14 sections | Settings with a left sub-nav (This account / Console), + Instant status updates. 9.4f: one section at a time, Instant status updates under Meta → Advanced [x] |
 | Account | Password, appearance, lead alerts, Telegram, device install, push | Account menu at the bottom of the rail. 9.4f: Your account holds the one theme control (Appearance); ⌘K Switch theme stays [x] |
-| Frame | Badges, account switcher, refresh + auto catch-up, spending-limit card, system banners, theme, sign out | Signal shell (+ Inbox badge, ⌘K, breadcrumbs). 9.4f: the theme button moved to Your account [x] |
+| Frame | Badges, account switcher, refresh + auto catch-up, spending-limit card, system banners, theme, sign out | Signal shell (+ Inbox badge, ⌘K, breadcrumbs). 9.4f: the theme button moved to Your account; 2026-11-14: the theme switch is back in the sidebar and in More (Eugene asked), next to Settings and the account row [x] |
 | New | Compare, Inbox, campaign page, ad set page, saved views, bulk bar, peek, period compare | 8.6 / 8.7 [x] |

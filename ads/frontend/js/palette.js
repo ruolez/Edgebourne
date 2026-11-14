@@ -18,7 +18,7 @@ const TYPE_ICON = { page: "table", tab: "table", setting: "settings", view: "gri
 // who: "all" everyone signed in · "staff" not a client · "admin" · "owner" (whole-console settings) · "report" admins and clients.
 const P = (title, href, who, icon_, keys = "", sub = "Go to") => ({ type: "page", title, href, who, icon: icon_, sub, keys });
 const PAGES = [
-  P("Today", "/home.html", "all", "sun", "home start dashboard overview front page"),
+  P("Today", "/home.html", "all", "home", "home start dashboard overview front page"),
   P("Inbox", "/inbox.html", "all", "inbox", "notifications alerts approvals rejections messages feed"),
   P("Leads", "/leads.html", "all", "leads", "contacts people prospects calls customers"),
   P("Ads", "/ads.html", "all", "ads", "manager creatives ad list"),

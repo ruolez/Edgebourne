@@ -8,7 +8,7 @@ const ICONS = {
   close: '<path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
   leads: '<path d="M4 5h16v11H8l-4 4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   team: '<circle cx="9" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3 19c.8-3.2 3.2-5 6-5s5.2 1.8 6 5M16 5.5a3 3 0 0 1 0 5.6M18 14.5c1.6.6 2.6 2.1 3 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
-  settings: '<circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.8 1.8M16.7 16.7l1.8 1.8M5.5 18.5l1.8-1.8M16.7 7.3l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  settings: '<g transform="translate(1.8 1.8) scale(.85)" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></g>',
   phone: '<path d="M6.6 3.5h3l1.5 4-2 1.3a11 11 0 0 0 6.1 6.1l1.3-2 4 1.5v3c0 1-.8 1.8-1.8 1.8C10.5 19.2 4.8 13.5 4.8 5.3c0-1 .8-1.8 1.8-1.8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   mail: '<rect x="3.5" y="5.5" width="17" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 7l8 6 8-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   search: '<circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -41,6 +41,8 @@ const ICONS = {
   compare: '<rect x="3.5" y="4.5" width="7" height="15" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13.5" y="4.5" width="7" height="15" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
   dots: '<circle cx="5.5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="18.5" cy="12" r="1.6" fill="currentColor"/>',
   user: '<circle cx="12" cy="8.5" r="3.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 20c1-3.6 4-5.5 7.5-5.5s6.5 1.9 7.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  device: '<rect x="3.5" y="4.5" width="17" height="11.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 20h7M12 16v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  contrast: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/>',
 };
 // The service worker makes the console installable and shows push notifications.
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
@@ -221,7 +223,13 @@ const THEMES = ["system", "light", "dark"];
 export function currentTheme() {
   try { return localStorage.getItem("ebads-theme") || "system"; } catch (e) { return "system"; }
 }
-// The theme is chosen on Your account (one control); the command menu's Switch theme steps through the same three.
+// The theme switch sits in the sidebar and the phone's More sheet; Your account has the same three with their
+// names spelled out, and the command menu's Switch theme steps through them. All of them stay in step (ebads:theme).
+const THEME_CHOICES = [["light", "sun", "Light"], ["dark", "moon", "Dark"], ["system", "device", "Match my device"]];
+const themeSwitch = () => `<span class="theme-switch" role="group" aria-label="Theme">${THEME_CHOICES.map(([t, ic, label]) =>
+  `<button type="button" data-theme-set="${t}" aria-pressed="${t === currentTheme()}" aria-label="${label}" title="${label}">${icon(ic)}</button>`).join("")}</span>`;
+document.addEventListener("click", (e) => { const b = e.target.closest("[data-theme-set]"); if (b) applyTheme(b.dataset.themeSet); });
+document.addEventListener("ebads:theme", () => document.querySelectorAll("[data-theme-set]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeSet === currentTheme()))));
 const themeLabel = (t) => ({ system: "Theme: match my device", light: "Theme: light", dark: "Theme: dark" }[t]);
 export function applyTheme(t) {
   if (t === "system") document.documentElement.removeAttribute("data-theme");
@@ -355,16 +363,17 @@ function refreshButton() {
 // Agency mode: which ad account the console shows. Admins switch; others see their own.
 function accountSwitch(me, where) {
   const list = me.accounts || [];
+  const initial = esc((me.account.name || "").trim().charAt(0).toUpperCase());
   if (!me.owner || list.length < 1) {
-    return list.length > 1 || me.role === "client" ? `<p class="acct-name acct-${where}">${esc(me.account.name)}</p>` : "";
+    return list.length > 1 || me.role === "client" ? `<p class="acct-name acct-${where}" data-initial="${initial}">${esc(me.account.name)}</p>` : "";
   }
   if (list.length === 1) {
-    return `<div class="acct acct-${where}"><span class="acct-only">${esc(me.account.name)}</span>
-      <button type="button" class="link-btn small" data-acct-add>+ Add an account</button></div>`;
+    return `<div class="acct acct-${where}" data-initial="${initial}"><span class="acct-only" title="${esc(me.account.name)}">${esc(me.account.name)}</span>
+      <button type="button" class="acct-add" data-acct-add aria-label="Add an account" title="Add an account">${icon("plus")}</button></div>`;
   }
   // FU-A: All accounts first (the overview), then each account; on the overview itself it is the one chosen.
   const all = frame.page === "accounts";
-  return `<div class="acct acct-${where}"><label class="sr-only" for="acct-${where}">Ad account</label>
+  return `<div class="acct acct-${where}" data-initial="${all ? "" : initial}"><label class="sr-only" for="acct-${where}">Ad account</label>
     <select class="input acct-select" id="acct-${where}" data-acct><option value="all" ${all ? "selected" : ""}>All accounts</option>${list.map((a) => `<option value="${a.id}" ${!all && a.id === me.account.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}
       <option value="new">+ Add an account…</option></select></div>`;
 }
@@ -419,7 +428,7 @@ const PAGE_TITLE = {
   team: "Team", account: "Your account", accounts: "All accounts",
 };
 const SECTIONS = {
-  today: { href: "/home.html", label: "Today", icon: "sun" },
+  today: { href: "/home.html", label: "Today", icon: "home" },
   inbox: { href: "/inbox.html", label: "Inbox", icon: "inbox", badge: "inbox" },
   leads: { href: "/leads.html", label: "Leads", icon: "leads", badge: "leads" },
   ads: { href: "/ads.html", label: "Ads", icon: "ads" },
@@ -642,23 +651,30 @@ export async function boot({ page, admin = false }) {
   const initials = me.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
+  // The sidebar, top to bottom: where you are (console, ad account, search), where you can go, what is going on
+  // (Claude and the spending limit in one card), then the console's own corner (Settings, theme, you, sign out).
   const rail = document.querySelector(".rail");
   rail.innerHTML = `
-    <a class="brand" href="/home.html"><img src="/img/favicon.svg" alt=""><span>Edge Bourne Ads</span></a>
-    ${accountSwitch(me, "rail")}
-    <button type="button" class="jump" data-palette>${icon("search")}<span>Search or jump to…</span><kbd>${mac ? "⌘" : "Ctrl "}K</kbd></button>
+    <div class="rail-head">
+      <a class="brand" href="/home.html"><img src="/img/favicon.svg" alt=""><span>Edge Bourne Ads</span></a>
+      ${accountSwitch(me, "rail")}
+      <button type="button" class="jump" data-palette>${icon("search")}<span>Search or jump to…</span><kbd>${mac ? "⌘" : "Ctrl "}K</kbd></button>
+    </div>
     <nav class="nav" aria-label="Main">
       ${groups.map(([label, keys]) => `<div class="nav-group"><span class="nav-label">${label}</span>${keys.map(link).join("")}</div>`).join("")}
     </nav>
     <div class="rail-foot">
-      ${isAdmin ? `<a class="setlink" href="/settings.html" ${cur("settings")}>${icon("settings")}<span>Settings</span></a>` : ""}
-      ${isAdmin ? '<a class="cap-card" id="cap-card" href="/performance.html" hidden></a>' : ""}
-      <a class="me" href="/account.html" ${cur("account")}>
-        <span class="avatar" aria-hidden="true">${esc(initials)}</span>
-        <span class="who"><b>${esc(me.name)}</b><small>${esc(roleLabel)}</small></span>
-      </a>
-      <div class="rail-actions">
-        <button type="button" data-signout>Sign out</button>
+      <div class="rail-status">${isAdmin ? '<a class="cap-card" id="cap-card" href="/performance.html" hidden></a>' : ""}</div>
+      <div class="rail-base">
+        ${isAdmin ? `<a class="setlink" href="/settings.html" ${cur("settings")}>${icon("settings")}<span class="label">Settings</span></a>` : ""}
+        <div class="theme-row">${icon("contrast")}<span class="label">Theme</span>${themeSwitch()}</div>
+        <div class="rail-you">
+          <a class="me" href="/account.html" ${cur("account")}>
+            <span class="avatar" aria-hidden="true">${esc(initials)}</span>
+            <span class="who"><b>${esc(me.name)}</b><small>${esc(roleLabel)}</small></span>
+          </a>
+          <button type="button" class="rail-btn" data-signout aria-label="Sign out" title="Sign out">${icon("logout")}</button>
+        </div>
       </div>
     </div>`;
 
@@ -736,6 +752,7 @@ export async function boot({ page, admin = false }) {
       ${allowed("settings") ? sheetLink(SECTIONS.settings.href, "Settings", "settings", section === "settings") : ""}
       <a href="/account.html" ${cur("account")}>${icon("user")}<span>Your account</span></a>
       <div class="sep"></div>
+      <div class="theme-row">${icon("contrast")}<span class="label">Theme</span>${themeSwitch()}</div>
       <button type="button" class="item" data-signout>${icon("logout")}Sign out</button>
     </nav>`;
   document.body.append(sheet);
@@ -826,7 +843,7 @@ export const refreshClaudeNow = () => { if (paintClaudeNow) paintClaudeNow(); };
 function startClaudeNow(top) {
   const card = document.createElement("a");
   card.className = "claude-now";
-  document.querySelector(".rail-foot")?.prepend(card);
+  document.querySelector(".rail-status")?.prepend(card);
   const bar = document.createElement("a");
   bar.className = "claude-now-bar";
   bar.hidden = true;

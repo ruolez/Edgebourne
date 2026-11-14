@@ -447,9 +447,23 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
   const themeWas = await page.evaluate(() => localStorage.getItem('ebads-theme') || 'system');
   await page.click('#theme-choice [data-theme-choice="dark"]');
   const themeNow = await page.evaluate(() => ({ attr: document.documentElement.dataset.theme, saved: localStorage.getItem('ebads-theme'),
-    pressed: document.querySelector('#theme-choice [aria-pressed="true"]')?.dataset.themeChoice, others: document.querySelectorAll('[data-theme-btn]').length }));
-  check('the theme is chosen in one place, Your account: Dark applies at once and is kept, and the sidebar and More carry no other theme button',
-    themeNow.attr === 'dark' && themeNow.saved === 'dark' && themeNow.pressed === 'dark' && themeNow.others === 0, JSON.stringify(themeNow));
+    pressed: document.querySelector('#theme-choice [aria-pressed="true"]')?.dataset.themeChoice,
+    rail: document.querySelector('.rail .theme-switch [aria-pressed="true"]')?.dataset.themeSet }));
+  check('Your account sets the theme: Dark applies at once, is kept, and the sidebar switch shows it',
+    themeNow.attr === 'dark' && themeNow.saved === 'dark' && themeNow.pressed === 'dark' && themeNow.rail === 'dark', JSON.stringify(themeNow));
+  await page.click('.rail .theme-switch [data-theme-set="light"]');
+  const themeRail = await page.evaluate(() => ({ attr: document.documentElement.dataset.theme, saved: localStorage.getItem('ebads-theme'),
+    pressed: [...document.querySelectorAll('.rail .theme-switch [aria-pressed="true"]')].map((b) => b.dataset.themeSet).join(),
+    account: document.querySelector('#theme-choice [aria-pressed="true"]')?.dataset.themeChoice,
+    names: [...document.querySelectorAll('.rail .theme-switch button')].map((b) => b.getAttribute('aria-label')).join(),
+    more: document.querySelectorAll('dialog.sheet .theme-switch button').length }));
+  check('the sidebar has the theme switch (Light, Dark, Match my device): Light applies at once, is kept, Your account follows, and the phone\'s More has it too',
+    themeRail.attr === 'light' && themeRail.saved === 'light' && themeRail.pressed === 'light' && themeRail.account === 'light'
+    && themeRail.names === 'Light,Dark,Match my device' && themeRail.more === 3, JSON.stringify(themeRail));
+  const railMap = await page.evaluate(() => ({ status: [...document.querySelectorAll('.rail-status > a')].map((a) => a.className).join(),
+    base: [...document.querySelectorAll('.rail-base > *')].map((el) => el.className).join(), out: document.querySelector('.rail [data-signout]')?.getAttribute('aria-label') }));
+  check('the sidebar ends with one status card (Claude, then the spending limit) and one corner for Settings, theme, you and Sign out',
+    railMap.status === 'claude-now,cap-card' && railMap.base === 'setlink,theme-row,rail-you' && railMap.out === 'Sign out', JSON.stringify(railMap));
   const meCard = await page.evaluate(() => ({ name: document.getElementById('me-name').textContent, email: document.getElementById('me-email').textContent,
     role: document.getElementById('me-role').textContent, out: !!document.querySelector('.me-card #account-signout') }));
   check('Your account opens on who is signed in (name, email, access) with Sign out beside it',
