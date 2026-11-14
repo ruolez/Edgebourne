@@ -167,8 +167,10 @@ function render(groups) {
   ul.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
 }
 
-const QUICK = ["Today", "Inbox", "Leads", "Ads", "Gallery", "Ideas", "Results", "Compare ads", "Tests", "Reports", "Claude", "Research", "Settings",
-  "New ad", "Ask Claude", "Ads that need attention", "Keyboard shortcuts"];
+// Opened with nothing typed: what there is to do first (the sidebar already lists the places), then the places.
+const QUICK_DO = ["Ask Claude", "New ad", "Claude: Suggestions waiting", "Inbox: Needs action", "Ads that need attention"];
+const QUICK = ["Today", "Inbox", "Leads", "Ads", "Gallery", "Ideas", "Results", "Compare", "Tests", "Reports", "Claude", "Research", "Settings", "Keyboard shortcuts"];
+const LOCAL_WITH_FOUND = 5;
 
 async function update(ctx) {
   const q = dlg.querySelector("input").value.trim();
@@ -177,7 +179,8 @@ async function update(ctx) {
   if (q) local = match(all, q).slice(0, 10);
   else local = QUICK.map((t) => all.find((i) => i.title === t)).filter(Boolean).concat(all.filter((i) => i.type === "view").slice(0, 5));
   const best = q && local.length ? score(local[0], q) : 0;
-  const groups = [[q ? "Pages and actions" : "Jump to", local]];
+  const todo = q ? [] : QUICK_DO.map((t) => all.find((i) => i.title === t)).filter(Boolean);
+  const groups = [...(todo.length ? [["Do", todo]] : []), [q ? "Pages and actions" : "Jump to", local]];
   render(groups);
   clearTimeout(timer);
   if (q.length < 2) return;
@@ -189,7 +192,9 @@ async function update(ctx) {
       // Whichever matches what was typed better comes first: a page or action, or things found by name.
       const found = ["Found", r.items];
       const foundBest = r.items.length ? Math.max(...r.items.map((i) => score(i, q))) : 0;
-      render(best > 0 && best >= foundBest ? [...groups, found] : [found, ...groups]);
+      // With names found, pages and actions keep to their best few, so a campaign or a lead is never ten rows down.
+      const fewer = r.items.length ? groups.map(([label, list]) => [label, list.slice(0, LOCAL_WITH_FOUND)]) : groups;
+      render(best > 0 && best >= foundBest ? [...fewer, found] : [found, ...fewer]);
     } catch (e) { /* local results stay */ }
   }, 160);
 }

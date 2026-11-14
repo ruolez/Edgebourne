@@ -950,3 +950,7 @@ dialog.dg-form .dg-count { font-variant-numeric: tabular-nums; }
   dialog.dg-form form > .row.end .btn { flex: 1; }
 }
 .tbl-sp polyline.td-partial { stroke-dasharray: 2 2; opacity: .55; }
+/* Compare: the Add control lives in the table's corner. */
+.cmp-corner #cmp-add { display: block; width: 100%; max-width: 220px; margin-top: 8px; font-weight: 500; }
+/* Phones: on the picture pages the cards come before the page's description. */
+@media (max-width: 720px) { .page-head:has(~ #gal) .page-sub, .page-head:has(~ #ideas) .page-sub { display: none; } }

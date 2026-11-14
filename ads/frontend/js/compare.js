@@ -65,7 +65,9 @@ function verdictHtml() {
 
 function tableHtml() {
   const items = data.items;
-  const head = `<tr><th class="cmp-corner">${esc(data.range.label)}${data.prev_range ? `<small>vs ${esc(data.prev_range.label)}</small>` : ""}</th>${items.map((it, i) => {
+  const n = items.length;
+  const head = `<tr><th class="cmp-corner">${esc(data.range.label)}${data.prev_range ? `<small>vs ${esc(data.prev_range.label)}</small>` : ""}
+    ${n < MAX && all ? `<select class="input tool" id="cmp-add" aria-label="Add an ad"><option value="">+ Add an ad</option>${all.filter((a) => !ids().includes(a.id)).map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select>` : ""}</th>${items.map((it, i) => {
     const [cls, label] = statusOf(it.effective_status);
     const img = it.image_url || it.thumbnail_url;
     return `<th><div class="cmp-h">${img ? `<img class="cmp-th" src="${esc(img)}" alt="" referrerpolicy="no-referrer">` : '<span class="cmp-th ph"></span>'}
@@ -100,7 +102,7 @@ function render() {
   $("cmp-sub").textContent = `${data.range.label}${state.vs && data.prev_range ? ` vs the ${data.prev_range.label} before` : ""}${withToday ? " · today so far, Meta still counting · verdict on complete days" : " · complete days only"}`;
   $("cmp-actions").innerHTML = `${rangeSelect("cmp-range", state.range)}
     <button type="button" class="view-chip" id="cmp-vs" aria-pressed="${state.vs}">vs before</button>
-    ${n < MAX && all ? `<select class="input tool" id="cmp-add" aria-label="Add an ad"><option value="">+ Add an ad</option>${all.filter((a) => !ids().includes(a.id)).map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select>` : ""}
+    ${window.ebadsMe?.role === "admin" && data.items.length >= 2 && data.items.length <= 4 ? `<a class="btn" id="cmp-test" href="/experiments.html#new=${data.items.map((i) => `ad:${encodeURIComponent(i.id)}`).join(",")}">${icon("tests")}Track as a test</a>` : ""}
     ${window.ebadsMe?.role === "admin" ? `<a class="btn btn-claude-outline" href="/desk.html?ask=${encodeURIComponent(askWords())}">${icon("spark")}Ask Claude which to keep</a>` : ""}`;
   const charts = [["leads", "Leads, running total"], ["cpl", "Cost per lead"], ["spend", "Spent per day"]];
   $("cmp").innerHTML = `${verdictHtml()}

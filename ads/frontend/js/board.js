@@ -119,12 +119,30 @@ function runItem(t, ix, openReports) {
   </li>`;
 }
 
+const RUNS_SHOWN = 2;
+// Which ads have their earlier runs open: the view redraws on every poll, so it is kept here.
+const openFamilies = new Set();
+document.addEventListener("toggle", (e) => {
+  const d = e.target;
+  if (!d.matches || !d.matches("details.fam-more")) return;
+  if (d.open) openFamilies.add(d.dataset.fam); else openFamilies.delete(d.dataset.fam);
+}, true);
+
 export function adsView(data, ix, openReports) {
   if (!data.families.length) return `<section class="panel empty"><h3>Nothing yet</h3><p>Each ad Claude works on gets its own story here: reviews, ideas, and what became of them.</p><div class="row"><a class="btn btn-claude" href="#new">Ask Claude about an ad</a></div></section>`;
   return data.families.map((f) => `<section class="panel family" data-family="${esc(f.root || "account")}">
     <div class="panel-body">
       ${familyHead(f, ix)}
-      <ol class="runs">${f.tasks.map((id) => runItem(ix.tasks.get(id), ix, openReports)).join("")}${
+      ${(() => {
+        // Newest first. A run stays in view while one of its suggestions waits for a decision.
+        const waits = (id) => (ix.tasks.get(id)?.proposals || []).some((p) => p.status === "pending");
+        const top = f.tasks.filter((id, i) => i < RUNS_SHOWN || waits(id));
+        const earlier = f.tasks.filter((id) => !top.includes(id));
+        const key = String(f.root || "account");
+        return `<ol class="runs">${top.map((id) => runItem(ix.tasks.get(id), ix, openReports)).join("")}</ol>${
+          earlier.length ? `<details class="fam-more" data-fam="${esc(key)}" ${openFamilies.has(key) ? "open" : ""}><summary>${earlier.length} earlier</summary><ol class="runs">${earlier.map((id) => runItem(ix.tasks.get(id), ix, openReports)).join("")}</ol></details>` : ""}`;
+      })()}
+      <ol class="runs">${
         // proposals about this ad that came from runs filed elsewhere (e.g. a results review)
         (() => {
           const stray = f.proposals.map((id) => ix.proposals.get(id)).filter((p) => p && !f.tasks.includes(ix.taskOf.get(p.id).id));

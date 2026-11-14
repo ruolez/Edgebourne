@@ -364,9 +364,24 @@ const RULE_UI = [
   ["events_quiet", "Lead stages stop reaching Meta's dataset (two days)", []],
 ];
 
+// The rules under plain headings, in the order someone looks for them. A rule not named here lands under Other.
+const RULE_GROUPS = [
+  ["Review and delivery", ["ad_rejected", "ad_approved", "learning_limited", "no_delivery", "fatigue", "meta_ad_error"]],
+  ["Spend", ["day_overspend", "week_overspend", "spend_cap", "cap_soon", "pace_over"]],
+  ["Leads and what they cost", ["cpl_high", "no_leads", "qualified_low", "junk_high", "change_result", "meta_anomaly"]],
+  ["Changes made in Ads Manager", ["changed_outside", "outside_edit", "draft_new", "draft_problems"]],
+  ["Tracking and connection", ["tracking", "numbers_off", "stale_data", "link_down", "events_quiet"]],
+];
+
 function renderAlerts() {
   const rules = s.alerts.rules;
-  $("al-rules").innerHTML = RULE_UI.map(([id, label, fields]) => {
+  const grouped = new Set(RULE_GROUPS.flatMap(([, ids]) => ids));
+  const rest = RULE_UI.filter(([id]) => !grouped.has(id)).map(([id]) => id);
+  const ordered = [...RULE_GROUPS, ...(rest.length ? [["Other", rest]] : [])].flatMap(([name, ids]) =>
+    [["", name, null], ...ids.map((id) => RULE_UI.find(([x]) => x === id)).filter(Boolean)]);
+  $("al-rules").innerHTML = ordered.map(([id, label, fields]) => {
+    if (!fields) return `<li class="al-group"><h3>${esc(label)}</h3></li>`;
+    if (!rules[id]) return "";
     const r = rules[id];
     const inputs = fields.map(([k, before, after]) => {
       const v = k === "target_cents" ? (r[k] ? r[k] / 100 : "") : r[k];

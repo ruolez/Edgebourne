@@ -207,9 +207,10 @@ function syncArmButtons(form) {
 
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
-async function openForm(t = null) {
+// `seed`: sides to start a new test with (Compare's "Track as a test" hands over its ads).
+async function openForm(t = null, seed = null) {
   let arms;
-  try { arms = (await Promise.all((t ? t.arms : [{}, {}]).map((a, i) => armField(i, a)))).join(""); } catch (err) { toast(err.message, "bad"); return; }
+  try { arms = (await Promise.all((t ? t.arms : seed || [{}, {}]).map((a, i) => armField(i, a)))).join(""); } catch (err) { toast(err.message, "bad"); return; }
   const metric = t ? t.metric : "cpl";
   const dlg = document.createElement("dialog");
   dlg.className = "test-dialog";
@@ -400,6 +401,12 @@ if (me) {
   $("new-test").addEventListener("click", () => openForm());
   // /experiments.html#new (the command menu's New test) opens the form straight away.
   if (location.hash === "#new") { history.replaceState(null, "", location.pathname + location.search); openForm(); }
+  // …#new=ad:<id>,ad:<id> (Compare's Track as a test): the form with those ads as its sides.
+  const seeded = location.hash.match(/^#new=((?:ad:\d+,?){2,4})$/);
+  if (seeded) {
+    history.replaceState(null, "", location.pathname + location.search);
+    openForm(null, seeded[1].split(",").filter(Boolean).map((ref) => ({ ad_ids: [ref.slice(3)] })));
+  }
   document.addEventListener("click", async (e) => {
     const s = e.target.closest("#show [data-show]");
     if (s) { show = s.dataset.show; try { localStorage.setItem("ebads-tests", show); } catch (err) {} render(); return; }

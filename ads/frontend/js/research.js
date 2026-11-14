@@ -231,9 +231,10 @@ if (me) {
       // origin "research": this page shows no full access bar, so its questions keep the read-only tools (FU-D).
       await api("/api/desk/tasks", { method: "POST", body: { kind: "research", prompt, origin: "research" } });
       $("prompt").value = "";
-      toast("Sent to Claude. Its report will show in Past research");
+      toast("Sent to Claude. Its report shows up here, under Past research.");
       lastJson = "";
       load();
+      showPart("past");
     } catch (err) { toast(err.message, "bad"); }
     finally { btn.disabled = false; }
   });

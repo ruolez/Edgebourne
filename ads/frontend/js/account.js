@@ -26,6 +26,8 @@ if (me) {
   });
   const first = new URLSearchParams(location.search).get("first") === "1" || me.must_change_password;
   document.getElementById("first-note").hidden = !first;
+  // A password that must be changed comes first; otherwise it sits last, under what is used more often.
+  if (first) document.querySelector(".me-card")?.after(document.getElementById("pw-section"));
   const notify = document.getElementById("notify");
   notify.checked = me.notify_new_leads;
   notify.addEventListener("change", async () => {

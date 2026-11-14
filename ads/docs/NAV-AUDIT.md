@@ -85,32 +85,45 @@ Today's sun). 248 px wide; shorter windows tighten the rows so it fits without s
 - **Tests:** an empty page has one button.
 - The quick look closes with an X; the ad page has Its leads.
 
+### Second round, from the leftovers (Eugene, same day: "what about left overs?")
+- **Ads list:** the Ads / Ad sets / Campaigns switch sits in the toolbar next to the table it changes, and the
+  toolbar keeps two fixed rows (what to show; then find, narrow, dates, columns). Campaign rows are two lines: the
+  objective line is gone, and + New ad set shows on the row in hand.
+- **Campaign and ad set headers:** the on/off switch and budget lead, as on the ad page. On phones Its leads, Results
+  and Ask Claude go into More (`moreMenuHtml(first)`), so the header is two rows, not three.
+- **Ad page:** the header keeps On/Off, Its leads, Compare and Polish; the two ways to copy ("Exact copy, switched
+  off", "New ad starting from this"), Archive and Delete are in a More menu (`#cr-more`). The Polish button hides on
+  the Polish tab. History has "This ad only" and starts with its newest 20.
+- **⌘K:** opened empty it leads with things to do (Ask Claude, New ad, Suggestions waiting, Inbox: Needs action, Ads
+  that need attention), then the places; once names are found, pages and actions keep to five rows.
+- **Compare:** "+ Add an ad" lives in the table's corner, next to the columns and their Remove.
+- **Reports:** with nobody to send to and nothing to decide, the review box is one line (Add a client, Add a note or
+  preview the email) and the report starts under it.
+- **Gallery on phones:** the three pickers share a row; on Gallery and Ideas the page's description gives way to
+  the cards. **Research:** after Send to Claude the page shows Past research, where the report lands.
+- **Your account:** Lead alerts and This device come before Appearance and Password (a forced first change of
+  password still comes first).
+- **Settings › Alerts:** the 26 rules sit under five headings (Review and delivery, Spend, Leads and what they
+  cost, Changes made in Ads Manager, Tracking and connection; `RULE_GROUPS` in `settings.js`), snoozed alerts come
+  above them, and Save stays in reach while the list scrolls.
+- **Claude › By ad:** each ad shows its two newest runs and any run with a suggestion still waiting; earlier runs
+  fold behind "N earlier" (the open state survives the page's polling).
+- **Compare → Tests:** "Track as a test" (admins, two to four ads) opens New test with those ads as its sides
+  (`/experiments.html#new=ad:<id>,ad:<id>`).
+- **Polish tab:** Run sits in the panel's head, not under the eleven checks.
+
 ## Left to pick from (not built)
 
-Most valuable first. Each is a contained piece of work.
-
-1. **Ads list:** the Ads / Ad sets / Campaigns switch inside the toolbar, next to the table it changes, with the
-   toolbar in two fixed rows (it reshuffles per level today).
-2. **Phone campaign / ad set header:** eight controls in three rows with the On switch last; switch and budget
-   first, Its leads / Results / Ask Claude into More.
-3. **Settings on phones:** sixteen sections in a sideways strip; a section picker instead. **Alerts:** 26 rules in
-   one list with Save at the end; group headings and a Save that stays in reach.
-4. **⌘K:** opened empty it repeats the sidebar; lead with actions, and stop ten page rows going ahead of the
-   campaign or lead that was typed.
-5. **Ad page:** the header's Polish button only switches tab (Run sits under eleven cards); one Copy menu instead of
-   Duplicate + New ad from this; Archive / Delete into the More menu like campaign pages; History filtered to
-   "This ad".
-6. **Reports:** the send-review box fills the first screen even with no clients to send to.
-7. **Compare:** Add an ad next to the columns; "Track as a test" from the verdict; ads with no spend folded in the
-   picker.
-8. **Gallery / Research on phones:** filters on one row, the sorting sentence behind a disclosure; Research lands on
-   Past research after Send to Claude.
-9. **Claude By ad:** six screens with nothing folded; a filter, two newest runs per ad, the rest folded.
-10. **Builders:** "Who sees it" folded when copying an ad set.
-11. **Your account:** lead alerts and this device before the password form.
-12. **Smaller:** one place for the date picker on every page; one class set for page headers; the wordings of links
-    to leads ("Its leads" / "All leads"); Tests and Audiences filters in the address; Team and closed accounts
-    folded when inactive; campaign rows on one line.
+1. **Builders:** "Who sees it" folded when copying an ad set. Left out on purpose: `qa/flows.cjs` fills those fields
+   directly in dozens of steps, so folding them by default means rewriting a large part of the suite for a modest
+   gain. Worth doing together with a QA helper that opens the fold.
+2. **Settings on phones:** the sideways section strip was left as Phase 9 chose it (with its two group names; QA
+   guards it). A section picker would replace it if wanted.
+3. **Compare's picker:** ads with no spend folded under the ones worth comparing.
+4. **Smaller:** one place for the date picker on every page; one class set for page headers; the wordings of links
+   to leads ("Its leads" / "All leads" / "All in Leads"); Tests and Audiences filters in the address; deactivated
+   teammates and closed accounts folded; Research's phone tab labels; the Gallery's sorting sentence and the
+   Schedules explanation behind a disclosure.
 
 ## QA
 
@@ -120,6 +133,12 @@ is the reason to distrust it: this round ran through a headless Chrome in Docker
 the session it was done in could not start a browser on the Mac. Run `sh qa/run.sh` once on the Mac's own Chrome
 to settle it. New checks cover the sidebar's theme switch and order, the More sheet's groups, the folded phone Ads
 list, an open Inbox item on a phone, the landing after a delete, the builders' breadcrumbs and previous / next.
+
+The second round's first commit (`f83b557`) and everything after it were not put through the full suite: the run
+that reached them stopped two thirds of the way on a real fault (the Reports box hid its numbers warning; fixed), and
+the last batch was checked with 21 targeted browser checks of exactly what changed (all passing) plus a load of every
+page at both sizes. `qa/flows.cjs` was updated for the ad page's More menu, but those steps have not run since. A full
+`sh qa/run.sh` on the Mac is owed before relying on the suite again.
 
 ## Notes for whoever continues
 

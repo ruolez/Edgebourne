@@ -799,8 +799,8 @@ dialog.confirm textarea#cd-input { min-height: 240px; max-height: 52vh; resize: 
 @media (max-width: 720px) {
   .gal-stats { grid-template-columns: 1fr 1fr; }
   .gal-tags { display: none; }
-  .gal-bar select.tool, .gal-bar #range-pick { flex: 1 1 40%; min-width: 0; order: 0; }
-  .gal-bar #range-pick { flex-basis: 100%; }
+  /* The three pickers share one row. */
+  .gal-bar select.tool, .gal-bar #range-pick { flex: 1 1 0; min-width: 0; order: 0; padding-left: 10px; padding-right: 26px; text-overflow: ellipsis; }
   .gal-kpi b { font-size: var(--t-m); }
   .gal-why { flex: 1 1 100%; order: -1; margin: 0; }
   /* The "Pick 2 to 6" line takes its own row; the buttons share the next one (never squeezed to slivers). */
@@ -1299,6 +1299,12 @@ iframe.preview-loading { position: absolute; width: 1px !important; height: 1px 
 .al-rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .al-rules li { display: grid; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .al-rules li:last-child { border-bottom: 0; }
+.al-rules li.al-group { padding: 18px 0 4px; border-bottom: 0; }
+.al-rules li.al-group:first-child { padding-top: 0; }
+.al-rules .al-group h3 { margin: 0; font: 600 var(--t-s)/1.3 var(--font-ui); color: var(--ink-2); }
+/* Save stays in reach while the list scrolls. */
+.al-save { position: sticky; bottom: 0; z-index: 2; padding: 10px 0; background: var(--surface); border-top: 1px solid var(--line); }
+@media (max-width: 960px) { .al-save { bottom: calc(var(--tabbar-h, 57px) + env(safe-area-inset-bottom)); } }
 .al-fields { display: flex; flex-wrap: wrap; gap: 6px 14px; padding-left: 28px; color: var(--ink-2); font-size: var(--t-m); }
 .al-num { display: inline-flex; align-items: center; gap: 6px; }
 .al-num .input { width: 84px; min-height: 36px; padding: 4px 8px; }
@@ -2238,3 +2244,9 @@ h2.mx-h { font-size: var(--t-l); }
 }
 /* Gallery cards: names take two lines' room, so cost per lead sits at the same height across a row. */
 @media (min-width: 721px) { .gal-card .cr-body > .cr-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2lh; } }
+/* Reports: the review box at rest is one line. */
+/* The note and the email preview fold away; a warning about the numbers (.rv-numbers) never does. */
+.rv-bar.rv-quiet .rv-form, .rv-bar.rv-quiet .rv-preview { display: none; }
+.rv-quiet-acts { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rv-quiet-acts[hidden] { display: none; }
+.rv-bar.rv-quiet .rv-top { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; }

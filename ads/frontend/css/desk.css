@@ -321,3 +321,9 @@ dialog.accept-sheet form { display: grid; gap: 12px; }
 @media (prefers-reduced-motion: reduce) {
   .cl-dot.working::before, .cv-trail li.now .tick, .cv-progress .dot { animation: none; }
 }
+/* By ad: an ad's earlier runs, folded. */
+.family .runs:empty { display: none; }
+.fam-more { margin-top: 4px; border-top: 1px solid var(--line); }
+.fam-more > summary { display: inline-flex; align-items: center; min-height: 36px; padding: 6px 0; cursor: pointer; color: var(--ink-2); font-size: var(--t-s); font-weight: 500; }
+.fam-more > summary:hover { color: var(--ink); }
+@media (max-width: 960px) { .fam-more > summary { min-height: var(--target); } }

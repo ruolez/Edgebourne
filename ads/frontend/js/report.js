@@ -171,6 +171,15 @@ async function pullPeriod(b) {
   }
 }
 
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#rv-more")) return;
+  const bar = $("rv-bar");
+  bar.dataset.opened = "1";
+  bar.classList.remove("rv-quiet");
+  $("rv-quiet-acts").hidden = true;
+  $("rv-note").focus();
+});
+
 function paintBar(rv) {
   const bar = $("rv-bar");
   bar.hidden = false;
@@ -184,6 +193,12 @@ function paintBar(rv) {
   for (const [action, id] of Object.entries(ACTION_BUTTONS)) $(id).hidden = !rv.actions.includes(action);
   $("rv-later").textContent = rv.later_label;
   $("rv-acts").hidden = !rv.actions.length;
+  // Nothing to send or decide and no note yet: the box is one line with the ways in, and the report starts right
+  // under it. A link to the review (#review), a typed or saved note, or a tap on the button opens it.
+  const quiet = !rv.actions.length && !rv.note && !noteDirty && location.hash !== "#review" && !bar.dataset.opened;
+  bar.classList.toggle("rv-quiet", quiet);
+  $("rv-quiet-acts").hidden = !quiet;
+  $("rv-add-client").hidden = !(window.ebadsMe && window.ebadsMe.role === "admin" && Array.isArray(rv.to) && !rv.to.length);
   if ($("rv-preview").open) refreshPreview();
 }
 

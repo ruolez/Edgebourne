@@ -529,7 +529,8 @@ async function renderPolish() {
   $("cr-main").innerHTML = `
     <div class="polish-layout">
       <section class="panel polish-panel">
-        <div class="panel-head"><h2>Polish this ad</h2><p>Claude checks it against what gets ads approved and bringing in leads</p></div>
+        <div class="panel-head wrap"><h2>Polish this ad</h2><p>Claude checks it against what gets ads approved and bringing in leads</p><span class="spacer"></span>
+          <button class="btn btn-claude" type="submit" form="polish-form" id="run-polish">${icon("spark")}<span>Run polish</span></button></div>
         <form class="panel-body stack" id="polish-form" novalidate>
           <div class="row presets">${Object.entries(PRESET_LABELS).map(([k, l]) => `<button type="button" class="chip" data-preset="${k}">${esc(l)}</button>`).join("")}
             <span class="spacer"></span><label class="check small"><input type="checkbox" id="show-checks"> Show what each pass checks</label></div>
@@ -544,8 +545,6 @@ async function renderPolish() {
             <textarea class="input" id="direction" rows="2" placeholder="e.g. The headline feels long. Keep the offer but make it calmer."></textarea></div>
           <div class="row">
             <label class="check"><input type="checkbox" id="variants" checked> Write new copy versions I can put on this ad</label>
-            <span class="spacer"></span>
-            <button class="btn btn-claude" type="submit" id="run-polish">${icon("spark")}<span>Run polish</span></button>
           </div>
           <p class="muted small flush">Claude runs this on your Mac with your Meta access and the design rules learned so far. Nothing changes on Meta until you accept a suggestion: a new version goes on this same ad, so it keeps its results.</p>
         </form>

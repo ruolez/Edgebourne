@@ -11,9 +11,9 @@
   <meta name="theme-color" content="#0E0F11" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-title" content="EB Ads">
   <script src="/js/theme.js"></script>
-  <link rel="stylesheet" href="/css/tokens.css?v=1795700018">
-  <link rel="stylesheet" href="/css/app.css?v=1795700018">
-  <link rel="stylesheet" href="/css/shell.css?v=1795700018">
+  <link rel="stylesheet" href="/css/tokens.css?v=1795700022">
+  <link rel="stylesheet" href="/css/app.css?v=1795700022">
+  <link rel="stylesheet" href="/css/shell.css?v=1795700022">
 </head>
 <body>
   <div class="app">
@@ -32,24 +32,6 @@
           <p class="panel-body muted flush" id="fa-account" hidden>Signing out also ends full access. So does changing your password, on every device.</p>
         </section>
         <section class="panel">
-          <div class="panel-head"><h2>Password</h2><p>Changing it signs you out on your other devices.</p></div>
-          <form class="panel-body stack" id="pw-form" novalidate>
-            <div class="field"><label for="current">Current password</label><input class="input" id="current" name="current" type="password" autocomplete="current-password"></div>
-            <div class="field"><label for="new">New password</label><input class="input" id="new" name="new" type="password" autocomplete="new-password"><span class="hint">At least 10 characters.</span></div>
-            <div><button class="btn btn-primary" type="submit">Change password</button></div>
-          </form>
-        </section>
-        <section class="panel" id="appearance">
-          <div class="panel-head"><h2>Appearance</h2><p>For this device.</p></div>
-          <div class="panel-body row">
-            <div class="segmented" role="group" aria-label="Theme" id="theme-choice">
-              <button type="button" data-theme-choice="system">Match my device</button>
-              <button type="button" data-theme-choice="light">Light</button>
-              <button type="button" data-theme-choice="dark">Dark</button>
-            </div>
-          </div>
-        </section>
-        <section class="panel">
           <div class="panel-head"><h2>Lead alerts</h2></div>
           <div class="panel-body stack">
             <label class="check"><input type="checkbox" id="notify"><span>Email me when a new lead arrives in my campaigns</span></label>
@@ -65,6 +47,24 @@
             <div id="push-box" aria-live="polite"><p class="muted flush">Checking this browser…</p></div>
             <div id="devices"></div>
           </div>
+        </section>
+        <section class="panel" id="appearance">
+          <div class="panel-head"><h2>Appearance</h2><p>For this device.</p></div>
+          <div class="panel-body row">
+            <div class="segmented" role="group" aria-label="Theme" id="theme-choice">
+              <button type="button" data-theme-choice="system">Match my device</button>
+              <button type="button" data-theme-choice="light">Light</button>
+              <button type="button" data-theme-choice="dark">Dark</button>
+            </div>
+          </div>
+        </section>
+        <section class="panel" id="pw-section">
+          <div class="panel-head"><h2>Password</h2><p>Changing it signs you out on your other devices.</p></div>
+          <form class="panel-body stack" id="pw-form" novalidate>
+            <div class="field"><label for="current">Current password</label><input class="input" id="current" name="current" type="password" autocomplete="current-password"></div>
+            <div class="field"><label for="new">New password</label><input class="input" id="new" name="new" type="password" autocomplete="new-password"><span class="hint">At least 10 characters.</span></div>
+            <div><button class="btn btn-primary" type="submit">Change password</button></div>
+          </form>
         </section>
       </div>
     </main>
