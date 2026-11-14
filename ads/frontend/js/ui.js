@@ -407,14 +407,14 @@ document.addEventListener("click", (e) => {
 // shown as tabs under the breadcrumb line.
 const PAGE_SECTION = {
   home: "today", inbox: "inbox", leads: "leads",
-  ads: "ads", ad: "ads", "new-ad": "ads", "new-adset": "ads", "new-campaign": "ads", forms: "ads", campaign: "ads", adset: "ads",
+  ads: "ads", ad: "ads", "new-ad": "ads", "new-adset": "ads", "new-campaign": "ads", forms: "ads", audiences: "ads", campaign: "ads", adset: "ads",
   gallery: "creative", ideas: "creative", research: "creative",
   performance: "insights", compare: "insights", experiments: "insights", report: "insights",
   desk: "claude", settings: "settings", team: "settings", account: "account", accounts: "accounts",
 };
 const PAGE_TITLE = {
   home: "Today", inbox: "Inbox", leads: "Leads", ads: "Ads", ad: "Ad", "new-ad": "New ad", "new-adset": "New ad set",
-  "new-campaign": "New campaign", forms: "Lead forms", campaign: "Campaign", adset: "Ad set", gallery: "Gallery", ideas: "Ideas", performance: "Results",
+  "new-campaign": "New campaign", forms: "Lead forms", audiences: "Audiences", campaign: "Campaign", adset: "Ad set", gallery: "Gallery", ideas: "Ideas", performance: "Results",
   compare: "Compare", experiments: "Tests", report: "Reports", desk: "Claude", research: "Research", settings: "Settings",
   team: "Team", account: "Your account", accounts: "All accounts",
 };
@@ -429,15 +429,15 @@ const SECTIONS = {
   settings: { href: "/settings.html", label: "Settings", icon: "settings", admin: true },
   account: { href: "/account.html", label: "Your account", icon: "user" },
 };
-// Section tabs: [page, label, who] (who: "admin" = admins only, "all" = everyone signed in).
+// Section tabs: [page, label, who] (who: "admin" = admins only, "staff" = not clients, "all" = everyone signed in).
 const SUBNAV = {
-  ads: [["ads", "Ads", "all"], ["forms", "Lead forms", "admin"]],
+  ads: [["ads", "Ads", "all"], ["forms", "Lead forms", "admin"], ["audiences", "Audiences", "staff"]],
   insights: [["performance", "Results", "all"], ["compare", "Compare", "all"], ["experiments", "Tests", "admin"], ["report", "Reports", "report"]],
   creative: [["gallery", "Gallery", "all"], ["ideas", "Ideas", "all"], ["research", "Research", "admin"]],
   claude: [["desk", "Claude", "admin"]],
   settings: [["settings", "Settings", "admin"], ["team", "Team", "admin"]],
 };
-const PAGE_HREF = { ads: "/ads.html", forms: "/forms.html", gallery: "/gallery.html", ideas: "/ideas.html", performance: "/performance.html", compare: "/compare.html",
+const PAGE_HREF = { ads: "/ads.html", forms: "/forms.html", audiences: "/audiences.html", gallery: "/gallery.html", ideas: "/ideas.html", performance: "/performance.html", compare: "/compare.html",
   experiments: "/experiments.html", report: "/report.html", desk: "/desk.html", research: "/research.html",
   settings: "/settings.html", team: "/team.html" };
 
@@ -684,7 +684,7 @@ export async function boot({ page, admin = false }) {
   const acctCrumb = showAcct && page !== "accounts" ? `<span class="crumb-acct">${esc(me.account.name)}</span>` : "";
   line.innerHTML = `${acctCrumb}<nav class="crumbs" aria-label="Breadcrumb"></nav><span class="grow"></span>${refreshButton()}`;
   main.prepend(line);
-  const canSee = (who) => who === "all" || isAdmin || (who === "report" && me.role === "client");
+  const canSee = (who) => who === "all" || isAdmin || (who === "report" && me.role === "client") || (who === "staff" && me.role !== "client");
   const tabsFor = (SUBNAV[section] || []).filter(([, , who]) => canSee(who));
   // Claude's page turns its one tab into its own (Conversations · By ad · Schedules), so its bar stays.
   if ((tabsFor.length > 1 || section === "claude") && tabsFor.some(([p]) => p === page)) {

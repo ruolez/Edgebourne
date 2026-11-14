@@ -7,6 +7,8 @@ from flask import Blueprint, jsonify, request
 
 import adset_build as ab
 import account_info
+import audience_rules
+import audiences_api
 import config
 import db
 import meta_client
@@ -69,20 +71,25 @@ def clean(raw):
     end = ab.iso_local(raw["end_day"], num("end_hour", 23), account_info.tz_name()) if raw.get("end_day") else None
     return {"name": str(raw.get("name") or "")[:200], "locations": locs, "age_min": num("age_min", 18), "age_max": num("age_max", 65),
             "suggest_min": num("suggest_min"), "suggest_max": num("suggest_max"), "advantage": bool(raw.get("advantage")),
-            "keep_hints": bool(raw.get("keep_hints")), "flexible_spec": flexible, "start": start, "end": end, "daily_budget_cents": num("daily_budget_cents")}
+            "keep_hints": bool(raw.get("keep_hints")), "flexible_spec": flexible, "start": start, "end": end, "daily_budget_cents": num("daily_budget_cents"),
+            # AM-D: audiences to include / leave out and a saved audience it started from (ids only; checked as this account's in check())
+            "include_audiences": audience_rules.clean_ids(raw.get("include_audiences")),
+            "exclude_audiences": audience_rules.clean_ids(raw.get("exclude_audiences")),
+            "saved_audience_id": str(raw.get("saved_audience_id") or "")[:30] if str(raw.get("saved_audience_id") or "").isdigit() else None}
 
 
 @bp.get("/new/options")
 @admin_required
 def options():
-    campaigns = db.query("""SELECT id, name, effective_status, daily_budget_cents FROM campaigns
+    campaigns = db.query("""SELECT id, name, effective_status, daily_budget_cents, COALESCE(special_ad_categories, '{}') AS special_ad_categories FROM campaigns
                             WHERE COALESCE(effective_status, '') NOT IN ('DELETED', 'ARCHIVED')
                             ORDER BY (effective_status = 'ACTIVE') DESC, name""")
     sets = db.query("""SELECT id, name, campaign_id, effective_status, targeting_summary FROM adsets
                        WHERE COALESCE(effective_status, '') NOT IN ('DELETED', 'ARCHIVED')
                        ORDER BY (effective_status = 'ACTIVE') DESC, name""")
     return jsonify({"campaigns": campaigns, "adsets": sets, "tz": account_info.tz_name(),
-                    "city_radius": ab.CITY_RADIUS, "pin_radius": ab.PIN_RADIUS, "advantage_max_age_min": ab.ADVANTAGE_MAX_AGE_MIN})
+                    "city_radius": ab.CITY_RADIUS, "pin_radius": ab.PIN_RADIUS, "advantage_max_age_min": ab.ADVANTAGE_MAX_AGE_MIN,
+                    **audiences_api.picker_options()})
 
 
 @bp.get("/template/<adset_id>")
@@ -130,8 +137,16 @@ def estimate():
     spec = clean(data.get("spec") or {})
     if not spec["locations"]:
         return jsonify({"lower": None, "upper": None})
+    special = []
+    if data.get("campaign_id"):
+        camp = db.query("SELECT COALESCE(special_ad_categories, '{}') AS special_ad_categories FROM campaigns WHERE id = %s",
+                        (str(data.get("campaign_id"))[:30],), one=True)
+        special = (camp or {}).get("special_ad_categories") or []
+    picked = audiences_api.pick_check(spec, special)  # AM-D: an audience that isn't this account's never reaches Meta, even for a read
+    if picked:
+        return jsonify({"lower": None, "upper": None, "problem": picked[0][1]})
     try:
-        t = template(str(data.get("template_adset_id") or ""))
+        t = audiences_api.with_saved(template(str(data.get("template_adset_id") or "")), spec)
         targeting = ab.targeting(spec, t.get("targeting"))
         key = "estimate:new:" + hashlib.sha1(json.dumps(targeting, sort_keys=True).encode()).hexdigest()
         row = cached(key, 3600, lambda: (meta_client.get(f"act_{_account()}/delivery_estimate", targeting_spec=json.dumps(targeting),
@@ -145,7 +160,7 @@ def check(data):
     """(campaign row or None, spec, [(field, message)]): everything create() refuses, without asking Meta,
     so the page can mark each field before its confirmation (9.4e)."""
     spec = clean(data.get("spec") or {})
-    campaign = db.query("""SELECT id, name, daily_budget_cents FROM campaigns WHERE id = %s
+    campaign = db.query("""SELECT id, name, daily_budget_cents, COALESCE(special_ad_categories, '{}') AS special_ad_categories FROM campaigns WHERE id = %s
                            AND COALESCE(effective_status, '') NOT IN ('DELETED', 'ARCHIVED')""", (str(data.get("campaign_id") or ""),), one=True)
     errs = [] if campaign else [("campaign", "Pick the campaign it goes in")]
     errs += ab.problems(spec, campaign["daily_budget_cents"] if campaign else 0)
@@ -156,6 +171,7 @@ def check(data):
     tid = str(data.get("template_adset_id") or "")
     if tid and not db.query("SELECT 1 FROM adsets WHERE id = %s", (tid,), one=True):
         errs.append(("template", "That ad set isn't there any more: pick another, or start from scratch"))
+    errs += audiences_api.pick_check(spec, (campaign or {}).get("special_ad_categories") or [])
     return campaign, spec, errs
 
 
@@ -184,7 +200,7 @@ def create():
     user = current_user()
     row = {"id": campaign["id"], "name": spec["name"], "campaign_id": campaign["id"]}
     try:
-        t = template(str(data.get("template_adset_id") or ""))
+        t = audiences_api.with_saved(template(str(data.get("template_adset_id") or "")), spec)
         body = ab.payload(spec, t, campaign, settings_store.get("meta_page_id"))
         made = meta_client.post(f"act_{_account()}/adsets",
                                 data={k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in body.items()})

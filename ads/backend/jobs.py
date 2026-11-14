@@ -126,7 +126,7 @@ def _loop():
             except Exception:
                 log.exception("account %s: reading Meta A/B tests failed", acct)
             if settings_store.get("meta_system_token") and settings_store.get("meta_ad_account_id"):
-                for name, mod in (("Meta's advice", "advice_api"), ("tracking health", "tracking_api")):
+                for name, mod in (("Meta's advice", "advice_api"), ("tracking health", "tracking_api"), ("audiences", "audiences_api")):
                     try:
                         __import__(mod).refresh_if_stale()
                     except Exception as exc:

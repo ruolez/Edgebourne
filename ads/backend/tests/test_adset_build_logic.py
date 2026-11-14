@@ -24,12 +24,23 @@ class SpecFromTests(unittest.TestCase):
             {"kind": "pin", "latitude": 32.7157, "longitude": -117.1611, "radius": 50, "name": None, "city_id": "2421830"},
             {"kind": "pin", "latitude": 33.9533, "longitude": -117.3962, "radius": 50, "name": None}],
             "age_min": 25, "age_max": 65, "suggest_min": 30, "suggest_max": 64, "advantage": True,
-            "hints": ["Entrepreneurship", "Small business owners"], "keep_hints": True})
+            "hints": ["Entrepreneurship", "Small business owners"], "keep_hints": True, "include_audiences": [], "exclude_audiences": []})
+
+    def test_a_templates_audiences_come_along(self):
+        t = {**LIVE["targeting"], "custom_audiences": [{"id": "238001", "name": "Web"}], "excluded_custom_audiences": [{"id": 238002}]}
+        s = ab.spec_from({**LIVE, "targeting": t})
+        self.assertEqual((s["include_audiences"], s["exclude_audiences"]), (["238001"], ["238002"]))
 
 
 class PayloadTests(unittest.TestCase):
     def spec(self, **kw):
         return {**ab.spec_from(LIVE), "name": "Inland Empire", **kw}
+
+    def test_picked_audiences_go_in_the_targeting_and_none_leaves_no_keys(self):
+        t = ab.targeting(self.spec(include_audiences=["238001", "238003"], exclude_audiences=["238002"]), LIVE["targeting"])
+        bare = ab.targeting(self.spec(), LIVE["targeting"])
+        self.assertEqual((t["custom_audiences"], t["excluded_custom_audiences"], "custom_audiences" in bare, "excluded_custom_audiences" in bare),
+                         ([{"id": "238001"}, {"id": "238003"}], [{"id": "238002"}], False, False))
 
     def test_a_copy_of_the_live_ad_set_in_a_campaign_budget_campaign_is_paused_with_no_budget(self):
         p = ab.payload(self.spec(), LIVE, CBO, "1404203629446490")

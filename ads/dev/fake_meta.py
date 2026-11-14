@@ -881,6 +881,147 @@ AFTER_DELIVERY = ("optimization_goal", "destination_type", "attribution_spec", "
 MUTABILITY = {"allow": set()}  # /fake/_mutability?field=&allow=1 relaxes one rule for a test
 COPY = {"active": False, "silent": None}  # /fake/_copy?active=1 (the next copy comes back on) / ?silent=<level> (no answer)
 NO_SPEND_CAP = "922337203685478"
+
+
+# ---- AM-D: custom, lookalike and saved audiences (act_<id>/customaudiences, act_<id>/saved_audiences) ----
+IG = "17841400000000001"  # the Page's Instagram account
+WEB_AUD, FORM_AUD, LIST_AUD, TINY_AUD = "23850000000000101", "23850000000000102", "23850000000000103", "23850000000000104"
+SAVED_AUD = "23850000000000201"
+
+
+def _aud_rule(kind, src, days, field, value):
+    return json.dumps({"inclusions": {"operator": "or", "rules": [{"event_sources": [{"id": src, "type": kind}], "retention_seconds": days * 86400,
+                                                                     "filter": {"operator": "and", "filters": [{"field": field, "operator": "i_contains" if field == "url" else "eq", "value": value}]}}]}})
+
+
+AUDIENCES = {
+    WEB_AUD: {"id": WEB_AUD, "name": "Website visitors - 30 days", "subtype": "WEBSITE", "retention_days": 30, "account": ACCOUNT,
+              "approximate_count_lower_bound": 12000, "approximate_count_upper_bound": 15000, "delivery_status": {"code": 200, "description": "This audience is ready for use."},
+              "operation_status": {"code": 200, "description": "Normal"}, "rule": _aud_rule("pixel", "1821497329119793", 30, "url", ""), "time_created": 1793000000},
+    FORM_AUD: {"id": FORM_AUD, "name": "Lead form openers - 90 days", "subtype": "ENGAGEMENT", "retention_days": 90, "account": ACCOUNT,
+               "approximate_count_lower_bound": 1200, "approximate_count_upper_bound": 1500, "delivery_status": {"code": 200, "description": "This audience is ready for use."},
+               "operation_status": {"code": 200}, "rule": _aud_rule("lead", FORM, 90, "event", "lead_generation_opened"), "time_created": 1793100000},
+    LIST_AUD: {"id": LIST_AUD, "name": "Past clients list", "subtype": "CUSTOM", "account": ACCOUNT, "description": "Uploaded in Ads Manager",
+               "approximate_count_lower_bound": 800, "approximate_count_upper_bound": 1000, "delivery_status": {"code": 200}, "operation_status": {"code": 200},
+               "time_created": 1792000000},
+    TINY_AUD: {"id": TINY_AUD, "name": "Old newsletter list", "subtype": "CUSTOM", "account": ACCOUNT,
+               "approximate_count_lower_bound": 40, "approximate_count_upper_bound": 60, "delivery_status": {"code": 300, "description": "This audience is too small."},
+               "operation_status": {"code": 200}, "time_created": 1791000000},
+}
+SAVED_AUDIENCES = {SAVED_AUD: {"id": SAVED_AUD, "name": "SoCal owners 30-60", "account": ACCOUNT, "time_created": 1792500000,
+                               "targeting": {"age_min": 30, "age_max": 60, "geo_locations": {"cities": [{"key": "2421696", "name": "Riverside", "radius": 25,
+                                                                                                         "distance_unit": "mile"}], "location_types": ["home", "recent"]}}}}
+AUD_FLAGS = {"tos_fail": False, "silent": False}
+AUD_RETENTION = {"pixel": 180, "page": 365, "ig_business": 365, "lead": 90, "video": 365}
+AUD_EVENTS = {"page": ("page_engaged", "page_visited", "page_messaged", "page_cta_clicked"),
+              "ig_business": ("ig_business_profile_all", "ig_business_profile_visit", "ig_user_messaged_business"),
+              "lead": ("lead_generation_opened", "lead_generation_submitted", "lead_generation_dropoff"),
+              "video": ("video_watched", "video_completed", "video_view_25_percent", "video_view_50_percent", "video_view_75_percent")}
+ADSET["targeting"]["custom_audiences"] = [{"id": WEB_AUD, "name": AUDIENCES[WEB_AUD]["name"]}]
+
+
+@app.route("/fake/_audiences")
+def fake_audiences():
+    """QA: fill=<id>[&lower=&upper=] makes a new audience ready; tos=0 fails the next create with the terms error; silent=1 drops the
+    next create's answer (it is made); special=<campaign id>&cats=HOUSING gives a campaign a special ad category (cats= empty: none)."""
+    a = request.args
+    if a.get("fill") in AUDIENCES:
+        x = AUDIENCES[a["fill"]]
+        x["approximate_count_lower_bound"], x["approximate_count_upper_bound"] = int(a.get("lower", 2000)), int(a.get("upper", 2500))
+        x["delivery_status"] = {"code": 200, "description": "This audience is ready for use."}
+    if "tos" in a:
+        AUD_FLAGS["tos_fail"] = a["tos"] == "0"
+    if "silent" in a:
+        AUD_FLAGS["silent"] = a["silent"] == "1"
+    if a.get("special") and by_id(a["special"]) is not None:  # special=<campaign id>&cats=HOUSING (empty: none), set as Meta would hold it
+        by_id(a["special"])["special_ad_categories"] = [c for c in (a.get("cats") or "").split(",") if c]
+    return jsonify({"flags": AUD_FLAGS, "audiences": AUDIENCES, "saved": SAVED_AUDIENCES})
+
+
+def audiences_of(acct, saved=False):
+    src = SAVED_AUDIENCES if saved else AUDIENCES
+    return jsonify({"data": [{k: v for k, v in x.items() if k != "account"} for x in src.values() if x.get("account") == acct]})
+
+
+def audience_known_source(acct, kind, sid):
+    if kind == "pixel":
+        return sid == DATASET and acct == ACCOUNT
+    if kind == "page":
+        return sid == PAGE and acct == ACCOUNT
+    if kind == "ig_business":
+        return sid == IG and acct == ACCOUNT
+    if kind == "lead":
+        return sid in FORMS and acct == ACCOUNT
+    if kind == "video":
+        return sid in VIDEOS
+    return False
+
+
+def audience_create(acct, a):
+    """POST act_<id>/customaudiences, checking the body shape audience_rules.create_params builds (Custom Audiences reference)."""
+    if AUD_FLAGS["tos_fail"]:
+        AUD_FLAGS["tos_fail"] = False
+        return jsonify({"error": {"message": "You must accept the Custom Audience terms of service before creating an audience (fake)",
+                                  "code": 2654, "type": "OAuthException"}}), 400
+    if any(k in a for k in ("schema", "payload", "customer_file_source")):
+        return refuse("This fake never takes customer lists")
+    name, subtype = a.get("name"), a.get("subtype")
+    if not name or subtype not in ("WEBSITE", "ENGAGEMENT", "LOOKALIKE"):
+        return refuse("Invalid parameter: name and subtype")
+    entry = {"name": name, "subtype": subtype, "account": acct, "description": a.get("description"), "time_created": int(__import__("time").time()),
+             "delivery_status": {"code": 200, "description": "This audience is ready for use."}, "operation_status": {"code": 200}}
+    if subtype == "LOOKALIKE":
+        try:
+            spec = json.loads(a.get("lookalike_spec") or "{}")
+        except ValueError:
+            return refuse("lookalike_spec must be JSON")
+        src = AUDIENCES.get(a.get("origin_audience_id") or "")
+        if not src or src.get("account") != acct or src.get("subtype") == "LOOKALIKE":
+            return refuse("The source audience doesn't exist in this ad account")
+        if (src.get("approximate_count_lower_bound") or 0) < 100:
+            return refuse("The source audience is too small: it needs at least 100 people from one country", 1713007)
+        if spec.get("type") != "similarity" or len(str(spec.get("country") or "")) != 2 or spec.get("ratio") not in (0.01, 0.02, 0.03, 0.05, 0.1):
+            return refuse("Invalid lookalike_spec")
+        entry["lookalike_spec"] = {"country": spec["country"], "ratio": spec["ratio"], "type": "similarity",
+                                   "origin": [{"id": src["id"], "name": src["name"], "type": "custom_audience"}]}
+    else:
+        try:
+            rule = json.loads(a.get("rule") or "")
+            first = rule["inclusions"]["rules"][0]
+            source = first["event_sources"][0]
+            seconds = int(first["retention_seconds"])
+            filters = first["filter"]["filters"]
+        except (ValueError, KeyError, IndexError, TypeError):
+            return refuse("Invalid rule")
+        kind, sid = source.get("type"), str(source.get("id"))
+        if (subtype == "WEBSITE") != (kind == "pixel") or kind not in AUD_RETENTION:
+            return refuse("The rule's event source doesn't fit the subtype")
+        if not audience_known_source(acct, kind, sid):
+            return refuse("The event source doesn't belong to this ad account")
+        if not 0 < seconds <= AUD_RETENTION[kind] * 86400:
+            return refuse("retention_seconds is outside the allowed range")
+        if kind != "pixel" and not any(f.get("field") == "event" and f.get("value") in AUD_EVENTS[kind] for f in filters):
+            return refuse("Unknown engagement event")
+        if a.get("prefill") != "true":
+            return refuse("prefill must be true here")
+        entry.update(rule=a["rule"], retention_days=seconds // 86400)
+    aid = str(next(ids))
+    AUDIENCES[aid] = {"id": aid, **entry}
+    if AUD_FLAGS["silent"]:
+        AUD_FLAGS["silent"] = False
+        import socket
+        request.environ["werkzeug.socket"].shutdown(socket.SHUT_RDWR)  # made, but the answer never arrives
+    return jsonify({"id": aid})
+
+
+def audience_refusal(acct, targeting):
+    """An ad set's targeting may only name audiences of its own ad account (as on Meta)."""
+    for key in ("custom_audiences", "excluded_custom_audiences"):
+        for x in (targeting or {}).get(key) or []:
+            got = AUDIENCES.get(str(x.get("id")))
+            if not got or got.get("account") != acct:
+                return refuse(f"Custom audience {x.get('id')} doesn't exist or isn't in this ad account")
+    return None
 LOCALES = [{"key": 6, "name": "English (US)"}, {"key": 24, "name": "English (UK)"}, {"key": 23, "name": "Spanish"},
            {"key": 1001, "name": "English (All)"}, {"key": 9, "name": "French (France)"}]
 INTERESTS = [{"id": "6003371567474", "name": "Entrepreneurship", "type": "interests", "audience_size_lower_bound": 300000000},
@@ -1078,6 +1219,8 @@ def graph(path):
             if parts[0] != BUSINESS:
                 return jsonify({"data": []})
             return reachable_list([ACCOUNT] if parts[1] == "owned_ad_accounts" else ["5556667778889990"])
+        if len(parts) == 2 and parts[0].startswith("act_") and parts[1] in ("customaudiences", "saved_audiences"):
+            return audiences_of(parts[0][4:], saved=parts[1] == "saved_audiences")
         if parts and parts[0].startswith("act_") and parts[0][4:] in OTHER_ACCOUNTS:
             return other_account_get(parts[0][4:], parts, a)
         if parts == [act]:
@@ -1195,7 +1338,8 @@ def graph(path):
             # A form lead the webhook announced (QA uses 7700…, 7711…, 7713…); shaped like Meta's.
             return jsonify(webhook_lead(parts[0]))
         if parts == [PAGE]:
-            return jsonify({"id": PAGE, "name": "Edge Bourne Consulting", "access_token": "fake-page-token"})
+            return jsonify({"id": PAGE, "name": "Edge Bourne Consulting", "access_token": "fake-page-token",
+                            **({"instagram_business_account": {"id": IG, "username": "edgebourne"}} if "instagram_business_account" in (a.get("fields") or "") else {})})
         if len(parts) == 2 and parts[0] in STUDIES and parts[1] == "objectives":
             st = STUDIES[parts[0]]
             cells = [c.get("ads") or c.get("adsets") for c in st["cells"]]
@@ -1290,6 +1434,8 @@ def graph(path):
                               "degrees_of_freedom_spec": json.loads(a.get("degrees_of_freedom_spec") or "{}"),
                               "effective_object_story_id": f"{PAGE}_{next(ids)}"}
             return jsonify({"id": cid})
+        if len(parts) == 2 and parts[0].startswith("act_") and parts[1] == "customaudiences":
+            return audience_create(parts[0][4:], a)
         if parts == [act, "campaigns"]:
             if a.get("status") != "PAUSED" or a.get("objective") != "OUTCOME_LEADS" or not a.get("name"):
                 return jsonify({"error": {"message": "Invalid parameter (fake): campaign", "code": 100}}), 400
@@ -1306,6 +1452,9 @@ def graph(path):
                 return jsonify({"error": {"message": "Invalid parameter (fake): adset", "code": 100}}), 400
             if a["campaign_id"] == CAMPAIGN["id"] and a.get("daily_budget"):
                 return jsonify({"error": {"message": "Budget is set on the campaign (fake)", "code": 100}}), 400
+            why = audience_refusal(ACCOUNT, t)
+            if why:
+                return why
             sid = str(next(ids))
             NEW_ADSETS[sid] = {"id": sid, "name": a["name"], "campaign_id": a["campaign_id"], "status": "PAUSED", "effective_status": "PAUSED",
                                "optimization_goal": a.get("optimization_goal"), "billing_event": a.get("billing_event"),
@@ -1424,6 +1573,9 @@ def graph(path):
                 if key in a:
                     obj[key] = a[key]
             if "targeting" in a:
+                why = audience_refusal(obj.get("account") or ACCOUNT, json.loads(a["targeting"]))
+                if why:
+                    return why
                 obj["targeting"] = json.loads(a["targeting"])
             if "creative" in a and parts[0] in ADS:
                 cid = json.loads(a["creative"])["creative_id"]

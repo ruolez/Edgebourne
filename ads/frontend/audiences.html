@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Audiences | Edge Bourne Ads</title>
+  <link rel="icon" href="/img/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/img/app/apple-touch-icon.png">
+  <meta name="theme-color" content="#F6F6F4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E0F11" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-title" content="EB Ads">
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/css/tokens.css?v=1794700000">
+  <link rel="stylesheet" href="/css/app.css?v=1795500000">
+  <link rel="stylesheet" href="/css/shell.css?v=1795000000">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail"></aside>
+    <main class="main">
+      <header class="page-head">
+        <a class="crumb" href="/ads.html" id="crumb">Ads</a>
+        <h1>Audiences</h1>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-primary" id="aud-new" hidden>New audience</button>
+      </header>
+      <div class="content stack">
+        <section class="panel">
+          <div class="panel-head"><h2>Your audiences</h2><p>Groups of people Meta can show your ads to, or leave out: website visitors, people who engaged with you, and people like them. Pick them in an ad set's Who sees it.</p></div>
+          <div class="panel-body stack tight">
+            <div class="aud-bar">
+              <div class="filters" role="group" aria-label="Show" id="aud-kinds"></div>
+              <label class="check aud-only"><input type="checkbox" id="aud-ready"> Ready only</label>
+              <span class="spacer"></span>
+              <span class="muted small" id="aud-source" role="status"></span>
+              <button type="button" class="btn btn-small" id="aud-refresh" hidden>Refresh</button>
+            </div>
+            <div id="aud-list"><div class="skeleton" role="status"><span></span><span></span><span></span><p>Loading from Meta…</p></div></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="/js/audiences.js"></script>
+</body>
+</html>

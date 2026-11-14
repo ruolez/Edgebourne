@@ -125,7 +125,7 @@ def locations_from(t):
 
 def audience_form(t):
     """Meta's targeting as the form's audience: places, ages, suggested ages, Advantage+ audience, gender, languages,
-    detailed targeting (include, with its group, and exclude) and custom audiences (kept; their pickers come with AM-D)."""
+    detailed targeting (include, with its group, and exclude) and custom audiences (included / left out; AM-D picks them)."""
     t = t or {}
     rng = t.get("age_range")
     if isinstance(rng, dict):
@@ -369,11 +369,20 @@ def problems(level, live, chs, ctx):
             if foreign:
                 out.append((field, "These aren't ad sets of this campaign (refresh the page): " + ", ".join(foreign)))
                 continue
-        if field == "targeting":
+        if field == "targeting":  # AM-D: only this account's audiences (ctx["audiences"], read under RLS); one Meta already has may stay
+            import audience_rules
             was, now_ = _audience_normal(live.get("targeting")), _audience_normal(c.get("value"))
-            if (was["custom"], was["excluded_custom"]) != (now_["custom"], now_["excluded_custom"]):
-                out.append((field, "Custom audiences are changed in Ads Manager for now; everything else here can change."))
+            if max(len(was["custom"]), len(was["excluded_custom"])) > audience_rules.MAX_PICKED:
+                # never write a shorter list than Meta has: the console edits at most MAX_PICKED a side
+                out.append((field, f"This ad set includes or leaves out more than {audience_rules.MAX_PICKED} audiences, more than the "
+                                   "console edits. Change who sees it in Ads Manager."))
                 continue
+            if (was["custom"], was["excluded_custom"]) != (now_["custom"], now_["excluded_custom"]):
+                picked = audience_rules.pick_problems(now_["custom"], now_["excluded_custom"], ctx.get("audiences") or {}, [],
+                                                      keep=set(was["custom"]) | set(was["excluded_custom"]))
+                if picked:
+                    out += [(field, m) for _, m in picked]
+                    continue
         if field != "frequency_control_specs" and can.get(field):
             out.append((field, can[field]))
             continue
@@ -403,9 +412,17 @@ def problems(level, live, chs, ctx):
                     out += [(field, m) for m in _special_problems(a.get("targeting") or {}, f"“{a.get('name')}”: ")]
         elif field == "targeting":
             out += [(field, m) for m in _audience_problems(c.get("value") or {})]
-            if ctx.get("special"):  # the audiences as Meta has them (their kind is never taken from the request)
-                kept = {k: (live.get("targeting") or {}).get(k) or [] for k in ("custom_audiences", "excluded_custom_audiences")}
-                out += [(field, m) for m in _special_problems({**(c.get("value") or {}), **kept})]
+            if ctx.get("special"):  # each audience's kind as Meta or the account's list has it (never taken from the request)
+                known = ctx.get("audiences") or {}
+                metas = {str(a.get("id")): a for k in ("custom_audiences", "excluded_custom_audiences")
+                         for a in (live.get("targeting") or {}).get(k) or [] if isinstance(a, dict)}
+
+                def kind_of(i):
+                    look = (metas.get(i) or {}).get("subtype") == "LOOKALIKE" or (known.get(i) or {}).get("kind") == "lookalike"
+                    return {"id": i, "subtype": "LOOKALIKE" if look else None, "name": (metas.get(i) or known.get(i) or {}).get("name")}
+                a = _audience_normal(c.get("value"))
+                resolved = {"custom_audiences": [kind_of(i) for i in a["custom"] + a["excluded_custom"]]}
+                out += [(field, m) for m in _special_problems({**(c.get("value") or {}), **resolved})]
         elif field == "placements" and not value["auto"]:
             if not value["platforms"]:
                 out.append((field, "Pick at least one place to show it, or use Advantage+ placements"))
@@ -573,8 +590,13 @@ def audience_parts(t):
              "Languages": ", ".join(LOCALE_NAMES.get(int(x), f"Language {x}") for x in t.get("locales") or []) or "any",
              "Detailed targeting": ", ".join(i.get("name") or i.get("id") for i in t.get("include") or []) or "none",
              "Excluded": ", ".join(i.get("name") or i.get("id") for i in t.get("exclude") or []) or "none",
-             "Custom audiences": ", ".join(a.get("name") or a.get("id") for a in t.get("custom_audiences") or []) or "none"}
+             "Includes people in": _aud_names(t.get("custom_audiences")),
+             "Leaves out people in": _aud_names(t.get("excluded_custom_audiences"))}
     return parts
+
+
+def _aud_names(lst):
+    return ", ".join(f"“{a.get('name') or a.get('id')}”" for a in lst or [] if isinstance(a, dict)) or "none"
 
 
 def audience_words(t):
@@ -587,6 +609,10 @@ def audience_words(t):
         out.append("Advantage+ audience")
     if p["Detailed targeting"] != "none":
         out.append(f"hints: {p['Detailed targeting']}")
+    if p["Includes people in"] != "none":
+        out.append(f"in {p['Includes people in']}")
+    if p["Leaves out people in"] != "none":
+        out.append(f"not in {p['Leaves out people in']}")
     return ", ".join(out)
 
 

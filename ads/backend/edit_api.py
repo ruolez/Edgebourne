@@ -12,6 +12,8 @@ from flask import Blueprint, jsonify, request
 
 import account_info
 import ads_api
+import audience_rules
+import audiences_api
 import db
 import edit_rules as er
 import meta_client
@@ -107,7 +109,9 @@ def read(level, entity_id):
         name_pins(live["targeting"]["locations"])
         ctx = {"campaign": {"id": camp.get("id"), "name": camp.get("name"), "daily_budget": er._int(camp.get("daily_budget")),
                             "lifetime_budget": er._int(camp.get("lifetime_budget")), "bid_strategy": camp.get("bid_strategy")},
-               "special": sorted(c for c in camp.get("special_ad_categories") or [] if c and c != "NONE")}
+               "special": sorted(c for c in camp.get("special_ad_categories") or [] if c and c != "NONE"),
+               "audiences": audiences_api.known()}
+        audiences_api.name_picked(live["targeting"], ctx["audiences"])
     return live, raw, ctx
 
 
@@ -175,6 +179,7 @@ def view(level, row, live, ctx):
     if level == "adset":
         out["campaign"] = ctx.get("campaign")
         out["special"] = ctx.get("special")
+        out.update(audiences_api.picker_options())
     else:
         out["adsets"] = [{k: a[k] for k in ("id", "name", "bid_amount")} for a in ctx.get("adsets") or []]
     return out
@@ -199,7 +204,10 @@ def edit_form(level, entity_id):
 def evaluate(level, row, data):
     """Fresh read + every check, no write: (live, raw, ctx, changes, problems, review, money questions)."""
     live, raw, ctx = read(level, row["id"])
-    chs = er.changes(level, live, wanted_from(data))
+    wanted = wanted_from(data)
+    if level == "adset" and isinstance(wanted.get("targeting"), dict):
+        wanted = {**wanted, "targeting": audiences_api.name_picked(dict(wanted["targeting"]), ctx.get("audiences") or {}, live["targeting"])}
+    chs = er.changes(level, live, wanted)
     now = utcnow()
     ctx = full_ctx(level, row, live, ctx, chs, now)
     names = {a["id"]: a.get("name") for a in ctx.get("adsets") or []}
@@ -251,11 +259,12 @@ def _store_after(level, entity_id, fresh, extra_children=()):
     t = fresh.get("targeting")
     db.execute("""UPDATE adsets SET name = %s, bid_strategy = %s, bid_amount_cents = %s, start_time = %s, end_time = %s, targeting_fp = %s,
                   targeting = %s, targeting_summary = %s, placements_fp = %s, optimization_goal = %s, destination_type = %s,
-                  billing_event = %s, attribution = %s, frequency = %s WHERE id = %s""",
+                  billing_event = %s, attribution = %s, frequency = %s, audience_ids = %s, excluded_audience_ids = %s WHERE id = %s""",
                (fresh.get("name"), fresh.get("bid_strategy") or None, sync.cents(fresh.get("bid_amount")), sync._time(fresh.get("start_time")),
-                sync._time(fresh.get("end_time")), sh.targeting_fingerprint(t), sync._json(er.kept_targeting(t)), sync.summarize_targeting(t),
+                sync._time(fresh.get("end_time")), sh.targeting_fingerprint(t), sync._json(er.kept_targeting(t)), sync.summarize_targeting(t, sync.audience_names(t)),
                 sh.placements_fingerprint(t), fresh.get("optimization_goal"), fresh.get("destination_type"), fresh.get("billing_event"),
-                sync._json(fresh.get("attribution_spec")), sync._json(fresh.get("frequency_control_specs")), entity_id))
+                sync._json(fresh.get("attribution_spec")), sync._json(fresh.get("frequency_control_specs")),
+                audience_rules.ids_in(t, "custom_audiences"), audience_rules.ids_in(t, "excluded_custom_audiences"), entity_id))
 
 
 def _texts(level, c, rows, live_raw_t, merged_t, ctx, live=None):

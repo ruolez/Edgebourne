@@ -61,7 +61,7 @@ error; it stops at its first missing selector, so a UI change updates it in the 
 Navigation (Nov 2026, "Signal"): sidebar groups **Work** (Today, Inbox, Leads) and **Run** (Ads, Creative, Insights,
 Claude) plus Settings; ⌘K / Ctrl+K or `/` opens a search-and-jump palette (`js/palette.js`); `g` then
 t / i / l / a / e / n / c / s jumps to a section. Every page has breadcrumbs; sections with sub-pages show
-tabs under them (Ads · Lead forms; Gallery · Ideas · Research; Results · Compare · Tests · Reports; Claude's Conversations ·
+tabs under them (Ads · Lead forms · Audiences; Gallery · Ideas · Research; Results · Compare · Tests · Reports; Claude's Conversations ·
 By ad · Schedules, each view with its own heading; Settings · Team). The palette also finds tabs, Settings sections, saved views, actions, lead forms, tests and saved competitor ads,
 and the words people use for a page ("Home", "Results"); `?` lists every shortcut. Phones: five tabs (Today, Leads, Ads,
 Inbox, More; More carries Claude's waiting count and lists Claude, then Creative, Ideas and Research). A missing page gets `404.html` (`error_page` in `nginx/ads.conf`); a page
@@ -209,6 +209,20 @@ into a campaign without a budget carries the ad set's, refused above the ceiling
 need it off first; Delete offers Turn it off instead first, then the typed name; children go with it, leads stay. Migration 047.
 Fake Meta: mutability like Meta's (`/fake/_mutability`), copies (`/fake/_copy?active=1|silent=<level>`), cascades, `search?type=adlocale|adinterest|adTargetingCategory`.
 QA: `QA_ONLY=edit sh qa/run.sh`, `ONLY=edit node qa/shots.cjs <dir>`.
+
+### Audiences (AM-D)
+
+Ads → **Audiences** (`audiences.html`, `js/audiences.js`, `aud-` classes; owners, account admins and teammates read it, clients never)
+lists the account's custom, lookalike and saved audiences with what each is in plain words, its size, whether it's ready and the ad
+sets that include it or leave it out (`adsets.audience_ids` / `excluded_audience_ids`, filled by the sync's full reads and the console's
+own edits). Owners and account admins make website (the pixel), Page, Instagram, lead form and video audiences and lookalikes of
+them in a three-step dialog (`POST /api/audiences`, rules in pure `backend/audience_rules.py`, routes in `audiences_api.py`; same
+`client_key` = same audience, an unanswered create is adopted by exact name, never made twice). No customer list is ever made,
+uploaded or changed here. The pickers (`js/audpick.js`: Include people in / Leave out people in, Start from a saved audience) are in
+New ad set, New campaign's ad set step and an ad set's Edit; the server checks every picked id against the account's own `audiences`
+rows before anything reaches Meta, and a lookalike can't go in a campaign with a special ad category. Migration 048. Fake Meta:
+`/fake/_audiences` (`fill=`, `tos=0`, `silent=1`, `special=<campaign>&cats=`). QA: `QA_ONLY=audiences sh qa/run.sh`,
+`ONLY=audiences node qa/shots.cjs <dir>`.
 
 ### Did it work? (D3)
 

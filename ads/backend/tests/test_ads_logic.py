@@ -137,6 +137,12 @@ class SummarizeTargetingTests(unittest.TestCase):
         self.assertEqual(sync.summarize_targeting(t),
                          "Ages 25–65+ · 4 areas (50 miles) · Hints: Small business owners, Business page admins · Advantage+ audience")
 
+    def test_audiences_included_and_left_out_are_named(self):
+        t = {"geo_locations": {"countries": ["US"]}, "custom_audiences": [{"id": "1", "name": "Website visitors"}],
+             "excluded_custom_audiences": [{"id": "2"}]}
+        self.assertEqual((sync.summarize_targeting(t), sync.summarize_targeting(t, {"2": "Past clients"})),
+                         ("US · In “Website visitors” · Not in 1 audience", "US · In “Website visitors” · Not in “Past clients”"))
+
     def test_country_only_and_empty(self):
         self.assertEqual((sync.summarize_targeting({"geo_locations": {"countries": ["US"]}}), sync.summarize_targeting(None)),
                          ("US", None))

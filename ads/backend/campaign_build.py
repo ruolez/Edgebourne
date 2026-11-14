@@ -100,15 +100,25 @@ def copy_warnings(ad):
     return out
 
 
-def review(spec, form_name, template_names, currency="USD"):
-    """The plain summary shown before creating and in the confirmation."""
+def audience_words(ids, names):
+    """“A”, “B” from the account's own names; a count when a name isn't known."""
+    named = [f"“{names[i]}”" for i in ids if (names or {}).get(i)]
+    return ", ".join(named) if len(named) == len(ids) else f"{len(ids)} audience{'s' if len(ids) != 1 else ''}"
+
+
+def review(spec, form_name, template_names, currency="USD", audience_names=None):
+    """The plain summary shown before creating and in the confirmation (with the audiences it includes or leaves out, named from
+    the account's own list)."""
     b = spec["daily_budget_cents"]
     s = spec["adset"]
     places = [ab.location_label(l) for l in s["locations"]]
+    inc, exc = s.get("include_audiences") or [], s.get("exclude_audiences") or []
+    auds = ((f" · includes people in {audience_words(inc, audience_names)}" if inc else "")
+            + (f" · leaves out people in {audience_words(exc, audience_names)}" if exc else ""))
     return {
         "campaign": f"{spec['name']} · Leads (Instant Form) · {dollars(b, currency)} a day (about {dollars(round(b * DAYS_PER_MONTH), currency)} a month), lowest cost",
         "adset": f"{s['name']} · {', '.join(places[:4])}{f' +{len(places) - 4}' if len(places) > 4 else ''} · ages {s['age_min']}–{s['age_max']}"
-                 + (" · Advantage+ audience" if s.get("advantage") else "") + " · Advantage+ placements",
+                 + (" · Advantage+ audience" if s.get("advantage") else "") + " · Advantage+ placements" + auds,
         "form": form_name,
         "ads": [{"name": a["name"], "title": a["title"], "starts_from": template_names.get(a["template_ad_id"], ""),
                  "media": {"same": "same media as that ad", "image": "a new image", "video": "a new video"}[a["media"]["kind"]],

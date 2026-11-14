@@ -88,6 +88,17 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(r["ads"], [{"name": "N6 - Payroll", "title": "Payroll in one click", "starts_from": "N1 - One simple system",
                                      "media": "same media as that ad", "warnings": []}])
 
+    def test_review_names_the_audiences_included_and_left_out(self):
+        picked = {**SPEC, "adset": {**ADSET, "include_audiences": ["11", "12"], "exclude_audiences": ["13"]}}
+        names = {"11": "Website visitors", "12": "Form senders", "13": "Past clients"}
+        self.assertEqual(cb.review(picked, "Free intro call", {}, audience_names=names)["adset"],
+                         "SoCal · Riverside, California + 25 mi · ages 25–65 · Advantage+ audience · Advantage+ placements"
+                         " · includes people in “Website visitors”, “Form senders” · leaves out people in “Past clients”")
+
+    def test_review_without_names_still_counts_the_audiences(self):
+        picked = {**SPEC, "adset": {**ADSET, "include_audiences": [], "exclude_audiences": ["13", "14"]}}
+        self.assertTrue(cb.review(picked, "Free intro call", {})["adset"].endswith(" · leaves out people in 2 audiences"))
+
     def test_review_and_problems_use_the_account_currency(self):
         r = cb.review(SPEC, "Free intro call", {"t1": "N1 - One simple system"}, currency="EUR")
         p = cb.problems({**SPEC, "daily_budget_cents": 6100}, {"f1"}, {"t1"}, 2000, currency="EUR")

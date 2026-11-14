@@ -4,6 +4,8 @@
 // ONLY=am-link node qa/shots.cjs <dir>: only Settings → Ads Manager link (AM-A) connected, through Claude, waiting for the Mac and not connected.
 // ONLY=drafts node qa/shots.cjs <dir>: only the drafts from Ads Manager (AM-B): Ads → Campaigns with the panel, the Drafts view
 // (open, finished and staged-edit drafts) and New campaign filled in from a draft.
+// ONLY=audiences node qa/shots.cjs <dir>: only AM-D: Ads → Audiences, the New audience dialog (each step: website and lookalike
+// details), the pickers in New ad set and in an ad set's Edit (nothing is made).
 // ONLY=edit node qa/shots.cjs <dir>: only AM-C: the Edit panel of the ad set (folded, then every section open), the review
 // with a money question (the campaign's spending cap removed), the copy dialog and the delete dialog.
 // Playwright: $PLAYWRIGHT_CORE, else the first intact copy on this Mac (the render pipeline's copy lost
@@ -52,7 +54,7 @@ db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) V
   const CLIENT_PAGES = ['home', 'inbox', 'ads', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312', 'compare.html#pick',
     'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video',
     'ad.html?id=120252672230740312#tab=history', 'gallery', 'ideas', 'performance', 'report', 'account', 'leads.html?due=today', 'performance.html?range=today'];
-  const OWNER_PAGES = ['home', 'inbox', 'ads', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312', 'compare.html?ids=120252672232030312,120252672233160312,120252672230740312', 'compare.html#pick', 'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=polish', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video', 'ad.html?id=120252672230740312#tab=comments', 'ad.html?id=120252672230740312#tab=history', 'ads.html?level=adset', 'new-ad', 'new-adset.html?campaign=120252638288040312', 'gallery', 'gallery.html?view=launched', 'ideas', 'research', 'research.html#tab=search', 'research.html#tab=watched', 'research.html#tab=past', 'desk', 'desk.html#ads', 'desk.html#schedules', 'performance', 'experiments', 'report', 'forms', 'new-campaign', 'team', 'settings', 'account', 'accounts', 'offline', 'missing-page.html',
+  const OWNER_PAGES = ['home', 'inbox', 'ads', 'ads.html?level=campaign', 'campaign.html?id=120252638288040312', 'adset.html?id=120252672227950312', 'compare.html?ids=120252672232030312,120252672233160312,120252672230740312', 'compare.html#pick', 'ad.html?id=120252672230740312', 'ad.html?id=120252672230740312#tab=polish', 'ad.html?id=120252672230740312#tab=audience', 'ad.html?id=120252672230740312#tab=video', 'ad.html?id=120252672230740312#tab=comments', 'ad.html?id=120252672230740312#tab=history', 'ads.html?level=adset', 'new-ad', 'new-adset.html?campaign=120252638288040312', 'gallery', 'gallery.html?view=launched', 'ideas', 'research', 'research.html#tab=search', 'research.html#tab=watched', 'research.html#tab=past', 'audiences', 'desk', 'desk.html#ads', 'desk.html#schedules', 'performance', 'experiments', 'report', 'forms', 'new-campaign', 'team', 'settings', 'account', 'accounts', 'offline', 'missing-page.html',
         'inbox.html?box=fyi', 'inbox.html?box=all', 'gallery.html?view=tired', 'leads.html?due=today',
         // FU-C: today so far (Results and Ads on Today, the ad page's daily charts with today's bar).
         'performance.html?range=today', 'ads.html?range=today', 'ad.html?id=120252672232030312&range=7',
@@ -60,6 +62,7 @@ db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) V
   const onlyAm = process.env.ONLY === 'am-link';
   const onlyDrafts = process.env.ONLY === 'drafts';
   const onlyEdit = process.env.ONLY === 'edit';
+  const onlyAud = process.env.ONLY === 'audiences';
   const fakeGet = (path) => sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001${path}').read().decode())"`);
   // AM-C: the Edit panel, the review with a money line, the copy dialog and the delete dialog (nothing is saved).
   const editShots = async (page, tag, scheme) => {
@@ -111,6 +114,49 @@ db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) V
     await page.screenshot({ path: `${OUT}/delete-dialog-${tag}-${scheme}.png` });
     await page.keyboard.press('Escape');
   };
+  // AM-D: the audiences list, the three steps of New audience (website, then a lookalike's details), the pickers (nothing is made).
+  const audienceShots = async (page, tag, scheme) => {
+    await page.goto(`${BASE}/audiences.html`);
+    await page.waitForSelector('#aud-list table');
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${OUT}/audiences-${tag}-${scheme}.png`, fullPage: true });
+    await page.click('#aud-new');
+    await page.waitForSelector('dialog.aud-dialog [data-aud-k]');
+    await page.click('[data-aud-k="website"]');
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${OUT}/aud-new-1-${tag}-${scheme}.png` });
+    await page.click('#aud-next');
+    await page.waitForSelector('#aud-days');
+    await page.screenshot({ path: `${OUT}/aud-new-2-${tag}-${scheme}.png` });
+    await page.click('#aud-next');
+    await page.waitForSelector('#aud-name');
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${OUT}/aud-new-3-${tag}-${scheme}.png` });
+    await page.click('#aud-back');
+    await page.click('#aud-back');
+    await page.click('[data-aud-k="lookalike"]');
+    await page.click('#aud-next');
+    await page.waitForSelector('#aud-origin');
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${OUT}/aud-new-look-${tag}-${scheme}.png` });
+    await page.keyboard.press('Escape');
+    await page.goto(`${BASE}/new-adset.html?campaign=120252638288040312`);
+    await page.waitForSelector('#aud-inc-chips [data-aud-chip]');
+    await page.click('#aud-exc-q');
+    await page.waitForTimeout(300);
+    await page.locator('#audiences-field').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `${OUT}/aud-pick-newset-${tag}-${scheme}.png` });
+    await page.goto(`${BASE}/adset.html?id=120252672227950312`);
+    await page.waitForSelector('#ed-open');
+    await page.click('#ed-open');
+    await page.waitForSelector('dialog.ed-panel #ed-sec-who');
+    await page.click('#ed-sec-who > summary');
+    await page.locator('#ed-aud').scrollIntoViewIfNeeded();
+    await page.click('#ed-aud-inc-q');
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${OUT}/aud-pick-edit-${tag}-${scheme}.png` });
+    await page.keyboard.press('Escape');
+  };
   // AM-B: the fake's drafts stored for account 1 as a link read 12 minutes ago would (kept as they are when QA left some).
   if (!asClient) sh('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', `import json, urllib.request, datetime as dt, account_ctx, am_drafts, db, drafts_api
 with account_ctx.use(1):
@@ -160,6 +206,7 @@ with account_ctx.use(1):
         await page.screenshot({ path: `${OUT}/${tag0}lead-detail-${tag}-${scheme}.png`, fullPage: true });
       }
       if (onlyEdit) { await editShots(page, tag, scheme); await ctx.close(); continue; }
+      if (onlyAud) { await audienceShots(page, tag, scheme); await ctx.close(); continue; }
       for (const p of (asClient ? CLIENT_PAGES : onlyAm ? [] : onlyDrafts ? DRAFT_PAGES : [...OWNER_PAGES, ...DRAFT_PAGES.slice(1)])) {
         await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
         if (p.includes('#')) await page.reload();
@@ -181,6 +228,7 @@ with account_ctx.use(1):
       }
       if (onlyAm) { await ctx.close(); continue; }
       await editShots(page, tag, scheme);
+      await audienceShots(page, tag, scheme);
       // FU-D: full access on, and a conversation with an image and a video preview.
       fullAccess(true);
       await page.goto(`${BASE}/desk.html#new`);

@@ -8,6 +8,7 @@ import { money, currencySymbol } from "./format.js";
 import { placesHtml, placesWidget } from "./places.js";
 import { changeStatus, spendWords, spendBody } from "./controls.js";
 import * as UrlState from "./urlstate.js";
+import { audPicker, audPickHtml, savedSelectHtml } from "./audpick.js";
 
 const WHAT = { campaign: "campaign", adset: "ad set" };
 const SECTIONS = {
@@ -150,7 +151,7 @@ function searchBox(id, placeholder) {
 function whoHtml(d, v) {
   const t = v.targeting;
   const g = t.genders.length === 1 ? String(t.genders[0]) : "";
-  return `<h4 class="ed-h">Places</h4>${placesHtml("ed-pl")}
+  return `${savedSelectHtml("ed-saved", d.saved_audiences)}<h4 class="ed-h">Places</h4>${placesHtml("ed-pl")}
     <h4 class="ed-h">Ages</h4>
     <div class="ed-pair"><div class="field"><label for="ed-age-min">From</label><select class="input" id="ed-age-min">${ageOpts(t.age_min)}</select></div>
       <div class="field"><label for="ed-age-max">To</label><select class="input" id="ed-age-max">${ageOpts(t.age_max)}</select></div></div>
@@ -162,7 +163,7 @@ function whoHtml(d, v) {
     <h4 class="ed-h">Languages</h4><ul class="ed-chips" id="ed-locales"></ul>${searchBox("lang", "Add a language")}
     <h4 class="ed-h">Detailed targeting</h4><p class="muted small flush">Interests and behaviours Meta starts from.</p><ul class="ed-chips" id="ed-include"></ul>${searchBox("inc", "Add an interest or behaviour")}
     <h4 class="ed-h">Exclude people who match</h4><ul class="ed-chips" id="ed-exclude"></ul>${searchBox("exc", "Exclude an interest or behaviour")}
-    <h4 class="ed-h">Custom audiences</h4><p class="flush small" id="ed-custom">${esc([...t.custom_audiences.map((a) => a.name), ...t.excluded_custom_audiences.map((a) => `not ${a.name}`)].join(", ") || "None")}</p>`;
+    <h4 class="ed-h">Your audiences</h4>${audPickHtml("ed-aud")}`;
 }
 
 function whereHtml(d, v) {
@@ -233,7 +234,8 @@ function readValues(root, d, st) {
     locations: st.places.get(), age_min: Number($("#ed-age-min").value), age_max: Number($("#ed-age-max").value), advantage: $("#ed-adv").checked,
     suggest_min: $("#ed-sug-min").value ? Number($("#ed-sug-min").value) : null, suggest_max: $("#ed-sug-max").value ? Number($("#ed-sug-max").value) : null,
     genders: gender && gender.dataset.gender ? [Number(gender.dataset.gender)] : [], locales: st.locales.map((l) => l.key),
-    include: st.include, exclude: st.exclude, custom_audiences: v.targeting.custom_audiences, excluded_custom_audiences: v.targeting.excluded_custom_audiences,
+    include: st.include, exclude: st.exclude,
+    custom_audiences: st.aud.get().include.map((id) => ({ id })), excluded_custom_audiences: st.aud.get().exclude.map((id) => ({ id })),
   };
   const manual = root.querySelector('input[name="ed-pl-mode"][value="manual"]').checked;
   out.placements = manual ? { auto: false, platforms: [...root.querySelectorAll("[data-plat]")].filter((i) => i.checked).map((i) => i.dataset.plat),
@@ -282,6 +284,10 @@ export async function openEdit({ level, id, focus = null, prefill = {}, undoOf =
     st.places = placesWidget("ed-pl", { cityRadius: d.city_radius, pinRadius: d.pin_radius, onChange: () => markDirty("who") });
     st.places.set(v.targeting.locations);
     st.locales = v.targeting.locales.map((k) => ({ key: k, name: d.locale_names[String(k)] || `Language ${k}` }));
+    // AM-D: include / leave out the account's audiences (the server checks each is this account's before anything reaches Meta).
+    st.aud = audPicker("ed-aud", { audiences: d.audiences || [], words: d.audience_words || {}, special: () => (d.special || []).length > 0,
+      advantage: () => $("#ed-adv").checked, onChange: () => markDirty("who") });
+    st.aud.set(v.targeting.custom_audiences, v.targeting.excluded_custom_audiences);
   }
   const drawChips = () => {
     if (level !== "adset") return;
@@ -322,10 +328,27 @@ export async function openEdit({ level, id, focus = null, prefill = {}, undoOf =
 
   // ---- interactions
   dlg.addEventListener("input", (e) => { const s = e.target.closest(".ed-sec"); if (s && !e.target.closest("[data-ed-search]") && !e.target.closest(".place-add")) markDirty(s.dataset.sec); });
+  // AM-D: Start from a saved audience fills places, ages, gender, languages and detailed targeting (and its audiences); Save sends it.
+  const applySaved = (sid) => {
+    const sv = (d.saved_audiences || []).find((x) => x.id === sid);
+    if (!sv) return;
+    const f = sv.form;
+    st.places.set(f.locations);
+    $("#ed-age-min").value = String(f.age_min); $("#ed-age-max").value = String(f.age_max);
+    $("#ed-adv").checked = f.advantage; $("#ed-sug").hidden = !f.advantage;
+    $("#ed-sug-min").value = f.suggest_min ? String(f.suggest_min) : ""; $("#ed-sug-max").value = f.suggest_max ? String(f.suggest_max) : "";
+    const g = f.genders.length === 1 ? String(f.genders[0]) : "";
+    dlg.querySelectorAll("[data-gender]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.gender === g)));
+    st.locales = f.locales.map((k) => ({ key: k, name: d.locale_names[String(k)] || `Language ${k}` }));
+    st.include = [...f.include]; st.exclude = [...f.exclude];
+    st.aud.set(f.custom_audiences, f.excluded_custom_audiences);
+    drawChips(); markDirty("who");
+  };
   dlg.addEventListener("change", (e) => {
     const s = e.target.closest(".ed-sec");
     if (!s || e.target.closest("[data-ed-search]")) return;
-    if (e.target.id === "ed-adv") $("#ed-sug").hidden = !e.target.checked;
+    if (e.target.id === "ed-adv") { $("#ed-sug").hidden = !e.target.checked; if (st.aud) st.aud.redraw(); }
+    if (e.target.id === "ed-saved") { applySaved(e.target.value); return; }
     if (e.target.id === "ed-cap-none") $("#ed-cap").disabled = e.target.checked;
     if (e.target.id === "ed-end-none") $("#ed-end-when").hidden = e.target.checked;
     if (e.target.name === "ed-pl-mode") $("#ed-manual").hidden = e.target.value !== "manual";

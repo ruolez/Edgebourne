@@ -39,7 +39,7 @@ def once(table, row, key):
         return db.query(f"SELECT * FROM {table} WHERE {key} = %s AND account_id = %s", (row[key], row["account_id"]), one=True)
 
 
-def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
+def seed_marked(acct, mark, ad, campaign, lead, task, admin_id, adset=None):
     """A marked row in each account-owned table the newer screens read (Inbox, History, versions, Claude, builds, CRM)."""
     proposal = once("desk_proposals", {"task_id": task, "kind": "status", "title": f"{mark} proposal", "entity_type": "ad", "entity_id": ad,
                                        "entity_name": f"{mark} ad", "proposed_value": "PAUSED", "status": "pending", "account_id": acct}, "title")
@@ -90,8 +90,18 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
     copy = once("copy_jobs", {"level": "campaign", "source_id": campaign, "plan": json.dumps({"name": f"{mark} copy", "adsets": []}),
                               "made": json.dumps({}), "status": "partial", "error": f"{mark} copy error", "client_key": f"{mark}copy",
                               "created_by": admin_id, "account_id": acct}, "client_key")
+    # AM-D: an audience (its name and words show on Ads → Audiences, its own route and the builders' pickers) used by the account's ad set.
+    audience = once("audiences", {"id": f"9{acct}00000000088", "kind": "custom", "subtype": "WEBSITE", "name": f"{mark} audience",
+                                  "description": f"{mark} audience words", "made_here": True, "source_kind": "website", "who": "all_visitors",
+                                  "retention_days": 30, "size_lower": 2000, "size_upper": 2500, "ready": "ready", "status_words": "Ready",
+                                  "account_id": acct}, "name")
+    db.execute("UPDATE audiences SET gone_at = NULL WHERE id = %s AND account_id = %s", (audience["id"], acct))
+    db.execute("UPDATE adsets SET audience_ids = array_append(array_remove(audience_ids, %s), %s) WHERE id = %s AND account_id = %s",
+               (audience["id"], audience["id"], adset, acct))
+    import settings_store
+    settings_store.set("audiences_read_at", __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(), account_id=acct)
     return {"proposal": proposal["id"], "view": view["id"], "build": build["id"], "swipe": swipe["id"], "alert": problem["id"],
-            "change": change["id"], "attachment": preview["id"], "draft": draft["draft_id"], "copy": copy["id"]}
+            "change": change["id"], "attachment": preview["id"], "draft": draft["draft_id"], "copy": copy["id"], "audience": audience["id"]}
 
 with account_ctx.all_accounts():
     acct = db.query("SELECT id FROM accounts WHERE name = 'Burdanova QA'", one=True)
@@ -131,7 +141,7 @@ with account_ctx.all_accounts():
         (client_email, generate_password_hash(secrets.token_hex(8)), A2), returning=True)
     admin = db.query("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1", one=True)
     two = {"ad": ids["ad"], "adset": ids["adset"], "campaign": ids["campaign"], "lead": lead["id"], "task": task["id"], "exp": exp["id"],
-           **seed_marked(A2, MARK2, ids["ad"], ids["campaign"], lead["id"], task["id"], admin["id"])}
+           **seed_marked(A2, MARK2, ids["ad"], ids["campaign"], lead["id"], task["id"], admin["id"], ids["adset"])}
     one = {"ad": "120252672229040312", "adset": "120252672227950312", "campaign": "120252638288040312",
            "lead": db.query("SELECT id FROM leads WHERE account_id = 1 ORDER BY id LIMIT 1", one=True)["id"]}
     # Account 1's marked rows exist only while this runs: later flows count account 1's proposals, views and alerts.
@@ -141,15 +151,17 @@ with account_ctx.all_accounts():
                            ("ad_versions", "label"), ("saved_views", "name"), ("campaign_builds", "client_key"), ("alerts", "dedupe_key"),
                            ("lead_notes", "body"), ("lead_replies", "subject"), ("activity", "subject"), ("inbox_reads", "item_key"),
                            ("desk_attachments", "name"), ("desk_tasks", "prompt"), ("swipes", "page_name"), ("numbers_runs", "error"),
-                           ("am_link_runs", "error"), ("am_snapshots", "scope"), ("am_drafts", "source"), ("copy_jobs", "client_key")):
+                           ("am_link_runs", "error"), ("am_snapshots", "scope"), ("am_drafts", "source"), ("copy_jobs", "client_key"),
+                           ("audiences", "name")):
                 db.execute(f"DELETE FROM {t} WHERE account_id = 1 AND {col} LIKE %s", (MARK1 + "%",))
             db.execute("DELETE FROM lead_events WHERE account_id = 1 AND details->>'ad' LIKE %s", (MARK1 + "%",))
+            db.execute("UPDATE adsets SET audience_ids = array_remove(audience_ids, '91' || '00000000088') WHERE account_id = 1")
     drop_mark1()
     atexit.register(drop_mark1)
     task1 = db.execute("INSERT INTO desk_tasks (kind, prompt, status, summary, account_id) VALUES ('question', %s, 'done', %s, 1) RETURNING id",
                        (f"{MARK1} task", f"{MARK1} summary"), returning=True)
     one.update(task=task1["id"], exp=(db.query("SELECT id FROM experiments WHERE account_id = 1 ORDER BY id LIMIT 1", one=True) or {"id": 1})["id"],
-               **seed_marked(1, MARK1, one["ad"], one["campaign"], one["lead"], task1["id"], admin["id"]))
+               **seed_marked(1, MARK1, one["ad"], one["campaign"], one["lead"], task1["id"], admin["id"], one["adset"]))
 
     # Row-level security on every table that holds account data (a new table that forgets it would leak).
     tables = db.query("""SELECT c.relname AS name, c.relrowsecurity AS rls,
@@ -179,7 +191,8 @@ def fill(rule, other):
         v = {"ad_id": other["ad"], "adset_id": other["adset"], "campaign_id": other["campaign"], "entity_id": other["ad"], "level": "ad",
              "lead_id": other["lead"], "task_id": other["task"], "exp_id": other.get("exp", 1), "id": other["lead"],
              "proposal_id": other["proposal"], "build_id": other["build"], "view_id": other["view"], "number": 900,
-             "change_id": other["change"], "att_id": other["attachment"], "draft_id": other["draft"], "job_id": other["copy"]}.get(name, "1")
+             "change_id": other["change"], "att_id": other["attachment"], "draft_id": other["draft"], "job_id": other["copy"],
+             "audience_id": other.get("audience", "1")}.get(name, "1")
         url = re.sub(r"<(?:[a-z]+:)?" + name + ">", str(v), url)
     return url
 

@@ -47,7 +47,13 @@ def spec_from(template):
             "suggest_min": (rng or [None, None])[0], "suggest_max": (rng or [None, None])[1],
             "advantage": (t.get("targeting_automation") or {}).get("advantage_audience") == 1,
             "hints": [i.get("name") for s in t.get("flexible_spec") or [] for k in ("interests", "behaviors", "work_positions")
-                      for i in s.get(k) or [] if i.get("name")], "keep_hints": True}
+                      for i in s.get(k) or [] if i.get("name")], "keep_hints": True,
+            "include_audiences": _audience_ids(t, "custom_audiences"), "exclude_audiences": _audience_ids(t, "excluded_custom_audiences")}
+
+
+def _audience_ids(t, key):
+    """AM-D: the custom audiences a targeting includes / leaves out, as ids."""
+    return [str(a["id"]) for a in t.get(key) or [] if isinstance(a, dict) and str(a.get("id") or "").isdigit()]
 
 
 def problems(spec, campaign_budget_cents):
@@ -101,6 +107,10 @@ def targeting(spec, template_targeting=None):
         t["flexible_spec"] = [{k: [{"id": str(i["id"]), "name": i.get("name")} for i in s[k]]
                                for k in ("interests", "behaviors", "work_positions") if s.get(k)}
                               for s in hints]
+    # AM-D: audiences picked to include / leave out (checked as this account's by the route before this is built).
+    for key, ids in (("custom_audiences", spec.get("include_audiences")), ("excluded_custom_audiences", spec.get("exclude_audiences"))):
+        if ids:
+            t[key] = [{"id": str(i)} for i in ids]
     return t
 
 

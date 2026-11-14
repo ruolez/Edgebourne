@@ -5,6 +5,7 @@ import { placesHtml, placesWidget } from "./places.js";
 import { mountUploader, waitReady } from "./uploader.js";
 import { builder } from "./builder.js";
 import { draftLeftHtml, draftNoteHtml, draftParam, loadDraftSpec } from "./drafts.js";
+import { audPicker, audPickHtml, audWords, savedSelectHtml } from "./audpick.js";
 
 const CLIENT_KEY = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -21,6 +22,9 @@ const draftP = draftParam();
 let draft = null;
 let draftFlex = [];
 const videoPolls = new Map();  // video id → stops waiting for Meta to process it
+// AM-D: audiences to include / leave out in the ad set, and the saved audience its places and ages came from.
+let aud = null;
+let savedId = null;
 
 const STEPS = [{ id: "goal", name: "Goal" }, { id: "budget", name: "Budget" }, { id: "adset", name: "Who sees it" }, { id: "form", name: "Lead form" }, { id: "ads", name: "Ads" }];
 const STATUS = FORMAT_STATUS;
@@ -95,7 +99,8 @@ function spec() {
     adset: { template_adset_id: $("s-template").value, name: $("s-name").value, locations: places.get(), age_min: n("s-age-min"), age_max: n("s-age-max"),
       advantage: $("s-advantage").checked, suggest_min: $("s-advantage").checked ? n("s-sug-min") : null, suggest_max: $("s-advantage").checked ? n("s-sug-max") : null,
       keep_hints: $("s-hints").checked, flexible_spec: $("s-template").value ? [] : draftFlex,
-      start_day: $("s-start").value || null, start_hour: 0, end_day: $("s-end").value || null, end_hour: 23 },
+      start_day: $("s-start").value || null, start_hour: 0, end_day: $("s-end").value || null, end_hour: 23,
+      include_audiences: aud ? aud.get().include : [], exclude_audiences: aud ? aud.get().exclude : [], saved_audience_id: savedId },
     ads,
     ...(draft && !draft.error ? { draft_id: draft.draft.id, again: Boolean(draftP.again) } : {}),
   };
@@ -132,7 +137,7 @@ function summary() {
   return {
     goal: $("c-name").value.trim(),
     budget: dollars && Number(dollars) > 0 ? `${money(Math.round(Number(dollars) * 100), { exact: true })} a day` : "",
-    adset: places_.length ? `${$("s-name").value.trim() || "Unnamed"} · ${places_.length === 1 ? "1 place" : `${places_.length} places`} · ages ${n($("s-age-min").value) ?? 18}–${n($("s-age-max").value) ?? 65}` : "",
+    adset: places_.length ? `${$("s-name").value.trim() || "Unnamed"} · ${places_.length === 1 ? "1 place" : `${places_.length} places`} · ages ${n($("s-age-min").value) ?? 18}–${n($("s-age-max").value) ?? 65}${aud && audWords(aud.names()) ? ` · ${audWords(aud.names())}` : ""}` : "",
     form: form && form.value ? form.textContent : "",
     ads: named.length ? named.join(", ") : "",
   };
@@ -163,17 +168,38 @@ function estimateSoon() {
 
 function changed() { readAds(); if (steps) steps.soon(); }
 
+// AM-D: Start from a saved audience fills the ad set's places, ages, hints and audiences; nothing is sent until Create.
+function applySaved() {
+  const s = (opts.saved_audiences || []).find((x) => x.id === $("s-saved").value);
+  savedId = s ? s.id : null;
+  if (s) {
+    const b = s.builder;
+    places.set(b.locations); hints = b.hints;
+    $("s-age-min").value = b.age_min; $("s-age-max").value = b.age_max;
+    $("s-sug-min").value = b.suggest_min ?? ""; $("s-sug-max").value = b.suggest_max ?? "";
+    $("s-advantage").checked = b.advantage; $("s-suggest").hidden = !b.advantage;
+    $("s-hints").checked = hints.length > 0;
+    $("s-hints-text").textContent = hints.join(", "); $("s-hints-row").hidden = !hints.length;
+    aud.set(b.include_audiences, b.exclude_audiences);
+  }
+  changed(); estimateSoon();
+}
+
 async function loadTemplate() {
   try {
     const t = $("s-template").value ? await api(`/api/adsets/template/${encodeURIComponent($("s-template").value)}`)
       // From scratch: Advantage+ audience with the minimum age Meta allows for it (25) and 65.
       : { locations: [], hints: [], age_min: 25, age_max: 65, suggest_min: null, suggest_max: null, advantage: true, keep_hints: false };
     places.set(t.locations); hints = t.hints;
+    if (aud) aud.set(t.include_audiences || [], t.exclude_audiences || []);
+    savedId = null;
+    if ($("s-saved")) $("s-saved").value = "";
     $("s-age-min").value = t.age_min; $("s-age-max").value = t.age_max;
     $("s-sug-min").value = t.suggest_min ?? ""; $("s-sug-max").value = t.suggest_max ?? "";
     $("s-advantage").checked = t.advantage; $("s-hints").checked = t.keep_hints && hints.length > 0;
     $("s-hints-text").textContent = hints.join(", "); $("s-hints-row").hidden = !hints.length;
     $("s-suggest").hidden = !t.advantage;
+    if (aud) aud.redraw();
     changed(); estimateSoon();
   } catch (err) { toast(err.message, "bad"); }
 }
@@ -288,6 +314,11 @@ if (me) {
     } else {
       $("places-box").innerHTML = placesHtml("nc");
       places = placesWidget("nc", { cityRadius: opts.city_radius, pinRadius: opts.pin_radius, onChange: () => { changed(); estimateSoon(); } });
+      $("s-aud-box").innerHTML = audPickHtml("s-aud");
+      aud = audPicker("s-aud", { audiences: opts.audiences || [], words: opts.audience_words || {}, special: () => false,
+        advantage: () => $("s-advantage").checked, onChange: () => { changed(); estimateSoon(); } });
+      $("s-saved-box").innerHTML = savedSelectHtml("s-saved", opts.saved_audiences);
+      if ($("s-saved")) $("s-saved").addEventListener("change", applySaved);
       $("s-template").innerHTML = opts.adsets.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("")
         + '<option value="">Nothing: start from scratch</option>';
       $("budget-hint").textContent = `Shared by everything in the campaign. What runs now: ${money(opts.running_daily_cents, { exact: true })} a day.`;
@@ -312,9 +343,9 @@ if (me) {
         }
       } });
       $("s-template").addEventListener("change", loadTemplate);
-      $("s-advantage").addEventListener("change", () => { $("s-suggest").hidden = !$("s-advantage").checked; });
+      $("s-advantage").addEventListener("change", () => { $("s-suggest").hidden = !$("s-advantage").checked; aud.redraw(); });
       $("f-reload").addEventListener("click", loadForms);
-      $("nc-form").addEventListener("input", (e) => { if (e.target.id !== "nc-q") { changed(); if (e.target.closest('[data-step="adset"]')) estimateSoon(); } });
+      $("nc-form").addEventListener("input", (e) => { if (e.target.id !== "nc-q" && !e.target.closest("[data-aud-q]")) { changed(); if (e.target.closest('[data-step="adset"]')) estimateSoon(); } });
       $("nc-form").addEventListener("change", (e) => {
         const tpl = e.target.closest('[data-k="template_ad_id"]');
         if (tpl) {

@@ -1,6 +1,7 @@
 """Mirror the ad account's campaigns so teammates can be assigned to them."""
 import json
 
+import audience_rules
 import db
 import edit_rules
 import meta_client
@@ -23,8 +24,23 @@ def _json(value):
     return json.dumps(value) if value not in (None, [], {}) else None
 
 
-def summarize_targeting(t):
-    """A one-line, human description of an ad set's targeting."""
+def _audience_part(t, key, names):
+    items = [a for a in t.get(key) or [] if isinstance(a, dict) and a.get("id")]
+    named = [a.get("name") or (names or {}).get(str(a["id"])) for a in items]
+    if not items:
+        return None
+    return ", ".join(f"“{n}”" for n in named) if all(named) else f"{len(items)} audience{'s' if len(items) != 1 else ''}"
+
+
+def audience_names(t):
+    """{id: name} from the account's own list for audiences Meta's read named without a name (one query, only when needed)."""
+    ids = [str(a["id"]) for k in ("custom_audiences", "excluded_custom_audiences") for a in (t or {}).get(k) or []
+           if isinstance(a, dict) and a.get("id") and not a.get("name")]
+    return {r["id"]: r["name"] for r in db.query("SELECT id, name FROM audiences WHERE id = ANY(%s)", (ids,))} if ids else {}
+
+
+def summarize_targeting(t, audience_names=None):
+    """A one-line, human description of an ad set's targeting (audiences named from Meta's read or the account's list)."""
     if not t:
         return None
     parts = []
@@ -49,6 +65,10 @@ def summarize_targeting(t):
         parts.append("Hints: " + ", ".join(interests[:4]) + (f" +{len(interests) - 4}" if len(interests) > 4 else ""))
     if (t.get("targeting_automation") or {}).get("advantage_audience") == 1:
         parts.append("Advantage+ audience")
+    for key, word in (("custom_audiences", "In"), ("excluded_custom_audiences", "Not in")):
+        part = _audience_part(t, key, audience_names)
+        if part:
+            parts.append(f"{word} {part}")
     return " · ".join(parts) or None
 
 
@@ -65,8 +85,8 @@ ADSET_UPSERT = """INSERT INTO adsets (id, name, campaign_id, status, configured_
                                    lifetime_budget_cents, optimization_goal, learning_stage, learning, issues,
                                    targeting_summary, created_time, updated_time, bid_strategy, bid_amount_cents,
                                    start_time, end_time, targeting_fp, targeting, placements_fp, attribution, destination_type,
-                                   billing_event, frequency, setup_seen_at, edit_seen_at, synced_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                                   billing_event, frequency, audience_ids, excluded_audience_ids, setup_seen_at, edit_seen_at, synced_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                        CASE WHEN %s THEN now() END, CASE WHEN %s THEN now() END, now())
                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, campaign_id = EXCLUDED.campaign_id,
                    status = EXCLUDED.status,
@@ -78,7 +98,8 @@ ADSET_UPSERT = """INSERT INTO adsets (id, name, campaign_id, status, configured_
                    targeting_summary = EXCLUDED.targeting_summary,
                    """ + ", ".join(f"{c} = " + _KEEP.format(c=c, t="adsets") for c in
                                    ("bid_strategy", "bid_amount_cents", "start_time", "end_time", "targeting_fp", "targeting",
-                                    "placements_fp", "attribution", "destination_type", "billing_event", "frequency")) + """,
+                                    "placements_fp", "attribution", "destination_type", "billing_event", "frequency", "audience_ids",
+                                    "excluded_audience_ids")) + """,
                    setup_seen_at = COALESCE(EXCLUDED.setup_seen_at, adsets.setup_seen_at),
                    edit_seen_at = COALESCE(EXCLUDED.edit_seen_at, adsets.edit_seen_at),
                    configured_status = COALESCE(EXCLUDED.configured_status, adsets.configured_status),
@@ -135,11 +156,12 @@ def upsert_adset(a, source, listed_at):
         cents(a.get("daily_budget")), cents(a.get("lifetime_budget")), a.get("optimization_goal"),
         (learning or {}).get("status"), json.dumps(learning) if learning else None,
         json.dumps(a.get("issues_info")) if a.get("issues_info") else None,
-        summarize_targeting(a.get("targeting")), a.get("created_time"), a.get("updated_time"),
+        summarize_targeting(a.get("targeting"), audience_names(a.get("targeting"))), a.get("created_time"), a.get("updated_time"),
         a.get("bid_strategy") or None, cents(a.get("bid_amount")), _time(a.get("start_time")), _time(a.get("end_time")),
         status_history.targeting_fingerprint(a.get("targeting")), _json(edit_rules.kept_targeting(a.get("targeting"))),
         status_history.placements_fingerprint(a.get("targeting")), _json(a.get("attribution_spec")), a.get("destination_type"),
-        a.get("billing_event"), _json(a.get("frequency_control_specs")), full, full,
+        a.get("billing_event"), _json(a.get("frequency_control_specs")),
+        audience_rules.ids_in(a.get("targeting"), "custom_audiences"), audience_rules.ids_in(a.get("targeting"), "excluded_custom_audiences"), full, full,
         bool(a.get(PARTIAL)), listed_at))
     if not written:
         return []

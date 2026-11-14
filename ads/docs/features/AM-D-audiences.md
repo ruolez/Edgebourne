@@ -11,6 +11,11 @@ Unit key: `AM-D-audiences` · Asked by Eugene 2026-11-13 · Needs AM-C (the ad s
 > - Special ad categories: lookalikes can't be picked there (Meta's rule); the picker says why.
 > - Migration **048** (next free number when built). No bridge change (the MCP's audience tools stay unused; Graph covers this).
 
+> **As built (2026-11-14):** everything above. Deviations: `audiences` also keeps `source_kind`, `who`, `detail` (a website
+> rule's address) and `client_key` (unique per account); the fake seeds a fourth customer list of 40–60 people for the lookalike
+> refusal; a lookalike's countries are those the ad sets name, else the US; route checks are unit tests without a database
+> (`tests/test_audiences_routes_logic.py`) plus QA; Meta's names for picked audiences come from the account's list, never the browser.
+
 ## Goal
 
 Eugene, 2026-11-13: *"We currently are lacking implementations that have to do with campaign management … come up with a plan to create a structure here so we can do all these things"* (scope c: audiences).

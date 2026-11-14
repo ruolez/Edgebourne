@@ -66,9 +66,12 @@ def check(spec, forms=None):
         errs.append(("adset", "adset_template", "That ad set isn't there any more: pick another, or start from scratch"))
     if not settings_store.get("meta_page_id"):
         errs.append(("goal", None, "Add this account's Facebook Page in Settings → Meta first"))
+    import audiences_api  # AM-D: picked audiences are this account's (a new campaign has no special ad category)
+    errs += [("adset", "audiences", m) for _, m in audiences_api.pick_check(spec["adset"], [])]
     out = {"problems": [{"step": s, "field": f, "message": m} for s, f, m in errs]}
     if not errs:
-        out["review"] = cb.review(spec, forms.get(spec["form_id"], ""), {k: v["name"] for k, v in tpl.items()}, account_info.currency())
+        out["review"] = cb.review(spec, forms.get(spec["form_id"], ""), {k: v["name"] for k, v in tpl.items()}, account_info.currency(),
+                                  audiences_api.names_for(spec["adset"]))
     return out
 
 
@@ -84,9 +87,15 @@ def view(b):
             status[r["id"]] = r["effective_status"]
     return {"id": b["id"], "status": b["status"], "error": b["error"], "made": made, "entity_status": status,
             "spec": b["spec"], "review": cb.review(b["spec"], forms_by_id().get(b["spec"]["form_id"], b["spec"]["form_id"]),
-                                                    {k: v["name"] for k, v in templates().items()}, account_info.currency()),
+                                                    {k: v["name"] for k, v in templates().items()}, account_info.currency(),
+                                                    _audience_names(b["spec"])),
             "created_at": b["created_at"].isoformat(), "published_at": b["published_at"].isoformat() if b["published_at"] else None,
             "draft": draft_ref(b.get("draft_id"))}
+
+
+def _audience_names(spec):
+    import audiences_api
+    return audiences_api.names_for((spec or {}).get("adset") or {})
 
 
 def draft_ref(draft_id):
@@ -163,6 +172,8 @@ def _run(build_id, user):
                     made["adset_id"] = adopted
                 else:
                     tpl = adsets_api.template(s["template_adset_id"]) if s["template_adset_id"] else {}  # {}: lead-form defaults
+                    import audiences_api
+                    tpl = audiences_api.with_saved(tpl, s)  # AM-D: a saved audience it started from gives the hints
                     body = ab.payload(s, tpl, {"id": made["campaign_id"], "daily_budget_cents": spec["daily_budget_cents"]},
                                       settings_store.get("meta_page_id"))
                     res = meta_client.post(f"act_{account}/adsets", data={k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in body.items()})

@@ -144,7 +144,7 @@ async function vocabularyLeaks(page) {
 const VOCAB_PAGES = ['/home.html', '/inbox.html', '/leads.html', '/ads.html', '/ads.html?level=campaign', '/ads.html?level=adset', '/campaign.html?id=120252638288040312',
   '/adset.html?id=120252672227950312', '/ad.html?id=120252672229400312', '/ad.html?id=120252672230740312#tab=video', '/ad.html?id=120252672230740312#tab=history', '/ad.html?id=120252672230740312#tab=polish',
   '/gallery.html', '/ideas.html', '/performance.html', '/compare.html?ids=120252672232030312,120252672233160312', '/experiments.html', '/report.html', '/desk.html', '/research.html', '/research.html#tab=search', '/research.html#tab=watched',
-  '/forms.html', '/new-ad.html', '/new-adset.html?campaign=120252638288040312', '/new-campaign.html', '/settings.html', '/team.html', '/account.html'];
+  '/forms.html', '/audiences.html', '/new-ad.html', '/new-adset.html?campaign=120252638288040312', '/new-campaign.html', '/settings.html', '/team.html', '/account.html'];
 
 const TARGET_PAGES = ['/home.html', '/inbox.html', '/leads.html', '/ads.html', '/gallery.html', '/ideas.html', '/research.html', '/research.html#tab=watched', '/performance.html', '/ad.html?id=120252672229400312', '/campaign.html?id=120252638288040312', '/desk.html', '/settings.html'];
 

@@ -167,13 +167,48 @@ class ProblemsTests(unittest.TestCase):
         found = self.p("campaign", live, {"adset_bids": {"S1": 1300, "999FOREIGN": 19900}}, c)
         self.assertEqual([(f, "999FOREIGN" in m) for f, m in found], [("adset_bids", True)])
 
-    def test_custom_audiences_cant_change_here_yet(self):
+    AUDS = {"777": {"id": "777", "name": "Website 30 days", "kind": "custom", "ready": "ready"},
+            "778": {"id": "778", "name": "Form senders", "kind": "custom", "ready": "ready"},
+            "779": {"id": "779", "name": "Like senders", "kind": "lookalike", "ready": "ready"}}
+
+    def test_audiences_of_this_account_can_be_included_and_left_out(self):
         live = adset()
-        added = {**live["targeting"], "custom_audiences": [{"id": "777"}]}
-        excluded = {**live["targeting"], "excluded_custom_audiences": [{"id": "778"}]}
-        self.assertEqual([[f for f, _ in self.p("adset", live, {"targeting": added})], [f for f, _ in self.p("adset", live, {"targeting": excluded})],
-                          self.p("adset", live, {"targeting": {**live["targeting"], "age_min": 30, "advantage": False}})],
-                         [["targeting"], ["targeting"], []])
+        picked = {**live["targeting"], "custom_audiences": [{"id": "777"}], "excluded_custom_audiences": [{"id": "778"}]}
+        self.assertEqual(self.p("adset", live, {"targeting": picked}, ctx(audiences=self.AUDS)), [])
+
+    def test_an_audience_not_in_this_account_is_refused(self):
+        live = adset()
+        foreign = {**live["targeting"], "custom_audiences": [{"id": "999"}]}
+        self.assertEqual(self.p("adset", live, {"targeting": foreign}, ctx(audiences=self.AUDS)), [("targeting", "That audience isn't in this account")])
+
+    def test_one_meta_already_has_on_the_ad_set_may_stay(self):
+        meta = {**META_ADSET, "targeting": {**META_ADSET["targeting"], "custom_audiences": [{"id": "555", "name": "Old list"}]}}
+        live = er.current("adset", meta)
+        kept = {**live["targeting"], "age_min": 30, "advantage": False}
+        self.assertEqual(self.p("adset", live, {"targeting": kept}, ctx(audiences=self.AUDS)), [])
+
+    def test_the_same_audience_both_ways_and_a_lookalike_in_a_special_campaign(self):
+        live = adset()
+        both = {**live["targeting"], "custom_audiences": [{"id": "777"}], "excluded_custom_audiences": [{"id": "777"}]}
+        t = {**live["targeting"], "age_min": 18, "advantage": False, "include": [], "custom_audiences": [{"id": "779"}]}
+        found = self.p("adset", live, {"targeting": t}, ctx(audiences=self.AUDS, special=["HOUSING"]))
+        self.assertEqual(([f for f, _ in self.p("adset", live, {"targeting": both}, ctx(audiences=self.AUDS))], [("lookalike" in m) for _, m in found]),
+                         (["targeting"], [True]))
+
+    def test_an_ad_set_with_more_audiences_than_the_console_edits_is_not_rewritten(self):
+        many = [{"id": str(9000 + i), "name": f"List {i}"} for i in range(ar_max() + 10)]
+        meta = {**META_ADSET, "targeting": {**META_ADSET["targeting"], "excluded_custom_audiences": many}}
+        live = er.current("adset", meta)
+        older = {**live["targeting"], "age_min": 30, "advantage": False}
+        found = self.p("adset", live, {"targeting": older}, ctx(audiences=self.AUDS))
+        self.assertEqual([(f, "Ads Manager" in m) for f, m in found], [("targeting", True)])
+
+    def test_the_review_says_who_is_left_out(self):
+        live = adset()
+        picked = {**live["targeting"], "excluded_custom_audiences": [{"id": "778", "name": "Form senders"}]}
+        rows = er.review("adset", live, er.changes("adset", live, {"targeting": picked}), "America/Los_Angeles")
+        self.assertEqual([(r["label"], r["old_words"], r["new_words"], bool(r["note"])) for r in rows],
+                         [("Leaves out people in", "none", "“Form senders”", True)])
 
     def test_the_lookalike_rule_reads_metas_audiences_not_the_forms(self):
         meta = {**META_ADSET, "targeting": {**META_ADSET["targeting"], "age_min": 18, "age_range": None, "flexible_spec": [],
@@ -192,6 +227,11 @@ class ProblemsTests(unittest.TestCase):
     def test_removing_a_special_category_is_ads_managers(self):
         self.assertEqual([f for f, _ in self.p("campaign", campaign(special_ad_categories=["HOUSING"]), {"special_ad_categories": []})],
                          ["special_ad_categories"])
+
+
+def ar_max():
+    import audience_rules
+    return audience_rules.MAX_PICKED
 
 
 class SpecialCategoryTests(unittest.TestCase):

@@ -12,7 +12,7 @@
   <meta name="apple-mobile-web-app-title" content="EB Ads">
   <script src="/js/theme.js"></script>
   <link rel="stylesheet" href="/css/tokens.css?v=1794700000">
-  <link rel="stylesheet" href="/css/app.css?v=1795400000">
+  <link rel="stylesheet" href="/css/app.css?v=1795500000">
   <link rel="stylesheet" href="/css/shell.css?v=1795000000">
 </head>
 <body>
@@ -47,6 +47,7 @@
                 <div class="field"><label for="s-template">Start from</label><select class="input" id="s-template" name="adset_template"></select><span class="hint">Copies its places, ages and audience hints. From scratch: Meta's lead-form setup, places and ages as you set them.</span></div>
                 <div class="field"><label for="s-name">Ad set name</label><input class="input" id="s-name" name="adset" maxlength="200" placeholder="SoCal - Instant form" autocomplete="off"></div>
               </div>
+              <div id="s-saved-box"></div>
               <div class="field"><span class="label">Places</span><input type="hidden" name="locations"><div id="places-box"></div></div>
               <label class="check"><input type="checkbox" id="s-advantage"> <span>Advantage+ audience <span class="muted">(recommended)</span><span class="hint explain" data-explain="advantage_audience"></span></span></label>
               <div class="grid-2">
@@ -58,6 +59,7 @@
                 <div class="field"><label for="s-end">Ends <span class="muted">(optional)</span></label><input class="input" type="date" id="s-end" name="end"><span class="hint">Empty: runs until you turn it off.</span></div>
               </div>
               <label class="check" id="s-hints-row"><input type="checkbox" id="s-hints"> <span>Keep the audience hints: <span class="muted" id="s-hints-text"></span></span></label>
+              <div class="aud-block"><h3 class="aud-h">Your audiences <span class="muted">(optional)</span></h3><div id="s-aud-box"></div></div>
               <p class="muted small flush"><span data-explain="advantage_placements"></span> Estimated audience: <b id="s-estimate">—</b></p>
             </div>
           </section>

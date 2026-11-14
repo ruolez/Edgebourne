@@ -2,7 +2,8 @@
 // node ads/qa/flows.cjs <out-dir>
 // QA_ONLY='name,name' runs the shared setup (sign-in, helpers) plus only the named check blocks; unset runs everything
 // exactly as before. Blocks: core (everything up to the Ads Manager link), link (AM-A/AM-B: the link and drafts),
-// edit (AM-C: editing campaigns and ad sets, copies, archive and delete). E.g. QA_ONLY=edit sh ads/qa/run.sh
+// edit (AM-C: editing campaigns and ad sets, copies, archive and delete), audiences (AM-D: Ads → Audiences, making them, the
+// pickers). E.g. QA_ONLY=edit sh ads/qa/run.sh
 // Playwright: $PLAYWRIGHT_CORE, else the first intact copy on this Mac (the render pipeline's copy lost
 // its package files on 2026-11-10; any 1.64 drives the Chromium 1248 below).
 const PW = [process.env.PLAYWRIGHT_CORE, '/Users/ruolez/Desktop/Dev/meta-ads/creatives/2026-11-07-new5/src/node_modules/playwright-core',
@@ -31,7 +32,8 @@ const run = (name) => !ONLY || ONLY.has(name);
   const errors = [];
   page.on('dialog', (d) => (d.type() === 'beforeunload' ? d.accept() : d.dismiss()));
   page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => { if (m.type() === 'error' && !/facebook\.com|preview_iframe/.test(m.text())) errors.push(m.text()); });
+  // A crafted API call a check makes on purpose carries qa_crafted=1: its refused status is the point, not a page error.
+  page.on('console', (m) => { if (m.type() === 'error' && !/facebook\.com|preview_iframe/.test(m.text()) && !/[?&]qa_crafted=1/.test((m.location() || {}).url || '')) errors.push(m.text()); });
   const sh = (cmd) => require('child_process').execSync(cmd).toString();
   // What the fake Meta holds for an object now (checks read Meta's side, not only the screen).
   const metaHits = (clear) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/fake/_hits${clear ? '?clear=1' : ''}').read().decode())"`));
@@ -2210,9 +2212,10 @@ print(a[0][1] if a else '-', b[0][1] if b else '-')"`).trim();
     leak.client_writes_not_refused.slice(0, 4).join(' | '));
   check('each account still sees its own data', leak.admin_sees_account2_on_account2 && leak.client_sees_own_leads);
   // The walk only finds a leak where the other account has a marked row: each screen must show its own account's marks.
-  const markShown = { 'admin on account 1': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/am-link', '/api/drafts'],
+  const markShown = { 'admin on account 1': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/am-link', '/api/drafts', '/api/audiences', '/api/adsets/new/options'],
     'admin on account 2, own ids': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/am-link', '/api/drafts', '/api/drafts/<draft_id>/spec', '/api/timeline/<level>/<entity_id>',
-      '/api/proposals/<int:proposal_id>', '/api/leads/<int:lead_id>', '/api/ads/ad/<ad_id>/tags', '/api/experiments/<int:exp_id>', '/api/builds/<int:build_id>', '/api/copy/<int:job_id>'] };
+      '/api/proposals/<int:proposal_id>', '/api/leads/<int:lead_id>', '/api/ads/ad/<ad_id>/tags', '/api/experiments/<int:exp_id>', '/api/builds/<int:build_id>', '/api/copy/<int:job_id>',
+      '/api/audiences', '/api/audiences/<audience_id>'] };
   const unmarked = Object.entries(markShown).flatMap(([who, routes]) => routes.filter((r) => !(leak.routes_showing_own_mark[who] || []).includes(r)).map((r) => `${who}: ${r}`));
   check('the leak walk has marked rows to find in Inbox, Claude, saved views, builds, History and the timeline', unmarked.length === 0, unmarked.join(' | '));
   check('FU-D: a Claude preview is read only in its own account; clients, teammates and account admins can\'t turn full access on',
@@ -8813,6 +8816,385 @@ with account_ctx.use(1):
     pull();
     // The refusals above log their 400 / 403 / 409 on purpose.
     for (let i = errors.length - 1; i >= edSeen; i--) if (/status of (400|403|409)/.test(errors[i])) errors.splice(i, 1);
+  }
+
+  // AM-D: audiences. Ads → Audiences lists them; owners and account admins make website, engagement and lookalike audiences
+  // (never a customer list) and pick them (include / leave out) in New ad set, New campaign and an ad set's Edit.
+  if (run('audiences'))
+  {
+    const audSeen = errors.length;
+    const C = '120252638288040312', S = '120252672227950312';
+    const WEB = '23850000000000101', FORM = '23850000000000102', LIST = '23850000000000103', TINY = '23850000000000104', SAVED = '23850000000000201';
+    const PIXEL = '1821497329119793';
+    const stamp = Date.now();
+    const py = (code) => require('child_process').execSync('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', { input: code }).toString();
+    const sql = (q) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "${q}"`).trim();
+    const fakeGet = (path) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001${path}').read().decode())"`));
+    const fakeAud = () => fakeGet('/fake/_audiences');
+    const byName = (name) => Object.values(fakeAud().audiences).filter((x) => x.name === name);
+    // Crafted calls (refusals included) carry qa_crafted=1, so only their own refused statuses stay out of the console errors:
+    // a real unexpected 4xx in a UI step of this block still fails the run.
+    const call = (method, url, body, p = page) => p.evaluate(async ([m, u, b]) => {
+      const r = await fetch(`${u}${u.includes('?') ? '&' : '?'}qa_crafted=1`, { method: m, headers: { 'Content-Type': 'application/json' }, body: b === null ? undefined : JSON.stringify(b) });
+      let j = null; try { j = await r.json(); } catch (e) { j = null; }
+      return { status: r.status, body: j };
+    }, [method, url, body === undefined ? null : body]);
+    const toastSays = (re) => page.waitForFunction((src) => new RegExp(src).test([...document.querySelectorAll('.toast')].map((t) => t.textContent).join(' ')), re.source, { timeout: 15000 }).then(() => true, () => false);
+    const fresh = () => sql("DELETE FROM settings WHERE key ~ '^audiences_(read|refresh)_at(@1)?$'");
+    const list = async () => { fresh(); return (await call('GET', '/api/audiences')).body; };
+    const openList = async () => { fresh(); await page.goto(`${BASE}/audiences.html`); await page.waitForSelector('#aud-list table, #aud-list .empty'); };
+    const created = (body) => { const posts = metaHits().filter((h) => h.startsWith('/v24.0/act_') && h.includes('customaudiences') && !h.includes('fields=')); return posts.length; };
+    fakeGet(`/fake/_audiences?tos=1&silent=0&special=${C}&cats=`);
+
+    // 1. Ads → Audiences: the tab, every audience with its size, status and where it's used (the live ad set includes the website one).
+    await openList();
+    const rows = await page.$$eval('#aud-list tr[data-aud-row]', (trs) => trs.map((tr) => [tr.dataset.audRow, tr.textContent.replace(/\s+/g, ' ')]));
+    const webRow = (rows.find((r) => r[0] === WEB) || [])[1] || '';
+    const tab = await page.$eval('.subnav a[href="/audiences.html"], .tabs a[href="/audiences.html"]', (a) => a.getAttribute('aria-current') || a.className).catch(() => null);
+    check('AM-D: Ads → Audiences (its own tab) lists the website, engagement and customer list audiences and the saved one, with sizes, status and where used',
+      [WEB, FORM, LIST, TINY, SAVED].every((id) => rows.some((r) => r[0] === id)) && /12,000–15,000 people/.test(webRow) && /Ready/.test(webRow)
+      && /In \d+ ad sets?/.test(webRow) && tab !== null && /40–60 people.*Too small to use yet/.test((rows.find((r) => r[0] === TINY) || [])[1] || ''), JSON.stringify(rows).slice(0, 400));
+
+    // 2. New audience → Website visitors, 30 days (three steps) → made, filling; Meta holds a WEBSITE audience from the pixel.
+    const webName = `QA website 30 days ${stamp}`;
+    await page.click('#aud-new');
+    await page.waitForSelector('dialog.aud-dialog [data-aud-k="website"]');
+    await page.click('[data-aud-k="website"]');
+    await page.click('#aud-next');
+    await page.waitForSelector('#aud-days');
+    const days0 = await page.inputValue('#aud-days');
+    await page.click('#aud-next');
+    await page.waitForSelector('#aud-name');
+    const prefilled = await page.inputValue('#aud-name');
+    await page.fill('#aud-name', webName);
+    await page.click('#aud-next');
+    const made2 = await toastSays(/Made\. Meta fills it/);
+    const web2 = byName(webName)[0] || {};
+    const rule2 = JSON.parse(web2.rule || '{}');
+    const r2 = ((rule2.inclusions || {}).rules || [{}])[0];
+    await page.waitForSelector('tr.flash');
+    const row2 = await page.textContent('tr.flash');
+    check('AM-D: New audience → Website visitors, 30 days: made from the pixel, filling, named as typed (the name starts from the plain words)',
+      made2 && days0 === '30' && prefilled === 'People who visited your website in the last 30 days' && web2.subtype === 'WEBSITE'
+      && r2.event_sources && r2.event_sources[0].id === PIXEL && r2.retention_seconds === 30 * 86400 && /Still filling/.test(row2) && /Filling/.test(row2),
+      `${prefilled} ${JSON.stringify(r2).slice(0, 200)} ${row2.replace(/\s+/g, ' ')}`);
+    const WEB2 = web2.id;
+
+    // 3. A website audience 200 days back is refused on its field; nothing is sent to Meta. Refusal.
+    metaHits(true);
+    const chk3 = (await call('POST', '/api/audiences/check', { kind: 'website', spec: { name: 'QA long', days: 200, who: 'all_visitors' } })).body;
+    const make3 = await call('POST', '/api/audiences', { kind: 'website', spec: { name: 'QA long', days: 200, who: 'all_visitors' }, client_key: `qa3-${stamp}` });
+    check('AM-D refusal: a website audience 200 days back is refused on "days" (180 at most), nothing sent',
+      chk3.problems.map((p) => p.field).join() === 'days' && /180/.test(chk3.problems[0].message) && make3.status === 400 && make3.body.field === 'days' && created() === 0,
+      JSON.stringify(chk3.problems));
+
+    // 4. People who opened the lead form and didn't send it, 30 days back (the slider) → Meta's engagement rule with that event.
+    const formName = `QA form dropoff ${stamp}`;
+    await page.click('#aud-new');
+    await page.waitForSelector('[data-aud-k="lead_form"]');
+    await page.click('[data-aud-k="lead_form"]');
+    await page.click('#aud-next');
+    await page.waitForSelector('input[name="aud-who"][value="lead_generation_dropoff"]');
+    await page.check('input[name="aud-who"][value="lead_generation_dropoff"]');
+    await page.fill('#aud-days', '30');
+    await page.click('#aud-next');
+    await page.waitForSelector('#aud-name');
+    const describe4 = await page.textContent('#aud-describe');
+    await page.fill('#aud-name', formName);
+    await page.click('#aud-next');
+    await toastSays(/Made\. Meta fills it/);
+    const f4 = byName(formName)[0] || {};
+    const r4 = ((JSON.parse(f4.rule || '{}').inclusions || {}).rules || [{}])[0];
+    check('AM-D: lead form openers who didn\'t send, 30 days: Meta gets the lead source and that event; the plain words say so',
+      f4.subtype === 'ENGAGEMENT' && r4.event_sources[0].type === 'lead' && r4.filter.filters[0].value === 'lead_generation_dropoff' && r4.retention_seconds === 30 * 86400
+      && /opened your lead form .* and didn't send it in the last 30 days/.test(describe4), `${describe4} ${JSON.stringify(r4).slice(0, 200)}`);
+
+    // 5. Lookalikes: from the audience still filling refused; once Meta fills it, 1 % US is made (through the dialog). From the
+    // 800-person customer list allowed, from the 60-person one refused. Refusals.
+    await list();
+    const filling = await call('POST', '/api/audiences', { kind: 'lookalike', spec: { name: `QA like web ${stamp}`, origin_id: WEB2, country: 'US', ratio: 0.01 }, client_key: `qa5a-${stamp}` });
+    fakeGet(`/fake/_audiences?fill=${WEB2}&lower=2000&upper=2500`);
+    await openList();
+    const lookName = `QA like website ${stamp}`;
+    await page.click('#aud-new');
+    await page.waitForSelector('[data-aud-k="lookalike"]');
+    await page.click('[data-aud-k="lookalike"]');
+    await page.click('#aud-next');
+    await page.waitForSelector('#aud-origin');
+    await page.selectOption('#aud-origin', WEB2);
+    await page.click('[data-ratio="0.01"]');
+    await page.click('#aud-next');
+    await page.waitForSelector('#aud-name');
+    const size5 = await page.textContent('dialog.aud-dialog .aud-sum');
+    await page.fill('#aud-name', lookName);
+    await page.click('#aud-next');
+    await toastSays(/Made\. Meta fills it/);
+    const look = byName(lookName)[0] || {};
+    const fromList = (await call('POST', '/api/audiences/check', { kind: 'lookalike', spec: { name: 'x', origin_id: LIST, country: 'US', ratio: 0.01 } })).body.problems;
+    const fromTiny = (await call('POST', '/api/audiences/check', { kind: 'lookalike', spec: { name: 'x', origin_id: TINY, country: 'US', ratio: 0.01 } })).body.problems;
+    check('AM-D refusal: a lookalike of an audience still filling is refused; once filled, 1 % US is made with Meta\'s similarity spec',
+      filling.status === 400 && filling.body.field === 'origin' && /still filling/.test(filling.body.error) && look.subtype === 'LOOKALIKE'
+      && JSON.stringify(look.lookalike_spec && [look.lookalike_spec.country, look.lookalike_spec.ratio, look.lookalike_spec.origin[0].id]) === JSON.stringify(['US', 0.01, WEB2])
+      && /1 % of people in the US/.test(size5), `${JSON.stringify(filling.body)} ${JSON.stringify(look.lookalike_spec)} ${size5.replace(/\s+/g, ' ').slice(0, 160)}`);
+    check('AM-D refusal: a lookalike of the 800-person customer list is allowed; of the 60-person list it is refused (100 at least)',
+      fromList.length === 0 && fromTiny.map((p) => p.field).join() === 'origin' && /at least 100 people/.test(fromTiny[0].message), JSON.stringify([fromList, fromTiny]));
+
+    // 6. The Custom Audience terms not accepted on Meta: the plain sentence with where to accept them. Refusal.
+    fakeGet('/fake/_audiences?tos=0');
+    const terms = await call('POST', '/api/audiences', { kind: 'page', spec: { name: `QA page ${stamp}`, days: 365, who: 'page_engaged' }, client_key: `qa6-${stamp}` });
+    check('AM-D refusal: without Meta\'s Custom Audience terms accepted the console says where to accept them, nothing is stored',
+      terms.status === 400 && terms.body.code === 'terms' && /Accept Meta's Custom Audience terms/.test(terms.body.error) && /Business settings/.test(terms.body.error)
+      && sql(`SELECT count(*) FROM audiences WHERE name = 'QA page ${stamp}'`) === '0', JSON.stringify(terms.body));
+
+    // 7. New ad set: it keeps the website audience the template includes, leaves out the lead form openers → Meta's targeting has both;
+    // the list says where each is used.
+    const setName = `QA AM-D set ${stamp}`;
+    await page.goto(`${BASE}/new-adset.html?campaign=${C}`);
+    await page.waitForSelector('#aud-inc-chips [data-aud-chip]');
+    const inc0 = await page.$$eval('#aud-inc-chips [data-aud-chip]', (l) => l.map((x) => x.dataset.audChip));
+    await page.fill('#name', setName);
+    await page.click('#aud-exc-q');
+    await page.click(`[data-aud-pick="exc:${FORM}"]`);
+    await page.waitForSelector(`#aud-exc-chips [data-aud-chip="${FORM}"]`);
+    const adv7 = await page.isVisible('#aud-adv');
+    await page.waitForFunction(() => document.querySelectorAll('#pl-list li').length > 0, null, { timeout: 15000 }).catch(() => {});
+    await page.click('#create');
+    await page.waitForSelector('dialog.confirm #cd-ok', { timeout: 15000 });
+    await Promise.all([page.waitForURL('**/new-ad.html?adset=**'), page.click('dialog.confirm #cd-ok')]);
+    const NS = new URL(page.url()).searchParams.get('adset');
+    const t7 = (fakeGet('/fake/_adsets')[NS] || {}).targeting || {};
+    const used7 = (await list()).items;
+    const u = (id) => (used7.find((a) => a.id === id) || {}).used_words;
+    const usedIds = (id, side) => (((used7.find((a) => a.id === id) || {}).used || {})[side] || []).map((x) => x.id);
+    const nWeb = usedIds(WEB, 'include').length, nForm = usedIds(FORM, 'exclude').length;
+    check('AM-D: New ad set includes the website audience (from the ad set it starts from) and leaves out the lead form openers; Meta holds both lists',
+      JSON.stringify(inc0) === JSON.stringify([WEB]) && adv7 && JSON.stringify((t7.custom_audiences || []).map((a) => a.id)) === JSON.stringify([WEB])
+      && JSON.stringify((t7.excluded_custom_audiences || []).map((a) => a.id)) === JSON.stringify([FORM]), JSON.stringify([inc0, t7.custom_audiences, t7.excluded_custom_audiences]));
+    check('AM-D: Audiences says where each is used: the website one in the live ad set and the new one, the lead form openers left out of the new one',
+      usedIds(WEB, 'include').includes(S) && usedIds(WEB, 'include').includes(NS) && usedIds(FORM, 'exclude').includes(NS) && !usedIds(FORM, 'include').length
+      && u(WEB) === `In ${nWeb} ad sets` && u(FORM) === `Left out of ${nForm} ad set${nForm === 1 ? '' : 's'}`, `${u(WEB)} | ${u(FORM)}`);
+
+    // 8. Edit on the live ad set: leave out the customer list → the review says so with the learning note → saved; History;
+    // the console's own change is never "Changed in Ads Manager" after the next read.
+    const blockStart = sql('SELECT now()');
+    await page.goto(`${BASE}/adset.html?id=${S}`);
+    await page.waitForSelector('#ed-open');
+    await page.click('#ed-open');
+    await page.waitForSelector('dialog.ed-panel #ed-sec-who');
+    await page.click('#ed-sec-who > summary');
+    await page.click('#ed-aud-exc-q');
+    await page.click(`[data-aud-pick="exc:${LIST}"]`);
+    await page.click('#ed-save');
+    await page.waitForSelector('dialog.ed-review');
+    const rev8 = (await page.textContent('dialog.ed-review')).replace(/\s+/g, ' ');
+    await page.click('dialog.ed-review #cd-ok');
+    const saved8 = await toastSays(/Saved\. Meta shows it/);
+    const meta8 = metaObj(S).targeting || {};
+    const hist8 = (await call('GET', `/api/adsets/${S}?range=7`)).body.timeline.map((t) => t.title);
+    pull();
+    const outside8 = sql(`SELECT count(*) FROM status_events WHERE entity_id = '${S}' AND at > '${blockStart}' AND source IN ('poll', 'webhook') AND field = 'targeting'`);
+    const alert8 = sql(`SELECT count(*) FROM alerts WHERE rule = 'outside_edit' AND entity_id = '${S}' AND created_at > '${blockStart}'`);
+    check('AM-D: Edit leaves the customer list out: the review says "Leaves out people in" with the learning note; saved; History says so',
+      /Leaves out people in\s*none\s*→\s*(changes to)?\s*“Past clients list”/.test(rev8) && /restarts learning/.test(rev8) && saved8
+      && JSON.stringify((meta8.excluded_custom_audiences || []).map((a) => a.id)) === JSON.stringify([LIST]) && JSON.stringify((meta8.custom_audiences || []).map((a) => a.id)) === JSON.stringify([WEB])
+      && hist8.some((t) => /Leaves out people in none → “Past clients list”/.test(t)), `${rev8.slice(0, 260)} | ${hist8.slice(0, 2).join(' / ')}`);
+    check("AM-D: the console's audience change is not \"Changed in Ads Manager\" after the next read", outside8 === '0' && alert8 === '0', `${outside8} ${alert8}`);
+    await page.goto(`${BASE}/adset.html?id=${S}`);
+    await page.waitForSelector('#who-sees');
+    const who8 = (await page.textContent('#who-sees')).replace(/\s+/g, ' ');
+    check('AM-D: the ad set page\'s "Who sees it" names the audiences it includes and leaves out',
+      /In “Website visitors - 30 days”/.test(who8) && /Not in “Past clients list”/.test(who8), who8.slice(0, 300));
+
+    // 9. Another account's audience id, sent by hand to New ad set, New campaign and Edit: 400, nothing reaches Meta. Refusal.
+    sh(`docker exec edgebourne-postgres psql -q -U edgebourne -d ebads -tAc "INSERT INTO audiences (account_id, id, kind, name) SELECT id, '99887766554433', 'custom', 'QA another account' FROM accounts WHERE id <> 1 ORDER BY id LIMIT 1 ON CONFLICT DO NOTHING"`);
+    const other = sql("SELECT account_id FROM audiences WHERE id = '99887766554433'");
+    metaHits(true);
+    const ns9 = await call('POST', '/api/adsets', { campaign_id: C, template_adset_id: S, spec: { name: 'QA crafted', age_min: 25, age_max: 65, advantage: false,
+      locations: [{ kind: 'city', key: '2421696', name: 'Riverside', radius: 25 }], include_audiences: ['99887766554433'] } });
+    const nc9 = (await call('POST', '/api/builds/check', { name: 'QA crafted', daily_budget_cents: 1500, adset: { name: 'x', locations: [{ kind: 'city', key: '2421696', name: 'Riverside', radius: 25 }],
+      exclude_audiences: ['99887766554433'] } })).body.problems.filter((p) => p.field === 'audiences');
+    const f9 = (await call('GET', `/api/edit/adset/${S}`)).body.values;
+    const ed9 = await call('POST', `/api/edit/adset/${S}`, { changes: { targeting: { ...f9.targeting, custom_audiences: [{ id: '99887766554433', name: 'mine' }] } }, seen: { targeting: f9.targeting } });
+    const est9 = await call('POST', '/api/adsets/estimate', { campaign_id: C, spec: { name: 'x', age_min: 25, age_max: 65,
+      locations: [{ kind: 'city', key: '2421696', name: 'Riverside', radius: 25 }], include_audiences: ['99887766554433'] } });
+    const estHits9 = metaHits().filter((h) => h.includes('delivery_estimate')).length;
+    const sent9 = metaHits().filter((h) => /\/v24\.0\/(act_\d+\/adsets|120252672227950312)\?/.test(h) && !h.includes('fields=')).length;
+    check('AM-D refusal: another account\'s audience id is refused by New ad set, New campaign and Edit ("That audience isn\'t in this account"), nothing sent',
+      other !== '' && other !== '1' && ns9.status === 400 && ns9.body.error === "That audience isn't in this account" && nc9.length === 1 && ed9.status === 400 && ed9.body.field === 'targeting' && sent9 === 0,
+      `${JSON.stringify(ns9.body)} ${JSON.stringify(nc9)} ${JSON.stringify(ed9.body)} ${sent9} ${other}`);
+    check('AM-D refusal: the reach estimate never sends another account\'s audience id to Meta (no delivery estimate asked)',
+      est9.status === 200 && est9.body.lower === null && est9.body.problem === "That audience isn't in this account" && estHits9 === 0, `${JSON.stringify(est9.body)} ${estHits9}`);
+    sql("DELETE FROM audiences WHERE id = '99887766554433'");
+
+    // 10. A campaign with a special ad category: the lookalike can't be picked and says why (and the server refuses it). Refusal.
+    fakeGet(`/fake/_audiences?special=${C}&cats=HOUSING`);
+    pull();
+    const LOOK = look.id;
+    await page.goto(`${BASE}/new-adset.html?campaign=${C}`);
+    await page.waitForSelector('#aud-inc-q');
+    await page.click('#aud-inc-q');
+    await page.fill('#aud-inc-q', 'QA like website');
+    const opt10 = await page.$eval(`[data-aud-pick="inc:${LOOK}"]`, (li) => [li.getAttribute('aria-disabled'), li.textContent.replace(/\s+/g, ' ')]).catch(() => [null, '']);
+    await page.click(`[data-aud-pick="inc:${LOOK}"]`).catch(() => {});
+    const chips10 = await page.$$eval('#aud-inc-chips [data-aud-chip]', (l) => l.map((x) => x.dataset.audChip));
+    const srv10 = (await call('POST', '/api/adsets/check', { campaign_id: C, template_adset_id: S, spec: { name: 'x', age_min: 18, age_max: 65,
+      locations: [{ kind: 'city', key: '2421696', name: 'Riverside', radius: 25 }], include_audiences: [LOOK] } })).body.problems;
+    fakeGet(`/fake/_audiences?special=${C}&cats=`);
+    pull();
+    check('AM-D refusal: in a campaign with a special ad category the lookalike is greyed out with the reason and the server refuses it',
+      opt10[0] === 'true' && /special ad category/.test(opt10[1]) && !chips10.includes(LOOK) && srv10.some((p) => p.field === 'audiences' && /lookalike/.test(p.message)),
+      `${JSON.stringify(opt10)} ${JSON.stringify(srv10)}`);
+
+    // 11. Start from a saved audience: Riverside + 25 mi and ages 30–60 fill in; nothing is made until Create.
+    const setsBefore = Object.keys(fakeGet('/fake/_adsets')).length;
+    await page.goto(`${BASE}/new-adset.html?campaign=${C}`);
+    await page.waitForSelector('#as-saved');
+    await page.selectOption('#as-saved', SAVED);
+    await page.waitForTimeout(300);
+    const filled = { places: (await page.textContent('#pl-list')).replace(/\s+/g, ' '), radius: await page.$eval('#pl-list select', (s) => s.value).catch(() => null),
+      ages: [await page.inputValue('#age_min'), await page.inputValue('#age_max')] };
+    check('AM-D: Start from a saved audience fills Riverside + 25 mi and ages 30–60; nothing is made on Meta',
+      /Riverside/.test(filled.places) && filled.radius === '25' && filled.ages.join('-') === '30-60' && Object.keys(fakeGet('/fake/_adsets')).length === setsBefore, JSON.stringify(filled));
+
+    // 12-13. A teammate reads the page (no New, no Refresh) and can't make one; a client has no tab and gets 403.
+    py(`import db
+from werkzeug.security import generate_password_hash as h
+for email, role in (('qa-amd-client@example.com', 'client'), ('qa-amd-mate@example.com', 'member')):
+    db.execute("INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, %s, 1) ON CONFLICT (email) DO UPDATE SET is_active = TRUE, password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, account_id = 1, must_change_password = FALSE", (email, 'QA AMD ' + role, h('amd-pass-12345'), role))
+db.execute("INSERT INTO campaign_members (campaign_id, user_id, account_id) SELECT '${C}', id, 1 FROM users WHERE email = 'qa-amd-mate@example.com' ON CONFLICT DO NOTHING")`);
+    for (const [email, who] of [['qa-amd-mate@example.com', 'teammate'], ['qa-amd-client@example.com', 'client']]) {
+      const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+      const p = await ctx.newPage();
+      p.on('pageerror', (e) => errors.push(`${who} page: ${e.message}`));
+      await p.goto(BASE + '/login.html');
+      await p.fill('#email', email); await p.fill('#password', 'amd-pass-12345');
+      await Promise.all([p.waitForURL('**/home.html**'), p.click('button[type=submit]')]);
+      await p.goto(BASE + '/ads.html');
+      await p.waitForSelector('.subnav a, .tabs a').catch(() => {});
+      const tabShown = (await p.locator('a[href="/audiences.html"]').count()) > 0;
+      const got = [(await call('GET', '/api/audiences', undefined, p)).status, (await call('POST', '/api/audiences', { kind: 'page', spec: { name: 'x', days: 30, who: 'page_engaged' } }, p)).status,
+        (await call('POST', '/api/audiences/check', { kind: 'page', spec: {} }, p)).status, (await call('GET', '/api/audiences/sources', undefined, p)).status,
+        (await call('POST', '/api/audiences/refresh', {}, p)).status];
+      if (who === 'teammate') {
+        await p.goto(BASE + '/audiences.html');
+        await p.waitForSelector('#aud-list table');
+        const ro = { rows: await p.locator('tr[data-aud-row]').count(), newBtn: await p.isVisible('#aud-new'), refresh: await p.isVisible('#aud-refresh') };
+        check('AM-D refusal: a teammate reads Audiences (the tab, the list) without New or Refresh; making, checking, sources and refresh are 403',
+          tabShown && ro.rows >= 5 && !ro.newBtn && !ro.refresh && JSON.stringify(got) === JSON.stringify([200, 403, 403, 403, 403]), JSON.stringify({ ...ro, got, tabShown }));
+        // Where-used follows the teammate's campaigns: with the campaign taken away, the website audience shows no ad set to them
+        // while the owner still sees the live one.
+        const webFor = async (pg) => (((await call('GET', '/api/audiences', undefined, pg)).body.items.find((a) => a.id === WEB) || {}).used || {}).include || [];
+        const mateIn = (await webFor(p)).map((x) => x.id);
+        sql("DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users WHERE email = 'qa-amd-mate@example.com')");
+        fresh();
+        const mateOut = (await webFor(p)).map((x) => x.id);
+        fresh();
+        const ownerSees = (await webFor(page)).map((x) => x.id);
+        check('AM-D: a teammate\'s where-used lists only ad sets in their campaigns (none once the campaign is taken away; the owner still sees it)',
+          mateIn.includes(S) && mateOut.length === 0 && ownerSees.includes(S), JSON.stringify({ mateIn, mateOut, ownerSees }));
+      } else {
+        check('AM-D refusal: a client has no Audiences tab and gets 403 on every audiences route', !tabShown && got.every((s) => s === 403), JSON.stringify({ got, tabShown }));
+      }
+      await ctx.close();
+    }
+    py(`import db
+db.execute("UPDATE users SET is_active = FALSE WHERE email IN ('qa-amd-client@example.com', 'qa-amd-mate@example.com')")
+db.execute("DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users WHERE email = 'qa-amd-mate@example.com')")`);
+
+    // 13b. New campaign: the server's review (the review step and the build view next to Publish) names the audiences picked,
+    // from the account's own list.
+    const spec13 = { name: `QA review ${stamp}`, daily_budget_cents: 1500, form_id: '1132280359202136',
+      adset: { name: 'QA review set', template_adset_id: S, age_min: 25, age_max: 65, advantage: false, locations: [{ kind: 'city', key: '2421696', name: 'Riverside', radius: 25 }],
+        include_audiences: [WEB], exclude_audiences: [FORM] },
+      ads: [{ name: 'QA ad', title: 'Free intro call', body: 'Book a call.', template_ad_id: '120252672229400312', media: { kind: 'same' }, cta_type: 'SIGN_UP' }] };
+    const chk13 = (await call('POST', '/api/builds/check', spec13)).body;
+    const build13 = py(`import json, builds_api, db
+spec = builds_api.clean(json.loads(${JSON.stringify(JSON.stringify(spec13))}))
+print(db.execute("INSERT INTO campaign_builds (spec, created_by, account_id) VALUES (%s, (SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1), 1) RETURNING id", (json.dumps(spec),), returning=True)['id'])`).trim();
+    const view13 = (await call('GET', `/api/builds/${build13}`)).body;
+    sql(`DELETE FROM campaign_builds WHERE id = ${Number(build13)}`);
+    const words13 = /includes people in “Website visitors - 30 days” · leaves out people in “Lead form openers - 90 days”/;
+    check('AM-D: New campaign\'s review and its build view (next to Publish) name the audiences included and left out',
+      words13.test((chk13.review || {}).adset || '') && words13.test((view13.review || {}).adset || ''), `${JSON.stringify(chk13.problems || chk13.review)} | ${(view13.review || {}).adset}`);
+
+    // 14. Meta makes the audience but its answer never arrives: the same press finds it (one audience, adopted); the same click twice
+    // gives the same audience.
+    fakeGet('/fake/_audiences?silent=1');
+    const lostName = `QA lost answer ${stamp}`;
+    const lost = await call('POST', '/api/audiences', { kind: 'video', spec: { name: lostName, days: 365, who: 'video_view_50_percent',
+      source_id: (await call('GET', '/api/audiences/sources')).body.videos[0].id }, client_key: `qa14-${stamp}` });
+    const again = await call('POST', '/api/audiences', { kind: 'video', spec: { name: lostName, days: 365, who: 'video_view_50_percent' }, client_key: `qa14-${stamp}` });
+    check('AM-D: a create Meta didn\'t answer is found and adopted (one audience on Meta, stored once); the same click again gives the same one',
+      lost.status === 201 && lost.body.adopted === true && byName(lostName).length === 1 && again.status === 200 && again.body.id === lost.body.id
+      && sql(`SELECT count(*) FROM audiences WHERE name = '${lostName}'`) === '1', `${JSON.stringify(lost.body)} ${JSON.stringify(again.body)}`);
+    const hist14 = sql(`SELECT count(*) FROM meta_changes WHERE action = 'audience_create' AND ok AND level = 'account' AND created_at > '${blockStart}'`);
+    check('AM-D: each audience made is in the change log (History / Activity), never a customer list', Number(hist14) >= 1
+      && Object.values(fakeAud().audiences).filter((x) => x.subtype === 'CUSTOM').length === 2, hist14);
+
+    // 15. Phones (390 and 320): the list as cards, the three-step dialog full screen, chips wrap, 44 px, 16 px fields, nothing past the edge.
+    for (const w of [390, 320]) {
+      await page.setViewportSize({ width: w, height: 760 });
+      await openList();
+      const lm = await page.evaluate(() => {
+        // The kind chips scroll sideways in their own row on phones (as every filter row does): their row must fit, not each chip.
+        const wide = [...document.querySelectorAll('main *')].filter((e) => e.getBoundingClientRect().right > innerWidth + 1 && e.getClientRects().length && !e.closest('.scroll-x') && !e.parentElement.closest('.filters')).map((e) => e.id || e.className).slice(0, 3);
+        const small = [...document.querySelectorAll('#aud-list summary, .aud-bar button, .aud-bar .check')].filter((e) => e.getBoundingClientRect().height < 44 && e.getClientRects().length).map((e) => e.textContent.trim().slice(0, 20));
+        // Cards: no cell runs past the screen even inside the table's scroll box.
+        const cut = [...document.querySelectorAll('.aud-tbl td')].filter((td) => td.getBoundingClientRect().right > innerWidth + 1).map((td) => td.className).slice(0, 3);
+        return { wide: [...wide, ...cut], small, cards: getComputedStyle(document.querySelector('.aud-tbl tr')).display, head: getComputedStyle(document.querySelector('.aud-tbl thead')).display };
+      });
+      await page.click('#aud-new');
+      await page.click('[data-aud-k="video"]');
+      await page.click('#aud-next');
+      await page.waitForSelector('#aud-src');
+      const dm = await page.evaluate(() => {
+        const dlg = document.querySelector('dialog.aud-dialog');
+        const wide = [...dlg.querySelectorAll('*')].filter((e) => e.getBoundingClientRect().right > innerWidth + 1 && e.getClientRects().length).map((e) => e.id || e.className).slice(0, 3);
+        return { w: Math.round(dlg.getBoundingClientRect().width), font: getComputedStyle(document.getElementById('aud-src')).fontSize,
+          next: document.getElementById('aud-next').getBoundingClientRect().height, radio: [...dlg.querySelectorAll('.aud-radios .check')].every((c) => c.getBoundingClientRect().height >= 44), wide };
+      });
+      await page.keyboard.press('Escape');
+      await page.goto(`${BASE}/new-adset.html?campaign=${C}`);
+      await page.waitForSelector('#aud-inc-chips [data-aud-chip]');
+      const pm = await page.evaluate(() => {
+        const box = document.getElementById('aud');
+        const wide = [...box.querySelectorAll('*')].filter((e) => e.getBoundingClientRect().right > innerWidth + 1 && e.getClientRects().length).map((e) => e.id || e.className).slice(0, 3);
+        return { wide, drop: [...box.querySelectorAll('[data-aud-drop]')].every((b) => b.getBoundingClientRect().height >= 44 && b.getBoundingClientRect().width >= 44),
+          font: getComputedStyle(document.getElementById('aud-inc-q')).fontSize };
+      });
+      check(`AM-D phone ${w}px: Audiences as cards, the New audience dialog fills the screen (16px fields, 44px buttons), the pickers' chips 44px, nothing past the edge`,
+        lm.wide.length === 0 && lm.small.length === 0 && lm.cards === 'flex' && lm.head === 'none' && dm.w === w && dm.font === '16px' && dm.next >= 44 && dm.radio
+        && dm.wide.length === 0 && pm.wide.length === 0 && pm.drop && pm.font === '16px', JSON.stringify({ lm, dm, pm }));
+    }
+    await page.setViewportSize({ width: 1360, height: 900 });
+
+    // 16. No class or id with an ad-blocker word on the page, in the dialog or the pickers; the files are named aud.
+    await openList();
+    await page.click('#aud-new');
+    await page.waitForSelector('dialog.aud-dialog');
+    const blocked = await page.evaluate(() => [...document.querySelectorAll('[class], [id]')].filter((e) => /(^|\s)(ad-|ads-|adset|sponsor|banner|promo)/i.test(`${e.className} ${e.id}`)).map((e) => e.id || e.className).slice(0, 3));
+    // The "who" cards are one radio group: one Tab stop, arrows move and pick, Next goes on with the picked one.
+    await page.waitForFunction(() => document.activeElement && document.activeElement.dataset.audK === 'website');
+    const stops = await page.$$eval('[data-aud-k]', (l) => l.filter((b) => b.tabIndex === 0).map((b) => b.dataset.audK));
+    for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
+    const kb = await page.evaluate(() => ({ focus: document.activeElement.dataset.audK, checked: [...document.querySelectorAll('[data-aud-k][aria-checked=true]')].map((b) => b.dataset.audK) }));
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowDown');
+    await page.click('#aud-next');
+    const kbNext = await page.waitForSelector('#aud-src', { timeout: 5000 }).then(() => true, () => false);
+    check('AM-D: the New audience "who" cards work from the keyboard (one Tab stop, arrows pick, Next goes on with it)',
+      JSON.stringify(stops) === '["website"]' && kb.focus === 'lead_form' && JSON.stringify(kb.checked) === '["lead_form"]' && kbNext, JSON.stringify({ stops, kb, kbNext }));
+    await page.keyboard.press('Escape');
+    const loaded = await page.evaluate(() => [location.pathname, ...[...document.scripts].map((s) => s.src), ...[...document.querySelectorAll('link[rel=stylesheet], link[rel=modulepreload]')].map((l) => l.href),
+      ...performance.getEntriesByType('resource').map((e) => e.name)].map((u) => new URL(u, location.href)).filter((u) => u.origin === location.origin).map((u) => u.pathname.split('/').pop()));
+    const blockedFiles = loaded.filter((f) => /^(ad-|ads-|adset|sponsor|banner|promo)/i.test(f));
+    check('AM-D: no class or id on Audiences or in the New audience dialog starts with an ad-blocker word, nor any file the page loads (audiences.js, audpick.js)',
+      blocked.length === 0 && blockedFiles.length === 0 && loaded.includes('audiences.js') && loaded.includes('audiences.html'), JSON.stringify({ blocked, blockedFiles }));
+
+    // Put the live ad set back as it was (the console's own write, through the same door) for the next run.
+    const now = (await call('GET', `/api/edit/adset/${S}`)).body.values;
+    await call('POST', `/api/edit/adset/${S}`, { changes: { targeting: { ...now.targeting, excluded_custom_audiences: [] } }, seen: { targeting: now.targeting } });
+    pull();
   }
 
   await browser.close();

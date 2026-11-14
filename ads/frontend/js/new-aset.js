@@ -4,6 +4,7 @@ import { money } from "./format.js";
 import { placeLabel, placesHtml, placesWidget } from "./places.js";
 import { builder } from "./builder.js";
 import { draftNoteHtml, draftParam, loadDraftSpec } from "./drafts.js";
+import { audPicker, audPickHtml, audWords, savedSelectHtml } from "./audpick.js";
 
 const $ = (id) => document.getElementById(id);
 let opts;
@@ -12,6 +13,9 @@ const locations_ = () => places.get();
 
 let places;
 let steps = null;
+// AM-D: audiences to include / leave out, and the saved audience the places and ages were filled from (its hints go along).
+let aud = null;
+let savedId = null;
 // AM-B: filled in from an Ads Manager draft (?draft=<id>): its id goes with Create, its audience hints when no ad set is the start.
 const draftP = draftParam();
 let draft = null;
@@ -27,6 +31,7 @@ function spec() {
     advantage: $("advantage").checked, keep_hints: $("keep_hints").checked, flexible_spec: $("template").value ? [] : draftFlex,
     start_day: $("start_day").value || null, start_hour: 0, end_day: $("end_day").value || null, end_hour: 23,
     daily_budget_cents: dollars ? Math.round(Number(dollars) * 100) : null,
+    include_audiences: aud ? aud.get().include : [], exclude_audiences: aud ? aud.get().exclude : [], saved_audience_id: savedId,
   };
 }
 
@@ -50,6 +55,7 @@ function syncCampaign() {
 function syncAdvantage() {
   const on = $("advantage").checked;
   $("suggest-field").hidden = !on;
+  if (aud) aud.redraw();
   $("age-hint").textContent = on ? `Hard limits. With Advantage+ audience the minimum can be at most ${opts.advantage_max_age_min}.` : "Only people in this range see it.";
 }
 
@@ -60,6 +66,8 @@ function whoLine() {
   if (locations.length) parts.push(locations.length <= 3 ? locations.map((l) => `${label(l)}${l.radius ? ` (${l.radius} mi)` : ""}`).join(", ") : `${locations.length} places`);
   if (s.keep_hints && hints.length) parts.push(`Hints: ${hints.slice(0, 3).join(", ")}${hints.length > 3 ? ` +${hints.length - 3}` : ""}`);
   if (s.advantage) parts.push("Advantage+ audience");
+  const a = aud ? audWords(aud.names()) : "";
+  if (a) parts.push(a[0].toUpperCase() + a.slice(1));
   return parts.join(" · ");
 }
 
@@ -110,11 +118,31 @@ function estimateSoon() {
 
 function changed() { estimateSoon(); if (steps) steps.soon(); }
 
+// AM-D: Start from a saved audience fills places, ages, hints and its audiences; nothing is sent until Create.
+function applySaved() {
+  const s = (opts.saved_audiences || []).find((x) => x.id === $("as-saved").value);
+  savedId = s ? s.id : null;
+  if (s) {
+    const b = s.builder;
+    places.set(b.locations); hints = b.hints;
+    $("age_min").value = b.age_min; $("age_max").value = b.age_max;
+    $("suggest_min").value = b.suggest_min ?? ""; $("suggest_max").value = b.suggest_max ?? "";
+    $("advantage").checked = b.advantage; $("keep_hints").checked = hints.length > 0;
+    $("hints").textContent = hints.join(", "); $("hints-row").hidden = !hints.length;
+    aud.set(b.include_audiences, b.exclude_audiences);
+    syncAdvantage();
+  }
+  changed();
+}
+
 async function loadTemplate() {
   try {
     const t = $("template").value ? await api(`/api/adsets/template/${encodeURIComponent($("template").value)}`)
       : { locations: [], hints: [], age_min: 25, age_max: 65, suggest_min: null, suggest_max: null, advantage: true, keep_hints: false };
     places.set(t.locations); hints = t.hints;
+    if (aud) aud.set(t.include_audiences || [], t.exclude_audiences || []);
+    savedId = null;
+    if ($("as-saved")) $("as-saved").value = "";
     $("age_min").value = t.age_min; $("age_max").value = t.age_max;
     $("suggest_min").value = t.suggest_min ?? ""; $("suggest_max").value = t.suggest_max ?? "";
     $("advantage").checked = t.advantage; $("keep_hints").checked = t.keep_hints && hints.length > 0;
@@ -157,6 +185,11 @@ if (me) {
   } else {
     $("places-box").innerHTML = placesHtml("pl");
     places = placesWidget("pl", { cityRadius: opts.city_radius, pinRadius: opts.pin_radius, onChange: changed });
+    $("aud-box").innerHTML = audPickHtml("aud");
+    aud = audPicker("aud", { audiences: opts.audiences || [], words: opts.audience_words || {}, onChange: changed,
+      special: () => ((campaign() || {}).special_ad_categories || []).length > 0, advantage: () => $("advantage").checked });
+    $("as-saved-box").innerHTML = savedSelectHtml("as-saved", opts.saved_audiences);
+    if ($("as-saved")) $("as-saved").addEventListener("change", applySaved);
     $("campaign").innerHTML = opts.campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}${c.effective_status === "ACTIVE" ? "" : " (off)"}</option>`).join("");
     const want = new URLSearchParams(location.search).get("campaign");
     if (want && opts.campaigns.some((c) => c.id === want)) $("campaign").value = want;
@@ -171,11 +204,11 @@ if (me) {
     if (want && !campaign()) $("budget-note").textContent = "The campaign you came from is deleted or archived, so it can't get new ad sets. Pick one that's still running.";
     await loadTemplate();
     if (draftP) await fillFromDraft();
-    $("campaign").addEventListener("change", () => { syncCampaign(); loadTemplate(); });
-    $("as-form").addEventListener("change", (e) => { if (e.target.id !== "campaign" && e.target.id !== "template") changed(); });
+    $("campaign").addEventListener("change", () => { syncCampaign(); loadTemplate(); aud.redraw(); });
+    $("as-form").addEventListener("change", (e) => { if (!["campaign", "template", "as-saved"].includes(e.target.id)) changed(); });
     $("template").addEventListener("change", loadTemplate);
-    $("as-form").addEventListener("input", (e) => { if (e.target.id !== "pl-q") changed(); });
-    $("advantage").addEventListener("change", () => { syncAdvantage(); changed(); });
+    $("as-form").addEventListener("input", (e) => { if (e.target.id !== "pl-q" && !e.target.closest("[data-aud-q]")) changed(); });
+    $("advantage").addEventListener("change", () => { syncAdvantage(); aud.redraw(); changed(); });
     $("as-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const form = $("as-form");
