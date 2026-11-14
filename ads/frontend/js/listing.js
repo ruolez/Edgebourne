@@ -81,6 +81,9 @@ function headerFigures() {
 
 // AM-B: drafts from Ads Manager (owner and account admins), shown on Campaigns; the Drafts view shows them alone.
 let drafts = null;
+// Phones: the campaign, dates, sort and archived controls fold behind one button; it stays as it was left while
+// the list redraws. Wide screens show them all in the toolbar.
+let moreTools = false;
 const draftsHere = () => state.level === "campaign" && me.role === "admin";
 const draftsAlone = () => draftsHere() && state.view === "drafts";
 
@@ -97,13 +100,16 @@ function toolbar() {
   return `<div class="cr-toolbar">
     <div class="views" role="group" aria-label="Show">${views}${mine}<button type="button" class="view-chip add" id="save-view">${icon("plus")}Save view</button></div>
     <span class="spacer"></span>
+    <button type="button" class="btn tb-toggle" id="tb-toggle" aria-expanded="${moreTools}" aria-controls="tb-more">Dates, sort, filters${state.campaign || state.archived ? `<span class="n">${[state.campaign, state.archived].filter(Boolean).length} on</span>` : ""}</button>
+    <div class="tb-more${moreTools ? " open" : ""}" id="tb-more">
     ${camps.length > 1 ? `<select class="input tool" id="camp-pick" aria-label="Campaign"><option value="">All campaigns</option>${camps.map((c) => `<option value="${esc(c.id)}" ${c.id === state.campaign ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>` : ""}
-    <label class="tool-search">${icon("search")}<input class="input" id="cr-search" type="search" placeholder="Filter by name" value="${esc(state.q)}" aria-label="Filter by name"></label>
     ${rangeSelect("range-pick", state.range)}
     ${narrow() && !(state.level === "ad" && state.display === "cards") ? sortPick() : ""}
     <button type="button" class="view-chip" id="vs" aria-pressed="${state.vs}" title="${MONTHS.includes(state.range) ? "Compare with the same days of the month before" : "Compare with the same number of days just before"}">vs before</button>
     ${state.display === "table" ? `<select class="input tool" id="cols-pick" aria-label="Columns">${Object.entries(COLUMN_SETS).map(([k, [l]]) => `<option value="${k}" ${k === state.cols ? "selected" : ""}>Columns: ${l}</option>`).join("")}</select>` : ""}
     ${data.archived ? `<button type="button" class="view-chip" id="archived" aria-pressed="${state.archived}">${state.archived ? "Hide" : "Show"} archived <span class="n">${data.archived}</span></button>` : ""}
+    </div>
+    <label class="tool-search">${icon("search")}<input class="input" id="cr-search" type="search" placeholder="Filter by name" value="${esc(state.q)}" aria-label="Filter by name"></label>
     ${state.level === "ad" ? `<div class="segmented icon-seg" role="group" aria-label="Display">
       <button type="button" data-display="table" aria-pressed="${state.display === "table"}" title="Table">${icon("table")}<span class="sr-only">Table</span></button>
       <button type="button" data-display="cards" aria-pressed="${state.display === "cards"}" title="Cards">${icon("grid")}<span class="sr-only">Cards</span></button></div>` : ""}
@@ -267,6 +273,7 @@ if (me) {
     }
     const d = e.target.closest("[data-display]");
     if (d) { set({ display: d.dataset.display }); return; }
+    if (e.target.closest("#tb-toggle")) { moreTools = !moreTools; $("tb-more").classList.toggle("open", moreTools); $("tb-toggle").setAttribute("aria-expanded", String(moreTools)); return; }
     if (e.target.closest("#vs")) { set({ vs: !state.vs }, true); return; }
     if (e.target.closest("#archived")) { set({ archived: !state.archived }, true); return; }
     const sv = e.target.closest("[data-saved]");

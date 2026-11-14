@@ -1048,6 +1048,8 @@ span.tq-fu { display: contents; }
   /* One column: the status and the numbers come before the tall preview. */
   .cr-side { display: contents; }
   .cr-state { order: -2; }
+  /* A suggestion waiting for a decision comes before the tall preview. */
+  .cr-side > .claude-panel { order: -1; }
   .cr-figs { order: -1; }
     }
 @media (max-width: 720px) {

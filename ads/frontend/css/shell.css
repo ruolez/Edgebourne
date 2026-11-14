@@ -348,6 +348,9 @@ dialog.palette::backdrop { background: rgba(10, 12, 14, .35); }
 .d-good { color: var(--signal-ink); } .d-bad { color: var(--bad-ink); } .d-mute { color: var(--ink-3); font-weight: 500; }
 .cr-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0; background: none; box-shadow: none; }
 .cr-toolbar .spacer { flex: 1; }
+/* The less-used toolbar controls: in the bar on wide screens, behind one button on phones. */
+.tb-more { display: contents; }
+.btn.tb-toggle, .link-btn.figs-more { display: none; }
 .cr-toolbar .views { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .view-chip.add { color: var(--ink-3); }
 .view-chip.add svg { width: 13px; height: 13px; }
@@ -378,6 +381,11 @@ dialog.palette::backdrop { background: rgba(10, 12, 14, .35); }
 .tbl td.num { text-align: right; font-family: var(--font-num); font-size: var(--t-s); }
 .tbl td.num b { font-weight: 600; }
 .tbl tbody tr { cursor: default; }
+/* Rows that open the quick look say so with the pointer. */
+.tbl tbody tr[data-row], .pl li[data-row] { cursor: pointer; }
+/* What an ad or ad set belongs to: the breadcrumbs say it on wide screens, this line on phones. */
+.in-where { display: none; }
+@media (max-width: 960px) { p.in-where:not([hidden]) { display: block; flex-basis: 100%; order: 2; margin: 2px 0 0; } span.in-where { display: inline; } }
 .tbl tbody tr:hover td { background: color-mix(in srgb, var(--surface-2) 45%, var(--surface)); }
 .tbl tbody tr.is-sel td { background: color-mix(in srgb, var(--signal-soft) 70%, var(--surface)); }
 .tbl tbody tr.is-peek td { background: var(--surface-2); }
@@ -562,7 +570,17 @@ body.has-bulk .content { padding-bottom: 96px; }
 @media (max-width: 960px) {
   #cols-pick, .cr-toolbar .icon-seg { display: none; }
   .cr-toolbar { gap: 8px; }
-  .tool-search { flex: 1 1 100%; order: -1; }
+  .tool-search { flex: 1 1 0; min-width: 0; order: -1; }
+  .btn.tb-toggle { display: inline-flex; order: -1; flex: none; gap: 6px; }
+  .tb-toggle .n { font: 500 var(--t-xs)/1 var(--font-num); color: var(--ink-3); }
+  .tb-more:not(.open) { display: none; }
+  /* Three key figures; the rest behind All figures. */
+  .figs.keyed:not(.all) .fig:not(.fig-key) { display: none; }
+  .figs.keyed:not(.all) .fig { border-top: 0; }
+  .figs.keyed:not(.all) .k1 { border-left: 0; }
+  .figs.keyed:not(.all) .k2 { border-left: 1px solid var(--line); }
+  .figs.keyed:not(.all) .k3 { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
+  .link-btn.figs-more { display: block; text-align: left; margin: 2px 0 0; padding: 10px 2px; min-height: var(--target); font-size: var(--t-s); font-weight: 500; color: var(--ink-2); }
   .cr-toolbar .views { order: -2; }
   /* Phones: campaign, then dates with vs before, then the sort, each a full row. */
   #camp-pick { flex: 1 1 100%; min-width: 0; order: 1; }

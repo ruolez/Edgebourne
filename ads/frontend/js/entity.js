@@ -1,7 +1,7 @@
 // Campaign and ad set pages: their numbers with "vs before", a daily chart, (ad sets) learning progress
 // and who sees it, the ad sets / ads inside in the manager table, and one History timeline.
 import { api, startLoad } from "./api.js";
-import { boot, emptyState, esc, icon, linkNote, onRefresh, setCrumbs, sourceNote, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
+import { boot, emptyState, entityLink, esc, icon, linkNote, onRefresh, setCrumbs, sourceNote, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
 import { columnChart, marksPanel } from "./charts.js";
 import { count, dayLabel, explain, money, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
@@ -15,6 +15,8 @@ const id = new URLSearchParams(location.search).get("id");
 // The dates are the ones picked last on any page (Ads, Results, Compare…), unless the link says otherwise.
 const DEFAULTS = { id: "", tab: LEVEL === "campaign" ? "adsets" : "ads", range: sharedRange(), vs: true, sort: "spend", dir: "desc", peek: "" };
 let state = UrlState.read({ ...DEFAULTS, id });
+const HISTORY_SHOWN = 15;
+let allHistory = false;
 let data = null, me = null, rows = null;
 const selected = new Set();
 
@@ -45,7 +47,7 @@ function render() {
   const canControl = e.can_control ?? data.campaign.can_control;
   $("en-title").textContent = e.name;
   document.title = `${e.name} | Edge Bourne Ads`;
-  $("en-sub").innerHTML = `${statusCell({ ...e, level: LEVEL })} <span class="sep-dot">·</span> ${esc(data.range.label)}${esc(vsWords(data, state.vs))}`;
+  $("en-sub").innerHTML = `${LEVEL === "adset" ? `<span class="in-where">in ${entityLink("campaign", data.campaign.id, data.campaign.name)} <span class="sep-dot">·</span> </span>` : ""}${statusCell({ ...e, level: LEVEL })} <span class="sep-dot">·</span> ${esc(data.range.label)}${esc(vsWords(data, state.vs))}`;
   const live = LIVE.includes(e.status);
   const budget = e.daily_budget_cents ? (canControl && live ? `<button type="button" class="chip" data-budget="${LEVEL}:${e.id}" data-current="${e.daily_budget_cents}" data-name="${esc(e.name)}">${money(e.daily_budget_cents, { exact: true })}/day</button>` : `<span class="chip">${money(e.daily_budget_cents, { exact: true })}/day</span>`) : "";
   $("en-actions").innerHTML = `${budget}
@@ -58,26 +60,29 @@ function render() {
   const tabs = [...(LEVEL === "campaign" ? [["adsets", "Ad sets", rows.adset.length]] : []), ["ads", "Ads", rows.ad.length], ["history", "History", data.timeline.length]];
   const list = children();
   const body = state.tab === "history"
-    ? `<section class="panel"><div class="panel-body">${data.timeline.length ? timelineHtml(data.timeline) : '<p class="muted">Nothing recorded yet.</p>'}</div></section>`
+    ? `<section class="panel"><div class="panel-body">${data.timeline.length ? timelineHtml(allHistory ? data.timeline : data.timeline.slice(0, HISTORY_SHOWN)) : '<p class="muted">Nothing recorded yet.</p>'}${
+        data.timeline.length > HISTORY_SHOWN && !allHistory ? `<p class="flush"><button type="button" class="link-btn" data-history-all>Show all ${data.timeline.length} entries</button></p>` : ""}</div></section>`
     : list.length && narrow() ? listHtml({ rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), selected, sort: state.sort, dir: state.dir })
     : list.length ? tableHtml({ level: childLevel(), rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: "results", sort: state.sort, dir: state.dir, selected, selectable: true, range: state.range })
     : emptyHere(e, live);
   // FU-C: Today against yesterday up to the same hour; a range with today compares its complete days.
   const hours = state.vs && data.compare && data.compare.mode === "hours" ? data.totals.prev : null;
   const prev = hours || (state.vs ? e.prev : null);
+  // Top to bottom: how it is doing, what is inside it (the way down, with the dates that drive the whole page),
+  // then the days behind the numbers.
   $("cr-all").innerHTML = `${figuresHtml(e.m, prev, data.target_qualified_cents, { today: e.today, ever: e.ever, cmp: hours ? null : state.vs ? e.cmp : null })}
-    <div class="charts"><section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
-      <section class="panel"><div class="panel-head"><h2>Leads per day</h2></div><div class="chart" id="c-leads"></div></section></div>
-    <div class="fig-foot"><div class="fig-src" id="fig-src"></div><div class="fig-marks" id="chg-panel"></div></div>
-    ${data.vs_peers ? `<div class="mx-line" id="mx-camp"><p class="flush">${icon("compare")}<span>${esc(data.vs_peers.line)}</span></p>${linkNote(data.vs_peers.source)}</div>` : ""}
-    ${LEVEL === "adset" ? audienceCard(e) : ""}
     <div class="cr-toolbar"><div class="tabs" role="tablist" aria-label="Show" data-tabpanel="en-panel">${tabs.map(([k, l, n]) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${state.tab === k}">${l}<span class="n">${n}</span></button>`).join("")}</div>
       <span class="spacer"></span>
       ${rangeSelect("range-pick", state.range)}
       <button type="button" class="view-chip" id="vs" aria-pressed="${state.vs}">vs before</button></div>
     <div id="en-panel">${body}</div>
     ${state.tab !== "history" && !narrow() && hasTrack(list) ? trackLegend() : ""}
-    <p class="muted small flush">${esc(rangeFoot(data))}${esc(unlistedNote(e.m, rows.ad))}</p>`;
+    <p class="muted small flush">${esc(rangeFoot(data))}${esc(unlistedNote(e.m, rows.ad))}</p>
+    <div class="charts"><section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
+      <section class="panel"><div class="panel-head"><h2>Leads per day</h2></div><div class="chart" id="c-leads"></div></section></div>
+    <div class="fig-foot"><div class="fig-src" id="fig-src"></div><div class="fig-marks" id="chg-panel"></div></div>
+    ${data.vs_peers ? `<div class="mx-line" id="mx-camp"><p class="flush">${icon("compare")}<span>${esc(data.vs_peers.line)}</span></p>${linkNote(data.vs_peers.source)}</div>` : ""}
+    ${LEVEL === "adset" ? audienceCard(e) : ""}`;
   document.querySelectorAll("#cr-all [data-w]").forEach((i) => { i.style.width = `${i.dataset.w}%`; });
   const marks = data.marks || [], marksSummary = data.marks_summary || "";
   columnChart({ el: $("c-spend"), series: data.series, key: "spend_cents", color: "var(--chart-spend)", title: "Spend per day", height: 170,
@@ -195,6 +200,7 @@ if (me) {
     const t = e.target.closest("[data-tab]");
     if (t) { selected.clear(); dropPeek(); set({ tab: t.dataset.tab, sort: "spend", dir: "desc", peek: "" }); }
     if (e.target.closest("#vs")) set({ vs: !state.vs }, true);
+    if (e.target.closest("[data-history-all]")) { allHistory = true; render(); }
   });
   $("cr-all").addEventListener("change", (e) => { if (e.target.id === "range-pick") { rememberRange(e.target.value); set({ range: e.target.value }, true); } });
   // Back / Forward: show what the URL says, the view first, then the quick look.

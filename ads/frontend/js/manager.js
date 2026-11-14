@@ -125,9 +125,10 @@ const C = {
 // A column's name in plain words, for saying what a list is sorted by.
 export const columnLabel = (key) => C[key]?.label || key;
 export const COLUMN_SETS = {
-  results: ["Results", { ad: ["name", "on", "status", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified", "ctr", "hook", "spark"],
-    adset: ["name", "on", "status", "budget", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified"],
-    campaign: ["name", "on", "status", "budget", "spend", "impressions", "reach", "leads", "cpl", "vs", "qualified"] }],
+  // Spent, leads and their cost first (what decisions are made on), then how far it travelled.
+  results: ["Results", { ad: ["name", "on", "status", "spend", "leads", "cpl", "vs", "qualified", "impressions", "reach", "ctr", "hook", "spark"],
+    adset: ["name", "on", "status", "budget", "spend", "leads", "cpl", "vs", "qualified", "impressions", "reach"],
+    campaign: ["name", "on", "status", "budget", "spend", "leads", "cpl", "vs", "qualified", "impressions", "reach"] }],
   delivery: ["Delivery", { ad: ["name", "on", "status", "spend", "impressions", "reach", "freq", "cpm", "ctr"],
     adset: ["name", "on", "status", "budget", "spend", "impressions", "reach", "freq", "cpm"],
     campaign: ["name", "on", "status", "budget", "spend", "impressions", "reach", "freq", "cpm"] }],
@@ -162,7 +163,9 @@ const withBooked = (defs) => {
 };
 
 export function tableHtml({ level, rows, cols, sort, dir, selected, selectable, range }) {
-  const defs = withBooked(COLUMN_SETS[cols]?.[1][level] || COLUMN_SETS.results[1][level]);
+  // A Budget column with nothing in it (the budget sits on the campaign, or on each ad set) is left out.
+  const defs = withBooked(COLUMN_SETS[cols]?.[1][level] || COLUMN_SETS.results[1][level])
+    .filter((k) => k !== "budget" || rows.some((r) => r.daily_budget_cents));
   const columns = defs.map((k) => C[k]);
   const sorter = columns.find((c) => c.key === sort) || C.spend;
   const sorted = [...rows].sort((a, b) => {
@@ -258,22 +261,34 @@ export function rangeFoot(d) {
 
 // `cmp` (FU-C): the complete days the deltas compare with `prev` when the figures include today so far.
 export function figuresHtml(m, prev, target, { today = null, ever = null, cmp = null } = {}) {
-  const f = (label, value, d) => `<div class="fig"><span class="fig-l">${label}</span><b class="fig-v">${value}</b>${d || ""}</div>`;
+  // `key` marks the three figures a phone shows first (spent, leads, cost per lead); All figures shows the rest.
+  const f = (label, value, d, key = "") => `<div class="fig${key ? ` fig-key ${key}` : ""}"><span class="fig-l">${label}</span><b class="fig-v">${value}</b>${d || ""}</div>`;
   const qcpl = m.qualified ? m.spend_cents / m.qualified : null;
   const c = cmp || m;
   // People reached over the complete days alone isn't read from Meta (daily reach can't be added up): no delta then.
   const reachOk = prev && !m.reach_summed && !cmp;
-  return `<div class="figs"${booked ? ' data-booked="1"' : ""}>
-    ${f(WORDS.spend, money(m.spend_cents, { exact: true }), prev ? delta(c.spend_cents, prev.spend_cents, null).replace(/d-(good|bad)/, "d-mute") : "")}
+  return `<div class="figs keyed${allFigures() ? " all" : ""}"${booked ? ' data-booked="1"' : ""}>
+    ${f(WORDS.spend, money(m.spend_cents, { exact: true }), prev ? delta(c.spend_cents, prev.spend_cents, null).replace(/d-(good|bad)/, "d-mute") : "", "k1")}
     ${f(WORDS.impressions, count(m.impressions), `${prev ? delta(c.impressions, prev.impressions, false) : ""}${todayEver(today, ever, "impressions")}`)}
     ${f(WORDS.reach, count(m.reach) + (m.reach_summed ? "*" : ""), `${reachOk ? delta(m.reach, prev.reach, false) : ""}${todayEver(today, ever, "reach")}`)}
-    ${f("Leads", count(m.leads), prev ? delta(c.leads, prev.leads, false) : "")}
-    ${f(WORDS.cpl, per(m.spend_cents, m.leads), prev ? delta(cpl(c), cpl(prev), true) : "")}
+    ${f("Leads", count(m.leads), prev ? delta(c.leads, prev.leads, false) : "", "k2")}
+    ${f(WORDS.cpl, per(m.spend_cents, m.leads), prev ? delta(cpl(c), cpl(prev), true) : "", "k3")}
     ${f(WORDS.qualified, count(m.qualified), prev ? delta(c.qualified, prev.qualified, false) : "")}
     ${f(WORDS.cpql, qcpl ? money(qcpl, { exact: true }) : "—", target ? `<span class="delta d-mute">target ${money(target)}</span>` : "")}
     ${booked ? `${f(FOLLOW.booked_col, count(m.booked), prev && (c.booked || prev.booked) ? delta(c.booked, prev.booked, false) : "")}${f(FOLLOW.cpb_col, per(m.spend_cents, m.booked), "")}` : ""}
-  </div>`;
+  </div><button type="button" class="link-btn figs-more" data-figs-all aria-expanded="${allFigures()}">${allFigures() ? "Fewer figures" : "All figures"}</button>`;
 }
+// Phones only (the button is hidden on wide screens, which always show every figure): remembered on this device.
+const FIGS_KEY = "ebads-figs-all";
+function allFigures() { try { return localStorage.getItem(FIGS_KEY) === "1"; } catch (e) { return false; } }
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-figs-all]");
+  if (!b) return;
+  const on = !allFigures();
+  try { localStorage.setItem(FIGS_KEY, on ? "1" : "0"); } catch (err) { /* storage off: it still toggles for this view */ }
+  document.querySelectorAll(".figs.keyed").forEach((el) => el.classList.toggle("all", on));
+  document.querySelectorAll("[data-figs-all]").forEach((el) => { el.textContent = on ? "Fewer figures" : "All figures"; el.setAttribute("aria-expanded", String(on)); });
+});
 
 // ---------------------------------------------------------------- selection, bulk bar, peek
 
@@ -510,7 +525,7 @@ export async function peek(r, { onClose, focus = true } = {}) {
       ${r.level === "campaign" ? `<a class="btn btn-small" href="/leads.html?campaign=${encodeURIComponent(r.id)}">Its leads</a>` : ""}</div>
     ${context(r)}
     <h3 class="pk-h">This period ${r.prev ? `<small>against the same days before${r.cmp ? ", complete days" : ""}</small>` : ""}</h3>
-    ${figuresHtml(m, r.prev, null, { today: r.today, ever: r.ever, cmp: r.cmp }).replace('class="figs"', 'class="figs pk-figs"')}
+    ${figuresHtml(m, r.prev, null, { today: r.today, ever: r.ever, cmp: r.cmp }).replace(/class="figs keyed[^"]*"/, 'class="figs pk-figs"').replace(/<button[^>]*data-figs-all[^>]*>[^<]*<\/button>/, "")}
     ${moreNumbers(r)}
     ${(r.spark || []).length ? `<h3 class="pk-h">Day by day</h3><div class="pk-charts"><p class="pk-cap">Spent</p><div class="chart" id="pk-spend"></div><p class="pk-cap">Leads</p><div class="chart" id="pk-leads"></div></div>` : ""}
     <div class="pk-diag"><p class="muted small">Asking Meta how it rates this ad…</p></div>
