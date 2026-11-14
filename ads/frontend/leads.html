@@ -11,9 +11,9 @@
   <meta name="theme-color" content="#0E0F11" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-title" content="EB Ads">
   <script src="/js/theme.js"></script>
-  <link rel="stylesheet" href="/css/tokens.css?v=1795700003">
-  <link rel="stylesheet" href="/css/app.css?v=1795700003">
-  <link rel="stylesheet" href="/css/shell.css?v=1795700003">
+  <link rel="stylesheet" href="/css/tokens.css?v=1795700006">
+  <link rel="stylesheet" href="/css/app.css?v=1795700006">
+  <link rel="stylesheet" href="/css/shell.css?v=1795700006">
 </head>
 <body>
   <div class="app">
@@ -31,11 +31,14 @@
           <label class="sr-only" for="q">Search leads</label>
           <input class="input" id="q" type="search" placeholder="Search leads">
         </div>
+        <button type="button" class="btn lf-toggle" id="lf-toggle" aria-expanded="false" aria-controls="lf-more">Filters</button>
+        <div class="lf-more" id="lf-more">
         <select class="input tool" id="source" aria-label="Which campaign or ad"><option value="">All campaigns and ads</option></select>
         <select class="input tool" id="follow" aria-label="Follow-ups"><option value="">Any follow-up</option></select>
         <label class="check"><input type="checkbox" id="tests"> Show test leads</label>
         <label class="check" id="junk-wrap" hidden><input type="checkbox" id="junk-only"> <span id="junk-label">Only junk</span></label>
         <button type="button" class="btn btn-quiet" id="clear-filters" hidden>Clear filters</button>
+        </div>
       </div>
       <p class="why-note" id="why-note" hidden></p>
       <div class="leads-layout" id="layout">

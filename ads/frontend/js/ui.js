@@ -767,6 +767,9 @@ export async function boot({ page, admin = false }) {
     <a class="icon-btn" href="/account.html" aria-label="Your account"><span class="avatar">${esc(initials)}</span></a>`;
   app.prepend(top);
   if (isAdmin) startClaudeNow(top);
+  // On phones the top bar already names the page: a heading that only repeats it is kept for screen readers.
+  const h1 = main.querySelector(".page-head h1");
+  if (h1 && page !== "home" && h1.textContent.trim() === PAGE_TITLE[page]) h1.classList.add("in-bar");  // Today's becomes a greeting
   const sectionCrumb = SECTIONS[section] ? { label: SECTIONS[section].label, href: SECTIONS[section].href } : null;
   const own = PAGE_TITLE[page];
   setCrumbs(sectionCrumb && own && own !== sectionCrumb.label ? [sectionCrumb, { label: own, href: location.pathname }] : [sectionCrumb || { label: own || "", href: location.pathname }]);
@@ -801,12 +804,16 @@ export async function boot({ page, admin = false }) {
         ${sheetLink("/account.html", "Your account", "user", page === "account")}
       </div></section>
       <div class="sep"></div>
-      <div class="theme-row">${icon("contrast")}<span class="label">Theme</span>${themeSwitch()}</div>
       <button type="button" class="item" data-signout>${icon("logout")}Sign out</button>
+      <div class="theme-row">${icon("contrast")}<span class="label">Theme</span>${themeSwitch()}</div>
     </nav>`;
   document.body.append(sheet);
   // The sheet opens on its first link, not on the account switcher (a stray tap there would change the account).
-  tabs.querySelector("[data-more]").addEventListener("click", () => { sheet.showModal(); sheet.querySelector("nav a")?.focus(); });
+  // The sheet's last rows sit where the More button was: a second tap of the same finger must not land on one of
+  // them (Sign out is down there), so taps in the first moment after it opens do nothing.
+  let sheetOpenedAt = 0;
+  tabs.querySelector("[data-more]").addEventListener("click", () => { sheetOpenedAt = Date.now(); sheet.showModal(); sheet.querySelector("nav a")?.focus(); });
+  sheet.addEventListener("click", (e) => { if (Date.now() - sheetOpenedAt < 400) { e.preventDefault(); e.stopPropagation(); } }, true);
   sheet.addEventListener("click", (e) => { if (e.target === sheet) sheet.close(); });
 
   document.querySelectorAll("[data-refresh]").forEach((b) => b.addEventListener("click", doRefresh));

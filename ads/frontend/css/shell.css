@@ -269,6 +269,9 @@ dialog.palette::backdrop { background: rgba(10, 12, 14, .35); }
 .ib-head { font-size: var(--t-xs); font-weight: 500; color: var(--ink-3); padding: 12px 16px 6px; }
 .ib-item { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 11px 16px; border-top: 1px solid var(--line); position: relative; cursor: pointer; }
 .ib-head + .ib-item { border-top: 0; }
+.ib-leads-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; padding: 12px 16px 10px; border-top: 1px solid var(--line); font-size: var(--t-s); font-weight: 600; color: var(--ink); }
+.ib-leads-head:first-child { margin-top: 0; border-top: 0; }
+.ib-more { list-style: none; padding: 10px 16px 12px; border-top: 1px solid var(--line); font-size: var(--t-s); }
 .ib-item:hover { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
 .ib-item[aria-current="true"] { background: var(--surface-2); }
 .ib-item:focus-visible { outline-offset: -2px; }
@@ -298,6 +301,8 @@ dialog.palette::backdrop { background: rgba(10, 12, 14, .35); }
   .ib-detail { display: none; }
   /* An item opened on a phone covers the list; ← Inbox or Back shows the list again. */
   .ib-layout.showing-detail .ib-list { display: none; }
+  .main:has(.ib-layout.showing-detail) > .page-head, .main:has(.ib-layout.showing-detail) .ib-tabs, .main:has(.ib-layout.showing-detail) .ib-kinds { display: none; }
+  .main:has(.ib-layout.showing-detail) > .content { padding-top: 14px; }
   .ib-layout.showing-detail .ib-detail { display: flex; position: static; }
   .ib-detail .back-link { align-self: flex-start; margin-bottom: 0; }
   .ib-keys { display: none; }
@@ -328,6 +333,9 @@ dialog.palette::backdrop { background: rgba(10, 12, 14, .35); }
   .btn-small { min-height: var(--target); }
   .page-head { padding: 16px 16px 12px; }
   .page-head h1 { font-size: var(--t-xl); }
+  /* The top bar names the page: a heading that only repeats it stays for screen readers. */
+  .page-head h1.in-bar { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .page-head:not(:has(> :not(.in-bar, [hidden], .spacer))) { padding-top: 6px; padding-bottom: 0; }
 }
 
 /* ---------- Ads manager (Signal) ---------- */

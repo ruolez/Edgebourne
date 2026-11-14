@@ -15,6 +15,14 @@ const $ = (id) => document.getElementById(id);
 const SOURCE_KEYS = ["campaign", "adset", "ad", "form"];
 const filtered = () => state.filter !== "open" || Boolean(state.q) || state.tests || Boolean(state.due) || Boolean(state.why) || state.junk || SOURCE_KEYS.some((k) => new URLSearchParams(location.search).get(k));
 const WHY_KEYS = [...Object.keys(LOST_REASONS), "none"];
+// Phones: where it came from, follow-ups, test leads and junk fold behind one Filters button that says how many
+// are on (wide screens show them all, the button is hidden). They open by themselves when one is on.
+const showMoreFilters = (open) => { $("lf-more").classList.toggle("open", open); $("lf-toggle").setAttribute("aria-expanded", String(open)); };
+function paintMoreFilters() {
+  const on = [SOURCE_KEYS.some((k) => new URLSearchParams(location.search).get(k)), Boolean(state.due), state.tests, state.junk].filter(Boolean).length;
+  $("lf-toggle").textContent = on ? `Filters · ${on} on` : "Filters";
+  if (on && !$("lf-toggle").dataset.touched) showMoreFilters(true);
+}
 const DUE_KEYS = FOLLOW.due.map(([k]) => k).filter(Boolean);
 
 function renderFilters() {
@@ -120,6 +128,7 @@ function renderList() {
   }
   // One Clear filters at a time: an empty list that offers its own hides the toolbar's.
   $("clear-filters").hidden = !filtered() || !!list.querySelector("[data-clear-filters]");
+  paintMoreFilters();
   state.leads.forEach((l) => state.seen.add(l.id));
 }
 
@@ -249,6 +258,7 @@ function detailHtml(lead) {
     </div>
     ${lead.no_auto_reply ? '<p class="muted small flush" id="no-auto-reply">No automatic reply went out because it looked like a repeat.</p>' : ""}
     ${lead.email ? replyForm(lead) : ""}
+    ${answers ? `<h3 class="section-title answers-title">Their answers</h3><dl class="facts answers">${answers}</dl>` : ""}
     ${lead.repeat_of ? "" : boxHtml(lead)}
     ${lead.repeat_of ? "" : `<div class="stage">
       <span class="stage-label" id="stage-label">Stage</span>
@@ -270,7 +280,6 @@ function detailHtml(lead) {
       ${lead.form_name ? `<dt>Form</dt><dd>${entityLink("form", lead.form_id, lead.form_name)}</dd>` : ""}
     </dl>
     ${isStaff() && !lead.is_test && !lead.repeat_of ? '<div class="row family-actions"><button type="button" class="btn btn-quiet btn-small" id="same-person">Same person as…</button></div>' : ""}
-    ${answers ? `<h3 class="section-title">Their answers</h3><dl class="facts">${answers}</dl>` : ""}
     ${familyHtml(lead)}
     ${emailsHtml(lead)}
     <h3 class="section-title">Notes</h3>
@@ -374,16 +383,29 @@ function prettyQuestion(key) {
 // On a phone the lead covers the list, so opening one is a step Back undoes; side by side it's just the selection.
 const covers = () => matchMedia("(max-width: 960px)").matches;
 const listUrl = () => location.pathname + location.search;
+// On a phone the open lead covers the list: it starts at its top, and the list comes back where it was.
+let listScroll = 0;
+function showDetail(on) {
+  const layout = $("layout");
+  const was = layout.classList.contains("showing-detail");
+  layout.classList.toggle("showing-detail", on);
+  if (!covers() || was === on) return;
+  if (on) { listScroll = window.scrollY; window.scrollTo(0, 0); }
+  else window.scrollTo(0, listScroll);
+}
 
 async function select(id, { push = true } = {}) {
   state.selected = id;
   document.querySelectorAll(".lead-row").forEach((r) => r.setAttribute("aria-current", String(Number(r.dataset.id) === id)));
   if (push) { if (covers()) openLayer(`${listUrl()}#lead=${id}`); else history.replaceState(null, "", `${listUrl()}#lead=${id}`); }
-  $("layout").classList.add("showing-detail");
+  showDetail(true);
   try {
     const lead = await api(`/api/leads/${id}`);
     if (state.selected !== id) return; // another lead was picked while this one loaded
     renderDetail(lead);
+    // On a wide screen the list scrolls beside it: a lead picked far down the list is shown from its name, not its middle.
+    const top = $("detail").getBoundingClientRect().top;
+    if (!covers() && top < 0) window.scrollTo({ top: window.scrollY + top - 16 });
   } catch (err) {
     if (state.selected !== id) return;
     $("detail").innerHTML = `<div class="empty"><h3>Can't open this lead</h3><p>${esc(err.message)}</p></div>`;
@@ -399,7 +421,7 @@ function renderDetail(lead, { keep = false } = {}) {
   detail.innerHTML = detailHtml(lead);
   wireFollow(lead);
   $("back")?.addEventListener("click", () => {
-    $("layout").classList.remove("showing-detail");
+    showDetail(false);
     closeLayer(listUrl());
   });
   wireReply(lead);
@@ -694,6 +716,9 @@ async function main() {
     load();
   });
   $("clear-filters").addEventListener("click", clearFilters);
+  $("lf-toggle").addEventListener("click", (e) => { e.currentTarget.dataset.touched = "1"; showMoreFilters(!$("lf-more").classList.contains("open")); });
+  // The response line is clamped to two lines on phones; a tap shows all of it.
+  $("response").addEventListener("click", (e) => e.currentTarget.classList.toggle("open"));
   $("list").addEventListener("click", (e) => { if (e.target.closest("[data-clear-filters]")) clearFilters(); });
   $("source").addEventListener("change", (e) => {
     const u = new URL(location.href);
@@ -721,7 +746,8 @@ async function main() {
   onRefresh(() => load());
   if (fromHash) state.selected = fromHash; // so the list doesn't open the newest lead instead
   await load();
-  if (fromHash) select(fromHash, { push: false });
+  // …#lead=<id>&reply=1 (Today's mail button) opens the lead with the email form ready.
+  if (fromHash) select(fromHash, { push: false }).then(() => { if (/[&#]reply=1/.test(location.hash)) $("reply-open")?.click(); });
   // A call dialled from this page while it was reloaded (a phone app starting again): ask how it went.
   resumePending(async (id) => {
     try { const lead = await api(`/api/leads/${id}`); ask(logCall, lead, { after: changed }); } catch (e) { /* gone or not theirs */ }
@@ -730,8 +756,7 @@ async function main() {
   const followUrl = () => {
     const id = Number((location.hash.match(/lead=(\d+)/) || [])[1]);
     if (id && id !== state.selected) select(id, { push: false });
-    else if (id) $("layout").classList.add("showing-detail");
-    else $("layout").classList.remove("showing-detail");
+    else showDetail(Boolean(id));
   };
   window.addEventListener("hashchange", followUrl);
   window.addEventListener("popstate", followUrl);

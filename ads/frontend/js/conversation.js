@@ -141,7 +141,8 @@ export function listHtml(data, ix, ctx) {
     </section>` : "";
   const none = !data.tasks.length ? '<p class="cl-note muted">What you ask Claude shows up here.</p>'
     : ctx.query && !recent.length ? '<p class="cl-note muted">No conversation matches that.</p>' : "";
-  return onMac + decide + days + cleared + none;
+  // What waits for a decision comes first; the Mac's status is context for it, not the headline.
+  return decide + onMac + days + cleared + none;
 }
 
 // ---------------------------------------------------------------- one turn

@@ -37,6 +37,17 @@ function actionLabel(r) {
 // A Call button dials and then asks how it went (followup.armDial); without a phone number, the lead opens.
 const callButton = (r) => (r.lead.phone ? `<a class="btn btn-call" href="tel:${esc(r.lead.phone)}" data-dial="${r.lead.id}">${icon("phone")}Call</a>` : `<a class="btn" href="${esc(r.href)}">Open</a>`);
 
+// The account spending limit: what is used, and what is left before Meta pauses every ad.
+function limitRow(cap) {
+  if (!cap || !cap.limit_cents) return "";
+  const used = cap.spent_cents / cap.limit_cents;
+  const amount = (c) => (c % 100 ? money(c, { exact: true }) : money(c));
+  const words = cap.remaining_cents <= 0 ? `${amount(cap.limit_cents)} reached: every ad is paused`
+    : `${amount(cap.spent_cents)} of ${amount(cap.limit_cents)} · ${amount(cap.remaining_cents)} left`;
+  const tone = used >= 1 ? "bad-text" : used >= 0.8 ? "warn-text" : "";
+  return `<div class="td-limit"><dt>Spending limit</dt><dd class="${tone}">${me.role === "admin" ? `<a href="/settings.html#spend-limit">${esc(words)}</a>` : esc(words)}</dd></div>`;
+}
+
 function leadRow(r) {
   const l = r.lead;
   const from = l.ad_name ? ` · from ${entityLink("ad", l.ad_id, shortAd(l.ad_name))}` : "";
@@ -44,7 +55,7 @@ function leadRow(r) {
     ${leadClock({ urgency: r.level, created_time: l.created_time })}
     <div class="tq-b"><a class="tq-name" href="${esc(r.href)}"><b>${esc(r.title)}</b></a><p>${esc(r.line || "No business given")}${from}</p></div>
     <div class="tq-acts">${callButton(r)}
-      ${l.email ? `<a class="btn tq-mail" href="mailto:${esc(l.email)}" aria-label="Email ${esc(r.title)}">${icon("mail")}</a>` : ""}</div>
+      ${l.email ? `<a class="btn tq-mail" href="${esc(r.href)}&reply=1" aria-label="Email ${esc(r.title)}">${icon("mail")}</a>` : ""}</div>
   </li>`;
 }
 
@@ -115,7 +126,7 @@ function queueHtml(d) {
     const all = g === "decide" && ids.length > 1 ? `<button type="button" class="link-btn" data-accept-all="${ids.join(",")}">Review all ${ids.length}</button>` : "";
     const calls = rows.filter((r) => r.rule === "new_lead").length;
     const more = g === "call" && d.waiting_calls > calls
-      ? `<li class="tq-more"><a href="/leads.html">${plural(d.waiting_calls - calls, "more lead")} waiting for a first call</a></li>` : "";
+      ? `<li class="tq-more"><a href="/leads.html?status=new">${plural(d.waiting_calls - calls, "more lead")} waiting for a first call</a></li>` : "";
     return `<section class="tq-group" aria-labelledby="tq-${g}"><h2 class="tq-h" id="tq-${g}">${title}${hint ? ` <small>${hint}</small>` : ""}<span class="spacer"></span>${all}</h2>
       <ul>${rows.map(rowOf).join("")}${more}</ul></section>`;
   }).join("");
@@ -157,6 +168,7 @@ function render(d) {
       <div><dt>Yesterday</dt><dd>${y ? `${money(y.spend_cents, { exact: true })} · ${plural(y.leads, "lead")}` : "no data yet"}</dd></div>
       <div><dt>Leads, last 7 days with today</dt><dd>${d.week.leads ?? 0}${pairNote(d.source && d.source.leads)}</dd></div>
       <div><dt>Cost per lead</dt><dd>${per(d.week.spend_cents, d.week.leads)}</dd></div>
+      ${limitRow(d.cap)}
     </dl>
     <div class="td-src" id="fig-src">${sourceNote(d.source, { today: true })}</div>
     <a class="btn" href="/performance.html">See all results</a>

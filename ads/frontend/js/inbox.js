@@ -83,6 +83,10 @@ function itemHtml(i) {
     <span class="ib-t tnum">${esc(when(i.at))}</span></li>`;
 }
 
+const LEADS_GROUP_FROM = 4;
+const LEADS_GROUP_SHOWN = 3;
+let allLeads = false;
+
 function renderList() {
   const items = data.items;
   if (!items.length) {
@@ -94,9 +98,20 @@ function renderList() {
   }
   const today = acctDay();  // the account's calendar day, wherever the browser is (FU-C)
   const head = (label) => `<li class="ib-head" role="presentation">${label}</li>`;
-  const todays = items.filter((i) => acctDay(new Date(i.at)) === today);
-  const older = items.filter((i) => acctDay(new Date(i.at)) !== today);
-  $("ib-list").innerHTML = (todays.length ? head("Today") + todays.map(itemHtml).join("") : "") + (older.length ? head("Earlier") + older.map(itemHtml).join("") : "");
+  // Needs action with every kind: four or more waiting leads become one group after everything else (the Leads page
+  // is where they are worked; here they would bury the money alert and Claude's suggestion). Three show, the rest
+  // behind Show all; the Leads chip still lists each one.
+  const grouping = box === "need" && kind === "all" && !rule && !unreadOnly;
+  const waiting = grouping ? items.filter((i) => i.rule === "new_lead") : [];
+  const group = waiting.length >= LEADS_GROUP_FROM ? waiting : [];
+  const rest = group.length ? items.filter((i) => i.rule !== "new_lead") : items;
+  const todays = rest.filter((i) => acctDay(new Date(i.at)) === today);
+  const older = rest.filter((i) => acctDay(new Date(i.at)) !== today);
+  const open = allLeads || group.some((i) => i.key === current);
+  const leadsHtml = group.length ? `<li class="ib-head ib-leads-head" role="presentation"><span>${plural(group.length, "new lead")} waiting for a first call</span>
+      <a class="btn btn-small btn-primary" href="/leads.html?status=new">Call them</a></li>${(open ? group : group.slice(0, LEADS_GROUP_SHOWN)).map(itemHtml).join("")}
+      ${group.length > LEADS_GROUP_SHOWN ? `<li class="ib-more"><button type="button" class="link-btn" data-all-leads aria-expanded="${open}">${open ? "Show fewer" : `Show all ${group.length}`}</button></li>` : ""}` : "";
+  $("ib-list").innerHTML = (todays.length ? head("Today") + todays.map(itemHtml).join("") : "") + (older.length ? head("Earlier") + older.map(itemHtml).join("") : "") + leadsHtml;
 }
 
 function action(i) {
@@ -231,7 +246,10 @@ function followUrl() {
 }
 addEventListener("popstate", followUrl);
 addEventListener("hashchange", followUrl);
-$("ib-list").addEventListener("click", (e) => { const li = e.target.closest("[data-key]"); if (li) pick(li); });
+$("ib-list").addEventListener("click", (e) => {
+  if (e.target.closest("[data-all-leads]")) { allLeads = !allLeads; renderList(); document.querySelector("[data-all-leads]")?.focus(); return; }
+  const li = e.target.closest("[data-key]"); if (li) pick(li);
+});
 $("ib-list").addEventListener("keydown", (e) => {
   const li = e.target.closest("[data-key]");
   if (!li) return;
