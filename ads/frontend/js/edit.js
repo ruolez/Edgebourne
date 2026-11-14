@@ -636,9 +636,10 @@ export function fitMenu(details) {
 }
 
 // The More menu on a campaign or ad set page (owner and account admins): Make a paused copy, Archive…, Delete….
-export function moreMenuHtml() {
+// `first`: links shown above the menu's own actions (phones move a page's ways out in here).
+export function moreMenuHtml(first = "") {
   return `<details class="menu ed-more" id="ed-more"><summary class="btn" aria-label="More actions">${icon("dots")}More</summary>
-    <div class="menu-pop" role="menu"><button type="button" role="menuitem" id="cp-open">${icon("copy")}Make a paused copy</button>
+    <div class="menu-pop" role="menu">${first ? `${first}<span class="menu-sep" role="separator"></span>` : ""}<button type="button" role="menuitem" id="cp-open">${icon("copy")}Make a paused copy</button>
       <button type="button" role="menuitem" id="ed-archive">Archive…</button>
       <button type="button" role="menuitem" class="btn-danger-text" id="ed-delete">Delete…</button></div></details>`;
 }

@@ -51,13 +51,21 @@ function render() {
   $("en-sub").innerHTML = `${LEVEL === "adset" ? `<span class="in-where">in ${entityLink("campaign", data.campaign.id, data.campaign.name)} <span class="sep-dot">·</span> </span>` : ""}${statusCell({ ...e, level: LEVEL })} <span class="sep-dot">·</span> ${esc(data.range.label)}${esc(vsWords(data, state.vs))}`;
   const live = LIVE.includes(e.status);
   const budget = e.daily_budget_cents ? (canControl && live ? `<button type="button" class="chip" data-budget="${LEVEL}:${e.id}" data-current="${e.daily_budget_cents}" data-name="${esc(e.name)}">${money(e.daily_budget_cents, { exact: true })}/day</button>` : `<span class="chip">${money(e.daily_budget_cents, { exact: true })}/day</span>`) : "";
-  $("en-actions").innerHTML = `${budget}
-    <a class="btn" href="/leads.html?${LEVEL}=${encodeURIComponent(e.id)}" id="en-leads">${icon("leads")}Its leads</a>
-    ${LEVEL === "campaign" ? `<a class="btn" href="/performance.html?campaign=${encodeURIComponent(e.id)}&range=${encodeURIComponent(state.range)}" id="en-results">${icon("chart")}Results</a>` : ""}
+  // Its state first (on or off, its budget), as on the ad page; then what to make or change; then the ways out.
+  // On phones the ways out go into More (when there is one), so the header stays one or two rows.
+  const hasMore = me.role === "admin" && editable(e);
+  const inMenu = hasMore && narrow();
+  const way = (href, ic, label, id = "", cls = "") => (inMenu
+    ? `<a role="menuitem" href="${href}"${id ? ` id="${id}"` : ""}>${icon(ic)}${label}</a>`
+    : `<a class="btn${cls}" href="${href}"${id ? ` id="${id}"` : ""}>${icon(ic)}${label}</a>`);
+  const ways = [way(`/leads.html?${LEVEL}=${encodeURIComponent(e.id)}`, "leads", "Its leads", "en-leads"),
+    LEVEL === "campaign" ? way(`/performance.html?campaign=${encodeURIComponent(e.id)}&range=${encodeURIComponent(state.range)}`, "chart", "Results", "en-results") : "",
+    me.role === "admin" ? way(`/desk.html?ask=1&campaign=${encodeURIComponent(data.campaign.id)}`, "spark", "Ask Claude", "", " btn-claude-outline") : ""].join("");
+  $("en-actions").innerHTML = `${canControl && live ? `<span class="pk-sw">${switchHtml(e.status === "ACTIVE", `data-toggle="${LEVEL}:${e.id}" data-name="${esc(e.name)}"`, `${e.name} on or off`)} ${e.status === "ACTIVE" ? "On" : "Off"}</span>` : ""}
+    ${budget}
     ${me.role === "admin" && live ? (LEVEL === "campaign" ? `<a class="btn" href="${esc(withFrom(`/new-adset.html?campaign=${encodeURIComponent(e.id)}`))}">${icon("plus")}New ad set</a>` : `<a class="btn" href="${esc(withFrom(`/new-ad.html?adset=${encodeURIComponent(e.id)}`))}">${icon("plus")}New ad</a>`) : ""}
-    ${me.role === "admin" ? `<a class="btn btn-claude-outline" href="/desk.html?ask=1&campaign=${encodeURIComponent(data.campaign.id)}">${icon("spark")}Ask Claude</a>` : ""}
-    ${me.role === "admin" && editable(e) ? `<button type="button" class="btn" id="ed-open">Edit</button>${moreMenuHtml()}` : ""}
-    ${canControl && live ? `<span class="pk-sw">${switchHtml(e.status === "ACTIVE", `data-toggle="${LEVEL}:${e.id}" data-name="${esc(e.name)}"`, `${e.name} on or off`)} ${e.status === "ACTIVE" ? "On" : "Off"}</span>` : ""}`;
+    ${inMenu ? "" : ways}
+    ${hasMore ? `<button type="button" class="btn" id="ed-open">Edit</button>${moreMenuHtml(inMenu ? ways : "")}` : ""}`;
   const tabs = [...(LEVEL === "campaign" ? [["adsets", "Ad sets", rows.adset.length]] : []), ["ads", "Ads", rows.ad.length], ["history", "History", data.timeline.length]];
   const list = children();
   const body = state.tab === "history"

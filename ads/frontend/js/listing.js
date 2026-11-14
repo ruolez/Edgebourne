@@ -98,19 +98,23 @@ function toolbar() {
   const mine = saved.map((v) => `<span class="sv"><button type="button" class="view-chip" data-saved="${v.id}" aria-pressed="${location.search.replace(/^\?/, "") === v.query}">${esc(v.name)}</button>${v.mine ? `<button type="button" class="sv-x" data-unsave="${v.id}" aria-label="Remove the view ${esc(v.name)}">×</button>` : ""}</span>`).join("");
   const camps = rows.campaign || [];
   if (moreTools === null) moreTools = Boolean(state.campaign || state.archived || state.sort !== "spend" || state.dir !== "desc");
-  return `<div class="cr-toolbar">
+  // Row one: what to show (the level, then its views). Row two: find and narrow it, then dates and columns.
+  return `<div class="cr-toolbar tb-rows">
+    <div class="segmented" id="level" role="group" aria-label="Level">${[["ad", "Ads"], ["adset", "Ad sets"], ["campaign", "Campaigns"]].map(([k, l]) =>
+      `<button type="button" data-level="${k}" aria-pressed="${k === state.level}">${l}</button>`).join("")}</div>
     <div class="views" role="group" aria-label="Show">${views}${mine}<button type="button" class="view-chip add" id="save-view">${icon("plus")}Save view</button></div>
-    <span class="spacer"></span>
+    <span class="tb-break" aria-hidden="true"></span>
+    <label class="tool-search">${icon("search")}<input class="input" id="cr-search" type="search" placeholder="Filter by name" value="${esc(state.q)}" aria-label="Filter by name"></label>
     <button type="button" class="btn tb-toggle" id="tb-toggle" aria-expanded="${moreTools}" aria-controls="tb-more">Dates, sort, filters${state.campaign || state.archived ? `<span class="n">${[state.campaign, state.archived].filter(Boolean).length} on</span>` : ""}</button>
     <div class="tb-more${moreTools ? " open" : ""}" id="tb-more">
     ${camps.length > 1 ? `<select class="input tool" id="camp-pick" aria-label="Campaign"><option value="">All campaigns</option>${camps.map((c) => `<option value="${esc(c.id)}" ${c.id === state.campaign ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>` : ""}
+    <span class="spacer"></span>
     ${rangeSelect("range-pick", state.range)}
     ${narrow() && !(state.level === "ad" && state.display === "cards") ? sortPick() : ""}
     <button type="button" class="view-chip" id="vs" aria-pressed="${state.vs}" title="${MONTHS.includes(state.range) ? "Compare with the same days of the month before" : "Compare with the same number of days just before"}">vs before</button>
     ${state.display === "table" ? `<select class="input tool" id="cols-pick" aria-label="Columns">${Object.entries(COLUMN_SETS).map(([k, [l]]) => `<option value="${k}" ${k === state.cols ? "selected" : ""}>Columns: ${l}</option>`).join("")}</select>` : ""}
     ${data.archived ? `<button type="button" class="view-chip" id="archived" aria-pressed="${state.archived}">${state.archived ? "Hide" : "Show"} archived <span class="n">${data.archived}</span></button>` : ""}
     </div>
-    <label class="tool-search">${icon("search")}<input class="input" id="cr-search" type="search" placeholder="Filter by name" value="${esc(state.q)}" aria-label="Filter by name"></label>
     ${state.level === "ad" ? `<div class="segmented icon-seg" role="group" aria-label="Display">
       <button type="button" data-display="table" aria-pressed="${state.display === "table"}" title="Table">${icon("table")}<span class="sr-only">Table</span></button>
       <button type="button" data-display="cards" aria-pressed="${state.display === "cards"}" title="Cards">${icon("grid")}<span class="sr-only">Cards</span></button></div>` : ""}
@@ -234,8 +238,8 @@ if (me) {
   $("new-ad").innerHTML = `${icon("plus")}<span>New ad</span>`;
   $("new-menu").hidden = me.role !== "admin";
   $("new-ad").hidden = me.role === "admin";
-  $("level").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-level]");
+  $("cr-all").addEventListener("click", (e) => {
+    const b = e.target.closest("#level [data-level]");
     if (!b || b.dataset.level === state.level) return;
     selected.clear(); dropPeek();
     set({ level: b.dataset.level, sort: "spend", dir: "desc", display: b.dataset.level === "ad" ? state.display : "table", peek: "",

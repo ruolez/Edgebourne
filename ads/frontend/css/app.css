@@ -2053,6 +2053,9 @@ dialog.ed-panel details.ed-sec > summary::before { content: none; }
 .ed-more .menu-pop button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 0; border-radius: var(--radius-s); background: none;
   color: var(--ink); font: inherit; font-size: var(--t-s); text-align: left; cursor: pointer; }
 .ed-more .menu-pop button.btn-danger-text { color: var(--bad-ink); }
+.ed-more .menu-pop a { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--radius-s); color: var(--ink); text-decoration: none; font-weight: 500; font-size: var(--t-s); }
+.ed-more .menu-pop a:hover, .ed-more .menu-pop a:focus-visible { background: var(--surface-2); }
+.ed-more .menu-sep { display: block; height: 1px; margin: 4px 6px; background: var(--line); }
 .ed-more .menu-pop button:hover, .ed-more .menu-pop button:focus-visible { background: var(--surface-2); }
 .ed-more .menu-pop svg { width: 16px; height: 16px; }
 .ed-more > summary { cursor: pointer; }
@@ -2082,7 +2085,7 @@ dialog.cp-dialog h2 { margin: 0; overflow-wrap: anywhere; }
   .ed-foot .btn { flex: 1; min-height: var(--target); justify-content: center; }
   .ed-chip .btn { min-width: var(--target); min-height: var(--target); justify-content: center; }
   .ed-checks .check, .cp-list .check { min-height: var(--target); align-items: center; }
-  .ed-more .menu-pop button { min-height: var(--target); }
+  .ed-more .menu-pop button, .ed-more .menu-pop a { min-height: var(--target); }
   .ed-more .menu-pop { max-width: calc(100vw - 32px); }
   #en-actions .ed-more > summary { min-height: var(--target); }
   dialog.cp-dialog .row.end .btn { min-height: var(--target); }

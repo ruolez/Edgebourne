@@ -57,13 +57,10 @@ function renderHead() {
   const can = ad.can_control;
   $("cr-actions").innerHTML = `
     ${can && ["ACTIVE", "PAUSED"].includes(ad.status) ? `<span class="switch-label">${ad.status === "ACTIVE" ? "On" : "Off"}</span>${switchHtml(ad.status === "ACTIVE", `data-toggle="ad:${ad.id}" data-name="${esc(ad.name)}"`, "Ad on or off")}` : ""}
-    ${can ? `<button class="btn" type="button" id="dup">${icon("copy")}<span>Duplicate</span></button>` : ""}
     <a class="btn" href="/leads.html?ad=${encodeURIComponent(ad.id)}" id="cr-leads">${icon("leads")}<span>Its leads</span></a>
     <a class="btn" href="/compare.html?ids=${encodeURIComponent(ad.id)}">${icon("compare")}<span>Compare</span></a>
-    ${can ? `<a class="btn" href="${esc(withFrom(`/new-ad.html?template=${encodeURIComponent(ad.id)}`))}">${icon("plus")}<span>New ad from this</span></a>` : ""}
-    ${can ? `<button class="btn btn-claude" type="button" data-goto="polish">${icon("spark")}<span>Polish</span></button>` : ""}
-    ${me.role === "admin" && !["ACTIVE", "ARCHIVED", "DELETED"].includes(ad.status) ? '<button class="btn" type="button" id="archive">Archive</button>' : ""}
-    ${me.role === "admin" && !["ACTIVE", "DELETED"].includes(ad.status) ? '<button class="btn btn-danger-text" type="button" id="delete">Delete</button>' : ""}`;
+    ${can ? `<button class="btn btn-claude" type="button" data-goto="polish" ${tab === "polish" ? "hidden" : ""}>${icon("spark")}<span>Polish</span></button>` : ""}
+    ${moreMenu(ad, can)}`;
   // Clients look, they don't ask Claude for changes: no Polish tab for them.
   const tabs = TABS.filter(([id]) => (id !== "video" || ad.object_type === "VIDEO") && (id !== "polish" || ad.can_control));
   $("cr-tabs").innerHTML = tabs.map(([id, l]) => `<button type="button" role="tab" data-tab="${id}" aria-selected="${id === tab}">${esc(l)}${id === "comments" && data.comment_total ? ` <span class="n">${data.comment_total}</span>` : ""}</button>`).join("");
@@ -75,8 +72,23 @@ window.addEventListener("hashchange", () => {
   if (asked && asked !== tab && document.querySelector(`#cr-tabs [data-tab="${CSS.escape(asked)}"]`)) showTab(asked);
 });
 
+// More: the two ways to copy the ad, then Archive and Delete (admins, when the ad is off). The same menu as on
+// campaign and ad set pages; it closes once something in it is picked.
+function moreMenu(ad, can) {
+  const items = [
+    can ? `<button type="button" role="menuitem" id="dup">${icon("copy")}Exact copy, switched off</button>` : "",
+    can ? `<a role="menuitem" href="${esc(withFrom(`/new-ad.html?template=${encodeURIComponent(ad.id)}`))}">${icon("plus")}New ad starting from this</a>` : "",
+    me.role === "admin" && !["ACTIVE", "ARCHIVED", "DELETED"].includes(ad.status) ? '<button type="button" role="menuitem" id="archive">Archive…</button>' : "",
+    me.role === "admin" && !["ACTIVE", "DELETED"].includes(ad.status) ? '<button type="button" role="menuitem" class="btn-danger-text" id="delete">Delete…</button>' : "",
+  ].filter(Boolean);
+  return items.length ? `<details class="menu ed-more" id="cr-more"><summary class="btn" aria-label="More actions">${icon("dots")}More</summary><div class="menu-pop" role="menu">${items.join("")}</div></details>` : "";
+}
+document.addEventListener("click", (e) => { if (e.target.closest("#cr-more .menu-pop [role=menuitem]")) document.getElementById("cr-more")?.removeAttribute("open"); });
+
 function showTab(next) {
   tab = next;
+  // The header's Polish button is a way to the Polish tab: on that tab it has nothing to do.
+  document.querySelector('#cr-actions [data-goto="polish"]')?.toggleAttribute("hidden", tab === "polish");
   history.replaceState(null, "", `${location.pathname}${location.search}#tab=${tab}`);
   document.querySelectorAll("#cr-tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
   clearTimeout(pollTimer);
@@ -788,21 +800,27 @@ document.addEventListener("submit", async (e) => {
 
 // One timeline (the same one as the Campaign and Ad set pages), filtered by who it came from; each line links to
 // what it is about. Claude's decided suggestions keep their full cards below it.
-const HISTORY_SHOW = [["all", "Everything"], ["meta", "From Meta"], ["console", "Made here"], ["claude", "Claude"]];
+// "own": what happened to this ad itself, without its ad set's and campaign's changes (those carry `on`).
+const HISTORY_SHOW = [["all", "Everything"], ["own", "This ad only"], ["meta", "From Meta"], ["console", "Made here"], ["claude", "Claude"]];
+const HISTORY_FIRST = 20;
+let historyAll = false;
+const historyHas = (i, k) => k === "all" || (k === "own" ? !i.on : i.source === k);
 
 function renderHistory() {
   const decided = data.proposals.filter((p) => p.status !== "pending");
   const items = data.history || [];
-  const n = (k) => (k === "all" ? items.length : items.filter((i) => i.source === k).length);
-  const shown = (data.ad.can_control ? HISTORY_SHOW : HISTORY_SHOW.filter(([k]) => k !== "claude")).filter(([k]) => k === "all" || n(k));
+  const n = (k) => items.filter((i) => historyHas(i, k)).length;
+  const shown = (data.ad.can_control ? HISTORY_SHOW : HISTORY_SHOW.filter(([k]) => k !== "claude")).filter(([k]) => k === "all" || (n(k) && (k !== "own" || n(k) < items.length)));
   if (!shown.some(([k]) => k === historyShow)) historyShow = "all";
-  const list = items.filter((i) => historyShow === "all" || i.source === historyShow);
+  const every = items.filter((i) => historyHas(i, historyShow));
+  const list = historyAll ? every : every.slice(0, HISTORY_FIRST);
   $("cr-main").innerHTML = `
     <section class="panel" aria-labelledby="hist-h">
       <div class="panel-head wrap"><h2 id="hist-h">What happened</h2><p>Meta's review and delivery, changes made here${data.ad.can_control ? ", and Claude's suggestions" : ""}, newest first</p></div>
       <div class="panel-body stack tight">
         ${shown.length > 2 ? `<div class="filters" role="group" aria-label="Show" id="hist-show">${shown.map(([k, l]) => `<button type="button" class="view-chip" data-show="${k}" aria-pressed="${k === historyShow}">${l}<span>${n(k)}</span></button>`).join("")}</div>` : ""}
         ${list.length ? timelineHtml(list, { cards: true }) : emptyState({ title: "Nothing recorded yet", body: "Meta's review and delivery changes show here from the next refresh, with every change made from this console.", panel: false, variant: "compact" })}
+        ${every.length > list.length ? `<p class="flush"><button type="button" class="link-btn" data-history-all>Show all ${every.length} entries</button></p>` : ""}
       </div></section>
     ${decided.length ? `<section class="panel" id="hist-cards"><div class="panel-head"><h2>Claude's earlier suggestions</h2><p>What each one would have changed, and what became of it</p></div><div class="panel-body stack tight">${decided.map((p) => proposalCard(p, null, adIndex())).join("")}</div></section>` : ""}`;
 }
@@ -841,6 +859,7 @@ if (me) {
   document.addEventListener("click", async (e) => {
     const t = e.target.closest("#cr-tabs [data-tab]");
     if (t) { showTab(t.dataset.tab); return; }
+    if (e.target.closest("[data-history-all]")) { historyAll = true; renderHistory(); return; }
     const g = e.target.closest("[data-goto]");
     if (g) { showTab(g.dataset.goto); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     const f = e.target.closest("#formats button[data-format]");

@@ -82,7 +82,9 @@ export function href(r) {
 }
 
 function nameCell(r) {
-  const sub = r.level === "ad" ? r.adset?.name : r.level === "adset" ? r.campaign?.name : r.objective ? r.objective.replace("OUTCOME_", "").toLowerCase() : "Campaign";
+  // An ad names its ad set, an ad set its campaign. A campaign has nothing above it (its objective, "leads" on every
+  // row, said nothing), so its row stays short.
+  const sub = r.level === "ad" ? r.adset?.name : r.level === "adset" ? r.campaign?.name : "";
   const tags = `${isTest(r) ? '<span class="mini-tag">Test</span>' : ""}${r.pending_proposals ? `<span class="mini-tag claude" title="Claude has a suggestion for this">${icon("spark")}</span>` : ""}`;
   return `<span class="tbl-name">${r.level === "ad" ? thumb(r) : ""}<span><span class="tbl-l1"><a href="${href(r)}" class="tbl-link">${esc(r.name)}</a>${tags}</span><small>${esc(sub || "")}</small></span></span>`;
 }
