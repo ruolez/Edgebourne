@@ -1747,7 +1747,8 @@ a.chip.campaign-add:hover { border-color: var(--ink-3); }
 .status-hooks #sw-status{display:inline-flex;align-items:center;gap:10px}
 
 /* Versions of one ad (Overview) */
-.ver-tbl th, .ver-tbl td { padding-left: 8px; padding-right: 8px; }
+/* .tbl.ver-tbl: shell.css's .tbl cells come later with the same weight, so this needs both classes to win. */
+.tbl.ver-tbl th, .tbl.ver-tbl td { padding-left: 8px; padding-right: 8px; }
 .ver-tbl td.ver-name { white-space: normal; min-width: 130px; padding-top: 8px; padding-bottom: 8px; }
 .ver-tbl .ver-name b { display: block; font-weight: 600; }
 .ver-tbl .ver-name small { display: block; color: var(--ink-3); font-size: var(--t-xs); margin-bottom: 6px; }
