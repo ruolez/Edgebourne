@@ -749,7 +749,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   // Alerts: rules in Settings; a rejected ad raises one alert (Telegram + Today), not twice, and it clears by itself.
   await openSettings('alerts');
   await page.waitForSelector('#al-rules li');
-  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 26);  // AM-E added Meta's unusual changes and error messages
+  check('Settings lists the alert rules under their five headings', (await page.locator('#al-rules li:not(.al-group)').count()) === 26 && (await page.locator('#al-rules li.al-group').count()) === 5);  // AM-E added Meta's unusual changes and error messages
   check('W1b: Settings lists the two lead-quality rules, on by default, with their numbers and what junk means',
     /Few leads qualify/.test(await page.textContent('#al-rules')) && /counting only leads someone has worked \(past New, or Lost\)/.test(await page.textContent('#al-rules')) && /Many leads look like junk/.test(await page.textContent('#al-rules'))
     && await page.isChecked('[data-rule="qualified_low"][data-key="on"]') && await page.isChecked('[data-rule="junk_high"][data-key="on"]')
@@ -2468,8 +2468,15 @@ for email, role, acct in (('acctadmin-qa@edgebourne.test', 'admin', 1), ('client
       return p;
     };
     const ap = await signIn('acctadmin-qa@edgebourne.test');
+    // A whole-console page isn't an account admin's to open: the address lands on the overview, which doesn't list it.
     await ap.goto(BASE + '/settings.html#accounts-panel');
+    await ap.waitForSelector('#overview[data-section]:not([hidden]) .ov-row');
+    const apOv = await ap.evaluate(() => ({ rows: [...document.querySelectorAll('#ov-groups .ov-row')].map((a) => a.dataset.ov).join(), list: [...document.querySelectorAll('.settings-nav [data-set]')].map((a) => a.dataset.set).join() }));
+    check("an admin of one account sees Settings without the whole console's pages (Accounts, Email and Telegram), in the overview and in the list",
+      apOv.rows === 'targets,alerts,prefs,replies,lead-quality,crm,team,reports-panel,meta,am-link,tracking,activity-panel' && apOv.list === `overview,${apOv.rows}`, JSON.stringify(apOv));
+    await ap.goto(BASE + '/settings.html#meta-app');
     await ap.waitForSelector('#meta[data-section]:not([hidden])');
+    check("for them Settings › Meta is this account's connection only, without the shared app", await ap.isHidden('#meta-app') && (await ap.getAttribute('.settings-nav [aria-current="page"]', 'data-set')) === 'meta');
     const apReach = await call('GET', '/api/accounts/reachable', undefined, ap);
     await ap.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
     await ap.waitForSelector('dialog.palette[open]');
