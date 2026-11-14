@@ -696,7 +696,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   // Alerts: rules in Settings; a rejected ad raises one alert (Telegram + Today), not twice, and it clears by itself.
   await openSettings('alerts');
   await page.waitForSelector('#al-rules li');
-  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 21);
+  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 22);
   check('W1b: Settings lists the two lead-quality rules, on by default, with their numbers and what junk means',
     /Few leads qualify/.test(await page.textContent('#al-rules')) && /counting only leads someone has worked \(past New, or Lost\)/.test(await page.textContent('#al-rules')) && /Many leads look like junk/.test(await page.textContent('#al-rules'))
     && await page.isChecked('[data-rule="qualified_low"][data-key="on"]') && await page.isChecked('[data-rule="junk_high"][data-key="on"]')
@@ -2204,14 +2204,18 @@ print(a[0][1] if a else '-', b[0][1] if b else '-')"`).trim();
     leak.client_writes_not_refused.slice(0, 4).join(' | '));
   check('each account still sees its own data', leak.admin_sees_account2_on_account2 && leak.client_sees_own_leads);
   // The walk only finds a leak where the other account has a marked row: each screen must show its own account's marks.
-  const markShown = { 'admin on account 1': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers'],
-    'admin on account 2, own ids': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/timeline/<level>/<entity_id>',
+  const markShown = { 'admin on account 1': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/am-link'],
+    'admin on account 2, own ids': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/am-link', '/api/timeline/<level>/<entity_id>',
       '/api/proposals/<int:proposal_id>', '/api/leads/<int:lead_id>', '/api/ads/ad/<ad_id>/tags', '/api/experiments/<int:exp_id>', '/api/builds/<int:build_id>'] };
   const unmarked = Object.entries(markShown).flatMap(([who, routes]) => routes.filter((r) => !(leak.routes_showing_own_mark[who] || []).includes(r)).map((r) => `${who}: ${r}`));
   check('the leak walk has marked rows to find in Inbox, Claude, saved views, builds, History and the timeline', unmarked.length === 0, unmarked.join(' | '));
   check('FU-D: a Claude preview is read only in its own account; clients, teammates and account admins can\'t turn full access on',
     JSON.stringify(leak.full_access) === JSON.stringify({ switched_owner_reads_account1: 404, account2_admin_reads_account1: 404, account2_admin_reads_own: 200, client_reads_own: 403,
       member_reads_own: 403, client_turns_on: 403, account2_admin_turns_on: 403, desk_lists_account1_preview: false }), JSON.stringify(leak.full_access));
+  check('AM-A: the Ads Manager link\'s connection is the owner\'s: an account admin sees their account without the Facebook name or the Mac, can\'t connect or switch reading on; teammates and clients get 403',
+    JSON.stringify(leak.am_link) === JSON.stringify({ account2_admin_status: 200, account2_admin_sees_connected_as: false, account2_admin_sees_the_mac: false,
+      account2_admin_connect: 403, account2_admin_turns_on: 403, member: 403, client: 403, client_check: 403 }),
+    JSON.stringify(leak.am_link));
   check('every table that holds account data is limited to its account by the database (row-level security)',
     leak.tables_without_isolation.length === 0 && leak.app_role_bypasses_rls === false && leak.isolated_tables >= 28, `${leak.isolated_tables} tables; missing: ${leak.tables_without_isolation.join()}`);
   await page.goto(BASE + '/ads.html');
@@ -4395,11 +4399,16 @@ db.execute('UPDATE ads SET effective_status = %s WHERE id = %s', ('DISAPPROVED',
 db.execute('DELETE FROM ad_daily WHERE ad_id IN (%s, %s)', ('qa-gal-copy', 'qa-gal-pic'))
 db.execute('DELETE FROM ads WHERE id IN (%s, %s)', ('qa-gal-copy', 'qa-gal-pic'))`);
     // Top: the judged cards cheapest first, then the rest by spend.
-    const top = (await gal()).groups;
+    const topAll = await gal();
+    const top = topAll.groups;
     const judged = top.filter((x) => x.enough);
-    check('Gallery Top: judged cards first, cheapest cost per lead first; deleted cards only under Deleted',
+    // FU-C: cards show cost per lead through today so far but are ordered on complete days: compare the order with the
+    // same dates through yesterday (late in the day today's spend can reorder the live figures).
+    const settledCpl = Object.fromEntries((await getJson(`/api/gallery?range=custom&start=${topAll.range.start}&end=${topAll.judged_through}`)).groups.map((x) => [x.key, x.cpl_cents]));
+    check('Gallery Top: judged cards first, cheapest cost per lead first (on complete days); deleted cards only under Deleted',
       judged.length > 0 && top.slice(0, judged.length).every((x) => x.enough)
-      && judged.every((x, i) => i === 0 || judged[i - 1].cpl_cents <= x.cpl_cents) && top.every((x) => x.bucket !== 'deleted'), top.map((x) => `${x.name}:${x.enough}:${x.cpl_cents}`).join(' | '));
+      && judged.every((x, i) => i === 0 || settledCpl[judged[i - 1].key] <= settledCpl[x.key]) && top.every((x) => x.bucket !== 'deleted'),
+      top.map((x) => `${x.name}:${x.enough}:${x.cpl_cents}:${settledCpl[x.key]}`).join(' | '));
     const launched = await gal('&view=launched');
     const weekAgo = new Date(Date.now() - 8 * 86400000).toISOString().slice(0, 10);
     check('Gallery Just launched: only cards that started in the last 7 days, newest first, and its chip counts them',
@@ -5505,7 +5514,7 @@ db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users
       await sp.goto(BASE + '/settings.html#alerts');
       await sp.waitForSelector('#al-rules input[data-key="on"]');
       const widths = await sp.evaluate(() => [...document.querySelectorAll('#al-rules input[data-key="on"]')].map((i) => Math.round(i.getBoundingClientRect().width)));
-      check('Settings → Alerts on a phone: every rule\'s tick box is 18px wide', widths.length === 21 && widths.every((w) => w === 18), JSON.stringify(widths));
+      check('Settings → Alerts on a phone: every rule\'s tick box is 18px wide', widths.length === 22 && widths.every((w) => w === 18), JSON.stringify(widths));
       await sp.context().close();
     }
     // Gone again: without those leads both alerts close by themselves at the next check.
@@ -7810,6 +7819,307 @@ print(json.dumps(out))
     dropTasks();
     // The refusals above log their 400 / 403 / 429 on purpose.
     for (let i = errors.length - 1; i >= fudSeen; i--) if (/status of (400|403|429)/.test(errors[i])) errors.splice(i, 1);
+  }
+
+  // AM-A: the Ads Manager link. The Mac's own MCP client (ads/bridge/amlink.py) runs in the fake-meta container against
+  // the fake MCP server (dev/fake_mcp.py) and the console; the user's Keychain is never touched (token in a file, key in env).
+  {
+    const amSeen = errors.length;
+    const py = (code) => require('child_process').execSync('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', { input: code }).toString();
+    const sql = (q) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "${q}"`).trim();
+    const fakeGet = (path) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001${path}').read().decode())"`));
+    const mcp = (q) => fakeGet(`/fake/_mcp?${q}`);
+    const ENV = '-e ADS_DESK_CONFIG=/tmp/qa-link/config.json -e ADS_DESK_KEY=qa-link-mac -e ADS_LINK_MCP=http://localhost:5001/mcp-fake/mcp -e ADS_LINK_TOKEN_FILE=/tmp/qa-link/token.json -e ADS_LINK_OPEN=fetch';
+    const linkOnce = () => sh(`docker exec ${ENV} edgebourne-fake-meta python3 /bridge/amlink.py --once`).trim();
+    const lastJson = (out) => JSON.parse(out.split('\n').pop());
+    // The Mac's key on the console's agent routes, from the fake-meta container (any header can be added).
+    const agent = (method, path, body, headers = {}) => JSON.parse(require('child_process').execSync(`docker exec -i edgebourne-fake-meta python3 -`, { input: `import json, urllib.request, urllib.error
+req = urllib.request.Request('http://ads-backend:5000${path}', data=${body === undefined ? 'None' : `json.dumps(${JSON.stringify(body)}).encode()`}, method='${method}',
+    headers={'Authorization': 'Bearer qa-link-mac', 'Content-Type': 'application/json', 'X-Bridge-Version': '3.1', **${JSON.stringify(headers)}})
+try:
+    r = urllib.request.urlopen(req, timeout=40); print(json.dumps({'status': r.status, 'body': json.loads(r.read() or b'null')}))
+except urllib.error.HTTPError as e:
+    print(json.dumps({'status': e.code, 'body': json.loads(e.read() or b'null')}))
+` }).toString().trim().split('\n').pop());
+    const call = (method, url, body, p = page) => p.evaluate(async ([m, u, b]) => {
+      const r = await fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b === undefined ? undefined : JSON.stringify(b) });
+      let j = null; try { j = await r.json(); } catch (e) { /* not JSON */ }
+      return { status: r.status, body: j };
+    }, [method, url, body]);
+    const force = (acct) => sql(`INSERT INTO settings (key, value) VALUES ('am_link_force${acct === 1 ? '' : '@' + acct}', '1') ON CONFLICT (key) DO UPDATE SET value = '1'`);
+    const snap = (acct, kind) => sql(`SELECT COALESCE(to_char(fetched_at, 'YYYY-MM-DD HH24:MI:SS.US'), '') || '|' || via FROM am_snapshots WHERE account_id = ${acct} AND kind = '${kind}' AND scope = ''`);
+    // The second account is the leak test's "Burdanova QA" (its id differs per database).
+    const A2 = Number(sql("SELECT id FROM accounts WHERE name = 'Burdanova QA' ORDER BY id LIMIT 1"));
+    const KEPT = `('agent_key_hash', 'bridge_version', 'bridge_last_seen', 'bridge_host', 'meta_ad_account_id@${A2}')`;
+    const saved = JSON.parse(sql(`SELECT COALESCE(json_object_agg(key, value), '{}') FROM settings WHERE key IN ${KEPT}`));
+    // Account 2 reads "Tokyo Test KK" for the block: the fake lists it but holds no campaigns, so a worker sync meanwhile
+    // imports nothing; any account-2 setting that sync writes goes again afterwards.
+    const keys2 = sql(`SELECT COALESCE(string_agg(quote_literal(key), ','), '''''') FROM settings WHERE key LIKE '%@${A2}'`);
+    const closed2 = sql(`SELECT COALESCE(archived_at::text, '') FROM accounts WHERE id = ${A2}`);  // open for the block, as it was after
+    sql(`UPDATE accounts SET archived_at = NULL WHERE id = ${A2}`);
+    const resetLink = () => sql("UPDATE am_link SET state = 'not_connected', client_kind = NULL, connected_as = NULL, connected_at = NULL, last_ok_at = NULL, last_error = NULL, fallback_reason = NULL, connect_requested_at = NULL, use_app = FALSE WHERE id = 1; DELETE FROM am_link_runs WHERE pass_hash NOT LIKE 'ACCT%'; DELETE FROM am_snapshots WHERE scope = ''; DELETE FROM alerts WHERE rule = 'link_down'; DELETE FROM settings WHERE key ~ '^am_link_(force|checked_at|no_access|on)(@[0-9]+)?$'");
+    resetLink();
+    py(`import time, desk_api, settings_store
+settings_store.set('agent_key_hash', desk_api.key_hash('qa-link-mac'))
+settings_store.set('bridge_last_seen', str(time.time()))
+settings_store.set('bridge_version', '3.1')
+settings_store.set('meta_ad_account_id', '4445556667778889', account_id=${A2})`);
+    mcp('reset=1');
+    sh(`docker exec edgebourne-fake-meta sh -c 'rm -rf /tmp/qa-link && mkdir -p /tmp/qa-link/ws/reports/desk/tmp/link && printf %s "{\\"base_url\\": \\"http://ads-backend:5000\\", \\"workdir\\": \\"/tmp/qa-link/ws\\", \\"claude\\": \\"/bin/false\\"}" > /tmp/qa-link/config.json'`);
+    const openLink = async (p = page) => { await p.goto(`${BASE}/settings.html#am-link`); await p.reload(); await p.waitForSelector('#am-link:not([hidden]) #am-acct'); };
+    const pillText = () => page.textContent('#am-state');
+
+    // 0. A Mac helper too old for the link: Connect is off and refused (409), so nobody waits for a Mac that can't answer.
+    py(`import settings_store
+settings_store.set('bridge_version', '3.0')`);
+    await openLink();
+    const oldHelper = { disabled: await page.$eval('#am-connect', (b) => b.disabled), note: await page.isVisible('#am-helper'), post: await call('POST', '/api/am-link/connect', {}) };
+    check('AM-A: with a Mac helper older than 3.1, Connect is greyed out with "Update the Mac helper first" and refused (409) (refusal)',
+      oldHelper.disabled && oldHelper.note && oldHelper.post.status === 409 && /Update the Mac helper first/.test(oldHelper.post.body.error) && sql('SELECT state FROM am_link') === 'not_connected',
+      JSON.stringify(oldHelper));
+    py(`import settings_store
+settings_store.set('bridge_version', '3.1')`);
+    // 1. Not connected: the section says so and offers Connect.
+    await openLink();
+    check('AM-A: Settings → Ads Manager link starts "Not connected" with Connect, and says it only reads',
+      /Not connected/.test(await pillText()) && (await page.textContent('#am-connect')).trim() === 'Connect' && /never changes anything in your ads/.test(await page.textContent('#am-body')));
+    // Cancel while waiting for the Mac: straight back to "Not connected" (nothing on the Mac to remove yet).
+    await page.click('#am-connect');
+    await page.waitForFunction(() => /Waiting for your Mac/.test(document.getElementById('am-state').textContent));
+    await page.click('#am-cancel');
+    await page.waitForFunction(() => /Not connected/.test(document.getElementById('am-state').textContent));
+    check('AM-A: Cancel while waiting for the Mac goes straight back to "Not connected" with Connect on',
+      sql('SELECT state FROM am_link') === 'not_connected' && !(await page.$eval('#am-connect', (b) => b.disabled)) && !(await page.$('#am-cancel')));
+    // 2. Connect → "Waiting for your Mac…"; the Mac's helper registers itself, signs in with PKCE and keeps the token.
+    await page.click('#am-connect');
+    await page.waitForFunction(() => /Waiting for your Mac/.test(document.getElementById('am-state').textContent));
+    const plan0 = lastJson(linkOnce());
+    await page.waitForFunction(() => /Connected as Eugene \(fake\)/.test(document.getElementById('am-line')?.textContent || ''), null, { timeout: 10000 });
+    const hits0 = fakeGet('/fake/_mcp_hits');
+    const tokReq = hits0.token_requests.find((t) => t.grant_type === 'authorization_code') || {};
+    const authz = hits0.hits.find((h) => h.method === 'oauth/authorize') || {};
+    check('AM-A: Connect → the Mac registers its own client, signs in (code_verifier and resource sent) and the page says "Connected as Eugene (fake)"',
+      plan0.plan.connect && hits0.hits.some((h) => h.method === 'oauth/register') && tokReq.code_verifier === true && /\/mcp-fake\/mcp$/.test(tokReq.resource)
+      && tokReq.redirect_uri === 'http://127.0.0.1:47615/callback' && sql('SELECT client_kind FROM am_link') === 'dcr', JSON.stringify({ plan: plan0.plan, tokReq }));
+    check('AM-A: the login asks Meta only for reading (scope "ads_read") and Settings shows what Meta allowed',
+      authz.scope === 'ads_read' && sql('SELECT scope FROM am_link') === 'ads_read' && /Meta allowed: ads_read/.test(await page.textContent('#am-scope')), JSON.stringify(authz));
+    const deskBridge = (await call('GET', '/api/desk')).body.bridge || {};
+    await page.goto(`${BASE}/desk.html`);
+    await page.click('#mac-open');
+    await page.waitForSelector('#mac-link-words');
+    check('AM-A: the Claude page\'s Mac dialog says how the Ads Manager link stands, with a way to Settings',
+      deskBridge.link_words === 'Connected' && /^Connected · Settings$/.test((await page.textContent('#mac-link-words')).trim()), JSON.stringify(deskBridge.link_words));
+    await page.click('#mac-close');
+    // 3. The first pass: every stored kind for account 1, read tools only. Account 2 has an ad account but the owner
+    // hasn't approved it for his Facebook login yet, so it isn't read.
+    fakeGet('/fake/_mcp_hits?clear=1');
+    const pass1 = lastJson(linkOnce());
+    const byAcct = Object.fromEntries(pass1.runs.map((r) => [r.account_id, r]));
+    const hits1 = fakeGet('/fake/_mcp_hits');
+    const LINK = ['ads_get_ad_accounts', 'ads_get_ad_entities', 'ads_get_errors', 'ads_insights_industry_benchmark', 'ads_insights_performance_vs_peers', 'ads_insights_auction_ranking_benchmarks',
+      'ads_insights_anomaly_signal', 'ads_insights_performance_trend', 'ads_get_dataset_quality', 'ads_insights_advertiser_context', 'ads_get_ad_preview_screenshot'];
+    const toolsCalled = [...new Set(hits1.hits.filter((h) => h.tool).map((h) => h.tool))];
+    check('AM-A: a pass for the owner\'s account bound to its ad account, none for an account the owner hasn\'t approved; only the link\'s read tools are called and no write ever',
+      byAcct[1] && byAcct[1].ad_account_id === '1025971549903293' && !byAcct[A2] && byAcct[1].kinds.length === 8
+      && toolsCalled.every((t) => LINK.includes(t)) && hits1.write_calls === 0 && sql("SELECT count(*) FROM am_snapshots WHERE account_id = 1 AND scope = ''") === '8',
+      JSON.stringify({ runs: pass1.runs, toolsCalled, writes: hits1.write_calls }));
+    await openLink();
+    const lastCells = await page.$$eval('#am-kinds .am-last', (els) => els.map((e) => e.textContent.trim()));
+    check('AM-A: Settings shows when each group was read and the source line "From Ads Manager via your Mac"',
+      lastCells.length === 2 && lastCells.every((t) => t && !/not read yet/.test(t)) && /^From Ads Manager via your Mac, (just now|\d+ min ago)$/.test((await page.textContent('#am-source')).trim()),
+      JSON.stringify({ lastCells, src: await page.textContent('#am-source') }));
+    // The Monday benchmarks push without a desk run's pass is refused once the link reads them (refusal).
+    const bench = agent('POST', '/api/agent/benchmarks', { items: [{ label: 'Cost per lead', ours: '$1', peers: '$2' }] });
+    check('AM-A: with the link connected, benchmarks pushed by the Mac\'s key alone are refused (409; only a desk run inside its request may) (refusal)',
+      bench.status === 409, JSON.stringify(bench));
+    // 4. The owner approves account 2's ad account. Its push lands in account 2 whatever X-Account says; its pass with
+    // account 1's ad account is refused.
+    py(`import settings_store
+settings_store.set('am_link_on', '4445556667778889', account_id=${A2})`);
+    force(A2);
+    const plan2 = agent('GET', '/api/agent/link/plan?timeout=0').body;
+    const run2 = plan2.runs.find((r) => r.account_id === A2) || {};
+    check('AM-A: once the owner approves account 2\'s ad account, its pass is bound to that ad account', run2.ad_account_id === '4445556667778889', JSON.stringify(plan2.runs));
+    const wrongAd = agent('POST', '/api/agent/link/push', { kind: 'ad_errors', ad_account_id: 'act_1025971549903293', via: 'direct', result: { errors: [] } }, { 'X-Link-Pass': run2.pass || '' });
+    const viaHeader = agent('POST', '/api/agent/link/push', { kind: 'ad_errors', ad_account_id: 'act_4445556667778889', via: 'direct', result: { errors: [] } }, { 'X-Link-Pass': run2.pass || '', 'X-Account': '1' });
+    const stored2 = sql(`SELECT account_id FROM am_snapshots WHERE run_id = ${Number(run2.run_id) || 0}`);
+    check('AM-A: a push is stored under its pass\'s account whatever X-Account says, and the same pass naming account 1\'s ad account is refused (409) (refusal)',
+      wrongAd.status === 409 && /another ad account/.test(wrongAd.body.error) && viaHeader.status === 200 && stored2 === String(A2), JSON.stringify({ wrongAd, viaHeader, stored2 }));
+    // 5. A Claude desk run's pass never reaches the link (refusal).
+    const withClaim = agent('POST', '/api/agent/link/push', { kind: 'ad_errors', ad_account_id: 'act_4445556667778889', via: 'direct', result: { errors: [] } },
+      { 'X-Link-Pass': run2.pass || '', 'X-Desk-Claim': 'any-claim' });
+    const planClaim = agent('GET', '/api/agent/link/plan?timeout=0', undefined, { 'X-Desk-Claim': 'any-claim' });
+    check('AM-A: a request carrying a desk run\'s pass (X-Desk-Claim) is refused on the link routes (403) (refusal)', withClaim.status === 403 && planClaim.status === 403,
+      JSON.stringify({ withClaim, planClaim }));
+    const plan2b = agent('GET', '/api/agent/link/plan?timeout=0').body;
+    check('AM-A: while an account\'s pass is open, the next plan makes no second one for it', !plan2b.runs.some((r) => r.account_id === A2), JSON.stringify(plan2b.runs));
+    // An answer naming another ad account in its own fields is refused (409), and rows about ads the account doesn't
+    // hold are left out (the Claude path can't be steered to read another ad account into this one).
+    const foreign = agent('POST', '/api/agent/link/push', { kind: 'ad_errors', ad_account_id: 'act_4445556667778889', via: 'claude',
+      result: { errors: [{ entity_id: '120252672229040312', account_id: 'act_1025971549903293', summary: 'account 1 data' }] } }, { 'X-Link-Pass': run2.pass || '' });
+    const notOurs = agent('POST', '/api/agent/link/push', { kind: 'anomalies', ad_account_id: 'act_4445556667778889', via: 'direct',
+      result: { anomalies: [{ entity_id: '120252672229040312', metric: 'cpl' }, { entity_id: '4445556667778889', metric: 'spend' }] } }, { 'X-Link-Pass': run2.pass || '' });
+    check('AM-A: a push naming another ad account is refused (409) and rows about another account\'s ads are left out (refusal)',
+      foreign.status === 409 && /names another ad account/.test(foreign.body.error) && notOurs.status === 200 && notOurs.body.kept === 1
+      && sql(`SELECT data::text FROM am_snapshots WHERE account_id = ${A2} AND kind = 'anomalies'`) === '{"rows": [{"metric": "spend", "entity_id": "4445556667778889"}]}',
+      JSON.stringify({ foreign, notOurs }));
+    agent('POST', '/api/agent/link/finish', { status: 'done' }, { 'X-Link-Pass': run2.pass || '' });
+    for (const r of plan2b.runs) agent('POST', '/api/agent/link/finish', { status: 'done' }, { 'X-Link-Pass': r.pass });
+    // Two plans at the same moment make one pass per account (the database refuses a second open one).
+    force(1);
+    const twin = await Promise.all([0, 1].map(() => new Promise((res) => require('child_process').exec(`docker exec edgebourne-fake-meta python3 -c "import json, urllib.request; r = urllib.request.urlopen(urllib.request.Request('http://ads-backend:5000/api/agent/link/plan?timeout=0', headers={'Authorization': 'Bearer qa-link-mac', 'X-Bridge-Version': '3.1'}), timeout=40); print(json.dumps([x['account_id'] for x in json.loads(r.read())['runs']]))"`, (e, out) => res(e ? [] : JSON.parse(out.trim().split('\n').pop()))))));
+    const openOne = sql("SELECT count(*) FROM am_link_runs WHERE account_id = 1 AND status = 'open'");
+    check('AM-A: two plans at the same moment open one pass for an account, never two', openOne === '1' && twin.flat().filter((a) => a === 1).length === 1, JSON.stringify({ twin, openOne }));
+    sql("UPDATE am_link_runs SET status = 'done', finished_at = now() WHERE status = 'open' AND pass_hash NOT LIKE 'ACCT%'");
+    // Account 2 switched to another ad account: not read until the owner approves the new one (refusal).
+    py(`import settings_store
+settings_store.set('meta_ad_account_id', '5556667778889990', account_id=${A2})`);
+    force(A2);
+    const planChanged = agent('GET', '/api/agent/link/plan?timeout=0').body;
+    check('AM-A: an account that switched to another ad account isn\'t read until the owner approves the new one (refusal)',
+      !planChanged.runs.some((r) => r.account_id === A2), JSON.stringify(planChanged.runs));
+    for (const r of planChanged.runs) agent('POST', '/api/agent/link/finish', { status: 'done' }, { 'X-Link-Pass': r.pass });
+    py(`import settings_store
+settings_store.set('meta_ad_account_id', '4445556667778889', account_id=${A2})
+settings_store.set('am_link_force', None, account_id=${A2})`);
+    // A Facebook login that can't see an account's ad account: that account is marked, nothing is read for it.
+    mcp('no_access=act_4445556667778889');
+    force(A2);
+    linkOnce();
+    check('AM-A: an ad account the Mac\'s Facebook login can\'t see ends its pass "no_access" and says so for that account',
+      sql(`SELECT status FROM am_link_runs WHERE account_id = ${A2} ORDER BY id DESC LIMIT 1`) === 'no_access' && sql(`SELECT value FROM settings WHERE key = 'am_link_no_access@${A2}'`) === '1');
+    mcp('no_access=0');
+    // 10. Check Ads Manager now: a plan with every kind within a second or two; again at once → "Checked a moment ago" (refusal).
+    await page.click('#am-check');
+    await page.waitForFunction(() => /Checked a moment ago/.test(document.getElementById('am-check-note')?.textContent || ''));
+    check('AM-A: right after Check now the button is greyed out until it may be pressed again', await page.$eval('#am-check', (b) => b.disabled));
+    const t0 = Date.now();
+    const plan3 = agent('GET', '/api/agent/link/plan?timeout=25').body;
+    const took = Date.now() - t0;
+    const again = await call('POST', '/api/am-link/check', {});
+    check('AM-A: Check Ads Manager now reaches the Mac at once with every kind; pressed again right away it\'s refused (429 "Checked a moment ago") (refusal)',
+      took < 2500 && (plan3.runs.find((r) => r.account_id === 1) || {}).kinds?.length === 8 && again.status === 429 && /Checked a moment ago/.test(again.body.error),
+      JSON.stringify({ took, runs: plan3.runs.map((r) => [r.account_id, r.kinds.length]), again }));
+    for (const r of plan3.runs) agent('POST', '/api/agent/link/finish', { status: 'done' }, { 'X-Link-Pass': r.pass });
+    // 6. Meta's answer in a shape nobody expects: refused (422), nothing stored, the old time stays (refusal).
+    const errorsBefore = snap(1, 'ad_errors');
+    mcp('shape=ad_errors');
+    force(1);
+    linkOnce();
+    const shapeRun = sql("SELECT status || '|' || COALESCE(error, '') FROM am_link_runs WHERE account_id = 1 ORDER BY id DESC LIMIT 1");
+    check('AM-A: an answer of an unexpected shape is refused (422): nothing stored, the old read keeps its time, the pass says why (refusal)',
+      snap(1, 'ad_errors') === errorsBefore && /unexpected shape/.test(shapeRun) && snap(1, 'benchmarks') !== errorsBefore, shapeRun);
+    mcp('shape=0');
+    // 7. A read tool Meta marks as one that changes things is refused on the Mac; the pass fails with the plain reason (refusal).
+    mcp('readonly_lie=ads_get_errors'); fakeGet('/fake/_mcp_hits?clear=1');
+    force(1);
+    linkOnce();
+    const lieRun = sql("SELECT status || '|' || COALESCE(error, '') FROM am_link_runs WHERE account_id = 1 ORDER BY id DESC LIMIT 1");
+    const lieCalled = fakeGet('/fake/_mcp_hits').hits.some((h) => h.tool === 'ads_get_errors');
+    check('AM-A: a tool Meta marks as changing things is never called; the pass ends "failed" saying why (refusal)',
+      /^failed\|ad_errors: Meta marks this tool as one that changes things/.test(lieRun) && !lieCalled, lieRun);
+    mcp('readonly_lie=0');
+    // 8. Meta asks for a new login: "Reconnect needed" and a link_down FYI in the Inbox; Reconnect → connected, the alert closes.
+    mcp('expire=1');
+    force(1);
+    linkOnce();
+    await openLink();
+    const inboxFyi = await call('GET', '/api/inbox?box=fyi');
+    const downOpen = sql("SELECT level FROM alerts WHERE rule = 'link_down' AND resolved_at IS NULL");
+    check('AM-A: an expired login shows "Reconnect needed" and an Ads Manager link FYI in the Inbox',
+      /Reconnect needed/.test(await pillText()) && (await page.textContent('#am-connect')).trim() === 'Reconnect' && downOpen === 'info'
+      && JSON.stringify(inboxFyi.body).includes('Ads Manager link: reconnect needed'), `${await pillText()} ${downOpen}`);
+    mcp('expire=0');
+    await page.click('#am-connect');
+    await page.waitForFunction(() => /Waiting for your Mac/.test(document.getElementById('am-state').textContent));
+    linkOnce();
+    await page.waitForFunction(() => /Connected as Eugene/.test(document.getElementById('am-line')?.textContent || ''), null, { timeout: 10000 });
+    check('AM-A: Reconnect signs in again and closes the link alert', sql("SELECT count(*) FROM alerts WHERE rule = 'link_down' AND resolved_at IS NULL") === '0');
+    // 9. Meta refuses the Mac's own client: Claude on the Mac reads instead; its pushes say "via Claude".
+    mcp('refuse_dcr=1');
+    await page.click('#am-connect');
+    await page.waitForFunction(() => /Waiting for your Mac/.test(document.getElementById('am-state').textContent));
+    linkOnce();
+    await page.waitForFunction(() => /Working through Claude on your Mac/.test(document.getElementById('am-line')?.textContent || ''), null, { timeout: 10000 });
+    const why = await page.textContent('#am-why');
+    force(1);
+    const plan4 = agent('GET', '/api/agent/link/plan?timeout=0').body;
+    const run4 = plan4.runs.find((r) => r.account_id === 1) || {};
+    const deskEnv = `-e ADS_DESK_CONFIG=/tmp/qa-link/config.json -e ADS_DESK_KEY=qa-link-mac -e ADS_LINK_PASS=${run4.pass}`;
+    sh(`docker exec edgebourne-fake-meta sh -c 'printf %s "{\\"structuredContent\\": {\\"errors\\": [{\\"entity_id\\": \\"120252672229400312\\", \\"summary\\": \\"QA fallback error\\"}]}}" > /tmp/qa-link/ws/reports/desk/tmp/link/run${run4.run_id}-ad_errors.json'`);
+    const linkPlan = JSON.parse(sh(`docker exec ${deskEnv} edgebourne-fake-meta python3 /bridge/desk link-plan ${run4.run_id}`));
+    const pushed = sh(`docker exec ${deskEnv} edgebourne-fake-meta python3 /bridge/desk link-push ${run4.run_id} --kind ad_errors --file /tmp/qa-link/ws/reports/desk/tmp/link/run${run4.run_id}-ad_errors.json`);
+    sh(`docker exec ${deskEnv} edgebourne-fake-meta python3 /bridge/desk link-finish ${run4.run_id} --status done`);
+    await openLink();
+    check('AM-A: when Meta refuses the Mac\'s own client the link works through Claude: the plan says mode "claude", the desk helper pushes with the pass, the line says "via Claude on your Mac"',
+      plan4.mode === 'claude' && /didn't accept the Mac's helper/.test(why) && linkPlan.reads.find((r) => r.kind === 'ad_errors').tool === 'ads_get_errors' && /"kept": 1/.test(pushed)
+      && /via Claude on your Mac/.test(await page.textContent('#am-source')) && snap(1, 'ad_errors').endsWith('|claude'), JSON.stringify({ mode: plan4.mode, pushed, src: await page.textContent('#am-source') }));
+    mcp('refuse_dcr=0');
+    await page.click('#am-connect');
+    await page.waitForFunction(() => /Waiting for your Mac/.test(document.getElementById('am-state').textContent));
+    linkOnce();
+    await page.waitForFunction(() => /Connected as Eugene/.test(document.getElementById('am-line')?.textContent || ''), null, { timeout: 10000 });
+    // 11. The Mac away for two hours: the source line says since when. Online with the same old reads it says how old
+    // they are instead, and with the login expired it sends Eugene to Reconnect, not to his Mac.
+    sql("UPDATE am_link_runs SET created_at = created_at - interval '2 hours' WHERE account_id = 1; UPDATE am_snapshots SET fetched_at = fetched_at - interval '2 hours' WHERE account_id = 1");
+    await openLink();
+    const onlineOld = (await page.textContent('#am-source')).trim();
+    sql("UPDATE am_link SET state = 'expired'");
+    await openLink();
+    const expiredOld = (await page.textContent('#am-source')).trim();
+    sql("UPDATE am_link SET state = 'connected'");
+    check('AM-A: with the Mac online the old reads say their age, and with the login expired the line says "Reconnect needed", never "away"',
+      /^From Ads Manager via (Claude on )?your Mac, 2 h ago$/.test(onlineOld) && /^Reconnect needed in Settings → Ads Manager link; this is from /.test(expiredOld), JSON.stringify({ onlineOld, expiredOld }));
+    py(`import time, settings_store
+settings_store.set('bridge_last_seen', str(time.time() - 7200))`);
+    await openLink();
+    const away = (await page.textContent('#am-source')).trim();
+    check('AM-A: when the Mac has been away, the line says "Your Mac has been away since …; this is from then."',
+      /^Your Mac has been away since \d{1,2}:\d{2} (AM|PM)( [A-Z]{2,5})?; this is from then\.$|^Your Mac has been away since \w{3}, \w{3} \d{1,2}, \d{1,2}:\d{2} (AM|PM); this is from then\.$/.test(away)
+      && await page.$eval('#am-source .am-src', (e) => e.classList.contains('is-stale')), away);
+    // 14. Phones: 44px buttons, nothing past the edge, the table as rows.
+    for (const w of [390, 320]) {
+      const pctx = await browser.newContext({ viewport: { width: w, height: 800 }, isMobile: true, hasTouch: true, storageState: await page.context().storageState() });
+      const pp = await pctx.newPage();
+      pp.on('pageerror', (e) => errors.push(`am-link ${w}: ${e.message}`));
+      await openLink(pp);
+      const fit = await pp.evaluate(() => ({ sideways: document.documentElement.scrollWidth - innerWidth,
+        btns: [...document.querySelectorAll('#am-body .btn, #am-body [role=switch]')].filter((b) => b.offsetParent).map((b) => Math.round(b.getBoundingClientRect().height)),
+        right: Math.max(...[...document.querySelectorAll('#am-body *')].map((e) => e.getBoundingClientRect().right)) }));
+      const small = (await pp.evaluate(guards.smallTargets)).filter((s) => /am-/.test(JSON.stringify(s)));
+      await pp.screenshot({ path: `${OUT}/am-link-phone-${w}.png`, fullPage: true });
+      check(`AM-A: on a ${w}px phone the Ads Manager link fits (no sideways scroll) and its buttons are 44px`, fit.sideways <= 0 && fit.right <= w + 0.5 && fit.btns.every((h) => h >= 44) && small.length === 0,
+        JSON.stringify({ fit, small: small.slice(0, 3) }));
+      await pctx.close();
+    }
+    // 15. No ad-blocker words in the section's markup (am- prefix, amlink.js).
+    const blocked = await page.evaluate(() => [...document.querySelectorAll('#am-link [class], #am-link [id]')].filter((e) => /(^|\s)(ad-|ads-|adset|advert|sponsor|banner|promo)/i.test(`${e.className} ${e.id}`)).length
+      + [...document.scripts].filter((s) => s.src && /\/(ad|ads|advert|banner|promo)[-_.]/.test(new URL(s.src).pathname)).length);
+    check('AM-A: no class, id or script name in the Ads Manager link starts with an ad-blocker word', blocked === 0, String(blocked));
+    // 12. Disconnect: the next plan says so, the Mac deletes its login, the page says "Not connected".
+    await page.click('#am-disconnect');
+    await page.waitForSelector('dialog.confirm #cd-ok');
+    await page.click('dialog.confirm #cd-ok');
+    await page.waitForFunction(() => /Disconnecting/.test(document.getElementById('am-state').textContent));
+    fakeGet('/fake/_mcp_hits?clear=1');
+    const plan5 = lastJson(linkOnce());
+    const tokenGone = sh('docker exec edgebourne-fake-meta sh -c "test -e /tmp/qa-link/token.json && echo kept || echo gone"').trim();
+    const revoked = fakeGet('/fake/_mcp_hits').hits.find((h) => h.method === 'oauth/revoke') || {};
+    await page.waitForFunction(() => /Not connected/.test(document.getElementById('am-state').textContent), null, { timeout: 10000 });
+    check('AM-A: Disconnect → the plan carries disconnect, the Mac cancels its refresh token at Meta, deletes its token and the page says "Not connected"',
+      plan5.plan.disconnect === true && tokenGone === 'gone' && revoked.known === true && revoked.hint === 'refresh_token', JSON.stringify({ plan: plan5.plan, tokenGone, revoked }));
+    // Back to how it was: the link off, the console's Mac key and account 2's ad account as before, the fake reset.
+    resetLink();
+    mcp('reset=1');
+    py(`import json, settings_store
+saved = json.loads(${JSON.stringify(JSON.stringify(saved))})
+for k in ('agent_key_hash', 'bridge_version', 'bridge_last_seen', 'bridge_host'):
+    settings_store.set(k, saved.get(k))
+settings_store.set('meta_ad_account_id', saved.get('meta_ad_account_id@${A2}'), account_id=${A2})`);
+    sql(`DELETE FROM settings WHERE key LIKE '%@${A2}' AND key NOT IN (${keys2}) AND key <> 'meta_ad_account_id@${A2}'`);
+    if (closed2) sql(`UPDATE accounts SET archived_at = '${closed2}' WHERE id = ${A2}`);
+    // The refusals above log their 409 / 429 on purpose.
+    for (let i = errors.length - 1; i >= amSeen; i--) if (/status of (409|422|429)/.test(errors[i])) errors.splice(i, 1);
   }
 
   await browser.close();

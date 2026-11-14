@@ -98,6 +98,7 @@ function renderMac(bridge) {
       <div><dt>Status</dt><dd>${esc(m.title)}${bridge.host ? ` · ${esc(bridge.host)}` : ""}<br><span class="muted">${esc(m.detail)}</span></dd></div>
       <div><dt>Last check</dt><dd>${esc(ago(bridge.last_seen))}</dd></div>
       <div><dt>Key</dt><dd>${bridge.has_key ? `ends in ${esc(bridge.key_hint || "")}` : "none yet"}</dd></div>
+      ${bridge.link_words ? `<div><dt>Ads Manager link</dt><dd id="mac-link-words">${esc(bridge.link_words)} · <a href="settings.html#am-link">Settings</a></dd></div>` : ""}
     </dl>
     ${bridge.needs_update ? `<div class="note warn" id="mac-update"><b>Update the helper on your Mac</b> (version ${esc(bridge.version || "?")}). Until it's on 2.0, conversations from teammates and clients wait in line, and Claude works without the limits each conversation should have. Run the command below on the Mac.</div>` : ""}
     ${keyBox}

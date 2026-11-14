@@ -1,6 +1,7 @@
 // Local design review: screenshots of each screen in light and dark.
 // AS=client node qa/shots.cjs <dir>: the same as a read-only client of Edge Bourne (files named client-…), only the
 // screens a client opens; a QA client user is made for the run and switched off after it.
+// ONLY=am-link node qa/shots.cjs <dir>: only Settings → Ads Manager link (AM-A) connected, through Claude, waiting for the Mac and not connected.
 // Playwright: $PLAYWRIGHT_CORE, else the first intact copy on this Mac (the render pipeline's copy lost
 // its package files on 2026-11-10; any 1.64 drives the Chromium 1248 below).
 const PW = [process.env.PLAYWRIGHT_CORE, '/Users/ruolez/Desktop/Dev/meta-ads/creatives/2026-11-07-new5/src/node_modules/playwright-core',
@@ -51,7 +52,20 @@ db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) V
         'inbox.html?box=fyi', 'inbox.html?box=all', 'gallery.html?view=tired', 'leads.html?due=today',
         // FU-C: today so far (Results and Ads on Today, the ad page's daily charts with today's bar).
         'performance.html?range=today', 'ads.html?range=today', 'ad.html?id=120252672232030312&range=7',
-        ...['targets', 'alerts', 'reports-panel', 'replies', 'lead-quality', 'tracking', 'crm', 'ab', 'activity-panel', 'meta-app', 'auto', 'telegram', 'email', 'accounts-panel'].map((s) => `settings.html#${s}`)];
+        ...['targets', 'alerts', 'reports-panel', 'replies', 'lead-quality', 'tracking', 'am-link', 'crm', 'ab', 'activity-panel', 'meta-app', 'auto', 'telegram', 'email', 'accounts-panel'].map((s) => `settings.html#${s}`)];
+  const onlyAm = process.env.ONLY === 'am-link';
+  // AM-A: the link in three states for its shots, with reads from 12 minutes ago (put back as it was afterwards).
+  const psql = (q) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "${q}"`).trim();
+  const amWas = psql('SELECT row_to_json(l) FROM am_link l');
+  const amState = (state) => psql(`UPDATE am_link SET state = '${state}', connected_as = ${state === 'connected' ? "'Eugene Ramirez'" : 'NULL'},
+    client_kind = ${state === 'connected' ? "'dcr'" : state === 'fallback' ? "'claude'" : 'NULL'}, last_ok_at = ${state === 'not_connected' ? 'NULL' : "now() - interval '12 minutes'"},
+    fallback_reason = ${state === 'fallback' ? "'Meta didn''t accept the Mac''s helper as a client (redirect_uris are not registered).'" : 'NULL'}, last_error = NULL,
+    scope = ${state === 'connected' ? "'ads_read'" : 'NULL'}, connect_requested_at = ${state === 'connecting' ? 'now()' : 'NULL'} WHERE id = 1`);
+  psql(`DELETE FROM am_link_runs WHERE pass_hash LIKE 'shots-am-%'; INSERT INTO am_link_runs (account_id, pass_hash, ad_account_id, kinds, mode, status, pushed, created_at, finished_at)
+    VALUES (1, 'shots-am-1', '1025971549903293', '{ad_errors,benchmarks}', 'direct', 'done', jsonb_build_object('ad_errors', 1, 'benchmarks', 2), now() - interval '12 minutes', now() - interval '12 minutes')`);
+  const amKinds = ['ad_errors', 'benchmarks', 'peers', 'auction_ranking', 'anomalies', 'trend', 'dataset_quality', 'advertiser_context'];
+  const amSnapsBefore = psql("SELECT count(*) FROM am_snapshots WHERE account_id = 1 AND scope = ''");
+  if (amSnapsBefore === '0') psql(`INSERT INTO am_snapshots (account_id, kind, scope, data, fetched_at, via) SELECT 1, k, '', jsonb_build_object('rows', jsonb_build_array()), now() - interval '12 minutes', 'direct' FROM unnest('{${amKinds.join(',')}}'::text[]) k`);
   const fullAccess = (on) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "UPDATE user_sessions SET full_until = ${on ? "now() + interval '8 hours'" : 'NULL'} WHERE user_id = 1"`);
   for (const scheme of ['light', 'dark']) {
     for (const [vw, vh, tag] of [[1440, 900, 'desk'], [390, 844, 'phone']]) {
@@ -74,7 +88,7 @@ db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) V
         await page.waitForSelector('#stages');
         await page.screenshot({ path: `${OUT}/${tag0}lead-detail-${tag}-${scheme}.png`, fullPage: true });
       }
-      for (const p of (asClient ? CLIENT_PAGES : OWNER_PAGES)) {
+      for (const p of (asClient ? CLIENT_PAGES : onlyAm ? [] : OWNER_PAGES)) {
         await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
         if (p.includes('#')) await page.reload();
         await page.waitForTimeout(600);
@@ -83,6 +97,16 @@ db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) V
         await page.screenshot({ path: `${OUT}/${tag0}${p.split('.')[0]}${variant ? '-' + variant : ''}-${tag}-${scheme}.png`, fullPage: true });
       }
       if (asClient) { await ctx.close(); continue; }
+      for (const state of ['connected', 'fallback', 'connecting', 'not_connected']) {
+        amState(state);
+        await page.goto(`${BASE}/settings.html#am-link`);
+        await page.reload();
+        await page.waitForSelector('#am-link:not([hidden]) #am-acct');
+        if (state === 'fallback') await page.click('#am-why summary');
+        await page.waitForTimeout(300);
+        await page.screenshot({ path: `${OUT}/settings-am-${state}-${tag}-${scheme}.png`, fullPage: true });
+      }
+      if (onlyAm) { await ctx.close(); continue; }
       // FU-D: full access on, and a conversation with an image and a video preview.
       fullAccess(true);
       await page.goto(`${BASE}/desk.html#new`);
@@ -150,6 +174,12 @@ db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) V
     }
   }
   await browser.close();
+  if (!asClient) {
+    const was = JSON.parse(amWas);
+    psql(`UPDATE am_link SET state = '${was.state}', connected_as = ${was.connected_as ? `'${was.connected_as.replace(/'/g, "''")}'` : 'NULL'}, client_kind = ${was.client_kind ? `'${was.client_kind}'` : 'NULL'},
+      last_ok_at = ${was.last_ok_at ? `'${was.last_ok_at}'` : 'NULL'}, fallback_reason = NULL WHERE id = 1; DELETE FROM am_link_runs WHERE pass_hash LIKE 'shots-am-%'`);
+    if (amSnapsBefore === '0') psql("DELETE FROM am_snapshots WHERE account_id = 1 AND scope = '' AND run_id IS NULL");
+  }
   if (asClient) sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "UPDATE users SET is_active = FALSE WHERE email = '${login[0]}'"`);
   sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "DELETE FROM desk_reports WHERE task_id = ${fudTask}; DELETE FROM desk_tasks WHERE id = ${fudTask}"`);
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');

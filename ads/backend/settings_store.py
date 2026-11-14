@@ -39,6 +39,9 @@ ACCOUNT_KEYS = {
     # FU-C: when today's per-ad rows were last read from Meta (any reader: a screen, Refresh, the worker).
     "today_ads_at",
     "today_ads_force",
+    # AM-A: the ad account the owner approved for reading through the Mac's Ads Manager link ("0" = off; unset = on for
+    # account 1 only), a pending Check now, when it was last pressed, and the Mac's Facebook login not reaching it.
+    "am_link_on", "am_link_force", "am_link_checked_at", "am_link_no_access",
 }
 INHERITED = {"meta_system_token"}
 

@@ -31,6 +31,7 @@ if [ "${1:-}" = "remove" ]; then
   url="$(python3 -c "import json;print(json.load(open('$CONF_DIR/config.json'))['base_url'])" 2>/dev/null || echo "$DEFAULT_URL")"
   security delete-generic-password -s "$SERVICE" -a "$url" >/dev/null 2>&1 || true
   security delete-generic-password -s "ads-desk-claude" >/dev/null 2>&1 || true
+  security delete-generic-password -s "ads-manager-link" -a "$url" >/dev/null 2>&1 || true
   rm -rf "$SKILL_DIR" "$CONF_DIR"
   ok "Removed. Also click \"Disconnect the Mac\" on the Desk page so the old key stops working."
   exit 0
@@ -94,7 +95,7 @@ else
 fi
 
 mkdir -p "$SKILL_DIR" "$CONF_DIR" "$LOG_DIR" "$HOME/Library/LaunchAgents"
-cp "$HERE/desk" "$HERE/bridge.py" "$SKILL_DIR/"
+cp "$HERE/desk" "$HERE/bridge.py" "$HERE/amlink.py" "$SKILL_DIR/"
 cp "$HERE/skill/SKILL.md" "$SKILL_DIR/SKILL.md"
 chmod 755 "$SKILL_DIR/desk"
 sed -i '' "1s|.*|#!$PY|" "$SKILL_DIR/desk"

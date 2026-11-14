@@ -29,11 +29,16 @@ import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 desk = importlib.machinery.SourceFileLoader("desk", os.path.join(HERE, "desk")).load_module()
+try:  # AM-A (desk 3.1): the Mac's own read-only link to Meta's Ads MCP server; an older install has no amlink.py
+    amlink = importlib.machinery.SourceFileLoader("amlink", os.path.join(HERE, "amlink.py")).load_module()
+except (OSError, ImportError):
+    amlink = None
 
 RUN_LIMIT_SECONDS = 25 * 60
 RENDER_LIMIT_SECONDS = 50 * 60
 ADVICE_LIMIT_SECONDS = 90 * 60  # an advice run may cut a 9:16 version of every running ad
 KEEPALIVE_SECONDS = 5  # also how quickly Stop on the Claude page reaches a run
+LINK_LIMIT_SECONDS = 10 * 60  # one fallback link pass through Claude
 RESUME_FAIL_SECONDS = 45  # a resumed run that dies this fast couldn't load its session: start fresh
 LOG_DIR = os.path.expanduser("~/Library/Logs/ads-desk")
 
@@ -151,7 +156,8 @@ def denied_tools(workdir, home, private=(), access="sandbox"):
     return (base + [f"mcp__{p}__{n}" for n in META_WRITE_TOOLS for p in META_PREFIXES]
             + [f"mcp__{s}" for s in FULL_DENIED_SERVERS]
             + [f"WebFetch(domain:{d})" for d in META_DOMAINS]
-            + ["Bash(meta:*)", "Bash(security:*)", "Bash(launchctl:*)", "Bash(claude:*)",
+            + ["Bash(meta:*)", "Bash(security:*)", "Bash(/usr/bin/security:*)", "Bash(env:*)", "Bash(command security:*)",
+               "Bash(exec security:*)", "Bash(xcrun security:*)", "Bash(launchctl:*)", "Bash(claude:*)",
                f"Read(/{home}/.claude/.credentials.json)", f"Read(/{home}/.claude.json)",
                f"Edit(/{home}/.claude/settings.json)", f"Edit(/{home}/.claude/settings.local.json)",
                f"Edit(/{home}/.claude/hooks/**)", f"Edit(/{home}/.claude/skills/ads-desk/**)",
@@ -199,6 +205,96 @@ def claude_command(cfg, task, access, home, briefs):
             "--disallowedTools", ",".join(denied),
             "--max-turns", "200" if full else "300" if kind == "advice" else "200" if render else "80"] + (
         ["--settings", json.dumps(full_settings(cfg["workdir"], home, skill_dir))] if full else [])
+
+
+def link_guard_settings(skill_dir):
+    """`--settings` for a fallback link run: a PreToolUse hook (`desk link-guard`) checks every MCP call against the pass
+    outside the model: only the link's read tools, only the pass's ad account (ADS_LINK_ACT), only their fixed
+    arguments. Text Meta returns can't steer the run to another ad account."""
+    return {"hooks": {"PreToolUse": [{"matcher": "mcp__.*", "hooks": [{"type": "command", "command": f"{skill_dir}/desk link-guard"}]}]}}
+
+
+def link_fallback_command(cfg, run, home):
+    """AM-A fallback, when Meta won't take the Mac's own link client: a cheap headless Claude run that calls exactly the
+    link's read tools and hands each answer to `desk link-push` with the pass in ADS_LINK_PASS. No other Bash, no web,
+    files only in reports/desk/tmp/link/, every Meta write tool denied by name, and the guard hook binding each call
+    to the pass's ad account (link_guard_settings)."""
+    skill_dir = os.path.join(home, ".claude", "skills", "ads-desk")
+    link_dir = f"/{cfg['workdir']}/reports/desk/tmp/link/**"
+    tools = [f"mcp__{p}__{t}" for t in sorted(set(amlink.LINK_TOOLS.values())) for p in META_PREFIXES]
+    for d in (skill_dir, "~/.claude/skills/ads-desk"):
+        tools += [f"Bash({d}/desk link-plan:*)", f"Bash({d}/desk link-push:*)", f"Bash({d}/desk link-finish:*)"]
+    tools += [f"Edit({link_dir})", f"Read({link_dir})", "Skill", "ToolSearch"]
+    denied = (denied_tools(cfg["workdir"], home) + [f"mcp__{p}__{n}" for n in META_WRITE_TOOLS for p in META_PREFIXES]
+              + ["WebFetch", "WebSearch", "Bash(meta:*)", "Bash(security:*)"])
+    return [cfg["claude"], "-p", f"/ads-desk link {int(run['run_id'])}", "--model", "haiku", "--permission-mode", "dontAsk",
+            "--max-turns", "40", "--allowedTools", ",".join(tools), "--disallowedTools", ",".join(denied),
+            "--settings", json.dumps(link_guard_settings(skill_dir))]
+
+
+def run_link_fallback(cfg, token, run):
+    """One link pass through Claude on this Mac (10 minutes at most). A pass Claude left open is closed as failed."""
+    os.makedirs(os.path.join(cfg["workdir"], "reports", "desk", "tmp", "link"), exist_ok=True)
+    env = dict(os.environ)
+    for name in ("DESK_CLAIM", "DESK_ACCOUNT"):
+        env.pop(name, None)
+    env["ADS_LINK_PASS"] = run["pass"]
+    env["ADS_LINK_ACT"] = f"act_{int(run['ad_account_id'])}"  # the guard hook allows this ad account only
+    claude_token = claude_oauth_token()
+    if claude_token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = claude_token
+    env["PATH"] = os.pathsep.join([os.path.dirname(cfg["claude"]), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", env.get("PATH", "")])
+    out_path = os.path.join(LOG_DIR, f"link-{int(run['run_id'])}.log")
+    code = None
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        with open(out_path, "w") as out:
+            proc = subprocess.Popen(link_fallback_command(cfg, run, os.path.expanduser("~")), cwd=cfg["workdir"], stdout=out,
+                                    stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+        try:
+            code = proc.wait(timeout=LINK_LIMIT_SECONDS)
+        except subprocess.TimeoutExpired:
+            end_process(proc)
+    except OSError as exc:
+        log(f"link pass {run['run_id']}: Claude Code could not start: {exc}")
+    pass_header = {"X-Link-Pass": run["pass"]}
+    try:
+        _, now = desk.call("GET", f"/api/agent/link/runs/{int(run['run_id'])}", cfg=cfg, token=token, extra_headers=pass_header)
+        if (now or {}).get("status") == "open":
+            desk.call("POST", "/api/agent/link/finish", {"status": "failed", "error": f"Claude stopped without finishing (exit code {code})"},
+                      cfg=cfg, token=token, extra_headers=pass_header)
+    except (desk.DeskError, urllib.error.URLError, OSError):
+        pass
+
+
+def link_loop(cfg):
+    """AM-A: asks the console every minute what to read from Ads Manager (a long poll, nothing runs while idle) and does
+    it: connect, disconnect, or one pass per account, directly or through Claude. Never starts a desk task."""
+    backoff = 5
+    while True:
+        try:
+            token = desk.key(cfg)
+        except SystemExit:
+            time.sleep(120)
+            continue
+        try:
+            status, plan = desk.call("GET", "/api/agent/link/plan?timeout=25", cfg=cfg, token=token, timeout=45)
+            backoff = 5
+            if status == 200 and plan:
+                state = amlink.handle_plan(cfg, token, plan, log=log, fallback=lambda run: run_link_fallback(cfg, token, run))
+                if state == "connecting":
+                    time.sleep(60)  # Meta couldn't be reached: the console hands the login out again in a minute
+                elif state == "unconfirmed":
+                    time.sleep(30)  # the console didn't take the result: don't repeat a disconnect or a login at once
+        except desk.DeskError as exc:
+            log(f"link: the console refused ({exc})")
+            time.sleep(600 if exc.status == 404 else 120 if exc.status == 401 else 30)
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 120)
+        except Exception as exc:  # noqa: BLE001 - the link must never take the bridge down
+            log(f"link: {exc}")
+            time.sleep(60)
 
 
 def squash(name):
@@ -400,6 +496,8 @@ def run_task(cfg, token, task):
 def main():
     cfg = desk.config()
     log(f"ads-desk bridge {desk.VERSION} watching {cfg['base_url']}")
+    if amlink:
+        threading.Thread(target=link_loop, args=(cfg,), name="ads-manager-link", daemon=True).start()
     if not os.access(cfg.get("claude") or "", os.X_OK):
         log(f"Claude Code isn't at {cfg.get('claude')} any more: requests will fail until ads/bridge/install.sh runs again")
     backoff = 5

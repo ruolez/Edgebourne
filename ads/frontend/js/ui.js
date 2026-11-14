@@ -1027,6 +1027,12 @@ export function sourceNote(src, { today = false } = {}) {
   return `<details class="src-note${tone}"><summary><span class="src-line">${esc(line)}</span></summary>
     <div class="src-help">${help.map((t) => `<p>${esc(t)}</p>`).join("")}${admin ? '<p><a href="/settings.html#numbers">Numbers check in Settings</a></p>' : ""}</div></details>`;
 }
+// AM-A: where something read through the Ads Manager link comes from ("From Ads Manager via your Mac, 12 min ago", or
+// "Your Mac has been away since 9:40 AM; this is from then."). The words are the server's (am_link.source).
+export function linkNote(src) {
+  if (!src || !src.words) return "";
+  return `<p class="am-src${src.away || src.stale ? " is-stale" : ""}">${icon("clock")}<span>${esc(src.words)}</span></p>`;
+}
 // "Meta 12 · Received 11" under a leads figure; the source note above explains why they can differ.
 export function pairNote(p) {
   const text = leadsPair(p);

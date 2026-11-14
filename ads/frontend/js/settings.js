@@ -3,6 +3,7 @@ import { money, currencySymbol } from "./format.js";
 import { wake } from "./alertmenu.js";
 import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when, errorState, guardLeaving, markSaved, safePath, setCrumbs, skeleton } from "./ui.js";
 import { confirmBig, confirmRemove, limitBody, limitMoney, pausedWords } from "./spendlimit.js";
+import { load as loadLink } from "./amlink.js";
 
 const $ = (id) => document.getElementById(id);
 let s;
@@ -12,7 +13,7 @@ let owner = false;
 // #mt-form, #tg-targets… from the days of the long page, and the links stored in alerts), or a short alias.
 // Anything else, or a whole-console section for someone who isn't the console's owner, opens Meta connection.
 const SECTION_ALIASES = { "lead-quality": "lead-quality", repeats: "lead-quality", junk: "lead-quality", reports: "reports-panel", activity: "activity-panel", accounts: "accounts-panel", refresh: "auto",
-  smtp: "email", "ab-tests": "ab", stages: "crm" };
+  smtp: "email", "ab-tests": "ab", stages: "crm", "ads-manager": "am-link", link: "am-link" };
 
 function sectionFor(hash) {
   let id = hash;
@@ -37,6 +38,7 @@ function showSection({ first = false } = {}) {
   setCrumbs([{ label: "Settings", href: "/settings.html" }, { label }]);
   document.title = `${label} · Settings | Edge Bourne Ads`;
   if (sec.id === "targets") loadLimit();
+  loadLink();
   const fold = target && (target.tagName === "DETAILS" ? target : target.closest("details"));
   if (fold) fold.open = true;
   // A section opens at the top of the page (with the list above it on phones); only something inside it,
@@ -351,6 +353,7 @@ const RULE_UI = [
   ["tracking", "Leads Meta counted aren't reaching your leads list", []],
   ["numbers_off", "Our numbers differ from Ads Manager", []],
   ["stale_data", "Meta stops answering", [["hours", "for", "hours"]]],
+  ["link_down", "The Ads Manager link stops reading (needs a new login, or your Mac's reads stop finishing)", [["hours", "for", "hours"]]],
   ["events_quiet", "Lead stages stop reaching Meta's dataset (two days)", []],
 ];
 
@@ -596,6 +599,9 @@ const ACTIONS = {
   "lead.status": "Moved a lead",
   "lead.owner": "Changed a lead's owner",
   "lead.email_failed": "A lead alert email failed",
+  "am_link.connect": "Asked the Mac to connect the Ads Manager link", "am_link.disconnect": "Disconnected the Ads Manager link",
+  "am_link.use_app": "Changed which app the Ads Manager link signs in with", "am_link.account": "Changed whether this account is read through the Mac",
+  "am_link.check": "Asked the Mac to read Ads Manager now", "am_link.state": "The Ads Manager link changed state",
 };
 const describe = (r) => ACTIONS[r.action] || r.action;
 

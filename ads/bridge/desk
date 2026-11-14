@@ -30,6 +30,10 @@ by hand keeps the pass in ~/.config/ads-desk/claims.json for the later calls.
   desk watched                           competitor Pages to check, and Ad Library ids already saved
   desk swipe [--task ID] [--file F]      save competitor ads (JSON list) into the swipe file; --task shows them in that answer
   desk benchmarks [--file F]             the week's benchmarks for Today (JSON: as_of, summary, items)
+  desk link-plan <run>                   Ads Manager link fallback runs (ADS_LINK_PASS): the tools and arguments to read
+  desk link-push <run> --kind K --file F one tool answer (JSON in reports/desk/tmp/link/) into the console
+  desk link-finish <run> --status S [--error E]   done | failed | no_access
+  desk link-guard                        PreToolUse hook of link runs: Meta tool calls only for the pass's ad account
   desk done <id> --summary S             finish
   desk fail <id> --error E               give up, with the reason
 """
@@ -45,7 +49,7 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSION = "3.0"
+VERSION = "3.1"
 # ADS_DESK_CONFIG points a test run at another dashboard (e.g. the local dev stack).
 CONFIG = os.environ.get("ADS_DESK_CONFIG") or os.path.expanduser("~/.config/ads-desk/config.json")
 SERVICE = "ads-desk"
@@ -61,6 +65,8 @@ def config():
 
 
 def key(cfg):
+    if os.environ.get("ADS_DESK_CONFIG") and os.environ.get("ADS_DESK_KEY"):
+        return os.environ["ADS_DESK_KEY"]  # tests against a local console only; the Mac's key stays in the Keychain
     try:
         out = subprocess.run(["security", "find-generic-password", "-s", SERVICE, "-a", cfg["base_url"], "-w"],
                              capture_output=True, text=True, check=True)
@@ -112,12 +118,13 @@ class DeskError(Exception):
         self.status = status
 
 
-def call(method, path, body=None, timeout=40, cfg=None, token=None, claim=None):
+def call(method, path, body=None, timeout=40, cfg=None, token=None, claim=None, extra_headers=None):
     cfg = cfg or config()
     token = token or key(cfg)
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(cfg["base_url"].rstrip("/") + path, data=data, method=method,
-                                 headers={**headers(token, claim or claim_for(path)), "Content-Type": "application/json"})
+                                 headers={**headers(token, claim or claim_for(path)), "Content-Type": "application/json",
+                                          **(extra_headers or {})})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as res:
             raw = res.read()
@@ -266,6 +273,83 @@ def save_local_copy(cfg, task_id, title, body):
         return None
 
 
+LINK_DIR = ("reports", "desk", "tmp", "link")
+
+
+def link_input(workdir, path):
+    """The real path of a link answer file: inside the workspace's reports/desk/tmp/link/ only (AM-A fallback runs)."""
+    root = os.path.realpath(workdir or "")
+    real = os.path.realpath(path)
+    folder = os.path.join(root, *LINK_DIR)
+    if not workdir or os.path.commonpath([folder, real]) != folder or real == folder or not os.path.isfile(real):
+        raise ValueError(f"{path} isn't a file in {folder}: write each answer there first")
+    return real
+
+
+def link_result(raw):
+    """A tool answer as the run saved it: the MCP envelope ({structuredContent | content}) or the data itself."""
+    if isinstance(raw, dict) and ("structuredContent" in raw or isinstance(raw.get("content"), list)):
+        if raw.get("structuredContent") is not None:
+            return raw["structuredContent"]
+        texts = [c.get("text") or "" for c in raw["content"] if isinstance(c, dict) and c.get("type") == "text"]
+        try:
+            return json.loads(texts[0]) if len(texts) == 1 else texts
+        except ValueError:
+            return texts[0]
+    return raw
+
+
+# The link's read tools and the only arguments a fallback run may give them (amlink.LINK_TOOLS holds the same tools;
+# a test compares them). Screenshots aren't read through Claude: they name an ad, not the ad account.
+LINK_GUARD = {
+    "ads_get_ad_accounts": (),
+    "ads_get_ad_entities": ("ad_account_id", "object_state", "limit", "after"),
+    "ads_get_errors": ("ad_account_id",), "ads_get_dataset_quality": ("ad_account_id",),
+    "ads_insights_industry_benchmark": ("ad_account_id",), "ads_insights_performance_vs_peers": ("ad_account_id",),
+    "ads_insights_auction_ranking_benchmarks": ("ad_account_id",), "ads_insights_anomaly_signal": ("ad_account_id",),
+    "ads_insights_performance_trend": ("ad_account_id",), "ads_insights_advertiser_context": ("ad_account_id",),
+}
+LINK_GUARD_ALWAYS = ("advertiser_job",)
+
+
+def link_guard(tool_name, tool_input, act):
+    """Why a link run's MCP call is refused, or None. act: the pass's ad account ("act_<digits>", from the bridge)."""
+    if not re.fullmatch(r"act_\d{1,30}", act or ""):
+        return "This run has no link pass ad account; no Meta tool may run."
+    name = (tool_name or "").split("__")[-1]
+    if name not in LINK_GUARD:
+        return f"{name} isn't one of the link's read tools."
+    args = tool_input if isinstance(tool_input, dict) else {}
+    extra = sorted(k for k in args if k not in LINK_GUARD[name] + LINK_GUARD_ALWAYS)
+    if extra:
+        return f"{name} may only take {', '.join(LINK_GUARD[name] + LINK_GUARD_ALWAYS)} in a link run (not {', '.join(extra)})."
+    if "ad_account_id" in LINK_GUARD[name] and str(args.get("ad_account_id") or "") != act:
+        return f"This link pass is for {act} only."
+    if name == "ads_get_ad_entities" and args.get("object_state") != "draft":
+        return "A link run reads drafts only (object_state draft)."
+    return None
+
+
+def content_account(raw):
+    """The ad account an answer names in its own account fields (act_<digits>), or None: link-push sends that, not the
+    plan's, so the console refuses an answer about another ad account."""
+    stack = [raw]
+    for _ in range(5000):
+        if not stack:
+            return None
+        node = stack.pop()
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in ("ad_account_id", "account_id") and isinstance(v, (str, int)) and str(v):
+                    v = str(v)
+                    return v if v.startswith("act_") else f"act_{v}"
+                if isinstance(v, (dict, list)):
+                    stack.append(v)
+        elif isinstance(node, list):
+            stack.extend(v for v in node if isinstance(v, (dict, list)))
+    return None
+
+
 LOGGED_KINDS = {"budget": "budget", "status": "on/off", "spend_limit": "spending limit"}
 
 
@@ -327,9 +411,25 @@ def main(argv=None):
     sub.add_parser("watched")
     sp = sub.add_parser("swipe"); sp.add_argument("--task", type=int); sp.add_argument("--file")
     sp = sub.add_parser("benchmarks"); sp.add_argument("--file")
+    sub.add_parser("link-plan").add_argument("run", type=int)
+    sub.add_parser("link-guard")
+    sp = sub.add_parser("link-push"); sp.add_argument("run", type=int); sp.add_argument("--kind", required=True); sp.add_argument("--file", required=True)
+    sp = sub.add_parser("link-finish"); sp.add_argument("run", type=int); sp.add_argument("--status", required=True, choices=["done", "failed", "no_access"])
+    sp.add_argument("--error")
     sp = sub.add_parser("done"); sp.add_argument("id", type=int); sp.add_argument("--summary", required=True)
     sp = sub.add_parser("fail"); sp.add_argument("id", type=int); sp.add_argument("--error", required=True)
     a = p.parse_args(argv)
+    if a.cmd == "link-guard":
+        # Claude Code's PreToolUse hook: the call as JSON on stdin; exit 2 refuses it and tells the run why.
+        try:
+            event = json.load(sys.stdin)
+        except ValueError:
+            event = {}
+        why = link_guard(event.get("tool_name"), event.get("tool_input"), os.environ.get("ADS_LINK_ACT"))
+        if why:
+            print(why, file=sys.stderr)
+            sys.exit(2)
+        return
     cfg = config()
     if a.cmd == "attach":
         try:
@@ -362,6 +462,37 @@ def main(argv=None):
 
     def go(method, path, body=None):
         return call(method, path, body, cfg=cfg, token=token)
+
+    if a.cmd.startswith("link-"):
+        # AM-A fallback: a headless Claude run reads Meta with the link's read tools and hands the answers over with the
+        # pass the bridge gave it (never a desk claim: the link routes refuse one).
+        link_pass = os.environ.get("ADS_LINK_PASS")
+        if not link_pass:
+            sys.exit("No link pass (ADS_LINK_PASS): only the Mac's bridge starts link runs")
+        os.environ.pop("DESK_CLAIM", None)
+
+        def link(method, path, body=None):
+            return call(method, path, body, cfg=cfg, token=token, extra_headers={"X-Link-Pass": link_pass})
+        try:
+            if a.cmd == "link-plan":
+                print(json.dumps(link("GET", f"/api/agent/link/runs/{a.run}")[1], indent=2))
+            elif a.cmd == "link-push":
+                plan = link("GET", f"/api/agent/link/runs/{a.run}")[1]
+                with open(link_input(cfg.get("workdir"), a.file)) as fh:
+                    raw = json.load(fh)
+                result = link_result(raw)
+                body = {"kind": a.kind, "ad_account_id": content_account(result) or plan["ad_account_id"], "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        "via": "claude", "tool": next((r["tool"] for r in plan["reads"] if r["kind"] == a.kind), None), "result": result}
+                print(json.dumps(link("POST", "/api/agent/link/push", body)[1]))
+            else:
+                print(json.dumps(link("POST", "/api/agent/link/finish", {"status": a.status, "error": a.error})[1]))
+        except DeskError as exc:
+            sys.exit(f"Desk said no ({exc.status}): {exc}")
+        except ValueError as exc:
+            sys.exit(str(exc))
+        except (urllib.error.URLError, OSError) as exc:
+            sys.exit(f"Can't reach the dashboard: {exc}")
+        return
 
     try:
         if a.cmd == "task":

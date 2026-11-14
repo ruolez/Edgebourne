@@ -16,7 +16,7 @@ CATEGORY = {
     "spend_cap": "money", "cap_soon": "money", "spend_limit_mismatch": "money", "pace_over": "money", "day_overspend": "money",
     "week_overspend": "money", "cpl_high": "money", "no_leads": "money",
     "tracking": "system", "events_quiet": "system", "stale_data": "system",
-    "report_review": "system", "report_sent": "system", "numbers_off": "system",
+    "report_review": "system", "report_sent": "system", "numbers_off": "system", "link_down": "system",
     "qualified_low": "leads", "junk_high": "leads",
 }
 CATEGORIES = ("status", "leads", "claude", "money", "system")
@@ -27,7 +27,7 @@ def category(rule):
     return CATEGORY.get(rule, "system")
 
 
-FYI_WHILE_INFO = {"numbers_off"}  # D1: one night off is for information; it needs action once it stays (warn)
+FYI_WHILE_INFO = {"numbers_off", "link_down"}  # D1 / AM-A: for information at first; it needs action once it stays (warn)
 
 
 def _alert_needs(a):

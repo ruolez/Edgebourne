@@ -33,6 +33,7 @@ WORSE = {
     "qualified_low": ("share_down", 10),  # % of the worked leads that qualified
     "junk_high": ("share_up", 15),        # % of the leads that look like junk
     "numbers_off": ("plus", 3),           # D1: days that differ from Ads Manager
+    "link_down": ("plus", 24),            # AM-A: hours since the Mac last read Ads Manager
 }
 DAY_AT_MOST = {"tracking"}  # leads may be getting lost: one day at most, like a red money alert
 EPS = 1e-9
@@ -148,6 +149,7 @@ def worse_hint(rule, measure, money=_money):
         "qualified_low": lambda: _qualified_hint(m),
         "junk_high": lambda: _junk_hint(m),
         "numbers_off": lambda: "You'll hear again if 3 more days differ.",
+        "link_down": lambda: "You'll hear again if it still isn't reading a day from now.",
     }.get(rule, lambda: "You'll hear again if it turns red.")()
 
 
@@ -189,6 +191,7 @@ def measure_words(rule, m, money=_money):
         "qualified_low": lambda: f"{int(m + 0.5)}% qualified",  # rounded half up, as the alert's title
         "junk_high": lambda: f"{int(m + 0.5)}% junk",
         "numbers_off": lambda: f"{m:.0f} day that differs" if round(m) == 1 else f"{m:.0f} days that differ",
+        "link_down": lambda: f"{m:.0f} hours without a read",
     }.get(rule, lambda: None)()
 
 

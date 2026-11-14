@@ -1885,3 +1885,26 @@ dialog.acp #acp-again { min-height: var(--target); }
   .sl-row .money-input .input { flex: 1; width: auto; min-width: 0; }
   .sl-row .btn { width: 100%; min-height: var(--target); }
 }
+
+/* AM-A: Settings → Ads Manager link, and the source line under anything it read ("From Ads Manager via your Mac …"). */
+.am-src { display: flex; align-items: center; gap: 6px; margin: 0; font-size: var(--t-xs); color: var(--ink-3); min-width: 0; }
+.am-src svg { flex: none; width: 14px; height: 14px; }
+.am-src span { min-width: 0; overflow-wrap: anywhere; }
+.am-src.is-stale { color: var(--amber-ink); }
+.am-conn, .am-acct { display: grid; gap: 10px; min-width: 0; }
+.am-acct { border-top: 1px solid var(--line); padding-top: 16px; }
+.am-title { margin: 0; font-size: var(--t-m); font-weight: 600; overflow-wrap: anywhere; }
+.am-line { overflow-wrap: anywhere; }
+.am-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.am-switch { display: flex; align-items: center; gap: 10px; }
+.am-kinds { width: 100%; }
+.am-kinds td:first-child { font-weight: 560; }
+.am-run-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: var(--t-s); color: var(--ink-2); overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .am-kinds thead { display: none; }
+  .am-kinds, .am-kinds tbody, .am-kinds tr, .am-kinds td { display: block; width: 100%; }
+  .am-kinds tr { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .am-kinds td { padding: 2px 0; border: 0; }
+  .am-kinds td[data-label]::before { content: attr(data-label) ": "; color: var(--ink-3); }
+  .am-acts .btn { flex: 1 1 100%; }
+}

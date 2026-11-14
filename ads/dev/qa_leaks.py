@@ -76,6 +76,11 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
     # D1: a numbers check that stopped (its words show in Settings → Numbers vs Ads Manager's recent checks).
     once("numbers_runs", {"kind": "check", "start_day": "2026-10-01", "end_day": "2026-10-02", "finished_at": "2026-10-03T04:10:00Z", "ok": False,
                           "error": f"{mark} run", "account_id": acct}, "error")
+    # AM-A: a link pass that failed (its words show in Settings → Ads Manager link) and a stored read from Ads Manager.
+    once("am_link_runs", {"pass_hash": f"{mark}pass", "ad_account_id": "1", "kinds": ["ad_errors"], "mode": "direct", "status": "failed",
+                          "error": f"{mark} link read", "account_id": acct}, "pass_hash")
+    once("am_snapshots", {"kind": "advertiser_context", "scope": f"{mark}scope", "data": json.dumps({"vertical": f"{mark} context"}),
+                          "fetched_at": "2026-11-13T10:00:00Z", "via": "direct", "account_id": acct}, "scope")
     return {"proposal": proposal["id"], "view": view["id"], "build": build["id"], "swipe": swipe["id"], "alert": problem["id"],
             "change": change["id"], "attachment": preview["id"]}
 
@@ -126,7 +131,8 @@ with account_ctx.all_accounts():
             for t, col in (("desk_proposals", "title"), ("desk_reports", "title"), ("status_events", "new_value"), ("meta_changes", "new_value"),
                            ("ad_versions", "label"), ("saved_views", "name"), ("campaign_builds", "client_key"), ("alerts", "dedupe_key"),
                            ("lead_notes", "body"), ("lead_replies", "subject"), ("activity", "subject"), ("inbox_reads", "item_key"),
-                           ("desk_attachments", "name"), ("desk_tasks", "prompt"), ("swipes", "page_name"), ("numbers_runs", "error")):
+                           ("desk_attachments", "name"), ("desk_tasks", "prompt"), ("swipes", "page_name"), ("numbers_runs", "error"),
+                           ("am_link_runs", "error"), ("am_snapshots", "scope")):
                 db.execute(f"DELETE FROM {t} WHERE account_id = 1 AND {col} LIKE %s", (MARK1 + "%",))
             db.execute("DELETE FROM lead_events WHERE account_id = 1 AND details->>'ad' LIKE %s", (MARK1 + "%",))
     drop_mark1()
@@ -570,8 +576,17 @@ fud = {"switched_owner_reads_account1": c.get(f"/api/desk/attachments/{one['atta
        "client_turns_on": cc.post("/api/auth/full-access", json={"password": "x"}).status_code,
        "account2_admin_turns_on": ac.post("/api/auth/full-access", json={"password": "x"}).status_code,
        "desk_lists_account1_preview": MARK1 + "preview" in c.get("/api/desk").get_data(as_text=True)}
+# AM-A: the link's connection (who is signed in on the Mac) is the owner's; an account admin sees only their account.
+am_seen = (ac.get("/api/am-link").get_json() or {}).get("link") or {}
+am = {"account2_admin_status": ac.get("/api/am-link").status_code,
+      "account2_admin_sees_connected_as": "connected_as" in am_seen,
+      "account2_admin_sees_the_mac": any(k in am_seen for k in ("mac_online", "mac_set_up", "helper_version", "scope", "connected_at")),
+      "account2_admin_connect": ac.post("/api/am-link/connect", json={}).status_code,
+      "account2_admin_turns_on": ac.patch("/api/am-link/account", json={"on": True}).status_code,
+      "member": mc.get("/api/am-link").status_code, "client": cc.get("/api/am-link").status_code,
+      "client_check": cc.post("/api/am-link/check", json={}).status_code}
 session_for(c, admin["id"], 1)
-out.update({"leaks": l1 + l2 + l2b + l3, "full_access": fud, "routes_checked": [n1, n2, n3], "admin_sees_account2_on_account2": sees_own,
+out.update({"leaks": l1 + l2 + l2b + l3, "full_access": fud, "am_link": am, "routes_checked": [n1, n2, n3], "admin_sees_account2_on_account2": sees_own,
             "client_sees_own_leads": client_sees_own, "client_switch_status": switch, "client_stays_on_own_account": still,
             "client_writes_not_refused": writes,
             "member_and_account_admin_routes": [n4, n5], "leaks_member_and_account_admin": l4 + l5,

@@ -46,6 +46,8 @@ DEFAULTS = {
     "junk_high": {"on": True, "percent": 30, "min_leads": 10},
     # D1: our stored days differ from Ads Manager's own totals after a night's (or a hand) pull; FYI once, warn when it stays.
     "numbers_off": {"on": True},
+    # AM-A: the Mac's Ads Manager link needs a new login, is refused, or stopped finishing its reads (console-wide, account 1).
+    "link_down": {"on": True, "hours": 6},
 }
 # Events that stay open until someone deals with them get a Done (00-PLAN C16).
 DONE_OK = {"outside_edit", "change_result"}
@@ -308,6 +310,9 @@ def evaluate(snap, rules, today):
 
     _numbers_alert(snap.get("numbers") or {}, rules["numbers_off"], add, money)
 
+    for a in link_alert(snap.get("link"), rules["link_down"], today):
+        add(a["rule"], a["entity_id"], a["level"], a["title"], a["lines"], None, a["href"], measure=a["measure"])
+
     r = rules["stale_data"]
     age = snap.get("last_pull_age_h")
     if r["on"] and snap.get("connected") and age is not None and age > r["hours"]:
@@ -381,7 +386,33 @@ def snapshot(now):
         "tracking": tracking_state(now),
         "lead_quality": lead_quality_groups(quality_rows),
         "numbers": numbers_state(),
+        "link": link_snapshot(now),
     }
+
+
+def link_alert(link, rule, today):
+    """AM-A: the link_down alert from link_snapshot() (None outside account 1), as found-dicts."""
+    import am_link
+    if not link or not rule["on"]:
+        return []
+    a = am_link.link_down(link["state"], link["since"], link["mac_online"], link["now"], rule["hours"])
+    if not a:
+        return []
+    return [{"rule": "link_down", "entity_id": "console", "key": f"link_down:console:{today.isoformat()}", "level": a["level"],
+             "title": a["title"], "lines": a["lines"], "campaign_id": None, "href": "/settings.html#am-link", "measure": a["measure"]}]
+
+
+def link_snapshot(now):
+    """What link_alert judges: the console's link, raised under account 1 only (the Mac and its login are Eugene's)."""
+    import account_ctx
+    import desk_api
+    if account_ctx.current() != account_ctx.DEFAULT:
+        return None
+    row = db.query("SELECT state, last_ok_at, connected_at FROM am_link WHERE id = 1", one=True)
+    if not row:
+        return None
+    return {"state": row["state"], "since": row["last_ok_at"] or row["connected_at"], "mac_online": desk_api.bridge_status()["online"],
+            "now": now}
 
 
 def numbers_state():

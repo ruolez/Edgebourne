@@ -73,6 +73,7 @@ const SETTINGS = [
   S("Lead replies", "replies", "automatic reply templates email answer"),
   S("Lead quality", "lead-quality", "repeats duplicates junk spam fake same person"),
   S("Tracking health", "tracking", "pixel dataset conversions api capi events"),
+  S("Ads Manager link", "am-link", "drafts mac mcp facebook login benchmarks errors check now"),
   S("Lead stages to Meta", "crm", "crm conversion leads quality"),
   S("Meta A/B tests", "ab", "split tests"),
   S("Activity", "activity-panel", "log history who changed"),

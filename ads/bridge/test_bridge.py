@@ -1,9 +1,13 @@
 """Bridge unit tests (host Python, stdlib only): cd ads/bridge && python3 -m unittest test_bridge"""
+import base64
+import hashlib
 import importlib.machinery
 import json
 import os
+import re
 import tempfile
 import unittest
+import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 bridge = importlib.machinery.SourceFileLoader("bridge", os.path.join(HERE, "bridge.py")).load_module()
@@ -411,6 +415,391 @@ class ReadBodyTests(unittest.TestCase):
     def test_outside_the_workspace_a_link_out_or_env_is_refused(self):
         self.assertEqual([self.read(os.path.join(self.root, "secret.txt")), self.read(os.path.join(self.work, "reports/desk/tmp/link.md")),
                           self.read(os.path.join(self.work, ".env"))], [None] * 3)
+
+
+
+# ---------------------------------------------------------------- AM-A: the Ads Manager link (amlink.py)
+
+amlink = bridge.amlink
+CFG = {"base_url": "https://ads.example.com", "workdir": WORKDIR, "claude": "/usr/local/bin/claude"}
+
+
+class FakeHttp:
+    """Records every request; answers from a list of (status, headers, body) or a function."""
+
+    def __init__(self, answer=None):
+        self.requests = []
+        self.answer = answer or (lambda method, url, headers, data: (500, {}, b"{}"))
+
+    def request(self, method, url, headers=None, data=None, timeout=30):
+        self.requests.append((method, url, headers or {}, data))
+        return self.answer(method, url, headers or {}, data)
+
+
+class MemoryStore:
+    def __init__(self, tok=None):
+        self.tok = tok
+
+    def load(self):
+        return self.tok
+
+    def save(self, tok):
+        self.tok = tok
+
+    def delete(self):
+        self.tok = None
+
+
+def tool(name, read_only=True, destructive=False, schema=None):
+    return {"name": name, "annotations": {"readOnlyHint": read_only, "destructiveHint": destructive},
+            "inputSchema": schema or {"type": "object", "properties": {"ad_account_id": {"type": "string"}}, "required": ["ad_account_id"]}}
+
+
+def session_with(tools, answer=None):
+    http = FakeHttp(answer)
+    link = amlink.Link(CFG, http=http, store=MemoryStore({"access_token": "at", "refresh_token": "rt", "client_id": "c",
+                                                          "expires_at": 9e12, "token_endpoint": "https://auth.example.com/token"}))
+    session = amlink.Session(link)
+    session.tools = {t["name"]: t for t in tools}
+    session.sid = "s1"
+    return session, http
+
+
+def rpc(result):
+    return lambda method, url, headers, data: (200, {"content-type": "application/json"},
+                                               json.dumps({"jsonrpc": "2.0", "id": json.loads(data)["id"], "result": result}).encode())
+
+
+class LinkToolsTests(unittest.TestCase):
+    def test_the_link_reads_only_tools_the_desk_already_treats_as_reads(self):
+        tools = set(amlink.LINK_TOOLS.values())
+        self.assertEqual((tools <= set(bridge.READ_TOOLS), tools & set(bridge.META_WRITE_TOOLS)), (True, set()))
+
+    def test_the_console_and_the_mac_ask_for_the_same_tool_with_the_same_arguments(self):
+        import sys
+        sys.path.insert(0, os.path.join(HERE, "..", "backend"))
+        try:
+            am_link = importlib.machinery.SourceFileLoader("am_link", os.path.join(HERE, "..", "backend", "am_link.py")).load_module()
+        finally:
+            sys.path.pop(0)
+        kinds = [k for k in amlink.LINK_TOOLS if not k.startswith("_")]
+        self.assertEqual({k: amlink.LINK_TOOLS[k] for k in kinds}, am_link.TOOLS)
+        self.assertEqual([amlink.tool_args(k, "123", scope="9", after="c2") for k in kinds],
+                         [am_link.tool_args(k, "123", scope="9", after="c2") for k in kinds])
+
+
+class ReadOnlyGuardTests(unittest.TestCase):
+    def test_write_tools_are_refused_before_any_request(self):
+        session, http = session_with([tool(n, read_only=False, destructive=True) for n in bridge.META_WRITE_TOOLS])
+        refused = 0
+        for name in ["ads_update_entity"] + bridge.META_WRITE_TOOLS:
+            with self.assertRaises(amlink.NotAllowed):
+                session.call_tool(name, {})
+            refused += 1
+        self.assertEqual((refused, http.requests), (len(bridge.META_WRITE_TOOLS) + 1, []))
+
+    def test_a_listed_tool_meta_marks_as_a_change_is_refused(self):
+        session, http = session_with([tool("ads_get_errors", read_only=False, destructive=False)])
+        with self.assertRaises(amlink.NotAllowed):
+            session.call_tool("ads_get_errors", {"ad_account_id": "act_1"})
+        self.assertEqual(http.requests, [])
+
+    def test_next_actions_in_an_answer_are_never_run(self):
+        answer = {"structuredContent": {"ad_drafts": [{"ad_object_id": "1"}], "paging": {},
+                                        "next_actions": {"actions": [{"tool": "ads_activate_entity", "strength": "required"}]}}}
+        session, http = session_with([tool("ads_get_ad_entities", schema={"type": "object", "properties": {
+            "ad_account_id": {}, "object_state": {}, "limit": {}, "after": {}}})], rpc(answer))
+        out = amlink.read_kind(session, "drafts", "123")
+        called = [json.loads(d)["params"]["name"] for _, _, _, d in http.requests]
+        self.assertEqual((out, called), ({"ad_drafts": [{"ad_object_id": "1"}]}, ["ads_get_ad_entities"]))
+
+    def test_drafts_follow_the_cursor_until_the_last_page(self):
+        pages = {None: ([{"ad_object_id": str(i)} for i in range(25)], {"cursors": {"after": "p2"}, "next": "https://…"}),
+                 "p2": ([{"ad_object_id": "25"}], {"cursors": {"after": "p3"}})}
+
+        def answer(method, url, headers, data):
+            after = json.loads(data)["params"]["arguments"].get("after")
+            rows, paging = pages[after]
+            return rpc({"structuredContent": {"ad_drafts": rows, "paging": paging}})(method, url, headers, data)
+        session, http = session_with([tool("ads_get_ad_entities", schema={"type": "object", "properties": {
+            "ad_account_id": {}, "object_state": {}, "limit": {}, "after": {}}})], answer)
+        self.assertEqual((len(amlink.read_kind(session, "drafts", "123")["ad_drafts"]), len(http.requests)), (26, 2))
+
+    def test_a_changed_schema_is_reported_never_guessed(self):
+        session, http = session_with([tool("ads_get_errors", schema={"type": "object", "properties": {"account": {}}, "required": ["account"]})])
+        with self.assertRaises(amlink.LinkError) as ctx:
+            session.call_tool("ads_get_errors", {"ad_account_id": "act_1"})
+        self.assertEqual((str(ctx.exception), http.requests), ("Meta changed the tool `ads_get_errors`; update the Mac helper.", []))
+
+    def test_the_goal_is_named_for_tools_that_take_it(self):
+        schema = {"type": "object", "properties": {"ad_account_id": {}, "advertiser_job": {}}, "required": ["ad_account_id"]}
+        self.assertEqual(amlink.with_known({"ad_account_id": "act_1"}, schema), {"ad_account_id": "act_1", "advertiser_job": "report_measure_or_look_up"})
+
+
+class OAuthTests(unittest.TestCase):
+    def test_pkce_verifier_and_challenge(self):
+        verifier, chal = amlink.pkce_pair()
+        expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        self.assertEqual((43 <= len(verifier) <= 128, bool(re.fullmatch(r"[A-Za-z0-9\-._~]+", verifier)), chal, "=" in chal),
+                         (True, True, expected, False))
+
+    def test_metadata_without_s256_or_with_plain_http_is_refused(self):
+        good = {"code_challenge_methods_supported": ["S256"], "authorization_endpoint": "https://a.example.com/auth",
+                "token_endpoint": "https://a.example.com/token"}
+        cases = [{**good, "code_challenge_methods_supported": ["plain"]}, {**good, "token_endpoint": "http://a.example.com/token"},
+                 {k: v for k, v in good.items() if k != "code_challenge_methods_supported"}]
+        refused = []
+        for meta in cases:
+            with self.assertRaises(amlink.LinkError):
+                amlink.check_as(meta, test=False)
+            refused.append(True)
+        self.assertEqual((refused, amlink.check_as(good, test=False)), ([True] * 3, good))
+
+    def test_plain_http_only_for_the_local_fake_while_testing(self):
+        self.assertEqual(amlink.check_url("http://localhost:5001/mcp-fake/mcp", test=True), "http://localhost:5001/mcp-fake/mcp")
+        with self.assertRaises(amlink.LinkError):
+            amlink.check_url("http://localhost:5001/mcp-fake/mcp", test=False)
+
+    def test_www_authenticate_is_read(self):
+        header = 'Bearer resource_metadata="https://mcp.facebook.com/.well-known/oauth-protected-resource/ads", scope="ads_mcp_management ads_read", error=invalid_token'
+        self.assertEqual(amlink.parse_www_authenticate(header),
+                         {"resource_metadata": "https://mcp.facebook.com/.well-known/oauth-protected-resource/ads",
+                          "scope": "ads_mcp_management ads_read", "error": "invalid_token"})
+
+    def test_discovery_order(self):
+        self.assertEqual(amlink.resource_metadata_urls("https://mcp.facebook.com/ads", {}),
+                         ["https://mcp.facebook.com/.well-known/oauth-protected-resource/ads", "https://mcp.facebook.com/.well-known/oauth-protected-resource"])
+        self.assertEqual(amlink.resource_metadata_urls("https://mcp.facebook.com/ads", {"resource_metadata": "https://x.example.com/prm"})[0],
+                         "https://x.example.com/prm")
+        self.assertEqual(amlink.as_metadata_urls("https://www.facebook.com/oauth"),
+                         ["https://www.facebook.com/.well-known/oauth-authorization-server/oauth", "https://www.facebook.com/.well-known/openid-configuration/oauth",
+                          "https://www.facebook.com/oauth/.well-known/openid-configuration"])
+        self.assertEqual(amlink.as_metadata_urls("https://auth.example.com"),
+                         ["https://auth.example.com/.well-known/oauth-authorization-server", "https://auth.example.com/.well-known/openid-configuration"])
+
+    def test_fallback_reasons(self):
+        cases = [("register", 400, {"error": "invalid_redirect_uri", "error_description": "redirect_uris are not registered"}),
+                 ("register", 400, {"error": "invalid_client_metadata"}), ("authorize", 400, {"error": "unauthorized_client"}),
+                 ("token", 401, {"error": "invalid_client"}), ("mcp", 403, {"error": "This client is not supported"}),
+                 ("authorize", 400, {"error": "access_denied"}), ("register", None, {}), ("token", 503, {})]
+        self.assertEqual([amlink.fallback_reason(*c)[0] for c in cases],
+                         ["fallback", "fallback", "fallback", "fallback", "fallback", "not_connected", "retry", "retry"])
+
+    def test_an_expired_refresh_token_means_reconnect_never_a_loop(self):
+        http = FakeHttp(lambda m, u, h, d: (400, {}, b'{"error": "invalid_grant"}'))
+        link = amlink.Link(CFG, http=http, store=MemoryStore())
+        with self.assertRaises(amlink.LinkError) as ctx:
+            link.refresh({"refresh_token": "old", "client_id": "c", "token_endpoint": "https://auth.example.com/token"})
+        self.assertEqual((ctx.exception.state, len(http.requests)), ("expired", 1))
+
+    def test_a_rotated_refresh_token_replaces_the_old_one(self):
+        http = FakeHttp(lambda m, u, h, d: (200, {}, b'{"access_token": "new-at", "refresh_token": "new-rt", "expires_in": 60}'))
+        store = MemoryStore()
+        amlink.Link(CFG, http=http, store=store).refresh({"refresh_token": "old", "client_id": "c", "token_endpoint": "https://auth.example.com/token"})
+        sent = dict(urllib.parse.parse_qsl(http.requests[0][3].decode()))
+        self.assertEqual((store.tok["refresh_token"], sent["resource"], sent["grant_type"]), ("new-rt", amlink.MCP_URL, "refresh_token"))
+
+    def test_the_keychain_write_keeps_the_token_off_the_command_line(self):
+        secret = base64.b64encode(b'{"access_token": "SECRET-TOKEN"}').decode()
+        argv, stdin = amlink.keychain_write("https://ads.edgebourne.com", secret)
+        self.assertEqual((argv, secret in stdin, any(secret in a for a in argv), "ads-manager-link" in stdin),
+                         (["security", "-i"], True, False, True))
+
+
+class ScopeAndMetadataTests(unittest.TestCase):
+    MCP = "https://mcp.example.com/ads"
+
+    def test_only_the_read_scope_first_and_everything_once_meta_refused_it(self):
+        self.assertEqual([amlink.pick_scope("ads_mcp_management ads_read"), amlink.pick_scope("ads_mcp_management ads_read", wide=True),
+                          amlink.pick_scope("ads_mcp_management"), amlink.pick_scope(""), amlink.pick_scope("thread_reader ads_read business_read")],
+                         ["ads_read", "ads_mcp_management ads_read", "ads_mcp_management", None, "ads_read business_read"])
+
+    def discover(self, prm, asm):
+        def answer(method, url, headers, data):
+            if method == "POST":
+                return 401, {"www-authenticate": 'Bearer resource_metadata="https://mcp.example.com/prm", scope="ads_mcp_management ads_read"'}, b"{}"
+            if url == "https://mcp.example.com/prm":
+                return 200, {}, json.dumps(prm).encode()
+            if url.startswith("https://auth.example.com/.well-known/oauth-authorization-server"):
+                return 200, {}, json.dumps(asm).encode()
+            return 404, {}, b"{}"
+        link = amlink.Link(CFG, http=FakeHttp(answer), store=MemoryStore())
+        link.url = self.MCP
+        return link.discover()
+
+    ASM = {"issuer": "https://auth.example.com", "authorization_endpoint": "https://auth.example.com/a", "token_endpoint": "https://auth.example.com/t",
+           "code_challenge_methods_supported": ["S256"], "revocation_endpoint": "https://auth.example.com/revoke"}
+    PRM = {"resource": MCP, "authorization_servers": ["https://auth.example.com"]}
+
+    def test_good_metadata_asks_for_reading_only(self):
+        found = self.discover(self.PRM, self.ASM)
+        self.assertEqual((found["scope"], found["narrowed"], found["issuer"]), ("ads_read", True, "https://auth.example.com"))
+
+    def test_metadata_for_another_server_or_issuer_is_refused(self):
+        words = []
+        for prm, asm in (({**self.PRM, "resource": "https://evil.example.com/ads"}, self.ASM), (self.PRM, {**self.ASM, "issuer": "https://evil.example.com"})):
+            with self.assertRaises(amlink.LinkError) as ctx:
+                self.discover(prm, asm)
+            words.append((ctx.exception.state, str(ctx.exception)))
+        self.assertEqual(words, [("refused", "Meta's sign-in details are for another server; the link won't use them."),
+                                 ("refused", "Meta's login metadata names another issuer; the link won't sign in.")])
+
+    def test_too_narrow_a_permission_asks_for_reconnect_and_widens_the_next_login(self):
+        answer = lambda m, u, h, d: (403, {"www-authenticate": 'Bearer error="insufficient_scope", scope="ads_mcp_management"'}, b"{}")  # noqa: E731
+        session, http = session_with([tool("ads_get_errors")], answer)
+        session.link.tok = {**session.link.store.load(), "narrowed": True}
+        with self.assertRaises(amlink.LinkError) as ctx:
+            session.call_tool("ads_get_errors", {"ad_account_id": "act_1"})
+        self.assertEqual((ctx.exception.state, session.link.store.tok.get("widen"), len(http.requests)), ("expired", True, 1))
+
+    def test_disconnect_cancels_the_refresh_token_at_meta(self):
+        http = FakeHttp(lambda m, u, h, d: (200, {}, b"{}"))
+        link = amlink.Link(CFG, http=http, store=MemoryStore({"refresh_token": "rt", "access_token": "at", "client_id": "c",
+                                                             "revocation_endpoint": "https://auth.example.com/revoke"}))
+        ok = link.revoke()
+        sent = dict(urllib.parse.parse_qsl(http.requests[0][3].decode()))
+        self.assertEqual((ok, http.requests[0][1], sent), (True, "https://auth.example.com/revoke", {"token": "rt", "token_type_hint": "refresh_token", "client_id": "c"}))
+
+    def test_the_redirect_is_the_loopback_ip_the_console_shows(self):
+        with open(os.path.join(HERE, "..", "backend", "am_link_api.py")) as fh:
+            text = fh.read()
+        self.assertEqual((amlink.REDIRECT_URI, f'REDIRECT_URI = "{amlink.REDIRECT_URI}"' in text), ("http://127.0.0.1:47615/callback", True))
+
+
+class LinkFailureTests(unittest.TestCase):
+    """A pass or a login that goes wrong is closed or reported at once, never left open to block the account."""
+
+    def setUp(self):
+        self.calls = []
+        self.answers = {}
+        real = amlink.console
+
+        def console(cfg, key, method, path, body=None, link_pass=None, timeout=40):
+            self.calls.append((path, body))
+            if path in self.answers:
+                raise self.answers[path]
+            return 200, {"kept": 1}
+        amlink.console = console
+        self.addCleanup(setattr, amlink, "console", real)
+
+    def link(self, answer):
+        return amlink.Link(CFG, http=FakeHttp(answer), store=MemoryStore({"access_token": "at", "refresh_token": "rt", "client_id": "c",
+                                                                         "expires_at": 9e12, "token_endpoint": "https://auth.example.com/token"}))
+
+    def finishes(self):
+        return [b for p, b in self.calls if p == "/api/agent/link/finish"]
+
+    def test_a_network_error_from_meta_closes_the_pass_as_failed(self):
+        def down(*_):
+            raise amlink.urllib.error.URLError("timed out")
+        kept = amlink.run_pass(CFG, "k", {"pass": "p", "run_id": 1, "ad_account_id": "123", "kinds": ["ad_errors"]}, self.link(down), log=lambda *_: None)
+        self.assertEqual((kept, [b["status"] for b in self.finishes()], "Couldn't reach Meta's server" in self.finishes()[0]["error"]),
+                         ({}, ["failed"], True))
+
+    def test_a_mislabeled_account_list_closes_the_pass_as_failed(self):
+        session = amlink.Session
+        opened = lambda self: (setattr(self, "tools", {"ads_get_ad_accounts": tool("ads_get_ad_accounts", read_only=False)}), self)[1]  # noqa: E731
+        session.open, real = opened, session.open
+        self.addCleanup(setattr, session, "open", real)
+        amlink.run_pass(CFG, "k", {"pass": "p", "run_id": 1, "ad_account_id": "123", "kinds": ["ad_errors"]}, self.link(None), log=lambda *_: None)
+        self.assertEqual([b["status"] for b in self.finishes()], ["failed"])
+
+    def test_a_disconnect_the_console_didnt_take_waits_before_the_next_try(self):
+        self.answers["/api/agent/link/status"] = desk.DeskError("busy", 503)
+        out = amlink.handle_plan(CFG, "k", {"disconnect": True}, link=self.link(None), log=lambda *_: None)
+        self.assertEqual(out, "unconfirmed")
+
+
+class LinkGuardTests(unittest.TestCase):
+    ACT = "act_1025971549903293"
+
+    def test_the_guard_knows_exactly_the_links_tools_but_screenshots(self):
+        self.assertEqual(set(desk.LINK_GUARD), {t for k, t in amlink.LINK_TOOLS.items() if k != "screenshots"})
+
+    def test_calls_for_the_pass_ad_account_pass(self):
+        calls = [("mcp__meta-ads__ads_get_errors", {"ad_account_id": self.ACT}),
+                 ("mcp__claude_ai_Meta_Ads__ads_insights_anomaly_signal", {"ad_account_id": self.ACT, "advertiser_job": "report_measure_or_look_up"}),
+                 ("mcp__meta-ads__ads_get_ad_entities", {"ad_account_id": self.ACT, "object_state": "draft", "limit": 25, "after": "c"}),
+                 ("mcp__meta-ads__ads_get_ad_accounts", {})]
+        self.assertEqual([desk.link_guard(n, a, self.ACT) for n, a in calls], [None] * 4)
+
+    def test_another_ad_account_extra_arguments_and_other_tools_are_refused(self):
+        calls = [("mcp__meta-ads__ads_get_errors", {"ad_account_id": "act_2223334445556667"}),
+                 ("mcp__meta-ads__ads_get_errors", {"ad_account_id": self.ACT, "entity_id": "120"}),
+                 ("mcp__meta-ads__ads_get_ad_entities", {"ad_account_id": self.ACT}),
+                 ("mcp__meta-ads__ads_get_ad_preview_screenshot", {"ad_id": "120"}),
+                 ("mcp__meta-ads__ads_update_entity", {"ad_account_id": self.ACT}),
+                 ("mcp__meta-ads__ads_get_ad_accounts", {"ad_account_id": "act_2223334445556667"})]
+        out = [desk.link_guard(n, a, self.ACT) for n, a in calls] + [desk.link_guard(calls[0][0], {"ad_account_id": self.ACT}, None)]
+        self.assertEqual([bool(w) for w in out], [True] * 7, out)
+        self.assertEqual(out[0], "This link pass is for act_1025971549903293 only.")
+
+    def test_the_hook_refuses_with_exit_code_2(self):
+        import subprocess
+        import sys
+        run = lambda act, args: subprocess.run([sys.executable, os.path.join(HERE, "desk"), "link-guard"], input=json.dumps(  # noqa: E731
+            {"tool_name": "mcp__meta-ads__ads_get_errors", "tool_input": args}), capture_output=True, text=True,
+            env={**os.environ, "ADS_LINK_ACT": act, "ADS_DESK_CONFIG": "/nonexistent"})
+        good, bad = run(self.ACT, {"ad_account_id": self.ACT}), run(self.ACT, {"ad_account_id": "act_9"})
+        self.assertEqual((good.returncode, bad.returncode, bad.stderr.strip()), (0, 2, "This link pass is for act_1025971549903293 only."))
+
+    def test_the_fallback_run_carries_the_guard(self):
+        cmd = bridge.link_fallback_command(CFG, {"run_id": 81, "pass": "p"}, HOME)
+        hooks = json.loads(cmd[cmd.index("--settings") + 1])["hooks"]["PreToolUse"]
+        self.assertEqual(hooks, [{"matcher": "mcp__.*", "hooks": [{"type": "command", "command": f"{SKILL}/desk link-guard"}]}])
+
+    def test_link_push_names_the_ad_account_the_answer_itself_names(self):
+        self.assertEqual([desk.content_account({"errors": [{"account_id": "2223334445556667"}]}), desk.content_account({"data": {"ad_account_id": "act_5"}}),
+                          desk.content_account({"errors": [{"summary": "act_9"}]})], ["act_2223334445556667", "act_5", None])
+
+    def test_full_runs_also_deny_other_spellings_of_the_keychain_tool(self):
+        denied = bridge.denied_tools(WORKDIR, HOME, access="full")
+        self.assertEqual({"Bash(/usr/bin/security:*)", "Bash(env:*)", "Bash(command security:*)"} <= set(denied), True)
+
+
+class LinkFallbackCommandTests(unittest.TestCase):
+    def setUp(self):
+        self.cmd = bridge.link_fallback_command(CFG, {"run_id": 81, "pass": "p"}, HOME)
+        self.allowed = self.cmd[self.cmd.index("--allowedTools") + 1].split(",")
+        self.denied = self.cmd[self.cmd.index("--disallowedTools") + 1].split(",")
+
+    def test_cheapest_model_without_questions(self):
+        self.assertEqual((self.cmd[1:3], self.cmd[self.cmd.index("--model") + 1], self.cmd[self.cmd.index("--permission-mode") + 1]),
+                         (["-p", "/ads-desk link 81"], "haiku", "dontAsk"))
+
+    def test_only_the_link_tools_and_its_desk_commands(self):
+        mcp = {t for t in self.allowed if t.startswith("mcp__")}
+        expected = {f"mcp__{p}__{t}" for t in amlink.LINK_TOOLS.values() for p in bridge.META_PREFIXES}
+        bash = sorted({re.sub(r"^Bash\((.*/)?desk (link-\w+):\*\)$", r"\2", t) for t in self.allowed if t.startswith("Bash(")})
+        files = [t for t in self.allowed if t.startswith(("Edit(", "Read("))]
+        self.assertEqual((mcp, bash, files), (expected, ["link-finish", "link-plan", "link-push"],
+                                              [f"Edit(/{WORKDIR}/reports/desk/tmp/link/**)", f"Read(/{WORKDIR}/reports/desk/tmp/link/**)"]))
+
+    def test_every_meta_write_tool_and_the_web_are_denied_by_name(self):
+        writes = {f"mcp__{p}__{n}" for n in bridge.META_WRITE_TOOLS for p in bridge.META_PREFIXES}
+        self.assertEqual((writes <= set(self.denied), {"WebFetch", "WebSearch", "Bash(meta:*)", "Bash(security:*)"} <= set(self.denied)), (True, True))
+
+
+class DeskLinkTests(unittest.TestCase):
+    def test_link_answers_are_read_only_from_their_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = os.path.realpath(tmp)
+            os.makedirs(os.path.join(work, "reports", "desk", "tmp", "link"))
+            good = os.path.join(work, "reports", "desk", "tmp", "link", "run1-ad_errors.json")
+            other = os.path.join(work, "reports", "desk", "tmp", "task1.json")
+            for f in (good, other):
+                open(f, "w").close()
+            out = []
+            for f in (good, other, os.path.join(work, ".env")):
+                try:
+                    out.append(desk.link_input(work, f) == good)
+                except ValueError:
+                    out.append(None)
+            self.assertEqual(out, [True, None, None])
+
+    def test_the_mcp_envelope_is_unwrapped(self):
+        self.assertEqual([desk.link_result({"structuredContent": {"errors": []}}), desk.link_result({"content": [{"type": "text", "text": '{"a": 1}'}]}),
+                          desk.link_result({"errors": []})], [{"errors": []}, {"a": 1}, {"errors": []}])
 
 
 if __name__ == "__main__":

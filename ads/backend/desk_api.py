@@ -20,6 +20,7 @@ from functools import wraps
 from flask import Blueprint, g, jsonify, request
 
 import account_info
+import am_link
 import config
 import db
 import lead_quality as lq
@@ -555,6 +556,8 @@ def bridge_with_status(rows=None):
     bridge = bridge_status()
     n = desk_view.now(open_runs() if rows is None else rows)
     bridge["status"] = desk_view.mac_status(bridge, n["working"], n["queued"])
+    link = db.query("SELECT state FROM am_link WHERE id = 1", one=True)
+    bridge["link_words"] = am_link.link_status_words(link["state"] if link else "not_connected")  # AM-A, the Mac dialog
     return bridge
 
 
@@ -725,7 +728,8 @@ def agent_required(f):
 
 
 CLAIM_HEADER = "X-Desk-Claim"
-PICK_ROUTES = ("wait", "queue")  # choosing work: the Mac itself, never a run
+# Choosing work and the Ads Manager link (AM-A): the Mac itself, never a run.
+PICK_ROUTES = ("wait", "queue", "link_plan", "link_status", "link_run", "link_push", "link_finish")
 
 
 def claim_refusal(route, path_task, bound, task_locked):

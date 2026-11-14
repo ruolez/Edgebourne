@@ -227,7 +227,13 @@ def _apply(body, sig):
 @bp.post("/agent/benchmarks")
 @agent_required
 def agent_benchmarks():
-    """The Monday summary's benchmarks from the Mac (industry, peers, auction ranking): MCP-only."""
+    """The Monday summary's benchmarks from the Mac (industry, peers, auction ranking): MCP-only. Once the Ads Manager
+    link is connected it reads benchmarks daily, so only a desk run (its claim pass decides the account) may still push
+    here; the Mac's key alone would let a header pick the account (AM-A)."""
+    import desk_api
+    link = db.query("SELECT state FROM am_link WHERE id = 1", one=True)
+    if link and link["state"] in ("connected", "fallback") and not desk_api.claimed_task():
+        return api_error("The Ads Manager link reads benchmarks every day now; only a Claude run on its own request may send them here.", 409)
     data = request.get_json(silent=True) or {}
     items = [{"label": str(i.get("label") or "")[:120], "ours": str(i.get("ours") or "")[:60], "peers": str(i.get("peers") or "")[:60],
               "note": str(i.get("note") or "")[:300]} for i in (data.get("items") or [])[:12] if isinstance(i, dict) and i.get("label")]

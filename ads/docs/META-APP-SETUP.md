@@ -170,6 +170,20 @@ Without this, the console learns that Meta approved or rejected an ad at the nex
 The System User needs admin access to the ad account for step 1. Switching it off only uninstalls
 the app from this ad account; polling carries on either way.
 
+## J. Ads Manager link with your own Meta app (only if the Mac's own login is refused)
+
+The Ads Manager link (Settings → Ads Manager link) normally signs in on the Mac without any app: it registers itself
+with Meta's Ads tools server. If Meta refuses that, the console keeps working through Claude on the Mac by itself. To
+try the console's own Meta app as the login instead:
+
+1. developers.facebook.com → your app (Edge Bourne Ads Console) → **Facebook Login for Business** → Settings →
+   **Valid OAuth Redirect URIs**: add `http://127.0.0.1:47615/callback` (the loopback IP, not "localhost") and save.
+2. In the console: **Settings → Ads Manager link → Advanced → Use my Meta app for the login**, then **Reconnect**.
+3. A Facebook page opens on the Mac. Sign in with the Facebook account that runs the ads and allow it. The section then
+   says "Connected as …". If Meta still says no, untick the box: the link goes on through Claude.
+
+The link only reads (drafts, Meta's error messages, benchmarks…). Disconnect removes its login from the Mac.
+
 ## Email (for lead alerts)
 
 Nothing to set up if the website already sends email (website admin → **Email**): the ads

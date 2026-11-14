@@ -29,6 +29,8 @@ services:
     command: ["python", "/dev-tools/fake_meta.py"]
     volumes:
       - ./ads/dev:/dev-tools:ro
+      # AM-A: QA runs the Mac's link client (ads/bridge/amlink.py) in here against the fake MCP server.
+      - ./ads/bridge:/bridge:ro
 
   backend:
     volumes:

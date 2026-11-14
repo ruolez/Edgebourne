@@ -127,6 +127,29 @@ thresholds, the second ad account and its read-only client, the first real spend
 check still owed on real Meta, real phones and the Mac: **one checklist**, `docs/ROADMAP.md` → Follow-up (2026-11-12) →
 What Eugene does now.
 
+### Ads Manager link (AM-A)
+
+Some of Ads Manager isn't in the Graph API (drafts, Meta's error details, benchmarks, unusual changes, tracking quality,
+business context). The Mac reads them through Meta's own Ads MCP server with its own Facebook login and pushes them
+here; nothing is ever written to Meta by it. `bridge/amlink.py` (desk 3.1, a second thread of the bridge) is the MCP
+client: OAuth 2.1 + PKCE + dynamic registration (or the console's Meta app, `docs/META-APP-SETUP.md` part J), token in
+the Keychain item `ads-manager-link`, read tools only (`LINK_TOOLS`, checked before any request; Meta's own annotations
+can only narrow it; `next_actions` never run). The server decides what is read and for whom (`am_link_api.py`:
+`GET /api/agent/link/plan` hands out one hashed pass per account, `POST /api/agent/link/push` keeps a kind only under
+that pass's account and ad account, whitelisted by `am_link.normalize` into `am_snapshots`; `X-Desk-Claim` refused).
+If Meta refuses the Mac's client, a cheap headless Claude run with the same read tools does each pass (skill "Link runs");
+a PreToolUse hook (`desk link-guard`, env `ADS_LINK_ACT`) binds each of its Meta calls to the pass's ad account outside the
+model, and the server refuses an answer naming another ad account and leaves out rows about ads the account doesn't hold.
+The Mac reads with Eugene's own Facebook login, so an account is read only for the ad account the owner approved
+(`am_link_on` holds that id; account 1 is on until switched off; changing the ad account turns it off; admins may only
+switch it off). The login asks for the read scope first (wider only after Meta answers `insufficient_scope`), the redirect
+is `http://127.0.0.1:47615/callback`, the metadata must name this server and issuer, and Disconnect revokes the refresh
+token at Meta when it offers revocation. Settings → Ads Manager link connects it (owner; refused until the Mac helper is
+3.1, Cancel while waiting) and shows what each account reads and when; account admins see only their account. Every block
+that shows link data uses `ui.linkNote` ("From Ads Manager via your Mac, 12 min ago" / "Your Mac has been away since …" only
+while the Mac really is offline / "Reconnect needed …" / "Reading this account through the Mac is off …"). QA runs the real
+client in the fake-meta container against `dev/fake_mcp.py` (`/fake/_mcp` switches, `/fake/_mcp_hits`).
+
 ### Did it work? (D3)
 
 Did it work? (`backend/change_checks.py` pure, `change_checks_db.py`, table `change_checks`): every budget, on/off, new

@@ -12,7 +12,7 @@
   <meta name="apple-mobile-web-app-title" content="EB Ads">
   <script src="/js/theme.js"></script>
   <link rel="stylesheet" href="/css/tokens.css?v=1794700000">
-  <link rel="stylesheet" href="/css/app.css?v=1795100000">
+  <link rel="stylesheet" href="/css/app.css?v=1795200000">
   <link rel="stylesheet" href="/css/shell.css?v=1795000000">
 </head>
 <body>
@@ -23,7 +23,7 @@
       <div class="content set-layout">
         <nav class="settings-nav" aria-label="Settings sections">
           <span class="set-group">This account</span>
-          <a href="#meta" data-set="meta">Meta connection</a><a href="#targets" data-set="targets">Targets</a><a href="#alerts" data-set="alerts">Alerts</a><a href="#reports-panel" data-set="reports-panel">Clients and reports</a><a href="#replies" data-set="replies">Lead replies</a><a href="#lead-quality" data-set="lead-quality">Lead quality</a><a href="#tracking" data-set="tracking">Tracking health</a><a href="#crm" data-set="crm">Lead stages to Meta</a><a href="#ab" data-set="ab">Meta A/B tests</a><a href="#activity-panel" data-set="activity-panel">Activity</a>
+          <a href="#meta" data-set="meta">Meta connection</a><a href="#targets" data-set="targets">Targets</a><a href="#alerts" data-set="alerts">Alerts</a><a href="#reports-panel" data-set="reports-panel">Clients and reports</a><a href="#replies" data-set="replies">Lead replies</a><a href="#lead-quality" data-set="lead-quality">Lead quality</a><a href="#tracking" data-set="tracking">Tracking health</a><a href="#am-link" data-set="am-link">Ads Manager link</a><a href="#crm" data-set="crm">Lead stages to Meta</a><a href="#ab" data-set="ab">Meta A/B tests</a><a href="#activity-panel" data-set="activity-panel">Activity</a>
           <span class="set-group console-only" hidden>Whole console</span>
           <a class="console-only" href="#meta-app" data-set="meta-app" hidden>Meta app</a><a class="console-only" href="#auto" data-set="auto" hidden>Automatic refresh</a><a class="console-only" href="#email" data-set="email" hidden>Email</a><a class="console-only" href="#telegram" data-set="telegram" hidden>Telegram</a><a class="console-only" href="#accounts-panel" data-set="accounts-panel" hidden>Accounts</a>
         </nav>
@@ -143,6 +143,10 @@
               <button type="button" class="link-btn" id="nc-check" aria-label="Check numbers against Ads Manager now">Check now</button></div>
             <div class="panel-body stack tight" id="nc-body"><p class="muted flush">Reading…</p></div>
           </div>
+        </section>
+        <section class="panel" id="am-link" data-section hidden>
+          <div class="panel-head"><h2>Ads Manager link</h2><p id="am-state"></p></div>
+          <div class="panel-body stack" id="am-body"><p class="muted flush">Reading…</p></div>
         </section>
         <section class="panel" id="crm" data-section hidden>
           <div class="panel-head"><h2>Lead stages to Meta</h2><p id="crm-state"></p></div>
