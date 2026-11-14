@@ -176,12 +176,15 @@ async function fillFromDraft() {
 const me = await boot({ page: "new-adset", admin: true });
 if (me) guardLeaving();
 if (me) {
-  $("crumb").innerHTML = `${icon("back")}<span>Back</span>`;
   const back = returnCrumbs("New ad set");
   $("create")?.insertAdjacentHTML("afterend", cancelLink(back));
   try { opts = await api("/api/adsets/new/options"); } catch (err) { toast(err.message, "bad"); }
+  // The breadcrumbs name the campaign this was opened from, once its name is known.
+  const cameFromId = new URLSearchParams((back.split("?")[1] || "").split("#")[0]).get("id");
+  const cameFromName = cameFromId && opts && (opts.campaigns.find((c) => c.id === cameFromId) || {}).name;
+  if (cameFromName) returnCrumbs("New ad set", "/ads.html", cameFromName);
   if (!opts || !opts.campaigns.length || !opts.adsets.length) {
-    document.querySelector(".new-ad-layout").innerHTML = `<section class="panel empty"><h3>Nothing to build on yet</h3><p>A new ad set starts from an existing one. Once your campaigns are synced from Meta, come back here.</p><a class="btn" href="/ads.html">Back to ads</a></section>`;
+    document.querySelector(".new-ad-layout").innerHTML = `<section class="panel empty"><h3>Nothing to build on yet</h3><p>A new ad set starts from an existing one. Once your campaigns are synced from Meta, come back here.</p><a class="btn" href="${esc(back)}">Go back</a></section>`;
   } else {
     $("places-box").innerHTML = placesHtml("pl");
     places = placesWidget("pl", { cityRadius: opts.city_radius, pinRadius: opts.pin_radius, onChange: changed });

@@ -56,7 +56,7 @@ async function load() {
       lastJson = json;
       if (tasks[0]) tasks[0].reports.forEach((r) => openReports.add(r.id));
       $("tasks").innerHTML = tasks.length ? tasks.map((t) => taskCard(t, openReports)).join("")
-        : '<section class="panel empty"><h3>No research yet</h3><p>Ask Claude what competitors are running, which angles repeat and what\'s worth testing (under Search). Reports land here.</p></section>';
+        : '<section class="panel empty"><h3>No research yet</h3><p>Ask Claude what competitors are running, which angles repeat and what\'s worth testing. Reports land here.</p><div class="row"><button type="button" class="btn" data-open-part="search">Go to Search</button></div></section>';
     }
     clearTimeout(timer);
     timer = setTimeout(load, tasks.some((t) => ACTIVE.has(t.status)) ? 4000 : 30000);
@@ -208,6 +208,7 @@ const me = await boot({ page: "research", admin: true });
 if (me) {
   showPart(partFromHash(), { remember: false });
   $("rs-tabs").addEventListener("click", (e) => { const t = e.target.closest("[data-part]"); if (t) showPart(t.dataset.part); });
+  document.addEventListener("click", (e) => { const t = e.target.closest("[data-open-part]"); if (t) showPart(t.dataset.openPart, { focus: true }); });
   // Edge Bourne's own searches; another account starts with none (type one, or ask Claude to watch Pages).
   const quick = (window.ebadsMe && window.ebadsMe.account.id !== 1) ? [] : QUICK;
   $("quick").hidden = !quick.length;

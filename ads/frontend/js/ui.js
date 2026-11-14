@@ -42,6 +42,7 @@ const ICONS = {
   dots: '<circle cx="5.5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="18.5" cy="12" r="1.6" fill="currentColor"/>',
   user: '<circle cx="12" cy="8.5" r="3.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 20c1-3.6 4-5.5 7.5-5.5s6.5 1.9 7.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
   device: '<rect x="3.5" y="4.5" width="17" height="11.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 20h7M12 16v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  file: '<path d="M7 3.5h7l4.5 4.5V19a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.5 3.5v5h5M9 13h6M9 16.5h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
   contrast: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/>',
 };
 // The service worker makes the console installable and shows push notifications.
@@ -450,7 +451,38 @@ const PAGE_HREF = { ads: "/ads.html", forms: "/forms.html", audiences: "/audienc
   experiments: "/experiments.html", report: "/report.html", desk: "/desk.html", research: "/research.html",
   settings: "/settings.html", team: "/team.html" };
 
-let frame = { page: null, section: null };
+// Each page's icon where pages are listed one by one (the phone's More sheet).
+const PAGE_ICON = { forms: "table", audiences: "team", gallery: "image", ideas: "grid", research: "research", performance: "chart", compare: "compare",
+  experiments: "tests", report: "file", settings: "settings", team: "team" };
+// "g" then a letter jumps to a section; the sidebar shows each letter as its link's tip.
+const SECTION_KEY = { today: "t", inbox: "i", leads: "l", ads: "a", creative: "e", insights: "r", claude: "c", settings: "s" };
+
+let frame = { page: null, section: null, cameFrom: null };
+
+// A message for the next page: said once after the move (a toast shown just before leaving is never seen).
+export function toastNext(message) {
+  try { sessionStorage.setItem("ebads-toast", message); } catch (e) { /* storage off */ }
+}
+// Moving by the menus (sidebar, section tabs, phone tabs, More, breadcrumbs, ⌘K) is not "drilling in": the page
+// reached that way shows no Back arrow on phones. Anything else that leads to a top page (Its leads, Results,
+// Compare from an ad…) does, and the arrow goes back where the person was.
+const VIA_NAV = "ebads-via-nav";
+export function viaNav() { try { sessionStorage.setItem(VIA_NAV, "1"); } catch (e) { /* storage off */ } }
+document.addEventListener("click", (e) => {
+  if (e.target.closest(".rail a, .subnav a, .tabbar a, dialog.sheet a, .crumbs a, .topbar .brand a")) viaNav();
+  const up = e.target.closest(".crumb-up[data-back]");
+  if (up && history.length > 1) { e.preventDefault(); history.back(); }
+}, true);
+function cameFrom() {
+  let menu = false;
+  try { menu = sessionStorage.getItem(VIA_NAV) === "1"; sessionStorage.removeItem(VIA_NAV); } catch (e) { /* storage off */ }
+  if (menu || !document.referrer) return null;
+  try {
+    const ref = new URL(document.referrer);
+    if (ref.origin !== location.origin || ref.pathname === location.pathname || /^\/(login\.html|index\.html)?$/.test(ref.pathname)) return null;
+    return ref.pathname + ref.search;
+  } catch (e) { return null; }
+}
 
 // ---------------------------------------------------------------- links to things
 
@@ -528,12 +560,13 @@ export const returnTo = (fallback) => safePath(new URLSearchParams(location.sear
 // (Ads › Campaign › New ad set), so the phone's back arrow goes there too. `name` names that page once known.
 export function returnCrumbs(own, fallback = "/ads.html", name = "") {
   const back = returnTo(fallback);
-  const page = back.split(/[?#]/)[0].replace(/^\//, "").replace(/\.html$/, "");
-  const ads = { label: "Ads", href: listHref("/ads.html") };
-  const mid = page && page !== "ads" ? [{ label: name || PAGE_TITLE[page] || "Back", href: back }] : [];
-  setCrumbs([ads, ...mid, { label: own, href: location.pathname + location.search }]);
-  const crumb = document.getElementById("crumb");
-  if (crumb) crumb.href = back;
+  const path = back.split(/[?#]/)[0];
+  const page = path.replace(/^\//, "").replace(/\.html$/, "");
+  // The trail starts at the section the page it was opened from belongs to (Today › New ad, Creative › Gallery › New ad).
+  const sec = SECTIONS[PAGE_SECTION[page]] || SECTIONS.ads;
+  const first = { label: sec.label, href: path === sec.href ? back : sec.href };
+  const mid = path !== sec.href ? [{ label: name || PAGE_TITLE[page] || "Back", href: back }] : [];
+  setCrumbs([first, ...mid, { label: own, href: location.pathname + location.search }]);
   return back;
 }
 // A Cancel link beside a form's main button: back where the page was opened from.
@@ -548,17 +581,28 @@ export function withFrom(href, from = location.pathname + location.search) {
 // Breadcrumbs: [{label, href}], the last one is the page itself. Pages that load names later call this.
 // A crumb back to a list (Ads, Leads, Results…) opens it as it was last filtered in this tab.
 export function setCrumbs(items) {
-  items = items.map((c, i) => (i < items.length - 1 ? { ...c, href: listHref(c.href) } : c));
+  const same = (href) => href && !href.includes("#") && href.split("?")[0] === location.pathname;
+  items = items.map((c, i) => {
+    if (i === items.length - 1 || !c.href) return c;
+    const href = listHref(c.href);
+    // The section's name above its own first page (Insights › Results) is where you are, not somewhere to go.
+    return same(href) ? { label: c.label } : { ...c, href };
+  });
   const nav = document.querySelector(".crumbs");
   if (nav) {
     nav.innerHTML = items.map((c, i) => i === items.length - 1
       ? `<span aria-current="page">${esc(c.label)}</span>`
-      : `<a href="${esc(c.href)}">${esc(c.label)}</a><span class="sep" aria-hidden="true">/</span>`).join("");
+      : `${c.href ? `<a href="${esc(c.href)}">${esc(c.label)}</a>` : `<span class="crumb-here">${esc(c.label)}</span>`}<span class="sep" aria-hidden="true">/</span>`).join("");
   }
   const up = document.querySelector(".topbar .crumb-up");
-  const parent = items.length > 1 ? items[items.length - 2] : null;
-  const root = !frame.page || Object.values(SUBNAV).some((tabs) => tabs.some(([p]) => p === frame.page)) || ["home", "inbox", "leads", "account"].includes(frame.page);
-  if (up) { up.hidden = !parent || root; if (parent) up.href = parent.href; }
+  const parent = items.slice(0, -1).reverse().find((c) => c.href) || null;
+  const root = !frame.page || Object.values(SUBNAV).some((tabs) => tabs.some(([p]) => p === frame.page)) || ["home", "inbox", "leads", "account", "accounts"].includes(frame.page);
+  if (up) {
+    const back = root || !parent ? frame.cameFrom : null;
+    up.hidden = !back && (!parent || root);
+    if (back) { up.href = back; up.dataset.back = "1"; up.setAttribute("aria-label", "Back"); }
+    else if (parent) { up.href = parent.href; delete up.dataset.back; up.setAttribute("aria-label", `Back to ${parent.label}`); }
+  }
   const title = document.querySelector(".topbar .brand span");
   if (title && items.length) title.firstChild.textContent = items[items.length - 1].label;
 }
@@ -625,7 +669,7 @@ export async function boot({ page, admin = false }) {
     }
     history.replaceState(null, "", clean);
   }
-  if (admin && me.role !== "admin") { location.href = "/home.html"; return null; }
+  if (admin && me.role !== "admin") { toastNext("That page is for the account's admins."); location.href = "/home.html"; return null; }
   if (me.role === "client") document.documentElement.classList.add("read-only");
   if (me.role === "client" && me.account.clients_update_leads) document.documentElement.classList.add("client-leads");
   setCurrency(me.account.currency);
@@ -635,7 +679,7 @@ export async function boot({ page, admin = false }) {
   window.ebadsMe = me;
   const isAdmin = me.role === "admin";
   const section = PAGE_SECTION[page] || page;
-  frame = { page, section };
+  frame = { page, section, cameFrom: cameFrom() };
   const roleLabel = me.owner ? "Admin" : isAdmin ? `Admin · ${me.account.name}` : me.role === "client" ? "Client" : "Team member";
   const showAcct = (me.accounts || []).length > 1 || !me.owner;
   const allowed = (key) => !SECTIONS[key].admin || isAdmin;
@@ -647,7 +691,7 @@ export async function boot({ page, admin = false }) {
   const cur = (key) => key === section ? 'aria-current="page"' : "";
   // FU-D: an amber dot next to Claude while this sign-in has full access on (only the owner who may turn it on).
   const faDot = me.full_access && me.full_access.allowed ? `<span class="fa-dot" data-fa-dot title="Full access on" ${me.full_access.on ? "" : "hidden"}><span class="sr-only">, full access on</span></span>` : "";
-  const link = (key) => { const l = SECTIONS[key]; return `<a href="${l.href}" ${cur(key)}>${icon(l.icon)}<span class="label">${l.label}</span>${key === "claude" ? faDot : ""}${badge(l.badge)}</a>`; };
+  const link = (key) => { const l = SECTIONS[key]; return `<a href="${l.href}" ${cur(key)} title="Press g then ${SECTION_KEY[key]}" aria-keyshortcuts="g ${SECTION_KEY[key]}">${icon(l.icon)}<span class="label">${l.label}</span>${key === "claude" ? faDot : ""}${badge(l.badge)}</a>`; };
   const initials = me.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -664,9 +708,9 @@ export async function boot({ page, admin = false }) {
       ${groups.map(([label, keys]) => `<div class="nav-group"><span class="nav-label">${label}</span>${keys.map(link).join("")}</div>`).join("")}
     </nav>
     <div class="rail-foot">
-      <div class="rail-status">${isAdmin ? '<a class="cap-card" id="cap-card" href="/performance.html" hidden></a>' : ""}</div>
+      <div class="rail-status">${isAdmin ? '<a class="cap-card" id="cap-card" href="/settings.html#spend-limit" title="Change the spending limit" hidden></a>' : ""}</div>
       <div class="rail-base">
-        ${isAdmin ? `<a class="setlink" href="/settings.html" ${cur("settings")}>${icon("settings")}<span class="label">Settings</span></a>` : ""}
+        ${isAdmin ? `<a class="setlink" href="/settings.html" ${cur("settings")} title="Press g then s" aria-keyshortcuts="g s">${icon("settings")}<span class="label">Settings</span></a>` : ""}
         <div class="theme-row">${icon("contrast")}<span class="label">Theme</span>${themeSwitch()}</div>
         <div class="rail-you">
           <a class="me" href="/account.html" ${cur("account")}>
@@ -707,8 +751,8 @@ export async function boot({ page, admin = false }) {
     const sub = document.createElement("nav");
     sub.className = "subnav";
     sub.setAttribute("aria-label", SECTIONS[section].label);
-    // Insights' tabs carry the campaign picked on Results (its page remembers itself without dates; the dates are shared).
-    const tabHref = (p) => (section === "insights" && p !== page ? listHref(PAGE_HREF[p]) : PAGE_HREF[p]);
+    // A tab opens its page as it was last filtered in this browser tab (Results keeps its campaign, the Gallery its view).
+    const tabHref = (p) => (p !== page ? listHref(PAGE_HREF[p]) : PAGE_HREF[p]);
     sub.innerHTML = tabsFor.map(([p, label]) => `<a href="${esc(tabHref(p))}" ${p === page ? 'aria-current="page"' : ""}>${label}</a>`).join("");
     line.after(sub);
   }
@@ -717,7 +761,7 @@ export async function boot({ page, admin = false }) {
   const top = document.createElement("header");
   top.className = "topbar";
   top.innerHTML = `<a class="crumb-up" href="${SECTIONS[section]?.href || "/home.html"}" aria-label="Back" hidden>${icon("back")}</a>
-    <a class="brand" href="/home.html"><img src="/img/favicon.svg" alt="Edge Bourne"><span>${esc(PAGE_TITLE[page] || "Edge Bourne Ads")}${showAcct && page !== "accounts" ? `<small class="top-acct">${esc(me.account.name)}</small>` : ""}</span></a>
+    <div class="brand"><a href="/home.html" aria-label="Today"><img src="/img/favicon.svg" alt=""></a><span>${esc(PAGE_TITLE[page] || "Edge Bourne Ads")}${showAcct && page !== "accounts" ? `<small class="top-acct">${esc(me.account.name)}</small>` : ""}</span></div>
     <button type="button" class="icon-btn" data-palette aria-label="Search">${icon("search")}</button>
     <button type="button" class="icon-btn" data-refresh aria-label="Refresh">${icon("refresh")}</button>
     <a class="icon-btn" href="/account.html" aria-label="Your account"><span class="avatar">${esc(initials)}</span></a>`;
@@ -737,20 +781,25 @@ export async function boot({ page, admin = false }) {
     <button type="button" data-more ${inMore ? 'aria-current="page"' : ""}>${icon("menu")}<span>More</span>${isAdmin ? badge("claude") : ""}</button>`;
   app.append(tabs);
 
-  // Claude first, then Creative with its pages, then Insights with its pages, then Settings.
+  // The More sheet lists every page the tab bar doesn't, grouped as the sidebar groups them and built from the same
+  // map: Claude first (its count is why More has a badge), then Creative, Insights, the rest of Ads, Settings.
   const sheetLink = (href, label, ic, current, extra = "") => `<a href="${href}" ${current ? 'aria-current="page"' : ""}>${icon(ic)}<span>${label}</span>${extra}</a>`;
+  const sheetGroup = (key, label = SECTIONS[key].label) => {
+    const pages = (SUBNAV[key] || []).filter(([p, , who]) => canSee(who) && !(key === "ads" && p === "ads"));
+    return pages.length ? `<section class="more-group" aria-label="${label}"><h2>${label}</h2><div class="more-grid">${
+      pages.map(([p, name]) => sheetLink(PAGE_HREF[p], name, PAGE_ICON[p] || SECTIONS[key].icon, p === page)).join("")}</div></section>` : "";
+  };
+  const manyAccounts = me.owner && (me.accounts || []).length > 1;
   const sheet = document.createElement("dialog");
   sheet.className = "sheet";
   sheet.setAttribute("aria-label", "More");
   sheet.innerHTML = `<div class="grab"></div>${accountSwitch(me, "sheet")}<nav>
       ${allowed("claude") ? sheetLink(SECTIONS.claude.href, "Claude", "spark", page === "desk", badge("claude")) : ""}
-      ${sheetLink(SECTIONS.creative.href, "Creative", "image", page === "gallery")}
-      ${sheetLink(PAGE_HREF.ideas, "Ideas", "grid", page === "ideas")}
-      ${isAdmin ? sheetLink(PAGE_HREF.research, "Research", "research", page === "research") : ""}
-      ${sheetLink(SECTIONS.insights.href, "Insights", "chart", page === "performance")}
-      ${SUBNAV.insights.filter(([p, , who]) => p !== "performance" && canSee(who)).map(([p, label]) => sheetLink(PAGE_HREF[p], label, p === "compare" ? "compare" : p === "experiments" ? "tests" : "table", p === page)).join("")}
-      ${allowed("settings") ? sheetLink(SECTIONS.settings.href, "Settings", "settings", section === "settings") : ""}
-      <a href="/account.html" ${cur("account")}>${icon("user")}<span>Your account</span></a>
+      ${sheetGroup("creative")}${sheetGroup("insights")}${sheetGroup("ads", "More in Ads")}${sheetGroup("settings")}
+      <section class="more-group" aria-label="You"><h2>You</h2><div class="more-grid">
+        ${manyAccounts ? sheetLink("/accounts.html", "All accounts", "grid", page === "accounts") : ""}
+        ${sheetLink("/account.html", "Your account", "user", page === "account")}
+      </div></section>
       <div class="sep"></div>
       <div class="theme-row">${icon("contrast")}<span class="label">Theme</span>${themeSwitch()}</div>
       <button type="button" class="item" data-signout>${icon("logout")}Sign out</button>
@@ -776,7 +825,11 @@ export async function boot({ page, admin = false }) {
 }
 
 // ⌘K / Ctrl+K or "/" opens the palette; "g" then a letter jumps to a section.
-const JUMPS = { t: "/home.html", i: "/inbox.html", l: "/leads.html", a: "/ads.html", e: "/gallery.html", n: "/performance.html", c: "/desk.html", s: "/settings.html" };
+// r = Results (n still works, from before), f = Lead forms, y = Your account, o = All accounts (owners with several).
+const JUMPS = { t: "/home.html", i: "/inbox.html", l: "/leads.html", a: "/ads.html", e: "/gallery.html", r: "/performance.html", n: "/performance.html",
+  c: "/desk.html", s: "/settings.html", f: "/forms.html", y: "/account.html", o: "/accounts.html" };
+const ADMIN_JUMPS = new Set(["c", "s", "f"]);
+const severalAccounts = () => Boolean(window.ebadsMe && window.ebadsMe.owner && (window.ebadsMe.accounts || []).length > 1);
 function typing(el) { return el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)); }
 function shortcuts(isAdmin) {
   let g = 0;
@@ -787,8 +840,8 @@ function shortcuts(isAdmin) {
     if (e.key === "?") { e.preventDefault(); openShortcuts(); return; }
     if (e.key === "g") { g = Date.now(); return; }
     if (g && Date.now() - g < 1200 && JUMPS[e.key]) {
-      if (!isAdmin && (e.key === "c" || e.key === "s")) return;
-      e.preventDefault(); location.href = JUMPS[e.key];
+      if ((!isAdmin && ADMIN_JUMPS.has(e.key)) || (e.key === "o" && !severalAccounts())) return;
+      e.preventDefault(); viaNav(); location.href = JUMPS[e.key];
     }
     g = 0;
   });
@@ -810,7 +863,8 @@ export function openShortcuts() {
   const k = (...keys) => keys.map((x) => (x === "then" || x === "or" ? ` ${x} ` : `<kbd>${esc(x)}</kbd>`)).join("");
   const rows = [
     ["Anywhere", [[k(mod, "K") + " or " + k("/"), "Search or jump to anything"], [k("?"), "This list"],
-      ...[["t", "Today"], ["i", "Inbox"], ["l", "Leads"], ["a", "Ads"], ["e", "Creative"], ["n", "Results"], ...(admin ? [["c", "Claude"], ["s", "Settings"]] : [])].map(([key, label]) => [k("g", "then", key), label])]],
+      ...[["t", "Today"], ["i", "Inbox"], ["l", "Leads"], ["a", "Ads"], ["e", "Creative"], ["r", "Results"], ...(admin ? [["c", "Claude"], ["f", "Lead forms"], ["s", "Settings"]] : []),
+        ["y", "Your account"], ...(severalAccounts() ? [["o", "All accounts"]] : [])].map(([key, label]) => [k("g", "then", key), label])]],
     ["Lists and tables", [[k("↑", "or", "↓"), "Move between rows"], [k("Enter"), "Open the quick look or the item"], ["Shift + click a box", "Select every row in between"], [k("Esc"), "Close the quick look, or clear the selection"]]],
     ["Inbox", [[k("j", "or", "k"), "Next or previous item"]]],
     ["Tabs", [[k("←", "or", "→"), "Switch between tabs"]]],

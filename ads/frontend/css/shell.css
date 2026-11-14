@@ -148,6 +148,7 @@ kbd {
 .crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
 .crumbs a { color: var(--ink-3); text-decoration: none; }
 .crumbs a:hover { color: var(--ink); }
+.crumbs .crumb-here { color: var(--ink-3); }
 .crumbs [aria-current] { color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch; }
 .crumbs .sep { color: var(--line-strong); }
 .crumb-acct { color: var(--ink-2); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 24ch; flex: none; }
@@ -179,6 +180,8 @@ kbd {
   }
   .topbar .brand { padding: 0; gap: 10px; flex: 1; min-width: 0; }
   .topbar .brand img { width: 26px; height: 26px; }
+  .topbar .brand a { flex: none; display: grid; place-items: center; width: var(--target); height: var(--target); margin: 0 -9px; border-radius: var(--radius-s); }
+  .topbar .brand span { min-width: 0; }
   .topbar .brand span { font-size: var(--t-l); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .topbar .crumb-up { color: var(--ink-3); text-decoration: none; display: grid; place-items: center; width: 32px; height: 40px; margin-left: -8px; }
   .topbar .crumb-up svg { width: 18px; height: 18px; }
@@ -215,6 +218,13 @@ dialog.sheet::backdrop { background: var(--scrim); }
 .sheet svg { width: 21px; height: 21px; color: var(--ink-2); flex: none; }
 .sheet .count { margin-left: auto; }
 .sheet .sep { height: 1px; background: var(--line); margin: 8px 12px; }
+dialog.sheet { max-height: calc(100dvh - 48px - env(safe-area-inset-top)); overflow-y: auto; overscroll-behavior: contain; }
+.more-group { margin-top: 6px; }
+.more-group h2 { margin: 0; padding: 8px 12px 4px; font-size: var(--t-xs); font-weight: 500; color: var(--ink-3); letter-spacing: .02em; }
+.more-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 6px; }
+.more-grid a { min-height: 46px; gap: 12px; font-size: var(--t-m); }
+.more-grid a span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.more-grid svg { width: 19px; height: 19px; }
 .sheet .theme-row { gap: 14px; min-height: 50px; padding: 0 8px 0 12px; color: var(--ink); font-size: var(--t-l); }
 .sheet .theme-row > svg { width: 21px; height: 21px; color: var(--ink-2); }
 .sheet .theme-switch { padding: 3px; border-radius: var(--radius-m); }
@@ -648,8 +658,6 @@ details.tech[open] > summary { margin-bottom: 8px; }
 details.tech > .field, details.tech > .row, details.tech > .stack { margin-top: 12px; }
 details.tech > summary + .row, details.tech > summary + .field, details.tech > summary + .stack { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) { details.tech > summary::after { transition: none; } }
-/* The breadcrumb line (desktop) and the top bar back arrow (phones) replace the old per-page "‹ Ads" links. */
-.page-head > a.crumb { display: none; }
 .figs { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .fig-s { width: 100%; font-size: var(--t-xs); color: var(--ink-3); }
 .pk-tl li.muted { display: block; padding: 4px 0; }

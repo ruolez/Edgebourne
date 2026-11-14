@@ -109,18 +109,29 @@ textarea.input { min-height: 84px; resize: vertical; }
 .note.bad { background: var(--bad-soft); color: var(--bad-ink); }
 
 /* ---------- Components: one of each (UX-AUDIT 9.2). Pages compose these; they don't restyle them. ---------- */
-/* Tabs switch what is shown below them. Section tabs under the breadcrumbs (.subnav) are the same tabs. */
-.tabs, .subnav { display: flex; gap: 22px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
-.tabs > button, .tabs > a, .subnav a {
+/* Tabs switch what is shown below them. A section's pages (.subnav, under the breadcrumbs) are pills instead:
+   they go to another page, and two rows of the same underlined tabs (Creative's pages above Research's own tabs)
+   read as one muddle. */
+.tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.subnav { display: flex; align-items: center; gap: 2px; min-height: 44px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.subnav a {
+  flex: none; display: inline-flex; align-items: center; min-height: 30px; padding: 0 11px; border-radius: var(--radius-pill);
+  color: var(--ink-3); text-decoration: none; font-size: var(--t-s); font-weight: 500; white-space: nowrap;
+  transition: background-color .12s var(--ease), color .12s var(--ease);
+}
+.subnav a:hover { color: var(--ink); background: var(--surface-2); }
+.subnav a[aria-current="page"] { color: var(--ink); font-weight: 600; background: var(--surface); box-shadow: var(--shadow-2); }
+.tabs > button, .tabs > a {
   flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 11px 0 10px; margin-bottom: -1px; border: 0;
   border-bottom: 2px solid transparent; background: none; color: var(--ink-3); font: 500 var(--t-s)/1.2 var(--font-ui);
   white-space: nowrap; text-decoration: none; cursor: pointer;
 }
-.tabs > button:hover, .tabs > a:hover, .subnav a:hover { color: var(--ink); }
-.tabs > [aria-selected="true"], .subnav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
+.tabs > button:hover, .tabs > a:hover { color: var(--ink); }
+.tabs > [aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
 .tabs .n { min-width: 20px; padding: 1px 6px; border-radius: var(--radius-pill); background: var(--surface-2); color: var(--ink-2); font: 500 var(--t-xs)/1.4 var(--font-num); text-align: center; }
 .tabs .n.claude { background: var(--violet); color: var(--on-violet); }
-.subnav, .main > .tabs { padding: 0 var(--gutter); }
+.subnav { padding: 0 calc(var(--gutter) - 11px); }
+.main > .tabs { padding: 0 var(--gutter); }
 .main > .tabs { margin: -6px 0 20px; }
 .cr-toolbar > .tabs { flex: 1 1 auto; min-width: 0; }
 
@@ -194,7 +205,11 @@ dialog h2 { font: 600 var(--t-l)/1.3 var(--font-ui); margin: 0; }
 dialog form > .row.end { margin-top: 6px; }
 
 @media (max-width: 960px) {
-  .tabs > button, .tabs > a, .subnav a { min-height: var(--target); min-width: var(--target); justify-content: center; padding-top: 0; padding-bottom: 0; }
+  .tabs > button, .tabs > a { min-height: var(--target); min-width: var(--target); justify-content: center; padding-top: 0; padding-bottom: 0; }
+  /* The pill is 34px tall; its touch area is the full 44px row (the transparent borders). */
+  .subnav { min-height: var(--target); gap: 0; }
+  .subnav a { min-height: var(--target); min-width: var(--target); justify-content: center; padding: 0 12px; background-clip: padding-box; border: solid transparent; border-width: 5px 2px; }
+  .subnav a[aria-current="page"] { box-shadow: none; background-color: var(--surface-2); }
   .view-chip, .segmented button { min-height: var(--target); min-width: var(--target); justify-content: center; flex-shrink: 0; }
   .segmented { padding: 2px; overflow-x: auto; flex-wrap: nowrap; }
   .stage .segmented { flex-wrap: wrap; overflow-x: visible; }
@@ -676,9 +691,6 @@ button.chip:hover { border-color: var(--ink-3); }
 .link-btn { background: none; border: 0; padding: 0; color: var(--focus); font: inherit; font-weight: 600; cursor: pointer; }
 .bad-text { color: var(--bad-ink); }
 .ok-text { color: var(--signal-ink); font-weight: 600; }
-.crumb { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-2); text-decoration: none; font-weight: 600; font-size: var(--t-m); flex-basis: 100%; }
-.crumb svg { width: 16px; height: 16px; }
-.crumb:hover { color: var(--ink); }
 .level { display: block; font-size: var(--t-s); font-weight: 600; color: var(--ink-3); }
 .btn svg { flex: none; }
 .btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }

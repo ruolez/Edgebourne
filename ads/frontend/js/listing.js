@@ -123,7 +123,8 @@ function render() {
   }
   if (!data.campaigns.length) {
     $("cr-all").innerHTML = (draftsHere() ? draftsHtml(drafts) : "")
-      + `<section class="panel empty"><h3>No ads yet</h3><p>Once Meta is connected in Settings, your campaigns, ad sets and ads appear here.</p></section>`;
+      + `<section class="panel empty"><h3>No ads yet</h3><p>Once Meta is connected in Settings, your campaigns, ad sets and ads appear here.</p>${
+        me.role === "admin" ? `<div class="row"><a class="btn btn-primary" href="${esc(withFrom("/new-campaign.html"))}">New campaign</a><a class="btn" href="/settings.html#meta">Open Settings</a></div>` : ""}</section>`;
     $("bulk").innerHTML = "";
     if (draftsHere()) showTarget();
     return;

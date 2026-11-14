@@ -3,7 +3,7 @@
 // one change through POST /api/edit/<level>/<id> with what the form showed (the server refuses if Ads Manager changed it
 // since). Also: Make a paused copy (level by level, resumable), Archive… and Delete… (Turn it off instead first).
 import { api } from "./api.js";
-import { confirmDialog, esc, icon, toast } from "./ui.js";
+import { confirmDialog, esc, icon, toast, toastNext } from "./ui.js";
 import { money, currencySymbol } from "./format.js";
 import { placesHtml, placesWidget } from "./places.js";
 import { changeStatus, spendWords, spendBody } from "./controls.js";
@@ -620,7 +620,7 @@ export async function deleteEntity({ level, id, name }, after, gone) {
   if (typed === false) return;
   try {
     await api(`/api/ads/${level}/${encodeURIComponent(id)}/delete`, { method: "POST", body: { name: typed } });
-    toast(`Deleted “${name}”`);
+    toastNext(`Deleted “${name}”`);
     gone();
   } catch (err) { toast(err.message, "bad"); after(); }
 }

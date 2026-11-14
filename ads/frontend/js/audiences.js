@@ -2,7 +2,7 @@
 // which ad sets use it; owners and account admins make website, engagement and lookalike audiences in a three-step dialog (Who,
 // Details, Name and check). Teammates read; clients never see the page. Meta's names and status are plain text (esc) everywhere.
 import { api } from "./api.js";
-import { boot, entityLink, esc, errorState, toast, icon, emptyState } from "./ui.js";
+import { boot, entityLink, esc, errorState, toast, toastNext, icon, emptyState } from "./ui.js";
 import { clock } from "./format.js";
 import * as UrlState from "./urlstate.js";
 
@@ -272,7 +272,7 @@ async function openNew() {
 // ---------------------------------------------------------------- the page
 
 const me = await boot({ page: "audiences" });
-if (me && me.role === "client") location.href = "/home.html";
+if (me && me.role === "client") { toastNext("Audiences are for the account's team."); location.href = "/home.html"; }
 else if (me) {
   $("aud-kinds").addEventListener("click", (e) => {
     const b = e.target.closest("[data-aud-kind]");

@@ -290,7 +290,6 @@ async function create(e) {
 const me = await boot({ page: "forms", admin: true });
 if (me) {
   guardLeaving();
-  $("crumb").innerHTML = `${icon("back")}<span>Ads</span>`;
   // #form=<id> (a lead's form, the command menu): that form, in view and marked; again when the link changes.
   const showLinked = () => {
     const linked = linkedForm() && document.querySelector(`[data-form-row="${CSS.escape(linkedForm())}"]`);
@@ -299,6 +298,7 @@ if (me) {
   };
   await loadList();
   showLinked();
+  if (location.hash === "#new") { history.replaceState(null, "", location.pathname + location.search); openBuilder(blank()); }
   addEventListener("hashchange", async () => { await loadList(); showLinked(); });
   $("new-form").addEventListener("click", async () => { if (await mayDiscard()) openBuilder(blank()); });
   $("list").addEventListener("click", async (e) => {

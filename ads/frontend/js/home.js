@@ -190,7 +190,7 @@ function render(d) {
     claudeCard = `<section class="panel td-sec td-claude" aria-labelledby="h-claude">
       <div class="td-sec-h">${icon("spark")}<h2 id="h-claude">Claude</h2>${mac}</div>
       <p class="td-note">${lastDone ? esc(lastDone.summary) : "Ask for a review, a polish audit or new ad ideas."}</p>
-      <a class="btn btn-claude-outline" href="/desk.html">${pend ? `Open ${plural(pend, "suggestion")}` : "Ask Claude"}</a>
+      <a class="btn btn-claude-outline" href="${pend ? "/desk.html#decide" : "/desk.html?ask=1"}">${pend ? `Open ${plural(pend, "suggestion")}` : "Ask Claude"}</a>
     </section>`;
   }
 

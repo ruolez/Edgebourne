@@ -300,7 +300,6 @@ function buildView(b) {
 const me = await boot({ page: "new-campaign", admin: true });
 if (me) guardLeaving();
 if (me) {
-  $("crumb").innerHTML = `${icon("back")}<span>Back</span>`;
   const back = returnCrumbs("New campaign");
   $("nc-create")?.insertAdjacentHTML("afterend", cancelLink(back));
   const buildId = new URLSearchParams(location.search).get("build");

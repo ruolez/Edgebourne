@@ -81,6 +81,8 @@ function showPassword(name, pw) {
 me = await boot({ page: "team", admin: true });
 if (me) {
   $("add-btn").addEventListener("click", () => openDialog(null));
+  // /team.html#new (the command menu's Add teammate) opens the dialog straight away.
+  if (location.hash === "#new") { history.replaceState(null, "", location.pathname + location.search); openDialog(null); }
   $("m-cancel").addEventListener("click", () => $("member-dialog").close());
   $("m-role").addEventListener("change", (e) => { $("m-client-note").hidden = e.target.value !== "client"; });
   $("member-form").addEventListener("submit", async (e) => {

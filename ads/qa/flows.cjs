@@ -337,9 +337,10 @@ const run = (name) => !ONLY || ONLY.has(name);
   check('delete refuses a name that does not match', await page.isVisible('#cd-err'), await page.textContent('#cd-err'));
   await page.fill('#cd-input', 'QA archive me');
   await page.screenshot({ path: `${OUT}/flow-delete-confirm.png` });
-  await Promise.all([page.waitForURL('**/ads.html'), page.click('dialog.confirm #cd-ok')]);
+  await Promise.all([page.waitForURL('**/adset.html?id=**'), page.click('dialog.confirm #cd-ok')]);
+  const goneSaid = await page.waitForSelector('.toast', { timeout: 5000 }).then((el) => el.textContent()).catch(() => '');
   const gone = await page.evaluate((id) => fetch(`/api/ads/ad/${id}`).then((r) => r.json()).then((d) => d.ad.status), dup.id);
-  check('Delete with the typed name deletes it and returns to Ads', gone === 'DELETED', gone);
+  check('Delete with the typed name deletes it, lands on its ad set and says so there', gone === 'DELETED' && /Deleted “QA archive me”/.test(goneSaid), `${gone} ${goneSaid}`);
   // Meta's lists leave archived ads out: one archived in Ads Manager stays archived here, not deleted.
   const elsewhere = await page.evaluate(() => fetch('/api/ads/ad/120252672229400312/duplicate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'QA archived in Ads Manager' }) }).then((r) => r.json()));
   sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/${elsewhere.id}?access_token=x', data=b'status=ARCHIVED'))"`);
@@ -4930,7 +4931,7 @@ db.execute(\\"INSERT INTO campaign_members (campaign_id, user_id, account_id) SE
   const cancelTo = await page.getAttribute('#cancel', 'href');
   const midCrumb = await page.$$eval('.crumbs a', (as) => as.map((a) => `${a.textContent}=${a.getAttribute('href')}`));
   check('New ad set opened from a campaign has Cancel back to that campaign, and says so in the breadcrumbs',
-    cancelTo === `/campaign.html?id=${C1}` && midCrumb.some((c) => c === `Campaign=/campaign.html?id=${C1}`), `${cancelTo} ${midCrumb.join(' | ')}`);
+    cancelTo === `/campaign.html?id=${C1}` && midCrumb.some((c) => /Free intro call/.test(c) && c.endsWith(`=/campaign.html?id=${C1}`)), `${cancelTo} ${midCrumb.join(' | ')}`);
   await Promise.all([page.waitForURL(`**/campaign.html?id=${C1}`), page.click('#cancel')]);
   check('Cancel goes back to the campaign', page.url().endsWith(`/campaign.html?id=${C1}`));
   await page.goto(BASE + `/new-ad.html?from=${encodeURIComponent('//example.com/x.html')}`);
@@ -7186,7 +7187,10 @@ with account_ctx.all_accounts():
   await phonePage.click('.tabbar [data-more]');
   await phonePage.waitForSelector('dialog.sheet[open]');
   const sheetOrder = await phonePage.evaluate(() => ({ links: [...document.querySelectorAll('dialog.sheet nav a')].map((a) => a.querySelector('span')?.textContent || a.textContent.trim()), focus: document.activeElement?.textContent.trim() }));
-  check('More lists Claude first, then Creative, and opens on Claude, not on the account switcher', sheetOrder.links[0] === 'Claude' && sheetOrder.links[1] === 'Creative' && sheetOrder.links.indexOf('Insights') > 1 && /^Claude/.test(sheetOrder.focus || ''), JSON.stringify(sheetOrder));
+  const sheetGroups = await phonePage.evaluate(() => [...document.querySelectorAll('dialog.sheet .more-group h2')].map((h) => h.textContent).join());
+  check('More lists Claude first, then every page the tab bar leaves out under its section (Creative, Insights, More in Ads, Settings, You), and opens on Claude, not on the account switcher',
+    sheetOrder.links.join().startsWith('Claude,Gallery,Ideas,Research,Results,Compare,Tests,Reports,Lead forms,Audiences,Settings,Team') && sheetOrder.links.at(-1) === 'Your account'
+    && sheetGroups === 'Creative,Insights,More in Ads,Settings,You' && /^Claude/.test(sheetOrder.focus || ''), JSON.stringify({ sheetOrder, sheetGroups }));
   await phonePage.keyboard.press('Escape');
   // A page that doesn't exist gets the console's own page, and the API keeps its own answer.
   const missing = await phonePage.goto(BASE + '/no-such-page.html?x=1');

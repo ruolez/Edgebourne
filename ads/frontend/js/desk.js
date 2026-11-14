@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, editing, esc, keepFocus, onRefresh, previewSkeleton, refreshClaudeNow, setFullAccessDot, toast } from "./ui.js";
+import { boot, confirmDialog, editing, esc, keepFocus, onRefresh, previewSkeleton, refreshClaudeNow, setCrumbs, setFullAccessDot, toast } from "./ui.js";
 import { clockZone } from "./format.js";
 import { sizeAttachments } from "./attach.js";
 import { ACTIVE, wireTaskActions } from "./tasks.js";
@@ -330,6 +330,7 @@ function renderConv(sel) {
   if (wantedTask && ix.tasks.has(wantedTask)) wantedTask = null;
 }
 
+let shownView = null;
 const VIEW_HEADS = {
   ads: ["By ad", "Each ad Claude has worked on: its conversations, the ideas and what came of them."],
   schedules: ["Schedules", "Regular reviews, on the days and times you pick."],
@@ -365,6 +366,9 @@ function drawView() {
   $("view").hidden = chat;
   // By ad and Schedules are pages of their own: each gets its heading (a conversation has its own in its header).
   $("view-head").hidden = chat;
+  // The breadcrumbs and the phone's title name the view, so "Claude" alone never stands for three different screens.
+  const viewName = chat ? "Conversations" : VIEW_HEADS[view][0];
+  if (shownView !== viewName) { shownView = viewName; setCrumbs([{ label: "Claude", href: "/desk.html#list" }, { label: viewName }]); }
   if (!chat) {
     const [h, sub] = VIEW_HEADS[view];
     if ($("view-h").textContent !== h) { $("view-h").textContent = h; $("view-sub").textContent = sub; }

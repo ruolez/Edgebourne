@@ -3,7 +3,7 @@
 // search field in the sidebar. Arrow keys, Enter, Esc. Words people use for a page ("Home", "Results",
 // "Performance"…) find it too.
 import { api } from "./api.js";
-import { esc, icon } from "./ui.js";
+import { esc, icon, viaNav } from "./ui.js";
 
 let dlg = null;
 let items = [];
@@ -29,9 +29,9 @@ const PAGES = [
   P("Gallery", "/gallery.html", "all", "image", "creative creatives pictures videos visuals thumbnails what works best ads copies", "Creative"),
   P("Ideas", "/ideas.html", "all", "grid", "by idea concepts tags hooks angles offers formats who it's for messages what works", "Creative"),
   P("Results", "/performance.html", "all", "chart", "insights performance numbers stats statistics charts spend cost per lead", "Insights"),
-  P("Compare ads", "/compare.html", "all", "compare", "side by side versus", "Insights"),
+  P("Compare", "/compare.html", "all", "compare", "compare ads side by side versus", "Insights"),
   P("Tests", "/experiments.html", "admin", "tests", "experiments a/b split test", "Insights"),
-  P("Reports", "/report.html", "report", "table", "client report share pdf print", "Insights"),
+  P("Reports", "/report.html", "report", "file", "client report share pdf print", "Insights"),
   P("Claude", "/desk.html", "admin", "spark", "desk ai assistant requests conversations"),
   P("Research", "/research.html", "admin", "research", "swipe file competitors ad library inspiration", "Creative"),
   P("Settings", "/settings.html", "admin", "settings", "preferences configuration setup options"),
@@ -45,6 +45,7 @@ const TABS = [
   T("Claude: Suggestions waiting", "/desk.html#decide", "admin", "spark", "decisions accept approve review proposals"),
   T("Claude: By ad", "/desk.html#ads", "admin", "spark", "per ad"),
   T("Claude: Schedules", "/desk.html#schedules", "admin", "clock", "scheduled recurring repeat"),
+  T("Gallery: Top", "/gallery.html?view=top", "all", "image", "best winners what works"),
   T("Gallery: Just launched", "/gallery.html?view=launched", "all", "image", "new recent started"),
   T("Gallery: Tired", "/gallery.html?view=tired", "all", "image", "fatigue worn out seen too often"),
   T("Research: Search", "/research.html#tab=search", "admin", "research", "ad library look up ask claude to research"),
@@ -63,7 +64,10 @@ const TABS = [
   T("Ads that need attention", "/ads.html?view=attention", "all", "power", "needs attention problems rejected issues"),
   T("Ads learning", "/ads.html?view=learning", "all", "ads", "learning phase limited"),
   T("Ads turned off", "/ads.html?view=off", "all", "power", "paused off stopped"),
-  T("Test ads", "/ads.html?view=tests", "all", "tests", "qa copies"),
+  T("Ads: QA copies", "/ads.html?view=tests", "all", "ads", "test ads qa copies duplicates"),
+  T("Ads Manager drafts", "/ads.html?level=campaign&view=drafts", "admin", "ads", "drafts unpublished started in ads manager finish"),
+  T("Leads: No next step", "/leads.html?due=none", "staff", "leads", "follow up nothing planned forgotten"),
+  T("Leads: Due today", "/leads.html?due=today", "staff", "leads", "follow up call back today"),
 ];
 const S = (title, hash, keys = "", who = "admin") => ({ type: "setting", title: `Settings: ${title}`, href: `/settings.html#${hash}`, who, sub: "Settings", keys });
 const SETTINGS = [
@@ -89,8 +93,10 @@ const ACTIONS = [
   A("New ad", { href: "/new-ad.html" }, "admin", "plus", "create make", "Create"),
   A("New ad set", { href: "/new-adset.html" }, "admin", "plus", "create make audience", "Create"),
   A("New campaign", { href: "/new-campaign.html" }, "admin", "plus", "create make", "Create"),
-  A("New lead form", { href: "/forms.html" }, "admin", "plus", "create make instant form", "Create"),
+  A("New lead form", { href: "/forms.html#new" }, "admin", "plus", "create make instant form", "Create"),
   A("New audience", { href: "/audiences.html#new" }, "admin", "plus", "create make custom audience lookalike website visitors retargeting", "Create"),
+  A("New test", { href: "/experiments.html#new" }, "admin", "plus", "create make a/b experiment compare two ads", "Create"),
+  A("Add teammate", { href: "/team.html#new" }, "admin", "plus", "invite user member login", "Create"),
   A("Ask Claude", { href: "/desk.html?ask=1" }, "admin", "spark", "question request help ai", "Claude"),
   A("Refresh from Meta", { run: "refresh" }, "staff", "refresh", "update sync reload latest"),
   A("Switch theme", { run: "theme" }, "all", "moon", "dark mode light mode appearance colours colors"),
@@ -194,6 +200,7 @@ function go(i, ctx) {
   dlg.close();
   if (item.tabEl) { item.tabEl.click(); item.tabEl.focus(); return; }
   if (item.run) { ctx.actions[item.run]?.(); return; }
+  viaNav();
   location.href = item.href;
 }
 

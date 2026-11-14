@@ -23,7 +23,8 @@ export const VIEWS = {
   attention: ["Needs attention", (r) => PROBLEM_STATES.includes(r.effective_status) || lifetimeQuiet(r) || r.pending_proposals > 0 || learningOf(r) === "FAIL"],
   learning: ["Learning", (r) => ["LEARNING", "FAIL"].includes(learningOf(r))],
   off: ["Off", (r) => r.status === "PAUSED"],
-  tests: ["Tests", isTest],
+  // Ads named as trial copies ("test", "QA"), not the A/B tests of Insights › Tests: a different word for a different thing.
+  tests: ["QA copies", isTest],
 };
 
 // Rows for each level, each knowing its parents, from the /api/ads tree.

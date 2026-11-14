@@ -148,7 +148,7 @@ function render() {
   if (!items.length) {
     $("tests").innerHTML = `<section class="panel empty"><h3>No tests yet</h3>
       <p>A test compares two to four ads or ad sets on one number, like cost per lead, over the same days. It says “too early” until each side has spent twice your target cost and has at least 3 leads, and it calls a winner only at 95% confidence.</p>
-      <button type="button" class="btn btn-primary" data-new>Set up a test</button></section>`;
+      <button type="button" class="btn btn-primary" data-new>New test</button></section>`;
     return;
   }
   $("tests").innerHTML = list.length ? list.map(testCard).join("")
@@ -270,7 +270,7 @@ async function openForm(t = null) {
     try {
       const saved = await api(t ? `/api/experiments/${t.id}` : "/api/experiments", { method: t ? "PATCH" : "POST", body });
       dlg.close();
-      toast(t ? "Saved" : "Tracking it");
+      toast(t ? "Test saved" : "Test saved. It tracks both sides from here.");
       history.replaceState(null, "", `#${saved.id}`);
       load();
     } catch (err) {
@@ -395,6 +395,8 @@ function openFinish(t) {
 me = await boot({ page: "experiments", admin: true });
 if (me) {
   $("new-test").addEventListener("click", () => openForm());
+  // /experiments.html#new (the command menu's New test) opens the form straight away.
+  if (location.hash === "#new") { history.replaceState(null, "", location.pathname + location.search); openForm(); }
   document.addEventListener("click", async (e) => {
     const s = e.target.closest("#show [data-show]");
     if (s) { show = s.dataset.show; try { localStorage.setItem("ebads-tests", show); } catch (err) {} render(); return; }

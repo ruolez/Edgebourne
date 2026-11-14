@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { boot, cancelLink, entityLink, esc, icon, toast, guardLeaving, markSaved, returnCrumbs, safePath } from "./ui.js";
+import { boot, cancelLink, entityLink, esc, icon, toast, toastNext, guardLeaving, markSaved, returnCrumbs, safePath, withFrom } from "./ui.js";
 import { CTA_LABELS } from "./format.js";
 import { mountUploader, waitReady } from "./uploader.js";
 import { builder } from "./builder.js";
@@ -152,9 +152,8 @@ async function loadForms() {
 
 const me = await boot({ page: "new-ad" });
 if (me) guardLeaving();
-if (me && me.role === "client") location.replace("/ads.html");
+if (me && me.role === "client") { toastNext("Making ads is for the account's team. Here are the ads."); location.replace("/ads.html"); }
 else if (me) {
-  $("crumb").innerHTML = `${icon("back")}<span>Back</span>`;
   // ?template=<ad> starts from that ad (older links said ?from=<ad>); ?from=<page> is where Cancel goes.
   const q0 = new URLSearchParams(location.search);
   const templateId = q0.get("template") || (q0.get("from") && !safePath(q0.get("from")) ? q0.get("from") : null);
@@ -163,8 +162,12 @@ else if (me) {
   mountUploader($("tab-upload"), { id: "file", name: "media", onDone: uploaded });
   if (me.role === "admin") $("claude-tip").hidden = false;
   try { options = await api("/api/ads/new/options"); } catch (err) { toast(err.message, "bad"); options = { adsets: [], templates: [], cta_types: [] }; }
+  // The breadcrumbs name the ad set or ad this was opened from, once its name is known.
+  const cameFromId = new URLSearchParams((back.split("?")[1] || "").split("#")[0]).get("id");
+  const cameFromName = cameFromId && ([...options.adsets, ...options.templates].find((x) => x.id === cameFromId) || {}).name;
+  if (cameFromName) returnCrumbs("New ad", "/ads.html", cameFromName);
   if (!options.adsets.length || (!options.templates.length && me.role !== "admin")) {
-    document.querySelector(".new-ad-layout").innerHTML = `<section class="panel empty"><h3>No ad set to put it in yet</h3><p>An ad goes inside an ad set.${me.role === "admin" ? " Start with a new campaign: it makes the ad set and its first ads." : " Ask an admin to set up the campaign first."}</p>${me.role === "admin" ? '<a class="btn btn-primary" href="/new-campaign.html">New campaign</a>' : '<a class="btn" href="/ads.html">Back to ads</a>'}</section>`;
+    document.querySelector(".new-ad-layout").innerHTML = `<section class="panel empty"><h3>No ad set to put it in yet</h3><p>An ad goes inside an ad set.${me.role === "admin" ? " Start with a new campaign: it makes the ad set and its first ads." : " Ask an admin to set up the campaign first."}</p>${me.role === "admin" ? `<a class="btn btn-primary" href="${esc(withFrom("/new-campaign.html", back))}">New campaign</a>` : `<a class="btn" href="${esc(back)}">Go back</a>`}</section>`;
   } else {
     $("aset-pick").innerHTML = options.adsets.map((s) => `<option value="${esc(s.id)}">${esc(s.name)} · ${esc(s.campaign_name)}${s.effective_status === "ACTIVE" ? "" : " (off)"}</option>`).join("");
     // Admins can also start from nothing: the account's Page, the lead form they pick, their own media.

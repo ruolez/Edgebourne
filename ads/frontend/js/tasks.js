@@ -1,6 +1,6 @@
 // Desk tasks and Claude's proposals, rendered the same way on Desk, Research and ad pages.
 import { api } from "./api.js";
-import { confirmDialog, esc, toast, when } from "./ui.js";
+import { confirmDialog, esc, toast, toastNext, when } from "./ui.js";
 import { renderMarkdown } from "./markdown.js";
 import { money } from "./format.js";
 import { lastChangeWords, spendBody, spendWords } from "./controls.js";
@@ -216,8 +216,8 @@ export function wireTaskActions(root, onChange, openReports) {
         let r;
         try { r = await api(`/api/proposals/${id}/approve`, { method: "POST", body: as ? { ...ask.body, apply_as: as } : ask.body }); }
         catch (err) { approve.disabled = false; throw err; }
-        if (r.experiment_id) { toast("Tracking it. Opening the test…"); location.href = `/experiments.html#${r.experiment_id}`; return; }
-        if (r.ad_id) { toast("Ad created (off). Opening it…"); location.href = `/ad.html?id=${encodeURIComponent(r.ad_id)}&created=1`; return; }
+        if (r.experiment_id) { toastNext("Test saved. It tracks both sides from here."); location.href = `/experiments.html#${r.experiment_id}`; return; }
+        if (r.ad_id) { location.href = `/ad.html?id=${encodeURIComponent(r.ad_id)}&created=1`; return; }
         if (r.updated_ad) { toast("Ad updated. Meta reviews it next."); onChange(); return; }
         toast(r.status === "applied" ? "Accepted and applied on Meta" : r.status === "approved" ? (r.note || "Accepted") : "Declined");
         onChange();

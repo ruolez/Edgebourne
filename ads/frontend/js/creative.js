@@ -1,5 +1,5 @@
 import { api, startLoad } from "./api.js";
-import { boot, confirmDialog, emptyState, entityLink, esc, icon, onRefresh, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, sourceNote, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
+import { boot, confirmDialog, emptyState, entityLink, esc, icon, onRefresh, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, sourceNote, switchHtml, timelineHtml, toast, toastNext, when, errorState, withFrom } from "./ui.js";
 import { CTA_LABELS, EXPLAIN, JUDGED_RANGES, RANGES, WORDS, count, money, pct, per, plural, rangeSelect, rememberRange, sharedRange, statusOf, statusPill, moneyWhole } from "./format.js";
 import { barList, columnChart, marksPanel } from "./charts.js";
 import { editBudget, restoreVersion, toggleEntity } from "./controls.js";
@@ -42,7 +42,6 @@ const TABS = [
 function renderHead() {
   const { ad } = data;
   document.title = `${ad.name} | Edge Bourne Ads`;
-  $("crumb").hidden = true;
   setCrumbs([{ label: "Ads", href: "/ads.html" },
     ...(ad.campaign_id ? [{ label: ad.campaign_name || "Campaign", href: `/campaign.html?id=${encodeURIComponent(ad.campaign_id)}` }] : []),
     ...(ad.adset_id ? [{ label: ad.adset_name || "Ad set", href: `/adset.html?id=${encodeURIComponent(ad.adset_id)}` }] : []),
@@ -64,6 +63,12 @@ function renderHead() {
   const tabs = TABS.filter(([id]) => (id !== "video" || ad.object_type === "VIDEO") && (id !== "polish" || ad.can_control));
   $("cr-tabs").innerHTML = tabs.map(([id, l]) => `<button type="button" role="tab" data-tab="${id}" aria-selected="${id === tab}">${esc(l)}${id === "comments" && data.comment_total ? ` <span class="n">${data.comment_total}</span>` : ""}</button>`).join("");
 }
+
+// A #tab= link followed while the page is open (a timeline's "History", ⌘K, Back) switches the tab too.
+window.addEventListener("hashchange", () => {
+  const asked = (location.hash.match(/tab=(\w+)/) || [])[1];
+  if (asked && asked !== tab && document.querySelector(`#cr-tabs [data-tab="${CSS.escape(asked)}"]`)) showTab(asked);
+});
 
 function showTab(next) {
   tab = next;
@@ -882,8 +887,8 @@ if (me) {
       if (name === false) return;
       try {
         await api(`/api/ads/ad/${encodeURIComponent(ad.id)}/delete`, { method: "POST", body: { name } });
-        toast(`Deleted “${ad.name}”`);
-        location.href = "/ads.html";
+        toastNext(`Deleted “${ad.name}”`);
+        location.href = ad.adset_id ? `/adset.html?id=${encodeURIComponent(ad.adset_id)}` : "/ads.html";
       } catch (err) { toast(err.message, "bad"); }
       return;
     }

@@ -120,7 +120,7 @@ function runItem(t, ix, openReports) {
 }
 
 export function adsView(data, ix, openReports) {
-  if (!data.families.length) return `<section class="panel empty"><h3>Nothing yet</h3><p>Each ad Claude works on gets its own story here: reviews, ideas, and what became of them.</p></section>`;
+  if (!data.families.length) return `<section class="panel empty"><h3>Nothing yet</h3><p>Each ad Claude works on gets its own story here: reviews, ideas, and what became of them.</p><div class="row"><a class="btn btn-claude" href="#new">Ask Claude about an ad</a></div></section>`;
   return data.families.map((f) => `<section class="panel family" data-family="${esc(f.root || "account")}">
     <div class="panel-body">
       ${familyHead(f, ix)}
