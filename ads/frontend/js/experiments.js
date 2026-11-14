@@ -145,6 +145,9 @@ function render() {
   document.querySelectorAll("#show [data-show]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.show === show)));
   document.querySelectorAll("#show [data-n]").forEach((n) => { n.textContent = counts[n.dataset.n]; });
   const list = items.filter(SHOWS[show]);
+  // With no tests yet the empty state's button is the one way in: the header's filters and New test would only repeat it.
+  $("show").hidden = !items.length;
+  $("new-test").hidden = !items.length;
   if (!items.length) {
     $("tests").innerHTML = `<section class="panel empty"><h3>No tests yet</h3>
       <p>A test compares two to four ads or ad sets on one number, like cost per lead, over the same days. It says “too early” until each side has spent twice your target cost and has at least 3 leads, and it calls a winner only at 95% confidence.</p>

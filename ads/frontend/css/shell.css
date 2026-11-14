@@ -348,6 +348,16 @@ dialog.palette::backdrop { background: rgba(10, 12, 14, .35); }
 .d-good { color: var(--signal-ink); } .d-bad { color: var(--bad-ink); } .d-mute { color: var(--ink-3); font-weight: 500; }
 .cr-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0; background: none; box-shadow: none; }
 .cr-toolbar .spacer { flex: 1; }
+/* On this page (Results): chips that jump to each section; they stay in reach while the page scrolls. */
+.pg-index { display: flex; gap: 4px; align-items: center; overflow-x: auto; scrollbar-width: none; position: sticky; top: 0; z-index: 6; padding: 8px 0; margin: -8px 0; background: var(--canvas); }
+#perf > section, #perf > div, #perf > .charts { scroll-margin-top: 56px; }
+@media (max-width: 960px) {
+  .pg-index { top: calc(52px + var(--target) + env(safe-area-inset-top)); margin: -8px -16px; padding: 6px 16px; }
+  #perf > section, #perf > div, #perf > .charts { scroll-margin-top: calc(52px + var(--target) + 56px + env(safe-area-inset-top)); }
+  /* Results' two pickers share one row. */
+  .page-head #campaign-pick { flex: 1 1 0; min-width: 0; }
+  .page-head #campaign-pick + .spacer { display: none; }
+}
 /* The less-used toolbar controls: in the bar on wide screens, behind one button on phones. */
 .tb-more { display: contents; }
 .btn.tb-toggle, .link-btn.figs-more { display: none; }

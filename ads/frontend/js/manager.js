@@ -516,7 +516,7 @@ export async function peek(r, { onClose, focus = true } = {}) {
   const m = r.m || {};
   const word = LEVEL_WORDS[r.level][0].replace(/^./, (c) => c.toUpperCase());
   drawer.innerHTML = `<div class="pk-head">${r.level === "ad" ? thumb(r) : ""}<div><p class="pk-kicker">${esc(word)}</p>
-      <h2>${esc(r.name)}</h2><p>${statusCell(r)}</p></div><button type="button" class="icon-btn pk-x" aria-label="Close">${icon("back")}</button></div>
+      <h2>${esc(r.name)}</h2><p>${statusCell(r)}</p></div><button type="button" class="icon-btn pk-x" aria-label="Close">${icon("close")}</button></div>
     <div class="row pk-actions"><a class="btn btn-primary btn-small" href="${href(r)}">Open ${esc(LEVEL_WORDS[r.level][0])}</a>
       ${r.can_control && ["ACTIVE", "PAUSED"].includes(r.status) ? `<span class="pk-sw">${switchHtml(isOn(r.status), `data-toggle="${r.level}:${r.id}" data-name="${esc(r.name)}"`, `${r.name} on or off`)} ${isOn(r.status) ? "On" : "Off"}</span>` : ""}
       ${r.level !== "ad" && r.daily_budget_cents ? budgetCell(r) : ""}

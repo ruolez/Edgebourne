@@ -57,6 +57,7 @@ function renderHead() {
   $("cr-actions").innerHTML = `
     ${can && ["ACTIVE", "PAUSED"].includes(ad.status) ? `<span class="switch-label">${ad.status === "ACTIVE" ? "On" : "Off"}</span>${switchHtml(ad.status === "ACTIVE", `data-toggle="ad:${ad.id}" data-name="${esc(ad.name)}"`, "Ad on or off")}` : ""}
     ${can ? `<button class="btn" type="button" id="dup">${icon("copy")}<span>Duplicate</span></button>` : ""}
+    <a class="btn" href="/leads.html?ad=${encodeURIComponent(ad.id)}" id="cr-leads">${icon("leads")}<span>Its leads</span></a>
     <a class="btn" href="/compare.html?ids=${encodeURIComponent(ad.id)}">${icon("compare")}<span>Compare</span></a>
     ${can ? `<a class="btn" href="${esc(withFrom(`/new-ad.html?template=${encodeURIComponent(ad.id)}`))}">${icon("plus")}<span>New ad from this</span></a>` : ""}
     ${can ? `<button class="btn btn-claude" type="button" data-goto="polish">${icon("spark")}<span>Polish</span></button>` : ""}

@@ -42,6 +42,12 @@ function deltaHtml(key, d) {
 }
 
 // The verdict reads complete days only (FU-C): with today in the range it says "through yesterday"; Today alone has none.
+// The question "Ask Claude which to keep" opens with: these ads, these dates (it arrives editable, nothing is sent).
+function askWords() {
+  const names = data.items.map((i) => `${i.name} (${i.id})`).join("; ");
+  return `Compare these ads over ${data.range.label.toLowerCase()} and tell me which to keep running and which to turn off, and why: ${names}`.slice(0, 1800);
+}
+
 function verdictHtml() {
   const v = data.verdict;
   const what = v.metric === "cpq_cents" ? "cost per qualified lead" : "cost per lead";
@@ -95,7 +101,7 @@ function render() {
   $("cmp-actions").innerHTML = `${rangeSelect("cmp-range", state.range)}
     <button type="button" class="view-chip" id="cmp-vs" aria-pressed="${state.vs}">vs before</button>
     ${n < MAX && all ? `<select class="input tool" id="cmp-add" aria-label="Add an ad"><option value="">+ Add an ad</option>${all.filter((a) => !ids().includes(a.id)).map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select>` : ""}
-    ${window.ebadsMe?.role === "admin" ? `<a class="btn btn-claude-outline" href="/desk.html?ask=1">${icon("spark")}Ask Claude which to keep</a>` : ""}`;
+    ${window.ebadsMe?.role === "admin" ? `<a class="btn btn-claude-outline" href="/desk.html?ask=${encodeURIComponent(askWords())}">${icon("spark")}Ask Claude which to keep</a>` : ""}`;
   const charts = [["leads", "Leads, running total"], ["cpl", "Cost per lead"], ["spend", "Spent per day"]];
   $("cmp").innerHTML = `${verdictHtml()}
     <div class="cmp-grid">${tableHtml()}

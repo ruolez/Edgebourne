@@ -118,17 +118,13 @@ function render() {
   }
 
   const ratio = (c, n) => (n ? c / n : null);
-  const figures = `<section class="panel figures${data.tracks_bookings ? " booked" : ""}" aria-label="Totals for the period">
+  const figures = `<section class="panel figures${data.tracks_bookings ? " booked" : ""}" id="sec-totals" aria-label="Totals for the period">
     <div class="figure hero"><span class="label">Cost per lead</span><span class="value">${cpl ? money(cpl, { exact: true }) : "—"}</span>${change(ratio(c.spend_cents, c.leads), ratio(p.spend_cents, p.leads), "down", p, exact)}<span class="sub">${count(t.leads)} lead${t.leads === 1 ? "" : "s"} from ${money(t.spend_cents)}</span>${yesterdayLine(data.yesterday)}</div>
-    <div class="figure" id="fig-spent"><span class="label">Spent</span><span class="value">${money(t.spend_cents)}</span>${change(c.spend_cents, p.spend_cents, null, p, exact)}</div>
-    <div class="figure" id="fig-leads"><span class="label">Leads</span><span class="value">${count(t.leads)}</span>${change(c.leads, p.leads, "up", p)}${pairNote(data.source && data.source.leads)}</div>
-    <div class="figure"><span class="label">Qualified or won</span><span class="value">${count(t.qualified)}</span>${change(c.qualified, p.qualified, "up", p)}<span class="sub">got that far · from your leads</span></div>
-    <div class="figure"><span class="label">Cost per qualified lead</span><span class="value">${per(t.spend_cents, t.qualified)}</span>${change(ratio(c.spend_cents, c.qualified), ratio(p.spend_cents, p.qualified), "down", p, exact)}<span class="sub">the number that matters most</span></div>
-    ${data.tracks_bookings ? `<div class="figure" id="fig-booked"><span class="label">${FOLLOW.booked}</span><span class="value">${count(t.booked)}</span>${change(c.booked, p.booked, "up", p)}<span class="sub">${count(t.held)} held, ${plural(t.no_show, "no-show")}</span></div>
-    <div class="figure" id="fig-cpb"><span class="label">${FOLLOW.cpb}</span><span class="value">${per(t.spend_cents, t.booked)}</span>${change(ratio(c.spend_cents, c.booked), ratio(p.spend_cents, p.booked), "down", p, exact)}<span class="sub">from your leads</span></div>` : ""}
+    ${/* with booked calls: counts on the first row, each above its cost on the second */ ""}
+    ${data.tracks_bookings ? `<div class="figure" id="fig-leads"><span class="label">Leads</span><span class="value">${count(t.leads)}</span>${change(c.leads, p.leads, "up", p)}${pairNote(data.source && data.source.leads)}</div><div class="figure"><span class="label">Qualified or won</span><span class="value">${count(t.qualified)}</span>${change(c.qualified, p.qualified, "up", p)}<span class="sub">got that far · from your leads</span></div><div class="figure" id="fig-booked"><span class="label">${FOLLOW.booked}</span><span class="value">${count(t.booked)}</span>${change(c.booked, p.booked, "up", p)}<span class="sub">${count(t.held)} held, ${plural(t.no_show, "no-show")}</span></div><div class="figure" id="fig-spent"><span class="label">Spent</span><span class="value">${money(t.spend_cents)}</span>${change(c.spend_cents, p.spend_cents, null, p, exact)}</div><div class="figure"><span class="label">Cost per qualified lead</span><span class="value">${per(t.spend_cents, t.qualified)}</span>${change(ratio(c.spend_cents, c.qualified), ratio(p.spend_cents, p.qualified), "down", p, exact)}<span class="sub">the number that matters most</span></div><div class="figure" id="fig-cpb"><span class="label">${FOLLOW.cpb}</span><span class="value">${per(t.spend_cents, t.booked)}</span>${change(ratio(c.spend_cents, c.booked), ratio(p.spend_cents, p.booked), "down", p, exact)}<span class="sub">from your leads</span></div>` : `<div class="figure" id="fig-spent"><span class="label">Spent</span><span class="value">${money(t.spend_cents)}</span>${change(c.spend_cents, p.spend_cents, null, p, exact)}</div><div class="figure" id="fig-leads"><span class="label">Leads</span><span class="value">${count(t.leads)}</span>${change(c.leads, p.leads, "up", p)}${pairNote(data.source && data.source.leads)}</div><div class="figure"><span class="label">Qualified or won</span><span class="value">${count(t.qualified)}</span>${change(c.qualified, p.qualified, "up", p)}<span class="sub">got that far · from your leads</span></div><div class="figure"><span class="label">Cost per qualified lead</span><span class="value">${per(t.spend_cents, t.qualified)}</span>${change(ratio(c.spend_cents, c.qualified), ratio(p.spend_cents, p.qualified), "down", p, exact)}<span class="sub">the number that matters most</span></div>`}
   </section>${data.compare && data.compare.note ? `<p class="td-note-line" id="cmp-note">Compared without today: today isn't over yet. The changes compare ${esc(data.compare.now_label)} with ${esc(data.compare.before_label)}.</p>` : ""}`;
 
-  const charts = `<div class="charts">
+  const charts = `<div class="charts" id="sec-days">
     <section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
     <section class="panel"><div class="panel-head"><h2>Leads per day</h2></div><div class="chart" id="c-leads"></div></section>
   </div>
@@ -149,11 +145,11 @@ function render() {
 
   // Who and where is read for whole days only (FU-C): name the days it covers, which stop at yesterday.
   const settledWords = (k) => (["7", "14", "30"].includes(k) ? `the last ${k} complete days, to yesterday` : k === "mtd" ? "this month to yesterday (complete days)" : "complete days only, to yesterday");
-  const extra = `<section class="panel"><div class="panel-head wrap"><h2>Who and where</h2><p>${campaign ? "This campaign" : "All ads"}, ${range === "today" ? "yesterday: read for whole days only" : withToday ? settledWords(range) : "same period"}</p><span class="spacer"></span>
+  const extra = `<section class="panel" id="sec-who"><div class="panel-head wrap"><h2>Who and where</h2><p>${campaign ? "This campaign" : "All ads"}, ${range === "today" ? "yesterday: read for whole days only" : withToday ? settledWords(range) : "same period"}</p><span class="spacer"></span>
       <div class="format-scroll"><div class="segmented" id="acc-by">${[["placement", "Placement"], ["age", "Age"], ["gender", "Gender"], ["device", "Device"], ["region", "Region"], ["hour", "Hour"]].map(([k, l]) => `<button type="button" data-by="${k}" aria-pressed="${k === accBy}">${l}</button>`).join("")}</div></div></div>
       <div class="panel-body aud-grid"><div><h3 class="chart-title">Share of spend</h3><div id="acc-spend">${skeleton("Loading from Meta…")}</div></div>
       <div><h3 class="chart-title">Leads and cost per lead</h3><div id="acc-leads"></div></div></div></section>
-    ${me.role === "admin" ? `<section class="panel"><div class="panel-head"><h2>What changed on Meta</h2><p>Last 14 days, from Meta's own history: Ads Manager, this dashboard and Meta's automatic changes</p></div><div class="panel-body" id="activity">${skeleton()}</div></section>` : ""}`;
+    ${me.role === "admin" ? `<section class="panel" id="sec-changes"><div class="panel-head"><h2>What changed on Meta</h2><p>Last 14 days, from Meta's own history: Ads Manager, this dashboard and Meta's automatic changes</p></div><div class="panel-body" id="activity">${skeleton()}</div></section>` : ""}`;
   // By idea lives in Creative › Ideas; here one line on the hooks for the same dates, and the way there.
   const ideas = `<section class="panel" id="ideas-panel"><div class="panel-head wrap"><h2>By idea</h2><p>Which hooks, angles and offers bring the cheapest leads</p><span class="spacer"></span>
       <a class="btn btn-quiet btn-small" id="ideas-open" href="/ideas.html?range=${encodeURIComponent(custom ? sharedRange() : range)}">Open Ideas</a></div>
@@ -165,7 +161,12 @@ function render() {
     mxd.trend && mxd.trend.line ? `<div class="mx-line" id="mx-trend"><p class="flush">${icon("chart")}<span>${esc(mxd.trend.line)}</span></p>${linkNote(mxd.trend.source)}</div>` : "",
     mxd.anomalies && mxd.anomalies.count ? `<p class="mx-line flush" id="mx-anom">${icon("alarm")}<a href="${esc(mxd.anomalies.href)}">Meta noticed ${plural(mxd.anomalies.count, "unusual change")}</a></p>` : "",
   ].join("") : "";
-  $("perf").innerHTML = alerts + cap + figures + mxCard + charts + mxLines + ads + quality + ideas + extra;
+  // The totals the two pickers above control come first; the month's pace (which ignores them) follows.
+  // On this page: a row of chips to each section, since the page runs four screens (nine on a phone).
+  const parts = [["sec-totals", "Totals"], ...(cap ? [["sec-pace", "This month"]] : []), ["sec-days", "Per day"], ["cr-panel", "Ads"], ["quality-panel", "Lead quality"],
+    ["ideas-panel", "By idea"], ["sec-who", "Who and where"], ...(me.role === "admin" ? [["sec-changes", "What changed"]] : [])];
+  const index = `<nav class="pg-index" aria-label="On this page">${parts.map(([id, label]) => `<button type="button" class="view-chip" data-sec="${id}">${label}</button>`).join("")}</nav>`;
+  $("perf").innerHTML = index + alerts + figures + (cap ? `<div id="sec-pace">${cap}</div>` : "") + mxCard + charts + mxLines + ads + quality + ideas + extra;
   loadQuality();
   loadIdeas();
   renderAds();
@@ -516,13 +517,24 @@ async function loadAccountBreakdown() {
 // Budget amounts come in cents marked `money` (never shown as a bare 2000).
 const fmtVal = (v, isMoney) => (v == null ? "" : isMoney ? money(v, { exact: true }) : typeof v === "object" ? (v.new_value ?? v.value ?? JSON.stringify(v)) : v);
 
+// The change list shows its newest few; the rest on request (it was most of the page's length).
+const ACTIVITY_SHOWN = 8;
+let allActivity = false;
+// The chips under the title: straight to a section of this long page.
+document.addEventListener("click", (e) => {
+  const chip = e.target.closest(".pg-index [data-sec]");
+  const target = chip && document.getElementById(chip.dataset.sec);
+  if (target) target.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+});
 async function loadActivity() {
   try {
     const d = await api("/api/insights/activity?days=14");
-    $("activity").innerHTML = d.items.length ? `<ul class="chg-list">${d.items.map((a) => {
+    const shown = allActivity ? d.items : d.items.slice(0, ACTIVITY_SHOWN);
+    $("activity").innerHTML = d.items.length ? `<ul class="chg-list">${shown.map((a) => {
       const change = a.old != null || a.new != null ? `: ${esc(String(fmtVal(a.old, a.money)))} → ${esc(String(fmtVal(a.new, a.money)))}` : "";
       return `<li><span><b>${esc(a.what || "")}</b>${a.object ? ` · ${a.about ? entityLink(a.about.level, a.about.id, a.object) : esc(a.object)}` : ""}${change}</span><small>${esc(when(a.time))}${a.who ? ` · ${esc(a.who)}` : ""}</small></li>`;
-    }).join("")}</ul>` : '<p class="muted flush">No changes in the last 14 days.</p>';
+    }).join("")}</ul>${d.items.length > shown.length ? `<p class="flush"><button type="button" class="link-btn" id="activity-all">Show all ${d.items.length} changes</button></p>` : ""}` : '<p class="muted flush">No changes in the last 14 days.</p>';
+    $("activity-all")?.addEventListener("click", () => { allActivity = true; loadActivity(); });
   } catch (err) { $("activity").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 

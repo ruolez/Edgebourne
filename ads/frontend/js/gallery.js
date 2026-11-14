@@ -100,13 +100,13 @@ function card(g) {
     <label class="gal-tick"><input type="checkbox" data-pick="${esc(g.key)}" aria-label="Select ${esc(g.name)}" ${sel ? "checked" : ""}></label>
     <div class="cr-body">
       ${entityLink("ad", g.top_ad_id, g.name, { cls: "cr-name" })}
-      ${copiesLine(g)}
       <div class="gal-status">${track(g)}<span class="pill ${cls}">${esc(label)}</span>${g.tired ? '<span class="pill warn">Tired</span>' : ""}</div>
-      ${copyNotes(g)}
       <div class="gal-kpi"><span>${WORDS.cpl}</span><b class="${g.enough ? "" : "early"}"${g.enough ? (data.with_today ? ' title="Includes today so far; the card\'s place is judged on complete days, through yesterday"' : "") : ' title="Fewer than 3 leads or less than twice your target spent: too early to judge"'}>${cpl}</b>${g.enough ? "" : `<span class="pill"${data.with_today ? ' title="Judged on complete days, through yesterday"' : ""}>Too early</span>`}</div>
       <dl class="cr-stats gal-stats"><div><dt>${WORDS.spend}</dt><dd>${money(g.spend_cents, { exact: true })}</dd></div><div><dt>${WORDS.leads}</dt><dd>${count(g.leads)}</dd></div>
         ${g.kind === "video" ? `<div title="${esc(EXPLAIN.hook)}"><dt>${WORDS.hook}</dt><dd>${g.hook_rate == null ? "—" : `${(g.hook_rate * 100).toFixed(1)}%`}</dd></div>` : ""}</dl>
       ${tags ? `<div class="chips gal-tags">${tags}</div>` : ""}
+      ${copiesLine(g)}
+      ${copyNotes(g)}
     </div></article>`;
 }
 
