@@ -73,6 +73,9 @@ Today's sun). 248 px wide; shorter windows tighten the rows so it fits without s
 - **Phone Ads list:** three key figures (All figures shows the rest) and "Dates, sort, filters" behind one button:
   the first ad is on the first screen instead of 1.3 screens down.
 - **Phones:** an ad says which ad set and campaign it is in; a waiting suggestion comes before the tall preview.
+- **Previous / next** (the commit after the QA follow-ups): an ad, ad set or campaign opened from a list offers the
+  one before and after it in that list, "‹ 3 of 14 ›" beside its name (`orderNav()` in `ui.js`; the list's order
+  is kept per level in this browser tab when a link is followed). An ad keeps its tab while stepping.
 
 ### Insights and Creative (`e98a186`)
 - **Results:** the totals the pickers control come first, the month's pace after; each count sits above its cost;
@@ -86,29 +89,37 @@ Today's sun). 248 px wide; shorter windows tighten the rows so it fits without s
 
 Most valuable first. Each is a contained piece of work.
 
-1. **Previous / next ad** on the ad, ad set and campaign pages (`‹ 3 of 14 ›` from the list you came from).
-2. **Ads list:** the Ads / Ad sets / Campaigns switch inside the toolbar, next to the table it changes, with the
+1. **Ads list:** the Ads / Ad sets / Campaigns switch inside the toolbar, next to the table it changes, with the
    toolbar in two fixed rows (it reshuffles per level today).
-3. **Phone campaign / ad set header:** eight controls in three rows with the On switch last; switch and budget
+2. **Phone campaign / ad set header:** eight controls in three rows with the On switch last; switch and budget
    first, Its leads / Results / Ask Claude into More.
-4. **Settings on phones:** sixteen sections in a sideways strip; a section picker instead. **Alerts:** 26 rules in
+3. **Settings on phones:** sixteen sections in a sideways strip; a section picker instead. **Alerts:** 26 rules in
    one list with Save at the end; group headings and a Save that stays in reach.
-5. **⌘K:** opened empty it repeats the sidebar; lead with actions, and stop ten page rows going ahead of the
+4. **⌘K:** opened empty it repeats the sidebar; lead with actions, and stop ten page rows going ahead of the
    campaign or lead that was typed.
-6. **Ad page:** the header's Polish button only switches tab (Run sits under eleven cards); one Copy menu instead of
+5. **Ad page:** the header's Polish button only switches tab (Run sits under eleven cards); one Copy menu instead of
    Duplicate + New ad from this; Archive / Delete into the More menu like campaign pages; History filtered to
    "This ad".
-7. **Reports:** the send-review box fills the first screen even with no clients to send to.
-8. **Compare:** Add an ad next to the columns; "Track as a test" from the verdict; ads with no spend folded in the
+6. **Reports:** the send-review box fills the first screen even with no clients to send to.
+7. **Compare:** Add an ad next to the columns; "Track as a test" from the verdict; ads with no spend folded in the
    picker.
-9. **Gallery / Research on phones:** filters on one row, the sorting sentence behind a disclosure; Research lands on
+8. **Gallery / Research on phones:** filters on one row, the sorting sentence behind a disclosure; Research lands on
    Past research after Send to Claude.
-10. **Claude By ad:** six screens with nothing folded; a filter, two newest runs per ad, the rest folded.
-11. **Builders:** "Who sees it" folded when copying an ad set.
-12. **Your account:** lead alerts and this device before the password form.
-13. **Smaller:** one place for the date picker on every page; one class set for page headers; the wordings of links
+9. **Claude By ad:** six screens with nothing folded; a filter, two newest runs per ad, the rest folded.
+10. **Builders:** "Who sees it" folded when copying an ad set.
+11. **Your account:** lead alerts and this device before the password form.
+12. **Smaller:** one place for the date picker on every page; one class set for page headers; the wordings of links
     to leads ("Its leads" / "All leads"); Tests and Audiences filters in the address; Team and closed accounts
     folded when inactive; campaign rows on one line.
+
+## QA
+
+The full `qa/run.sh` after the pass: every check passes except one, "on a phone a tap on a marked day shows its
+changes", which also failed before any of these changes in the same setup and passes when run by itself. The setup
+is the reason to distrust it: this round ran through a headless Chrome in Docker (Linux, software rendering), because
+the session it was done in could not start a browser on the Mac. Run `sh qa/run.sh` once on the Mac's own Chrome
+to settle it. New checks cover the sidebar's theme switch and order, the More sheet's groups, the folded phone Ads
+list, an open Inbox item on a phone, the landing after a delete, the builders' breadcrumbs and previous / next.
 
 ## Notes for whoever continues
 

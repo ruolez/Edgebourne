@@ -393,9 +393,18 @@ dialog.palette::backdrop { background: rgba(10, 12, 14, .35); }
 .tbl tbody tr { cursor: default; }
 /* Rows that open the quick look say so with the pointer. */
 .tbl tbody tr[data-row], .pl li[data-row] { cursor: pointer; }
+/* ‹ 3 of 14 ›: the one before and after in the list the page was opened from. */
+.seq-nav { display: inline-flex; align-items: center; gap: 2px; color: var(--ink-3); }
+.seq-nav .icon-btn { width: 28px; height: 28px; border-radius: var(--radius-s); color: var(--ink-2); }
+.seq-nav .icon-btn svg { width: 14px; height: 14px; }
+.seq-nav .seq-next svg { transform: rotate(180deg); }
+.seq-nav span.icon-btn { opacity: .3; }
+.seq-n { padding: 0 4px; font: 500 var(--t-xs)/1 var(--font-num); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#cr-seq:empty, #en-seq:empty { display: none; }
+@media (max-width: 960px) { .seq-nav .icon-btn { width: var(--target); height: var(--target); } }
 /* What an ad or ad set belongs to: the breadcrumbs say it on wide screens, this line on phones. */
 .in-where { display: none; }
-@media (max-width: 960px) { p.in-where:not([hidden]) { display: block; flex-basis: 100%; order: 2; margin: 2px 0 0; } span.in-where { display: inline; } }
+@media (max-width: 960px) { .page-head > p.in-where:not([hidden]) { display: block; flex-basis: 100%; order: 0; margin: 0; } span.in-where { display: inline; } }
 .tbl tbody tr:hover td { background: color-mix(in srgb, var(--surface-2) 45%, var(--surface)); }
 .tbl tbody tr.is-sel td { background: color-mix(in srgb, var(--signal-soft) 70%, var(--surface)); }
 .tbl tbody tr.is-peek td { background: var(--surface-2); }

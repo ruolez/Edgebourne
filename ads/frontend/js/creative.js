@@ -1,5 +1,5 @@
 import { api, startLoad } from "./api.js";
-import { boot, confirmDialog, emptyState, entityLink, esc, icon, onRefresh, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, sourceNote, switchHtml, timelineHtml, toast, toastNext, when, errorState, withFrom } from "./ui.js";
+import { boot, confirmDialog, emptyState, entityLink, esc, icon, onRefresh, orderNav, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, sourceNote, switchHtml, timelineHtml, toast, toastNext, when, errorState, withFrom } from "./ui.js";
 import { CTA_LABELS, EXPLAIN, JUDGED_RANGES, RANGES, WORDS, count, money, pct, per, plural, rangeSelect, rememberRange, sharedRange, statusOf, statusPill, moneyWhole } from "./format.js";
 import { barList, columnChart, marksPanel } from "./charts.js";
 import { editBudget, restoreVersion, toggleEntity } from "./controls.js";
@@ -47,6 +47,7 @@ function renderHead() {
     ...(ad.adset_id ? [{ label: ad.adset_name || "Ad set", href: `/adset.html?id=${encodeURIComponent(ad.adset_id)}` }] : []),
     { label: ad.name, href: location.pathname + location.search }]);
   $("cr-title").textContent = ad.name;
+  $("cr-seq").innerHTML = orderNav("ad", ad.id);
   const where = [ad.adset_id ? entityLink("adset", ad.adset_id, ad.adset_name || "its ad set") : "", ad.campaign_id ? entityLink("campaign", ad.campaign_id, ad.campaign_name || "its campaign") : ""].filter(Boolean);
   $("cr-where").hidden = !where.length;
   $("cr-where").innerHTML = where.length ? `in ${where.join(' <span class="sep-dot">·</span> ')}` : "";

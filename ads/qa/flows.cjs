@@ -4213,6 +4213,22 @@ with account_ctx.use(1):
 print(','.join(left))
 ` }).toString().trim();
   check('the prune drops old read marks but keeps recent ones and a pending proposal\'s (A3-131)', pruneLeft === 'alert:qa-prune-new,proposal:qa-prune-old', pruneLeft);
+  // Previous / next: an ad opened from the Ads list offers the one before and after it in that list.
+  await page.goto(BASE + '/ads.html');
+  await page.waitForSelector('.tbl tbody tr[data-row^="ad:"] a[href^="/ad.html"]');
+  const seqIds = await page.$$eval('#cr-all [data-row^="ad:"]', (rows) => rows.map((r) => r.dataset.row.slice(3)));
+  await Promise.all([page.waitForURL('**/ad.html?id=**'), page.locator('.tbl tbody tr[data-row^="ad:"] a[href^="/ad.html"]').nth(1).click()]);
+  await page.waitForSelector('#cr-seq .seq-nav');
+  const seq = await page.evaluate(() => ({ n: document.querySelector('.seq-n').textContent, prev: document.querySelector('.seq-prev').getAttribute('href'), next: document.querySelector('.seq-next').getAttribute('href') }));
+  await Promise.all([page.waitForURL(`**/ad.html?id=${seqIds[2]}**`), page.click('#cr-seq a.seq-next')]);
+  await page.waitForSelector('#cr-seq .seq-nav');
+  const seqAfter = await page.textContent('.seq-n');
+  await page.evaluate(() => sessionStorage.removeItem('ebads-seq:ad'));
+  await page.reload();
+  await page.waitForSelector('#cr-actions *');
+  check('an ad opened from the Ads list offers the one before and after it ("2 of N"), Next opens the next one, and an ad opened cold offers none',
+    seq.n === `2 of ${seqIds.length}` && seq.prev.startsWith(`/ad.html?id=${seqIds[0]}`) && seq.next.startsWith(`/ad.html?id=${seqIds[2]}`) && seqAfter === `3 of ${seqIds.length}`
+    && (await page.locator('#cr-seq .seq-nav').count()) === 0, JSON.stringify({ seq, seqAfter, n: seqIds.length }));
   // 8.5 Signal shell: every page sits in the right section, has breadcrumbs, and ⌘K finds an ad.
   const sections = { 'home': 'Today', 'inbox': 'Inbox', 'leads': 'Leads', 'ads': 'Ads', 'ad.html?id=120252672230740312': 'Ads', 'new-ad': 'Ads',
     'forms': 'Ads', 'new-campaign': 'Ads', 'performance': 'Insights', 'report': 'Insights', 'experiments': 'Insights', 'desk': 'Claude', 'gallery': 'Creative', 'ideas': 'Creative', 'research': 'Creative' };

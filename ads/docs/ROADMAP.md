@@ -301,7 +301,8 @@ Record, findings and what is left to pick from: `ads/docs/NAV-AUDIT.md`. Method:
 - [x] The daily loop (`d630e9e`): Leads list scrolls by itself beside the open lead (wide), an open lead is the whole screen and the filters fold behind one button (phones), answers right after the ways to reach them; Inbox Needs action groups four or more waiting leads after everything else; Today's mail button opens the console's email form and the Money card carries the spending limit on phones; Claude's list starts with what waits; More ends with Theme, not Sign out.
 - [x] Running ads (`dc8ce2a`): campaign and ad set pages show what is inside before the charts; tables lead with Spent, Leads, Cost per lead, vs before and drop an empty Budget column; the phone Ads list shows three key figures and folds dates, sort and filters; phones say what an ad or ad set belongs to.
 - [x] Insights and Creative (`e98a186`): Results opens on its totals, each count above its cost, with chips that jump to its eight sections; Compare's question to Claude arrives written; Gallery cards align cost per lead; an empty Tests page has one button.
-- [ ] Left to pick from, most valuable first: `NAV-AUDIT.md` → "Left to pick from" (previous / next ad, the level switch in the Ads toolbar, the phone campaign header, a section picker for Settings on phones, ⌘K's empty state, the ad page's header, and smaller ones).
+- [x] Previous / next: an ad, ad set or campaign opened from a list offers the one before and after it (`orderNav()` in `ui.js`).
+- [ ] Left to pick from, most valuable first: `NAV-AUDIT.md` → "Left to pick from" (the level switch in the Ads toolbar, the phone campaign header, a section picker for Settings on phones, ⌘K's empty state, the ad page's header, and smaller ones).
 - Owed on real devices: the phone Back arrow in the installed app (iPhone and Android), the More sheet's first-moment tap guard, the folded filters with the on-screen keyboard.
 
 ---

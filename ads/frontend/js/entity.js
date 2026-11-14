@@ -1,7 +1,7 @@
 // Campaign and ad set pages: their numbers with "vs before", a daily chart, (ad sets) learning progress
 // and who sees it, the ad sets / ads inside in the manager table, and one History timeline.
 import { api, startLoad } from "./api.js";
-import { boot, emptyState, entityLink, esc, icon, linkNote, onRefresh, setCrumbs, sourceNote, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
+import { boot, emptyState, entityLink, esc, icon, linkNote, onRefresh, orderNav, setCrumbs, sourceNote, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
 import { columnChart, marksPanel } from "./charts.js";
 import { count, dayLabel, explain, money, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
@@ -46,6 +46,7 @@ function render() {
   const e = data.entity;
   const canControl = e.can_control ?? data.campaign.can_control;
   $("en-title").textContent = e.name;
+  $("en-seq").innerHTML = orderNav(LEVEL, e.id);
   document.title = `${e.name} | Edge Bourne Ads`;
   $("en-sub").innerHTML = `${LEVEL === "adset" ? `<span class="in-where">in ${entityLink("campaign", data.campaign.id, data.campaign.name)} <span class="sep-dot">·</span> </span>` : ""}${statusCell({ ...e, level: LEVEL })} <span class="sep-dot">·</span> ${esc(data.range.label)}${esc(vsWords(data, state.vs))}`;
   const live = LIVE.includes(e.status);

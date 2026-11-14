@@ -503,6 +503,30 @@ export function entityHref(level, id, dim) {
   if (ADMIN_ONLY.has(level) && (!window.ebadsMe || window.ebadsMe.role !== "admin")) return null;
   return ENTITY_HREF[level](id, dim);
 }
+// The list someone opened a campaign, ad set or ad from, in the order it was showing: kept (per level, this browser
+// tab) when a link to one is followed from a list, so its page can offer the one before and the one after.
+const SEQ_KEY = "ebads-seq:";
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a[href]");
+  const m = a && (a.getAttribute("href") || "").match(/^\/(ad|adset|campaign)\.html\?id=/);
+  const list = m && document.getElementById("cr-all");
+  if (!list) return;
+  const ids = [...list.querySelectorAll(`[data-row^="${m[1]}:"]`)].map((el) => el.dataset.row.slice(m[1].length + 1));
+  if (ids.length > 1) { try { sessionStorage.setItem(SEQ_KEY + m[1], JSON.stringify([...new Set(ids)].slice(0, 400))); } catch (err) { /* storage off */ } }
+}, true);
+// "‹ 3 of 14 ›" for the page of `id`, or nothing when it wasn't opened from a list. An ad keeps its tab (#tab=).
+export function orderNav(level, id) {
+  let ids = [];
+  try { ids = JSON.parse(sessionStorage.getItem(SEQ_KEY + level) || "[]"); } catch (e) { /* storage off */ }
+  const i = ids.indexOf(String(id));
+  if (i < 0 || ids.length < 2) return "";
+  const what = { campaign: "campaign", adset: "ad set", ad: "ad" }[level];
+  const step = (other, dir, word) => (other
+    ? `<a class="icon-btn seq-${dir}" href="${esc(ENTITY_HREF[level](other) + (level === "ad" ? location.hash : ""))}" aria-label="${word} ${what} in the list" title="${word} ${what} in the list">${icon("back")}</a>`
+    : `<span class="icon-btn seq-${dir}" aria-hidden="true">${icon("back")}</span>`);
+  return `<nav class="seq-nav" aria-label="The list you came from">${step(ids[i - 1], "prev", "Previous")}<span class="seq-n">${i + 1} of ${ids.length}</span>${step(ids[i + 1], "next", "Next")}</nav>`;
+}
+
 // The History tab of a campaign, ad set or ad (links.history_href on the server): campaign and ad set pages keep
 // their tab in the query, the ad page in the hash.
 export function historyHref(level, id, { check = null } = {}) {
@@ -769,7 +793,8 @@ export async function boot({ page, admin = false }) {
   if (isAdmin) startClaudeNow(top);
   // On phones the top bar already names the page: a heading that only repeats it is kept for screen readers.
   const h1 = main.querySelector(".page-head h1");
-  if (h1 && page !== "home" && h1.textContent.trim() === PAGE_TITLE[page]) h1.classList.add("in-bar");  // Today's becomes a greeting
+  // Headings a page fills in later (an ad's name, Today's greeting) have an id and are left alone.
+  if (h1 && !h1.id && h1.textContent.trim() === PAGE_TITLE[page]) h1.classList.add("in-bar");
   const sectionCrumb = SECTIONS[section] ? { label: SECTIONS[section].label, href: SECTIONS[section].href } : null;
   const own = PAGE_TITLE[page];
   setCrumbs(sectionCrumb && own && own !== sectionCrumb.label ? [sectionCrumb, { label: own, href: location.pathname }] : [sectionCrumb || { label: own || "", href: location.pathname }]);
