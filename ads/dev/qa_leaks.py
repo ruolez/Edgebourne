@@ -86,8 +86,12 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
                                "fields": json.dumps({"name": {"new": f"{mark} draft"}, "objective": {"new": "OUTCOME_LEADS"}}),
                                "last_seen_at": "2026-11-13T10:00:00Z", "account_id": acct}, "source")
     db.execute("UPDATE am_drafts SET gone_at = NULL WHERE draft_id = %s AND account_id = %s", (draft["draft_id"], acct))  # a link read may have marked it gone
+    # AM-C: a copy left half made (its name shows in its own route).
+    copy = once("copy_jobs", {"level": "campaign", "source_id": campaign, "plan": json.dumps({"name": f"{mark} copy", "adsets": []}),
+                              "made": json.dumps({}), "status": "partial", "error": f"{mark} copy error", "client_key": f"{mark}copy",
+                              "created_by": admin_id, "account_id": acct}, "client_key")
     return {"proposal": proposal["id"], "view": view["id"], "build": build["id"], "swipe": swipe["id"], "alert": problem["id"],
-            "change": change["id"], "attachment": preview["id"], "draft": draft["draft_id"]}
+            "change": change["id"], "attachment": preview["id"], "draft": draft["draft_id"], "copy": copy["id"]}
 
 with account_ctx.all_accounts():
     acct = db.query("SELECT id FROM accounts WHERE name = 'Burdanova QA'", one=True)
@@ -137,7 +141,7 @@ with account_ctx.all_accounts():
                            ("ad_versions", "label"), ("saved_views", "name"), ("campaign_builds", "client_key"), ("alerts", "dedupe_key"),
                            ("lead_notes", "body"), ("lead_replies", "subject"), ("activity", "subject"), ("inbox_reads", "item_key"),
                            ("desk_attachments", "name"), ("desk_tasks", "prompt"), ("swipes", "page_name"), ("numbers_runs", "error"),
-                           ("am_link_runs", "error"), ("am_snapshots", "scope"), ("am_drafts", "source")):
+                           ("am_link_runs", "error"), ("am_snapshots", "scope"), ("am_drafts", "source"), ("copy_jobs", "client_key")):
                 db.execute(f"DELETE FROM {t} WHERE account_id = 1 AND {col} LIKE %s", (MARK1 + "%",))
             db.execute("DELETE FROM lead_events WHERE account_id = 1 AND details->>'ad' LIKE %s", (MARK1 + "%",))
     drop_mark1()
@@ -175,7 +179,7 @@ def fill(rule, other):
         v = {"ad_id": other["ad"], "adset_id": other["adset"], "campaign_id": other["campaign"], "entity_id": other["ad"], "level": "ad",
              "lead_id": other["lead"], "task_id": other["task"], "exp_id": other.get("exp", 1), "id": other["lead"],
              "proposal_id": other["proposal"], "build_id": other["build"], "view_id": other["view"], "number": 900,
-             "change_id": other["change"], "att_id": other["attachment"], "draft_id": other["draft"]}.get(name, "1")
+             "change_id": other["change"], "att_id": other["attachment"], "draft_id": other["draft"], "job_id": other["copy"]}.get(name, "1")
         url = re.sub(r"<(?:[a-z]+:)?" + name + ">", str(v), url)
     return url
 
@@ -349,7 +353,10 @@ def account1_state():
             "snoozes": q("SELECT id, ended_at FROM alert_snoozes ORDER BY id"),
             "ads": q("SELECT COUNT(*) AS n FROM ads"),
             "meta_ad": meta_client.get(one["ad"], fields="status,name"),
-            "meta_campaign": meta_client.get(one["campaign"], fields="status,daily_budget"),
+            "meta_campaign": meta_client.get(one["campaign"], fields="status,daily_budget,name,bid_strategy,spend_cap"),
+            "meta_adset": meta_client.get(one["adset"], fields="status,name,targeting,bid_amount"),
+            "copy": q("SELECT status, made FROM copy_jobs WHERE id = %s", one["copy"]),
+            "copies": q("SELECT COUNT(*) AS n FROM copy_jobs"),
             "meta_comments": [(x.get("id"), x.get("is_hidden"), x.get("comment_count"))
                               for x in meta_client.get(f"{story1}/comments", token=meta_client.page_token(),
                                                        fields="id,is_hidden,comment_count").get("data", [])],
@@ -406,7 +413,20 @@ for method, url, body in (("POST", f"/api/ads/ad/{one['ad']}/status", {"status":
                           ("DELETE", f"/api/alerts/{one['alert']}/snooze", None),
                           ("POST", f"/api/alerts/{one['alert']}/done", {}),
                           ("POST", "/api/diagnose", {"alert_id": one["alert"], "prompt": "x"}),
-                          ("POST", "/api/diagnose", {"ad_id": one["ad"], "prompt": "x"})):
+                          ("POST", "/api/diagnose", {"ad_id": one["ad"], "prompt": "x"}),
+                          # AM-C: Edit, copies, archive and delete aimed at account 1's campaign and ad set from account 2.
+                          ("GET", f"/api/edit/campaign/{one['campaign']}", None),
+                          ("GET", f"/api/edit/adset/{one['adset']}", None),
+                          ("GET", f"/api/edit/adset/{one['adset']}/inside", None),
+                          ("POST", f"/api/edit/adset/{one['adset']}/check", {"changes": {"name": "x"}}),
+                          ("POST", f"/api/edit/adset/{one['adset']}", {"changes": {"name": "x"}, "seen": {"name": "SoCal business owners - Instant form"}}),
+                          ("POST", f"/api/edit/campaign/{one['campaign']}", {"changes": {"spend_cap": 900000}, "seen": {"spend_cap": None}}),
+                          ("POST", f"/api/copy/campaign/{one['campaign']}/plan", {}),
+                          ("POST", f"/api/copy/adset/{one['adset']}", {"plan": {"name": "x", "adsets": []}}),
+                          ("GET", f"/api/copy/{one['copy']}", None),
+                          ("POST", f"/api/copy/{one['copy']}/resume", {}),
+                          ("POST", f"/api/ads/campaign/{one['campaign']}/archive", {}),
+                          ("POST", f"/api/ads/adset/{one['adset']}/delete", {"name": "x"})):
     r = c.open(url, method=method, json=body)
     applied = [x for x in ((r.get_json(silent=True) or {}).get("results") or []) if x.get("ok")] if url.endswith("/bulk/apply") else []
     # Refused means a 4xx. A 5xx got past the account check and only failed further on (account 2 has no Page

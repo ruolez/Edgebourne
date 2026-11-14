@@ -154,21 +154,25 @@ def find_entity(entity_id):
 REMOVALS = {"archive": "ARCHIVED", "delete": "DELETED"}
 
 
-def removal_problem(user, row, action, typed_name):
-    """Archive and delete are admin-only, only for ads that are off, and delete needs the
-    name typed. Meta lets an archived ad go on to deleted, never back."""
+REMOVAL_WORDS = {"ad": "ad", "adset": "ad set", "campaign": "campaign"}
+
+
+def removal_problem(user, row, action, typed_name, level="ad"):
+    """Archive and delete are admin-only (owner or this account's admin), only for what is off, and delete needs the
+    name typed. Meta lets an archived one go on to deleted, never back. AM-C: campaigns and ad sets the same way."""
+    word = REMOVAL_WORDS[level]
     if action not in REMOVALS:
         return "Unknown action"
     if user.get("role") != "admin":
-        return "Only an admin can archive or delete ads"
+        return f"Only an admin can archive or delete {word}s"
     if row["status"] == "DELETED":
         return "It's already deleted"
     if row["status"] == REMOVALS[action]:
         return "It's already archived"
     if row["status"] == "ACTIVE":
-        return "Switch the ad off first"
+        return f"Switch the {word} off first"
     if action == "delete" and (typed_name or "").strip() != row["name"].strip():
-        return "Type the ad's name exactly to delete it"
+        return f"Type the {word}'s name exactly to delete it"
     return None
 
 

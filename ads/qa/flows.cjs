@@ -1,5 +1,8 @@
 // Local E2E of the Ads controls against the fake Meta server (docker-compose.dev.yml).
 // node ads/qa/flows.cjs <out-dir>
+// QA_ONLY='name,name' runs the shared setup (sign-in, helpers) plus only the named check blocks; unset runs everything
+// exactly as before. Blocks: core (everything up to the Ads Manager link), link (AM-A/AM-B: the link and drafts),
+// edit (AM-C: editing campaigns and ad sets, copies, archive and delete). E.g. QA_ONLY=edit sh ads/qa/run.sh
 // Playwright: $PLAYWRIGHT_CORE, else the first intact copy on this Mac (the render pipeline's copy lost
 // its package files on 2026-11-10; any 1.64 drives the Chromium 1248 below).
 const PW = [process.env.PLAYWRIGHT_CORE, '/Users/ruolez/Desktop/Dev/meta-ads/creatives/2026-11-07-new5/src/node_modules/playwright-core',
@@ -13,6 +16,8 @@ const IMG = process.argv[3];
 const results = [];
 const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`); };
 const guards = require('./guards.cjs');
+const ONLY = process.env.QA_ONLY ? new Set(process.env.QA_ONLY.split(',').map((x) => x.trim()).filter(Boolean)) : null;
+const run = (name) => !ONLY || ONLY.has(name);
 
 (async () => {
   require('fs').mkdirSync(OUT, { recursive: true });
@@ -53,6 +58,7 @@ const guards = require('./guards.cjs');
   await page.fill('#password', 'localdev-pass-123');
   await Promise.all([page.waitForURL('**/home.html**'), page.click('button[type=submit]')]);
 
+  if (run('core')) { // QA_ONLY 'core': every check from here to the Ads Manager link (one long sequence; its parts lean on each other)
   // 1. Turn N2 off from the Ads page, through the confirm dialog.
   await page.goto(BASE + '/ads.html');
   const n2 = page.locator('[data-toggle="ad:120252672229400312"]');
@@ -2206,7 +2212,7 @@ print(a[0][1] if a else '-', b[0][1] if b else '-')"`).trim();
   // The walk only finds a leak where the other account has a marked row: each screen must show its own account's marks.
   const markShown = { 'admin on account 1': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/am-link', '/api/drafts'],
     'admin on account 2, own ids': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/am-link', '/api/drafts', '/api/drafts/<draft_id>/spec', '/api/timeline/<level>/<entity_id>',
-      '/api/proposals/<int:proposal_id>', '/api/leads/<int:lead_id>', '/api/ads/ad/<ad_id>/tags', '/api/experiments/<int:exp_id>', '/api/builds/<int:build_id>'] };
+      '/api/proposals/<int:proposal_id>', '/api/leads/<int:lead_id>', '/api/ads/ad/<ad_id>/tags', '/api/experiments/<int:exp_id>', '/api/builds/<int:build_id>', '/api/copy/<int:job_id>'] };
   const unmarked = Object.entries(markShown).flatMap(([who, routes]) => routes.filter((r) => !(leak.routes_showing_own_mark[who] || []).includes(r)).map((r) => `${who}: ${r}`));
   check('the leak walk has marked rows to find in Inbox, Claude, saved views, builds, History and the timeline', unmarked.length === 0, unmarked.join(' | '));
   check('FU-D: a Claude preview is read only in its own account; clients, teammates and account admins can\'t turn full access on',
@@ -7823,9 +7829,11 @@ print(json.dumps(out))
     // The refusals above log their 400 / 403 / 429 on purpose.
     for (let i = errors.length - 1; i >= fudSeen; i--) if (/status of (400|403|429)/.test(errors[i])) errors.splice(i, 1);
   }
+  } // QA_ONLY 'core'
 
   // AM-A: the Ads Manager link. The Mac's own MCP client (ads/bridge/amlink.py) runs in the fake-meta container against
   // the fake MCP server (dev/fake_mcp.py) and the console; the user's Keychain is never touched (token in a file, key in env).
+  if (run('link'))
   {
     const amSeen = errors.length;
     const py = (code) => require('child_process').execSync('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', { input: code }).toString();
@@ -8247,10 +8255,10 @@ settings_store.set('max_daily_budget_cents', ${ceilingWas ? `'${ceilingWas}'` : 
       await page.click('dialog.confirm #cd-ok');
       await page.waitForFunction((c) => /Applied/.test(document.querySelector(`#draft-${c} tr[data-field="daily_budget"]`)?.textContent || ''), CAMP, { timeout: 15000 }).catch(() => {});
       const nameRow = await page.textContent(`#draft-${CAMP} tr[data-field="name"]`);
-      check('AM-B: Apply in the console opens the usual budget dialog ($20.00 → $25.00, +25%, "Raise anyway"); after the yes Meta\'s budget is $25.00 and the row says Applied',
+      check('AM-B: Apply in the console opens the usual budget dialog ($20.00 → $25.00, +25%, "Raise anyway"); after the yes Meta\'s budget is $25.00 and the row says Applied; the staged name offers Apply too (AM-C)',
         /\$20\.00/.test(row0) && !/changed this since/.test(row0) && /\+25%/.test(dlg.hint) && dlg.ok === 'Raise anyway' && metaObj(CAMP).daily_budget === '2500'
         && /Applied/.test(await page.textContent(`#draft-${CAMP} tr[data-field="daily_budget"]`))
-        && sql(`SELECT (applied->>'daily_budget') IS NOT NULL FROM am_drafts WHERE draft_id = '${CAMP}'`) === 't' && /Change it in Ads Manager/.test(nameRow),
+        && sql(`SELECT (applied->>'daily_budget') IS NOT NULL FROM am_drafts WHERE draft_id = '${CAMP}'`) === 't' && /Apply in the console/.test(nameRow),  // AM-C: a staged name opens Edit (checked in the edit block)
         JSON.stringify({ row0, dlg: dlg.ok, budget: metaObj(CAMP).daily_budget }));
       // 10b. Another amount typed in the dialog isn't the draft's: Meta gets what was typed, the row stays unapplied (409).
       sql(`UPDATE am_drafts SET applied = '{}'::jsonb WHERE draft_id = '${CAMP}'`);
@@ -8425,6 +8433,386 @@ settings_store.set('meta_ad_account_id', saved.get('meta_ad_account_id@${A2}'), 
     if (closed2) sql(`UPDATE accounts SET archived_at = '${closed2}' WHERE id = ${A2}`);
     // The refusals above log their 409 / 429 on purpose.
     for (let i = errors.length - 1; i >= amSeen; i--) if (/status of (409|422|429)/.test(errors[i])) errors.splice(i, 1);
+  }
+
+  // AM-C: change campaigns and ad sets after they're made (every setting Meta allows), paused copies, archive and delete.
+  // Owner and account admins only; every write reads Meta fresh, refuses a value Ads Manager changed since, runs the money rules.
+  if (run('edit'))
+  {
+    const edSeen = errors.length;
+    const C = '120252638288040312', S = '120252672227950312';
+    const py = (code) => require('child_process').execSync('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', { input: code }).toString();
+    const sql = (q) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "${q}"`).trim();
+    const fakeGet = (path) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001${path}').read().decode())"`));
+    const call = (method, url, body, p = page) => p.evaluate(async ([m, u, b]) => {
+      const r = await fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b === null ? undefined : JSON.stringify(b) });
+      let j = null; try { j = await r.json(); } catch (e) { j = null; }
+      return { status: r.status, body: j };
+    }, [method, url, body === undefined ? null : body]);
+    const form = async (level, id) => (await call('GET', `/api/edit/${level}/${id}`)).body;
+    const save = (level, id, changes, seen, extra = {}) => call('POST', `/api/edit/${level}/${id}`, { changes, seen, ...extra });
+    const titles = async (level, id) => (await call('GET', `/api/${level === 'campaign' ? 'campaigns' : 'adsets'}/${id}?range=7`)).body.timeline.map((t) => t.title);
+    const toastSays = (re) => page.waitForFunction((src) => new RegExp(src).test([...document.querySelectorAll('.toast')].map((t) => t.textContent).join(' ')), re.source, { timeout: 15000 }).then(() => true, () => false);
+    const openEdit = async (level, id) => {
+      await page.goto(`${BASE}/${level === 'campaign' ? 'campaign' : 'adset'}.html?id=${id}`);
+      await page.waitForSelector('#ed-open');
+      await page.click('#ed-open');
+      await page.waitForSelector('dialog.ed-panel .ed-sec');
+    };
+    const section = async (key) => { if (!(await page.$eval(`#ed-sec-${key}`, (d) => d.open))) await page.click(`#ed-sec-${key} > summary`); };
+    const review = async () => { await page.click('#ed-save'); await page.waitForSelector('dialog.ed-review'); return page.textContent('dialog.ed-review'); };
+    const more = async (item) => { await page.waitForSelector('#ed-more'); await page.click('#ed-more > summary'); await page.click(item); };
+    // A bid change from an earlier run must not start this run's 3-day rule.
+    sql("UPDATE meta_changes SET created_at = created_at - interval '4 days' WHERE action IN ('bid', 'bid_strategy', 'spend_cap') AND created_at > now() - interval '4 days'");
+    sql("UPDATE status_events SET at = at - interval '4 days', meta_time = meta_time - interval '4 days' WHERE field = 'bid_amount' AND at > now() - interval '4 days'");
+    const t0 = (await form('adset', S)).values;
+    const age0 = t0.targeting.age_min;
+    const sName = t0.name;
+    const blockStart = sql('SELECT now()');
+
+    // 1. The ad set's Edit: every section with what it is now; the goal is read-only with the reason (it has delivered).
+    await openEdit('adset', S);
+    const secs = await page.$$eval('dialog.ed-panel .ed-sec', (ds) => ds.map((d) => [d.dataset.sec, d.querySelector('.ed-now').textContent]));
+    const goalWhy = await page.textContent('[data-why="optimization_goal"]');
+    check('AM-C: Edit opens every section of the ad set with what it is now (places, ages, Advantage+ placements, Leads)',
+      secs.map((s) => s[0]).join() === 'name,when,bidding,who,where,goal,often' && new RegExp(`ages ${age0}–65`).test(secs[3][1]) && /area/.test(secs[3][1])
+      && /Advantage\+ placements/.test(secs[4][1]) && /^Leads/.test(secs[5][1]), JSON.stringify(secs));
+    check('AM-C: the goal is read-only after delivery, with the reason and Make a paused copy with this change',
+      /after the ad set has delivered/.test(goalWhy) && await page.$eval('#ed-goal', (s) => s.disabled) && (await page.locator('[data-ed-copy-change]').count()) === 1, goalWhy);
+
+    // 2. Ages 30+ with Advantage+ audience on: refused on the field before anything is sent. Refusal.
+    await section('who');
+    if (!(await page.isChecked('#ed-adv'))) await page.check('#ed-adv');
+    await page.selectOption('#ed-age-min', '30');
+    await page.click('#ed-save');
+    await page.waitForSelector('#ed-err-who:not([hidden])');
+    check('AM-C refusal: with Advantage+ audience the minimum age can be at most 25', /at most 25/.test(await page.textContent('#ed-err-who')) && metaObj(S).targeting.age_min === age0,
+      await page.textContent('#ed-err-who'));
+
+    // 3. Advantage+ audience off: the review says old → new with the learning note; saved; History; never "Changed in Ads Manager".
+    await page.uncheck('#ed-adv');
+    const rev3 = await review();
+    check('AM-C: the review shows Ages old → new and that Meta restarts learning', new RegExp(`Ages\\s*${age0}–65\\s*→\\s*30–65`).test(rev3.replace(/changes to/g, '')) && /restarts learning/.test(rev3), rev3.slice(0, 300));
+    await page.click('dialog.ed-review #cd-ok');
+    const saved3 = await toastSays(/Saved\. Meta shows it/);
+    check('AM-C: saved, and Meta holds ages 30–65', saved3 && metaObj(S).targeting.age_min === 30, JSON.stringify(metaObj(S).targeting.age_min));
+    check('AM-C: History says "Ages … → 30–65"', (await titles('adset', S)).some((t) => new RegExp(`^Ages ${age0}–65 → 30–65`).test(t)), JSON.stringify((await titles('adset', S)).slice(0, 3)));
+    pull();
+    const outsideAfter = sql(`SELECT count(*) FROM status_events WHERE entity_id = '${S}' AND at > '${blockStart}' AND source IN ('poll', 'webhook') AND field IN ('targeting', 'placements')`);
+    const outsideAlert = sql(`SELECT count(*) FROM alerts WHERE rule = 'outside_edit' AND entity_id = '${S}' AND created_at > '${blockStart}'`);
+    check("AM-C: the console's own edit is not \"Changed in Ads Manager\" after the next read (no event, no alert)", outsideAfter === '0' && outsideAlert === '0', `${outsideAfter} ${outsideAlert}`);
+
+    // 4. Ads Manager changes the ages while the form is open: 409, nothing sent. Refusal.
+    await openEdit('adset', S);
+    await section('who');
+    await page.selectOption('#ed-age-min', '35');
+    outside(S, 'targeting_age_min=33');
+    await review();
+    metaHits(true);
+    await page.click('dialog.ed-review #cd-ok');
+    const conflict = await toastSays(/Ads Manager has a different value now/);
+    const posted4 = metaHits().filter((h) => h.startsWith(`/v24.0/${S}?`) && h.includes('targeting=')).length;  // a write sends its fields
+    check('AM-C refusal: a value changed in Ads Manager since the form opened is refused (409), nothing sent', conflict && metaObj(S).targeting.age_min === 33 && posted4 === 0, `${metaObj(S).targeting.age_min} posts=${posted4}`);
+    await page.waitForSelector('dialog.ed-panel .ed-sec');
+    await page.keyboard.press('Escape');
+
+    // 5. A place from Meta's place search joins the list; a 60-mile radius is refused (Meta's range). Refusal.
+    await openEdit('adset', S);
+    await section('who');
+    const placesBefore = await page.locator('#ed-pl-list li').count();
+    await page.fill('#ed-pl-q', 'River');
+    await page.waitForSelector('#ed-pl-results [data-pick]');
+    await page.click('#ed-pl-results [data-pick]');
+    check('AM-C: a place picked from the place search joins the list', (await page.locator('#ed-pl-list li').count()) === placesBefore + 1);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('dialog.ed-panel', { state: 'detached' });
+    const f5 = await form('adset', S);
+    const far = { ...f5.values.targeting, locations: f5.values.targeting.locations.map((l, i) => (i ? l : { ...l, radius: 60 })) };
+    const chk5 = (await call('POST', `/api/edit/adset/${S}/check`, { changes: { targeting: far } })).body;
+    check('AM-C refusal: a 60-mile radius is refused with the range', chk5.problems.some((p) => /1 to 50 miles/.test(p.message)), JSON.stringify(chk5.problems));
+
+    // 6. Placements chosen by hand: Instagram only.
+    await openEdit('adset', S);
+    await section('where');
+    await page.check('input[name="ed-pl-mode"][value="manual"]');
+    await page.check('[data-plat="instagram"]');
+    await review();
+    await page.click('dialog.ed-review #cd-ok');
+    await toastSays(/Saved/);
+    check('AM-C: placements saved by hand: Meta shows on Instagram only', JSON.stringify(metaObj(S).targeting.publisher_platforms) === '["instagram"]', JSON.stringify(metaObj(S).targeting.publisher_platforms));
+
+    // 7. The campaign's bidding: a cost per result goal of $12 on each ad set; then $12 → $15 on the ad set needs the +20 % yes.
+    await openEdit('campaign', C);
+    await section('bidding');
+    await page.click('[data-bid="COST_CAP"]');
+    for (const inp of await page.$$('[data-adset-bid]')) await inp.fill('12');
+    await review();
+    await page.click('dialog.ed-review #cd-ok');
+    await toastSays(/Saved/);
+    check('AM-C: the campaign bids with a cost per result goal of $12.00 on its ad set', metaObj(C).bid_strategy === 'COST_CAP' && String(metaObj(S).bid_amount) === '1200',
+      `${metaObj(C).bid_strategy} ${metaObj(S).bid_amount}`);
+    const big = await save('adset', S, { bid_amount: 1500 }, { bid_amount: 1200 });
+    check('AM-C refusal: $12 → $15 (+25 %) without the knowing yes is 409 big', big.status === 409 && big.body.code === 'big' && String(metaObj(S).bid_amount) === '1200', JSON.stringify(big));
+    await openEdit('adset', S);
+    await section('bidding');
+    await page.fill('#ed-bid', '15');
+    const rev7 = await review();
+    check('AM-C: the review asks for the +20 % yes in words', /\+25%/.test(rev7) && (await page.locator('dialog.ed-review [data-ed-q="big"]').count()) === 1, rev7.slice(0, 200));
+    await page.click('dialog.ed-review #cd-ok');
+    check('AM-C: nothing is sent until the box is ticked', String(metaObj(S).bid_amount) === '1200' && (await page.locator('dialog.ed-review').count()) === 1);
+    await page.check('dialog.ed-review [data-ed-q="big"]');
+    await page.click('dialog.ed-review #cd-ok');
+    await toastSays(/Saved/);
+    check('AM-C: with the yes the goal is $15.00', String(metaObj(S).bid_amount) === '1500', String(metaObj(S).bid_amount));
+    // A read that races the save (the console's stored copy still says $12): the next pull knows the $15 as the console's own.
+    // (Step 4's age change really was made in Ads Manager, so this pull may alert about the audience: only the goal counts here.)
+    sql(`UPDATE adsets SET bid_amount_cents = 1200 WHERE id = '${S}'`);
+    const racedAt = sql('SELECT now()');
+    pull();
+    const bidEvents = sql(`SELECT string_agg(source, ',') FROM status_events WHERE entity_id = '${S}' AND field = 'bid_amount' AND at > '${blockStart}'`);
+    const bidAlert = sql(`SELECT count(*) FROM alerts WHERE rule = 'outside_edit' AND entity_id = '${S}' AND created_at > '${racedAt}' AND title NOT LIKE 'Audience%'`);
+    check("AM-C: the console's own goal change, read by a pull that raced the save, is the console's (not \"Changed in Ads Manager\", no alert)",
+      bidEvents === 'console' && bidAlert === '0', `${bidEvents} ${bidAlert}`);
+
+    // 8. Raise again at once: the 3-day question; accepted knowingly and stored.
+    const recent = await save('adset', S, { bid_amount: 1700 }, { bid_amount: 1500 });
+    const recentOk = await save('adset', S, { bid_amount: 1700 }, { bid_amount: 1500 }, { accept_recent: true });
+    const accepted8 = sql(`SELECT accepted FROM meta_changes WHERE entity_id = '${S}' AND action = 'bid' AND ok ORDER BY id DESC LIMIT 1`);
+    check('AM-C: a second raise at once asks the 3-day question; accepted, it is stored as recent', recent.status === 409 && recent.body.code === 'recent'
+      && recentOk.status === 200 && /recent/.test(accepted8) && String(metaObj(S).bid_amount) === '1700', `${JSON.stringify(recent.body && recent.body.code)} ${recentOk.status} ${accepted8}`);
+
+    // 9. A goal above the daily-budget ceiling is refused whatever is accepted. Refusal.
+    const over = await save('adset', S, { bid_amount: 50000 }, { bid_amount: 1700 }, { accept_big: true, accept_recent: true, accept_high: true });
+    check('AM-C refusal: a cost per result goal above the ceiling is refused', over.status === 400 && over.body.code === 'refused' && String(metaObj(S).bid_amount) === '1700', JSON.stringify(over.body));
+
+    // 9b. A new end on something whose end has passed starts it spending again: the spend confirmation, and a lifetime
+    // budget's new pace above the ceiling is refused. Refusals.
+    const minute = (ms) => new Date(ms).toISOString().slice(0, 16) + 'Z';
+    const ended = minute(Date.now() - 86400000);
+    outside(S, `end_time=${encodeURIComponent(ended.replace('Z', ':00+0000'))}`);
+    const resume = await save('adset', S, { end_time: null }, { end_time: ended });
+    const spendS = (await call('GET', `/api/ads/adset/${S}/spend`)).body;
+    const resumeOk = await save('adset', S, { end_time: null }, { end_time: ended },
+      { ...(spendS.daily_cents ? { confirm_daily_cents: spendS.daily_cents } : {}), ...(spendS.lifetime_cents ? { confirm_lifetime_cents: spendS.lifetime_cents } : {}) });
+    check('AM-C refusal: "No end date" on an ad set that is on and has ended needs the spend confirmation; with it, saved',
+      resume.status === 409 && resume.body.code === 'spend' && /spending again/.test(resume.body.error) && resumeOk.status === 200 && !metaObj(S).end_time,
+      `${JSON.stringify(resume.body)} ${resumeOk.status} ${metaObj(S).end_time}`);
+    const c9 = metaObj(C);
+    outside(C, `lifetime_budget=1000000&stop_time=${encodeURIComponent(ended.replace('Z', ':00+0000'))}&clear=daily_budget`);
+    const longer = await save('campaign', C, { stop_time: minute(Date.now() + 36 * 3600000) }, { stop_time: ended },
+      { accept_big: true, accept_recent: true, confirm_daily_cents: 0, confirm_lifetime_cents: 1000000 });
+    outside(C, `daily_budget=${c9.daily_budget}&clear=lifetime_budget,stop_time`);
+    check('AM-C refusal: a new end on an ended lifetime budget that would spend above the ceiling a day is refused, nothing sent',
+      longer.status === 400 && longer.body.code === 'refused' && /highest daily budget/.test(longer.body.error) && String(metaObj(C).daily_budget) === String(c9.daily_budget),
+      JSON.stringify(longer.body));
+    // A campaign edit can't name an ad set outside the campaign (another account's included). Refusal.
+    const foreign = await save('campaign', C, { adset_bids: { [S]: 1700, '999000111': 1500 } }, { adset_bids: { [S]: 1700 } });
+    check('AM-C refusal: a cost per result goal for an ad set outside the campaign is refused (400), nothing sent to it',
+      foreign.status === 400 && foreign.body.field === 'adset_bids' && !metaHits().some((h) => h.includes('999000111')), JSON.stringify(foreign.body));
+
+    // 10. The campaign's spending cap: below what it spent is refused; removing it is a danger yes.
+    const cap = await save('campaign', C, { spend_cap: 900000 }, { spend_cap: (await form('campaign', C)).values.spend_cap });
+    const low = await save('campaign', C, { spend_cap: 10000 }, { spend_cap: 900000 });
+    check('AM-C refusal: a campaign cap at or below what it spent is refused', cap.status === 200 && low.status === 400 && /already spent/.test(low.body.error) && String(metaObj(C).spend_cap) === '900000',
+      `${cap.status} ${JSON.stringify(low.body)}`);
+    await openEdit('campaign', C);
+    await section('cap');
+    await page.check('#ed-cap-none');
+    await review();
+    const danger = (await page.locator('dialog.ed-review .ed-ask.is-danger [data-ed-q="danger"]').count()) === 1 && /Save anyway/.test(await page.textContent('dialog.ed-review #cd-ok'));
+    await page.check('dialog.ed-review [data-ed-q="danger"]');
+    await page.click('dialog.ed-review #cd-ok');
+    await toastSays(/Saved/);
+    check('AM-C: removing the campaign cap takes the danger yes, then Meta has no cap', danger && metaObj(C).spend_cap === undefined, JSON.stringify(metaObj(C).spend_cap));
+
+    // 11. A new name: History says Renamed, the manager shows it.
+    const cName = (await form('campaign', C)).values.name;
+    await openEdit('campaign', C);
+    await section('name');
+    await page.fill('#ed-name', `${cName} (QA)`);
+    await review();
+    await page.click('dialog.ed-review #cd-ok');
+    await toastSays(/Saved/);
+    await page.waitForFunction((n) => document.getElementById('en-title')?.textContent === n, `${cName} (QA)`).catch(() => {});
+    const tree = (await call('GET', '/api/ads?range=7')).body;
+    check('AM-C: a new name is in History and in the manager', (await titles('campaign', C)).some((t) => t === `Renamed to “${cName} (QA)”`)
+      && JSON.stringify(tree).includes(`${cName} (QA)`), (await titles('campaign', C))[0]);
+    await save('campaign', C, { name: cName }, { name: `${cName} (QA)` });
+
+    // 12. An ad set that never delivered changes its goal; the delivered one offers a paused copy instead (checked in 1).
+    const made12 = await call('POST', '/api/adsets', { campaign_id: C, template_adset_id: S, spec: { name: 'QA AM-C new set', age_min: 25, age_max: 65, advantage: false,
+      locations: [{ kind: 'city', key: '2421696', name: 'Riverside', radius: 25 }] } });
+    const NS = made12.body && made12.body.id;
+    const ns = NS ? await form('adset', NS) : null;
+    const goal12 = NS ? await save('adset', NS, { optimization_goal: 'QUALITY_LEAD' }, { optimization_goal: ns.values.optimization_goal }) : null;
+    check('AM-C: an ad set that never delivered changes what it optimizes for', ns && ns.editable.optimization_goal === null && goal12.status === 200
+      && fakeGet('/fake/_adsets')[NS].optimization_goal === 'QUALITY_LEAD', JSON.stringify(goal12 && goal12.body));
+
+    // 13. A paused copy of the campaign, level by level: every ad set and ad, all paused.
+    const plan13 = (await call('POST', `/api/copy/campaign/${C}/plan`, {})).body;
+    const sets13 = plan13.adsets.filter((s) => s.ticked), ads13 = sets13.flatMap((s) => s.ads.filter((a) => a.ticked));
+    await page.goto(`${BASE}/campaign.html?id=${C}`);
+    await more('#cp-open');
+    await page.waitForSelector('dialog.cp-dialog #cp-go');
+    await page.click('#cp-go');
+    await page.waitForSelector('#cp-done', { timeout: 60000 });
+    const job13 = JSON.parse(sql('SELECT made FROM copy_jobs ORDER BY id DESC LIMIT 1') || '{}');
+    const madeIds = [job13.campaign_id, ...Object.values(job13.adsets || {}), ...Object.values(job13.ads || {})];
+    check('AM-C: Make a paused copy makes the campaign, each ad set and each ad, all paused', Object.keys(job13.adsets || {}).length === sets13.length
+      && Object.keys(job13.ads || {}).length === ads13.length && ads13.length >= 5 && madeIds.every((i) => metaObj(i).status === 'PAUSED'),
+      `${Object.keys(job13.adsets || {}).length}/${sets13.length} ${Object.keys(job13.ads || {}).length}/${ads13.length}`);
+    await page.click('#cp-openit');
+    await page.waitForURL(`**/campaign.html?id=${job13.campaign_id}**`);
+    await page.waitForFunction(() => /Off/.test(document.getElementById('en-sub')?.textContent || ''), null, { timeout: 15000 }).catch(() => {});
+    check('AM-C: the copy opens, off', /Off/.test(await page.textContent('#en-sub')), await page.textContent('#en-sub'));
+
+    // 14. A copy Meta made on is switched off at once and History says so. Refusal of a live copy.
+    fakeGet('/fake/_copy?active=1');
+    const g = await call('POST', `/api/copy/adset/${S}`, { plan: { name: 'QA AM-C guard copy', adsets: [{ id: S, ads: [] }], target_campaign_id: C }, client_key: `amc-guard-${Date.now()}` });
+    const gid = g.body && g.body.open && g.body.open.id;
+    check('AM-C refusal: a copy that comes back on is switched off at once, named in History', gid && g.body.switched_off.includes(gid) && metaObj(gid).status === 'PAUSED'
+      && (await titles('adset', gid)).includes('Switched off a copy Meta made on'), JSON.stringify(g.body && g.body.switched_off));
+
+    // 15. Meta doesn't answer the ad set step: Finish the copy finds it (no second ad set) and makes the rest.
+    const plan15 = (await call('POST', `/api/copy/adset/${S}/plan`, {})).body;
+    const ads15 = plan15.adsets[0].ads.filter((a) => a.ticked).length;
+    fakeGet('/fake/_copy?silent=adset');
+    await page.goto(`${BASE}/adset.html?id=${S}`);
+    await more('#cp-open');
+    await page.waitForSelector('dialog.cp-dialog #cp-go');
+    await page.click('#cp-go');
+    await page.waitForSelector('#cp-partial', { timeout: 60000 });
+    const partialSays = await page.textContent('#cp-partial');
+    await page.click('#cp-resume');
+    await page.waitForSelector('#cp-done', { timeout: 60000 });
+    const named = Object.values(fakeGet('/fake/_adsets')).filter((x) => x.name === `${sName} - copy`);
+    const CP = named[0] && named[0].id;
+    check('AM-C: a copy step Meta didn\'t answer: Finish the copy adopts it, no second ad set', /didn't answer/.test(partialSays) && named.length === 1
+      && Object.values(JSON.parse(sql('SELECT made FROM copy_jobs ORDER BY id DESC LIMIT 1')).ads || {}).length === ads15, `${named.length} ${partialSays}`);
+    await page.click('#cp-cancel');
+
+    // 16. Archive a campaign that is on: switch it off first. Refusal.
+    await page.goto(`${BASE}/campaign.html?id=${C}`);
+    await more('#ed-archive');
+    await page.waitForSelector('dialog.confirm');
+    const offFirst = await page.textContent('dialog.confirm h2');
+    await page.click('dialog.confirm #cd-cancel');
+    const arch = await call('POST', `/api/ads/campaign/${C}/archive`, {});
+    check('AM-C refusal: archiving a campaign that is on says switch it off first (dialog and server)', /Switch it off first/.test(offFirst) && arch.status === 409 && metaObj(C).status === 'ACTIVE',
+      `${offFirst} ${arch.status}`);
+
+    // 17. Delete an ad set: Turn it off instead comes first; a wrong name is refused; the right one deletes it and its ads.
+    const spend17 = (await call('GET', `/api/ads/adset/${CP}/spend`)).body;
+    await call('POST', `/api/ads/adset/${CP}/status`, { status: 'ACTIVE', confirm_daily_cents: spend17.daily_cents, confirm_lifetime_cents: spend17.lifetime_cents });
+    const leads0 = sql('SELECT count(*) FROM leads');
+    await page.goto(`${BASE}/adset.html?id=${CP}`);
+    await more('#ed-delete');
+    await page.waitForSelector('dialog.ed-del-first .cd-choice');
+    const firstChoice = await page.textContent('dialog.ed-del-first .cd-choice:first-child b');
+    await page.click('dialog.ed-del-first .cd-choice:last-child');
+    await page.waitForSelector('dialog.confirm #cd-ok');
+    await page.click('dialog.confirm #cd-ok');  // its own Turn off confirmation
+    await page.waitForSelector('dialog.confirm #cd-input');
+    await page.fill('#cd-input', 'not the name');
+    await page.click('dialog.confirm #cd-ok');
+    const nameErr = await page.isVisible('#cd-err');
+    const wrong = await call('POST', `/api/ads/adset/${CP}/delete`, { name: 'not the name' });
+    await page.fill('#cd-input', `${sName} - copy`);
+    await Promise.all([page.waitForURL('**/campaign.html?id=**'), page.click('dialog.confirm #cd-ok')]);
+    const cpAds = Object.values(JSON.parse(sql('SELECT made FROM copy_jobs WHERE level = \'adset\' AND made::text LIKE \'%' + CP + '%\' ORDER BY id DESC LIMIT 1')).ads || {});
+    check('AM-C: Delete offers Turn it off instead first; a wrong name is refused; the right one deletes it and its ads; leads stay',
+      firstChoice === 'Turn it off instead' && nameErr && wrong.status === 400 && wrong.body.field === 'name' && metaObj(CP).status === 'DELETED'
+      && cpAds.length === ads15 && cpAds.every((a) => metaObj(a).status === 'DELETED') && sql('SELECT count(*) FROM leads') === leads0, `${firstChoice} ${wrong.status} ${metaObj(CP).status}`);
+
+    // 18-19. A teammate (assigned to the campaign) and a client: no Edit or More, and 403 on every route.
+    const job = sql('SELECT id FROM copy_jobs ORDER BY id DESC LIMIT 1');
+    py(`import db
+from werkzeug.security import generate_password_hash as h
+for email, role in (('qa-amc-client@example.com', 'client'), ('qa-amc-mate@example.com', 'member')):
+    db.execute("INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, %s, 1) ON CONFLICT (email) DO UPDATE SET is_active = TRUE, password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, account_id = 1, must_change_password = FALSE", (email, 'QA AMC ' + role, h('amc-pass-12345'), role))
+db.execute("INSERT INTO campaign_members (campaign_id, user_id, account_id) SELECT '${C}', id, 1 FROM users WHERE email = 'qa-amc-mate@example.com' ON CONFLICT DO NOTHING")`);
+    const routes = [['GET', `/api/edit/adset/${S}`], ['POST', `/api/edit/adset/${S}/check`], ['POST', `/api/edit/adset/${S}`], ['GET', `/api/edit/campaign/${C}/inside`],
+      ['GET', '/api/edit/search?kind=detail&q=small'], ['POST', `/api/copy/campaign/${C}/plan`], ['POST', `/api/copy/campaign/${C}`], ['GET', `/api/copy/${job}`],
+      ['POST', `/api/copy/${job}/resume`], ['POST', `/api/ads/adset/${S}/archive`], ['POST', `/api/ads/campaign/${C}/delete`]];
+    for (const [email, who] of [['qa-amc-mate@example.com', 'teammate'], ['qa-amc-client@example.com', 'client']]) {
+      const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+      const p = await ctx.newPage();
+      p.on('pageerror', (e) => errors.push(`${who} page: ${e.message}`));
+      await p.goto(BASE + '/login.html');
+      await p.fill('#email', email); await p.fill('#password', 'amc-pass-12345');
+      await Promise.all([p.waitForURL('**/home.html**'), p.click('button[type=submit]')]);
+      const got = [];
+      for (const [m, u] of routes) got.push((await call(m, u, m === 'POST' ? { changes: { name: 'x' }, seen: { name: sName }, plan: { name: 'x' }, name: 'x' } : undefined, p)).status);
+      let buttons = 0;
+      for (const href of [`/campaign.html?id=${C}`, `/adset.html?id=${S}`]) {
+        await p.goto(BASE + href);
+        await p.waitForSelector('#en-actions .btn');
+        buttons += await p.locator('#ed-open, #ed-more').count();
+      }
+      check(`AM-C refusal: a ${who} sees no Edit or More and gets 403 on every edit, copy, archive and delete route`, buttons === 0 && got.every((s) => s === 403), JSON.stringify(got));
+      await ctx.close();
+    }
+    py(`import db
+db.execute("UPDATE users SET is_active = FALSE WHERE email IN ('qa-amc-client@example.com', 'qa-amc-mate@example.com')")
+db.execute("DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users WHERE email = 'qa-amc-mate@example.com')")`);
+
+    // 20. AM-B: a staged rename in Ads Manager → Apply in the console opens Edit with the draft's name filled in and outlined.
+    py(`import json, urllib.request, account_ctx, am_drafts, db, drafts_api
+with account_ctx.use(1):
+    raw = json.loads(urllib.request.urlopen('http://fake-meta:5001/fake/_mcp_drafts').read())
+    run = db.execute("""INSERT INTO am_link_runs (account_id, pass_hash, ad_account_id, kinds, mode, status, created_at, finished_at)
+                        VALUES (1, 'qa-amc-drafts', '1025971549903293', '{drafts}', 'direct', 'done', now(), now())
+                        ON CONFLICT (pass_hash) DO UPDATE SET created_at = EXCLUDED.created_at RETURNING id, created_at""", returning=True)
+    drafts_api.store(run, am_drafts.normalize(raw), True, run['created_at'])`);
+    await page.goto(`${BASE}/ads.html?level=campaign&view=drafts`);
+    await page.waitForSelector(`[data-dr-apply="${S}"][data-field="name"]`);
+    await page.click(`[data-dr-apply="${S}"][data-field="name"]`);
+    await page.waitForSelector('dialog.ed-panel #ed-sec-name.ed-from-draft');
+    const drafted = await page.inputValue('#ed-name');
+    check('AM-C: a staged name from Ads Manager opens Edit with the draft\'s name filled in and its setting outlined', drafted === `${sName} (wider)`
+      && await page.$eval('#ed-sec-name', (d) => d.open && d.classList.contains('is-dirty')), drafted);
+    await page.keyboard.press('Escape');
+    sql("DELETE FROM am_drafts WHERE run_id = (SELECT id FROM am_link_runs WHERE pass_hash = 'qa-amc-drafts'); DELETE FROM am_link_runs WHERE pass_hash = 'qa-amc-drafts'; DELETE FROM alerts WHERE rule IN ('draft_new', 'draft_problems')");
+
+    // 21. Phones: the Edit layer is the whole screen, sections fold, 16px fields, a 44px Save, nothing past the edge; Back closes it.
+    for (const w of [390, 320]) {
+      await page.setViewportSize({ width: w, height: 760 });
+      await openEdit('adset', S);
+      await section('who');
+      const m = await page.evaluate(() => {
+        const dlg = document.querySelector('dialog.ed-panel');
+        const save = document.getElementById('ed-save').getBoundingClientRect();
+        const wide = [...dlg.querySelectorAll('*')].filter((e) => e.getBoundingClientRect().right > innerWidth + 1 && e.getClientRects().length).map((e) => e.id || e.className).slice(0, 3);
+        return { w: dlg.getBoundingClientRect().width, folded: [...dlg.querySelectorAll('details.ed-sec')].filter((d) => !d.open).length,
+          font: getComputedStyle(document.getElementById('ed-name')).fontSize, save: save.height, wide, inner: innerWidth };
+      });
+      await page.goBack();
+      await page.waitForSelector('dialog.ed-panel', { state: 'detached', timeout: 5000 }).catch(() => {});
+      const gone = (await page.locator('dialog.ed-panel').count()) === 0;
+      await page.click('#ed-more > summary');
+      await page.waitForTimeout(150);  // the menu fits itself to the screen on its toggle event (queued after the click)
+      const menu = await page.$$eval('#ed-more .menu-pop button', (bs) => bs.map((b) => { const r = b.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.height >= 44; }));
+      await page.click('#ed-more > summary');
+      check(`AM-C phone ${w}px: the More menu's three items are whole on screen and 44px tall`, menu.length === 3 && menu.every(Boolean), JSON.stringify(menu));
+      check(`AM-C phone ${w}px: Edit fills the screen, sections fold, 16px fields, 44px Save, nothing past the edge, Back closes it`,
+        Math.round(m.w) === m.inner && m.folded >= 5 && m.font === '16px' && m.save >= 44 && m.wide.length === 0 && gone, JSON.stringify({ ...m, gone }));
+    }
+    await page.setViewportSize({ width: 1360, height: 900 });
+
+    // 22. No class or id with an ad-blocker word in the panel and the copy dialog.
+    await openEdit('adset', S);
+    const blocked = await page.evaluate(() => [...document.querySelectorAll('[class], [id]')].filter((e) => /(^|\s)(ad-|ads-|adset|sponsor|banner|promo)/i.test(`${e.className} ${e.id}`)).length);
+    await page.keyboard.press('Escape');
+    check('AM-C: no class or id in Edit starts with an ad-blocker word', blocked === 0, String(blocked));
+
+    // Put the live ad set and campaign back as they were for the next run (the console's own writes, through the same door).
+    const now = await form('adset', S);
+    await save('adset', S, { targeting: t0.targeting, placements: { auto: true } }, { targeting: now.values.targeting, placements: now.values.placements });
+    const c1 = await form('campaign', C);
+    await save('campaign', C, { bid_strategy: 'LOWEST_COST_WITHOUT_CAP' }, { bid_strategy: c1.values.bid_strategy }, { accept_big: true });
+    pull();
+    // The refusals above log their 400 / 403 / 409 on purpose.
+    for (let i = errors.length - 1; i >= edSeen; i--) if (/status of (400|403|409)/.test(errors[i])) errors.splice(i, 1);
   }
 
   await browser.close();

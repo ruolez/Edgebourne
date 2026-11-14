@@ -22,16 +22,22 @@ FIELDS = {
 # Budget, bid, dates and audience (D2): compared once the console has stored them from a full read
 # (setup_seen_at), so the first sync after the update records nothing.
 SETUP = {
-    "campaign": ("daily_budget", "lifetime_budget", "spend_cap", "bid_strategy", "start_time", "end_time"),
-    "adset": ("daily_budget", "lifetime_budget", "bid_strategy", "bid_amount", "start_time", "end_time", "targeting"),
+    "campaign": ("daily_budget", "lifetime_budget", "spend_cap", "bid_strategy", "start_time", "end_time", "special_ad_categories"),
+    "adset": ("daily_budget", "lifetime_budget", "bid_strategy", "bid_amount", "start_time", "end_time", "targeting",
+              "placements", "optimization_goal", "attribution", "frequency"),
 }
-META_KEY = {"end_time": {"campaign": "stop_time", "adset": "end_time"}}  # everything else has the same name
+# AM-C added these: compared once a full read stored them too (edit_seen_at), so the first sync after the update records nothing.
+EDIT_SETUP = {"campaign": ("special_ad_categories",), "adset": ("placements", "optimization_goal", "attribution", "frequency")}
+META_KEY = {"end_time": {"campaign": "stop_time", "adset": "end_time"}, "placements": {"adset": "targeting"},
+            "attribution": {"adset": "attribution_spec"}, "frequency": {"adset": "frequency_control_specs"}}  # the rest: same name
 MONEY_FIELDS = ("daily_budget", "lifetime_budget", "spend_cap", "bid_strategy", "bid_amount")
 CENTS_FIELDS = ("daily_budget", "lifetime_budget", "spend_cap", "bid_amount")
 TIME_FIELDS = ("start_time", "end_time")
 STORED_COL = {"daily_budget": "daily_budget_cents", "lifetime_budget": "lifetime_budget_cents", "spend_cap": "spend_cap_cents",
               "bid_strategy": "bid_strategy", "bid_amount": "bid_amount_cents", "start_time": "start_time",
-              "end_time": {"campaign": "stop_time", "adset": "end_time"}, "targeting": "targeting_fp"}
+              "end_time": {"campaign": "stop_time", "adset": "end_time"}, "targeting": "targeting_fp",
+              "placements": "placements_fp", "optimization_goal": "optimization_goal", "attribution": "attribution",
+              "frequency": "frequency", "special_ad_categories": "special_ad_categories"}
 # What counts as changed outside the console when Meta reports it: the switch and every setup field (W2's
 # "What we did", D3's windows).
 OUTSIDE_FIELDS = ("configured_status",) + tuple(dict.fromkeys(SETUP["campaign"] + SETUP["adset"]))
@@ -39,9 +45,9 @@ PREV_COLS = {
     "ad": "status, configured_status, effective_status, review_feedback, issues, creative_id, title, body",
     "adset": ("status, configured_status, effective_status, learning_stage, learning, issues, daily_budget_cents, "
               "lifetime_budget_cents, bid_strategy, bid_amount_cents, start_time, end_time, targeting_fp, targeting_summary, "
-              "setup_seen_at"),
+              "setup_seen_at, optimization_goal, placements_fp, attribution, frequency, edit_seen_at"),
     "campaign": ("status, configured_status, effective_status, issues, daily_budget_cents, lifetime_budget_cents, bid_strategy, "
-                 "spend_cap_cents, start_time, stop_time, setup_seen_at"),
+                 "spend_cap_cents, start_time, stop_time, setup_seen_at, special_ad_categories, edit_seen_at"),
 }
 NEW_WINDOW = timedelta(hours=48)       # first seen within 48 h of creation = a new entity, else backfill
 CONSOLE_WINDOW = timedelta(minutes=10)  # a console write this recent explains a status change
@@ -123,6 +129,71 @@ def targeting_fingerprint(t):
     return hashlib.sha256(json.dumps(_normal(kept), sort_keys=True).encode()).hexdigest()[:16]
 
 
+PLACEMENT_KEYS = ("publisher_platforms", "facebook_positions", "instagram_positions", "messenger_positions",
+                  "audience_network_positions", "device_platforms")
+
+
+def placements_fingerprint(t):
+    """Where an ad set shows: 'auto' (Advantage+ placements: Meta picks) or a short hash of the placements chosen by hand."""
+    t = t or {}
+    if not t.get("publisher_platforms"):
+        return "auto"
+    kept = {k: t[k] for k in PLACEMENT_KEYS if t.get(k) not in (None, [], {})}
+    return hashlib.sha256(json.dumps(_normal(kept), sort_keys=True).encode()).hexdigest()[:16]
+
+
+ATTRIBUTION_EVENTS = {"CLICK_THROUGH": "click", "VIEW_THROUGH": "view", "ENGAGED_VIDEO_VIEW": "engaged"}
+
+
+def attribution_key(spec):
+    """Meta's attribution_spec as one key: [{CLICK_THROUGH, 7}, {VIEW_THROUGH, 1}] -> '7d_click_1d_view' (None = none)."""
+    if isinstance(spec, str):
+        try:
+            spec = json.loads(spec)
+        except ValueError:
+            return None
+    parts = []
+    for event in ATTRIBUTION_EVENTS:
+        for item in spec or []:
+            if isinstance(item, dict) and item.get("event_type") == event and item.get("window_days"):
+                parts.append(f"{int(item['window_days'])}d_{ATTRIBUTION_EVENTS[event]}")
+    return "_".join(parts) or None
+
+
+def frequency_key(specs):
+    """frequency_control_specs as 'max/days' ('2/7'), None without one."""
+    if isinstance(specs, str):
+        try:
+            specs = json.loads(specs)
+        except ValueError:
+            return None
+    for item in specs or []:
+        if isinstance(item, dict) and item.get("max_frequency") and item.get("interval_days"):
+            return f"{int(item['max_frequency'])}/{int(item['interval_days'])}"
+    return None
+
+
+def categories_key(cats):
+    """special_ad_categories as one sorted string ('CREDIT,HOUSING'); None = none (Meta also says ['NONE'])."""
+    kept = sorted({str(c) for c in (cats or []) if c and str(c) != "NONE"})
+    return ",".join(kept) or None
+
+
+def _setup_value(f, value):
+    """One setup field as compared (a Meta value or a stored one)."""
+    if f in CENTS_FIELDS:
+        return _cents(value)
+    if f in TIME_FIELDS:
+        return minute_utc(value)
+    if f == "attribution":
+        return attribution_key(value)
+    if f == "frequency":
+        return frequency_key(value)
+    if f == "special_ad_categories":
+        return categories_key(value)
+    return value or None
+
+
 def _cents(value):
     try:
         cents = int(value)
@@ -158,8 +229,8 @@ def snapshot(level, meta):
         return out  # read with the older field set: setup fields aren't compared (nor marked as seen)
     for f, key in keys.items():
         value = meta.get(key)
-        out[f] = (_cents(value) if f in CENTS_FIELDS else minute_utc(value) if f in TIME_FIELDS
-                  else targeting_fingerprint(value) if f == "targeting" else (value or None))
+        out[f] = (targeting_fingerprint(value) if f == "targeting" else placements_fingerprint(value) if f == "placements"
+                  else _setup_value(f, value))
     return out
 
 
@@ -176,9 +247,10 @@ def stored_snapshot(level, row):
     out = {f: snap.get(f) for f in FIELDS[level]}
     if row.get("setup_seen_at"):
         for f in SETUP.get(level, ()):
+            if f in EDIT_SETUP.get(level, ()) and not row.get("edit_seen_at"):
+                continue  # stored before AM-C: not compared until a full read stores it
             col = STORED_COL[f] if isinstance(STORED_COL[f], str) else STORED_COL[f][level]
-            value = row.get(col)
-            out[f] = (_cents(value) if f in CENTS_FIELDS else minute_utc(value) if f in TIME_FIELDS else (value or None))
+            out[f] = _setup_value(f, row.get(col))
     return out
 
 
@@ -209,11 +281,42 @@ def diff(level, before, after, now, created_time):
 
 
 BUDGET_FIELDS = ("daily_budget", "lifetime_budget")
+# AM-C: an Edit made here, by the setup field Meta reports (meta_changes.action). Its new_value says what it set: the plain
+# value, "start …" / "end …" for a date, "fp:<fingerprint> …" for an audience, "fp:<placements> tfp:<audience> …" for placements.
+FIELD_ACTIONS = {"bid_amount": ("bid",), "bid_strategy": ("bid_strategy",), "start_time": ("schedule",), "end_time": ("schedule",),
+                 "spend_cap": ("spend_cap",), "targeting": ("targeting", "placements"), "placements": ("placements",),
+                 "optimization_goal": ("optimization",), "attribution": ("attribution",), "frequency": ("frequency",),
+                 "special_ad_categories": ("special_categories",)}
+EDIT_ACTIONS = tuple(sorted({a for acts in FIELD_ACTIONS.values() for a in acts} | {"rename", "conversion_location", "billing"}))
+
+
+def console_value(field, action, text):
+    """What an Edit's meta_changes value set, in the form the sync compares for `field` (None when it set nothing for it)."""
+    text = "" if text is None else str(text)
+    if field in TIME_FIELDS:
+        head, _, rest = text.partition(" ")
+        if head != ("start" if field == "start_time" else "end"):
+            return False  # a date change of the other end
+        return None if rest in ("", "none") else rest
+    if field in ("targeting", "placements"):
+        tag = "tfp:" if field == "targeting" and action == "placements" else "fp:"
+        token = next((t for t in text.split(" ") if t.startswith(tag)), None)
+        return token[len(tag):] if token else False
+    head = text.split(" ")[0]  # the machine token; History words (and a bid's bidding) follow it
+    return None if head in ("", "none") else head
 
 
 def explained_by_console(entity_id, ev, changes, now):
     """The meta_changes id of a recent write from this console that explains the event, else None: a switch
-    for a status, our own budget write to that exact amount, or Meta's advice applied here (any amount)."""
+    for a status, our own budget write to that exact amount, Meta's advice applied here (any amount), or an Edit (AM-C)
+    of that setting to that same value."""
+    if ev["field"] in FIELD_ACTIONS:
+        new = None if ev.get("new") is None else str(ev["new"])
+        for ch in sorted(changes, key=lambda c: c["created_at"], reverse=True):
+            if (ch["entity_id"] == entity_id and ch.get("ok") and ch["action"] in FIELD_ACTIONS[ev["field"]]
+                    and now - ch["created_at"] <= CONSOLE_WINDOW and console_value(ev["field"], ch["action"], ch.get("new_value")) == new):
+                return ch["id"]
+        return None
     if ev["field"] in BUDGET_FIELDS:
         for ch in sorted(changes, key=lambda c: c["created_at"], reverse=True):
             if ch["entity_id"] != entity_id or not ch.get("ok") or now - ch["created_at"] > CONSOLE_WINDOW:
@@ -256,6 +359,40 @@ def reason_words(summary):
 
 BID_WORDS = {"LOWEST_COST_WITHOUT_CAP": "Highest volume", "COST_CAP": "Cost per result goal",
              "LOWEST_COST_WITH_BID_CAP": "Bid cap", "LOWEST_COST_WITH_MIN_ROAS": "Return on ad spend goal"}
+
+
+GOAL_WORDS = {"LEAD_GENERATION": "Leads", "QUALITY_LEAD": "Conversion leads", "REACH": "Reach", "IMPRESSIONS": "Impressions",
+              "LINK_CLICKS": "Link clicks", "LANDING_PAGE_VIEWS": "Landing page views", "OFFSITE_CONVERSIONS": "Website conversions",
+              "THRUPLAY": "Video plays", "CONVERSATIONS": "Conversations", "QUALITY_CALL": "Calls"}
+CATEGORY_WORDS = {"HOUSING": "Housing", "EMPLOYMENT": "Employment", "CREDIT": "Credit", "FINANCIAL_PRODUCTS_SERVICES": "Financial products",
+                  "ISSUES_ELECTIONS_POLITICS": "Social issues, elections or politics"}
+
+
+def goal_words(value):
+    return GOAL_WORDS.get(value) or (value or "none").replace("_", " ").capitalize()
+
+
+def attribution_words(key):
+    """'7d_click_1d_view' -> '7 days after a click, 1 day after a view'."""
+    if not key:
+        return "Meta's default"
+    out = []
+    bits = str(key).split("_")
+    for days, kind in zip(bits[0::2], bits[1::2]):
+        n = int(days.rstrip("d") or 0)
+        out.append(f"{n} day{'s' if n != 1 else ''} after {'a click' if kind == 'click' else 'a view' if kind == 'view' else 'an engaged view'}")
+    return ", ".join(out)
+
+
+def frequency_words(key):
+    if not key:
+        return "no limit"
+    most, days = str(key).split("/")
+    return f"at most {most} time{'s' if most != '1' else ''} in {days} day{'s' if days != '1' else ''}"
+
+
+def category_words(key):
+    return ", ".join(CATEGORY_WORDS.get(c, c.replace("_", " ").capitalize()) for c in str(key).split(",")) if key else "none"
 
 
 def bid_words(value):
@@ -307,6 +444,16 @@ def setup_headline(ev, money=None, tz=None):
         if before and after and before != after:
             return f"Audience changed: {before} → {after}"
         return "Audience settings changed (see Ads Manager for the detail)"
+    if field == "placements":
+        return "Where it shows: back to Advantage+ placements" if new == "auto" else "Where it shows changed"
+    if field == "optimization_goal":
+        return f"Optimized for: {goal_words(old)} → {goal_words(new)}" if old else f"Optimized for: {goal_words(new)}"
+    if field == "attribution":
+        return f"Results counted: {attribution_words(old)} → {attribution_words(new)}"
+    if field == "frequency":
+        return f"How often people see it: {frequency_words(old)} → {frequency_words(new)}"
+    if field == "special_ad_categories":
+        return f"Special ad category: {category_words(new)}" if not old else f"Special ad category: {category_words(old)} → {category_words(new)}"
     return None
 
 
@@ -387,9 +534,9 @@ def record(level, entity, events, source, now=None, detail=None):
     now = now or datetime.now(timezone.utc)
     changes = db.query(
         """SELECT id, entity_id, action, new_value, ok, created_at FROM meta_changes
-           WHERE entity_id = %s AND action IN ('status', 'budget', 'recommendation', 'recommendation_check')
+           WHERE entity_id = %s AND (action IN ('status', 'budget', 'recommendation', 'recommendation_check') OR action = ANY(%s))
              AND created_at > now() - interval '15 minutes'""",
-        (entity["id"],))
+        (entity["id"], list(EDIT_ACTIONS)))
     out = []
     for ev in events:
         src, change_id = ("backfill", None) if ev.get("backfill") else (source, None)
@@ -713,6 +860,8 @@ def outside_title(ev, money, tz):
     field, old, new = ev["field"], ev.get("old"), ev.get("new")
     if field == "targeting":
         return "Audience changed in Ads Manager"
+    if field in ("placements", "optimization_goal", "attribution", "frequency", "special_ad_categories"):
+        return setup_headline(ev, money, tz) + " (in Ads Manager)"
     if field in TIME_FIELDS:
         thing = "Start" if field == "start_time" else "End date"
         if not new:

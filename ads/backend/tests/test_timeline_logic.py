@@ -264,3 +264,30 @@ class SpendLimitLineTests(unittest.TestCase):
                          [("Account spending limit $150.00 → $200.00", "money"), ("Removed the account spending limit", "money"),
                           ("Account spending limit: none → $200.00", "money"), ("Tried to change the account spending limit", "money"),
                           ("Put the account spending limit back to $150.00", "money")])
+
+
+class EditTitleTests(unittest.TestCase):
+    """AM-C: an Edit's meta_changes value carries its History line after the machine part status_history reads."""
+    def title(self, action, new, ok=True, old=None):
+        return timeline.change_title({"action": action, "old_value": old, "new_value": new, "ok": ok}, lambda c: f"${c / 100:.2f}")
+
+    def test_each_edit_reads_as_its_history_line(self):
+        self.assertEqual([self.title("bid", "1500 COST_CAP Cost per result goal $12.00 → $15.00"),
+                          self.title("targeting", "fp:abc Ages 25–65 → 30–65; Advantage+ audience on → off"),
+                          self.title("schedule", "end 2026-12-01T07:59Z Ends: Nov 30, 11:59 PM → No end date"),
+                          self.title("placements", "fp:auto tfp:x Where it shows: Advantage+ placements → Instagram"),
+                          self.title("optimization", "QUALITY_LEAD What it optimizes for: Leads → Conversion leads"),
+                          self.title("copy", "Free intro call - copy", old="Free intro call")],
+                         ["Cost per result goal $12.00 → $15.00", "Ages 25–65 → 30–65; Advantage+ audience on → off",
+                          "Ends: Nov 30, 11:59 PM → No end date", "Where it shows: Advantage+ placements → Instagram",
+                          "What it optimizes for: Leads → Conversion leads", "Made as a paused copy of “Free intro call”"])
+
+    def test_a_refused_edit_says_tried(self):
+        self.assertEqual([self.title("targeting", "fp:abc Ages 25–65 → 30–65", ok=False), self.title("bid", "1500 COST_CAP x", ok=False),
+                          self.title("copy", "x", ok=False)],
+                         ["Tried to change: Ages 25–65 → 30–65", "Tried to change: x", "Tried to make a copy"])
+
+    def test_edits_chart_as_money_switch_or_edit(self):
+        import marks
+        self.assertEqual([marks.category({"kind": "change", "field": a}) for a in ("bid", "bid_strategy", "spend_cap", "schedule", "targeting", "rename")],
+                         ["money", "money", "money", "switch", "edit", "edit"])

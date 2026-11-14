@@ -33,7 +33,8 @@ export function placesWidget(id, { cityRadius, pinRadius, onChange }) {
         <button type="button" class="btn btn-quiet btn-small" data-remove="${i}" aria-label="Remove ${esc(placeLabel(l))}">Remove</button>
       </li>`).join("") : '<li class="muted">No places yet. Add one below.</li>';
   };
-  const hide = () => { results = []; $("results").hidden = true; $("q").setAttribute("aria-expanded", "false"); };
+  // The widget can be gone (Edit's panel closed) while the page's click listener below still runs.
+  const hide = () => { results = []; if (!$("results")) return; $("results").hidden = true; $("q").setAttribute("aria-expanded", "false"); };
   const show = (list) => {
     results = list;
     $("results").innerHTML = list.map((p, i) => `<li role="option" id="${id}-pr-${i}" data-pick="${i}" tabindex="-1"><span class="place-kind">${KIND[p.kind]}</span>${esc(p.name)}</li>`).join("")
@@ -82,7 +83,8 @@ export function placesWidget(id, { cityRadius, pinRadius, onChange }) {
     if (e.key === "Escape") { hide(); $("q").focus(); }
   });
   $("results").addEventListener("click", (e) => { const li = e.target.closest("[data-pick]"); if (li) pick(Number(li.dataset.pick)); });
-  document.addEventListener("click", (e) => { if (!e.target.closest(".place-add")) hide(); });
+  const away = (e) => { if (!$("results")) { document.removeEventListener("click", away); return; } if (!e.target.closest(".place-add")) hide(); };
+  document.addEventListener("click", away);
   return {
     get: () => locations,
     set: (list) => { locations = list.map((l) => ({ ...l })); render(); },

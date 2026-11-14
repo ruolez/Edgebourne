@@ -316,3 +316,70 @@ def limit_action(text, payload):
         return "unclear", (f"Claude's amount ({cents / 100:,.2f}) isn't what its words say (“{words_said}”), "
                            "so it can't be applied. Decline it and ask again.")
     return "spend_limit", cents
+
+
+# ---------------------------------------------------------------- AM-C: bids, campaign caps and schedules
+
+BID_HIGH_TIMES = 3   # a cost per result goal above 3x the account's target cost per lead needs its own knowing yes
+CAMPAIGN_CAP_DANGER = 2  # a campaign spending cap raised past 2x (or removed) needs a second, danger yes
+
+
+def bid_change(old_cents, new_cents, target_cpl_cents, cap_cents, last=None, now=None):
+    """A cost per result goal or bid cap from old to new, like budget_change: {from, to, pct, big, recent, rollback, high,
+    over_cap, cap, remove, last}. new None = the cap removed (Meta may then pay whatever a result costs: a big raise).
+    old None = a first cap (it limits spending, never a raise). high: above BID_HIGH_TIMES x the target cost per lead;
+    over_cap: above the daily-budget ceiling (a goal above a day's budget means nothing)."""
+    remove = new_cents is None
+    # A removal is the largest raise of all: the 3-day rule applies to it too (never a rollback).
+    rec = recency(last, now, old_cents, float("inf") if remove else new_cents) if last is not None and now is not None and old_cents else None
+    pct = round((new_cents - old_cents) * 100 / old_cents) if old_cents and not remove else None
+    return {"from": old_cents, "to": new_cents, "pct": pct, "remove": remove, "cap": cap_cents,
+            "big": remove or bool(old_cents) and (new_cents - old_cents) / old_cents > BIG_STEP,
+            "recent": bool(rec and rec["recent"] and rec["raise"] and not rec["rollback"]),
+            "rollback": bool(rec and rec["rollback"]), "last": last if rec else None,
+            "high": bool(target_cpl_cents) and not remove and new_cents > BID_HIGH_TIMES * target_cpl_cents,
+            "over_cap": not remove and new_cents > cap_cents, **({"hours": rec["hours"], "ok_after": rec["ok_after"]} if rec else {})}
+
+
+def spend_cap_change(old_cents, new_cents, spent_cents):
+    """A campaign's spending cap from old to new (None = no cap): {from, to, spent, remove, refused, danger, big}. Never at or
+    below what it has spent (Meta would stop it at once); a removal or a raise past CAMPAIGN_CAP_DANGER x needs a danger yes."""
+    remove = new_cents is None
+    refused = None
+    if not remove and new_cents <= (spent_cents or 0):
+        refused = "That's at or below what this campaign has already spent: Meta would stop it at once."
+    big = bool(old_cents) and not remove and new_cents > CAMPAIGN_CAP_DANGER * old_cents
+    return {"from": old_cents, "to": new_cents, "spent": spent_cents, "remove": remove, "refused": refused,
+            "danger": bool(old_cents) and (remove or big), "big": big}
+
+
+def lifetime_pace(lifetime_cents, spent_cents, now, end, start=None):
+    """What a lifetime budget still has to spend per day from max(now, start) until its end (cents, rounded up), or None once
+    the end has passed (or comes before the start)."""
+    begin = max(now, start) if start is not None else now
+    if not lifetime_cents or end is None or end <= begin:
+        return None
+    days = max((end - begin).total_seconds() / 86400, 1 / 24)
+    left = max(lifetime_cents - (spent_cents or 0), 0)
+    return int(-(-left // days)) if left % days else int(left // days)
+
+
+def schedule_money(live, changes, now, cap_cents, last=None):
+    """The money side of a new start and/or end: {pace, turn_on, resumes}. pace: a lifetime budget's daily pace before and after
+    (window max(now, start) → end) through budget_change (ceiling, +20 %, 3-day rule); an ended one has no old pace, so only the
+    ceiling is checked. turn_on: something that is on and starts spending again or earlier (an earlier start, or a new end on
+    something whose end has passed), which needs the turn-on spend confirmation. live: {lifetime_budget, spent, end_time,
+    start_time, status} (datetimes); changes: {start_time?, end_time?} (None = none)."""
+    start_old, end_old = live.get("start_time"), live.get("end_time")
+    start_new = changes["start_time"] if "start_time" in changes else start_old
+    end_new = changes["end_time"] if "end_time" in changes else end_old
+    pace = None
+    if live.get("lifetime_budget") and ("start_time" in changes or "end_time" in changes) and end_new is not None:
+        old = lifetime_pace(live["lifetime_budget"], live.get("spent"), now, end_old, start_old)
+        new = lifetime_pace(live["lifetime_budget"], live.get("spent"), now, end_new, start_new)
+        if new:
+            pace = budget_change(old, new, cap_cents, last, now) if old else budget_change(new, new, cap_cents)
+    on = live.get("status") == "ACTIVE"
+    earlier = "start_time" in changes and start_new is not None and start_old is not None and start_new < start_old and start_old > now
+    resumes = "end_time" in changes and end_old is not None and end_old <= now and (end_new is None or end_new > now)
+    return {"pace": pace, "turn_on": bool(on and (earlier or resumes)), "resumes": bool(on and resumes)}

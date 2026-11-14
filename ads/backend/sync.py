@@ -2,6 +2,7 @@
 import json
 
 import db
+import edit_rules
 import meta_client
 import settings_store
 import status_history
@@ -10,6 +11,16 @@ import status_history
 def cents(value):
     """Meta sends budgets as strings in minor units; "0" means not set."""
     return int(value) if value not in (None, "", "0") else None
+
+
+def spend_cap(value):
+    """A campaign's spend_cap in cents; Meta's 'no cap' value (edit_rules.NO_SPEND_CAP) is none."""
+    c = cents(value)
+    return None if c is None or str(value) == edit_rules.NO_SPEND_CAP else c
+
+
+def _json(value):
+    return json.dumps(value) if value not in (None, [], {}) else None
 
 
 def summarize_targeting(t):
@@ -43,7 +54,8 @@ def summarize_targeting(t):
 
 ADSET_FIELDS = ("id,name,campaign_id,status,configured_status,effective_status,daily_budget,lifetime_budget,"
                 "optimization_goal,learning_stage_info,targeting,issues_info,created_time,updated_time,"
-                "bid_strategy,bid_amount,start_time,end_time")
+                "bid_strategy,bid_amount,start_time,end_time,attribution_spec,destination_type,billing_event,"
+                "frequency_control_specs,promoted_object")
 ADSET_FIELDS_PLAIN = ("id,name,campaign_id,status,effective_status,daily_budget,lifetime_budget,"
                       "optimization_goal,learning_stage_info,targeting")
 # Budget, bid, dates and audience are stored only from a full read (setup_seen_at set, D2); a read with the
@@ -52,8 +64,10 @@ _KEEP = "CASE WHEN EXCLUDED.setup_seen_at IS NOT NULL THEN EXCLUDED.{c} ELSE {t}
 ADSET_UPSERT = """INSERT INTO adsets (id, name, campaign_id, status, configured_status, effective_status, daily_budget_cents,
                                    lifetime_budget_cents, optimization_goal, learning_stage, learning, issues,
                                    targeting_summary, created_time, updated_time, bid_strategy, bid_amount_cents,
-                                   start_time, end_time, targeting_fp, setup_seen_at, synced_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, CASE WHEN %s THEN now() END, now())
+                                   start_time, end_time, targeting_fp, targeting, placements_fp, attribution, destination_type,
+                                   billing_event, frequency, setup_seen_at, edit_seen_at, synced_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                       CASE WHEN %s THEN now() END, CASE WHEN %s THEN now() END, now())
                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, campaign_id = EXCLUDED.campaign_id,
                    status = EXCLUDED.status,
                    effective_status = EXCLUDED.effective_status,
@@ -63,8 +77,10 @@ ADSET_UPSERT = """INSERT INTO adsets (id, name, campaign_id, status, configured_
                    learning = EXCLUDED.learning, issues = CASE WHEN %s THEN adsets.issues ELSE EXCLUDED.issues END,
                    targeting_summary = EXCLUDED.targeting_summary,
                    """ + ", ".join(f"{c} = " + _KEEP.format(c=c, t="adsets") for c in
-                                   ("bid_strategy", "bid_amount_cents", "start_time", "end_time", "targeting_fp")) + """,
+                                   ("bid_strategy", "bid_amount_cents", "start_time", "end_time", "targeting_fp", "targeting",
+                                    "placements_fp", "attribution", "destination_type", "billing_event", "frequency")) + """,
                    setup_seen_at = COALESCE(EXCLUDED.setup_seen_at, adsets.setup_seen_at),
+                   edit_seen_at = COALESCE(EXCLUDED.edit_seen_at, adsets.edit_seen_at),
                    configured_status = COALESCE(EXCLUDED.configured_status, adsets.configured_status),
                    created_time = COALESCE(EXCLUDED.created_time, adsets.created_time),
                    updated_time = COALESCE(EXCLUDED.updated_time, adsets.updated_time), synced_at = now()
@@ -121,7 +137,9 @@ def upsert_adset(a, source, listed_at):
         json.dumps(a.get("issues_info")) if a.get("issues_info") else None,
         summarize_targeting(a.get("targeting")), a.get("created_time"), a.get("updated_time"),
         a.get("bid_strategy") or None, cents(a.get("bid_amount")), _time(a.get("start_time")), _time(a.get("end_time")),
-        status_history.targeting_fingerprint(a.get("targeting")), full,
+        status_history.targeting_fingerprint(a.get("targeting")), _json(edit_rules.kept_targeting(a.get("targeting"))),
+        status_history.placements_fingerprint(a.get("targeting")), _json(a.get("attribution_spec")), a.get("destination_type"),
+        a.get("billing_event"), _json(a.get("frequency_control_specs")), full, full,
         bool(a.get(PARTIAL)), listed_at))
     if not written:
         return []
@@ -140,12 +158,13 @@ def sync_adsets(source="poll"):
 
 
 CAMPAIGN_FIELDS = ("id,name,status,configured_status,effective_status,objective,daily_budget,lifetime_budget,"
-                   "bid_strategy,issues_info,created_time,updated_time,spend_cap,start_time,stop_time")
+                   "bid_strategy,issues_info,created_time,updated_time,spend_cap,start_time,stop_time,special_ad_categories")
 CAMPAIGN_FIELDS_PLAIN = "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy"
 CAMPAIGN_UPSERT = """INSERT INTO campaigns (id, name, status, configured_status, effective_status, objective,
                                       daily_budget_cents, lifetime_budget_cents, bid_strategy, issues,
-                                      created_time, updated_time, spend_cap_cents, start_time, stop_time, setup_seen_at, synced_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, CASE WHEN %s THEN now() END, now())
+                                      created_time, updated_time, spend_cap_cents, start_time, stop_time, special_ad_categories,
+                                      setup_seen_at, edit_seen_at, synced_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, CASE WHEN %s THEN now() END, CASE WHEN %s THEN now() END, now())
                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status,
                    configured_status = COALESCE(EXCLUDED.configured_status, campaigns.configured_status),
                    effective_status = EXCLUDED.effective_status, objective = EXCLUDED.objective,
@@ -153,8 +172,9 @@ CAMPAIGN_UPSERT = """INSERT INTO campaigns (id, name, status, configured_status,
                    lifetime_budget_cents = EXCLUDED.lifetime_budget_cents,
                    bid_strategy = EXCLUDED.bid_strategy, issues = CASE WHEN %s THEN campaigns.issues ELSE EXCLUDED.issues END,
                    """ + ", ".join(f"{c} = " + _KEEP.format(c=c, t="campaigns") for c in
-                                   ("spend_cap_cents", "start_time", "stop_time")) + """,
+                                   ("spend_cap_cents", "start_time", "stop_time", "special_ad_categories")) + """,
                    setup_seen_at = COALESCE(EXCLUDED.setup_seen_at, campaigns.setup_seen_at),
+                   edit_seen_at = COALESCE(EXCLUDED.edit_seen_at, campaigns.edit_seen_at),
                    created_time = COALESCE(EXCLUDED.created_time, campaigns.created_time),
                    updated_time = COALESCE(EXCLUDED.updated_time, campaigns.updated_time), synced_at = now()
                """ + status_history.UNLESS_CONSOLE_WROTE.format(table="campaigns")
@@ -167,7 +187,8 @@ def upsert_campaign(c, source, listed_at):
         c["id"], c["name"], c.get("status"), c.get("configured_status"), c.get("effective_status"), c.get("objective"),
         cents(c.get("daily_budget")), cents(c.get("lifetime_budget")), c.get("bid_strategy"),
         json.dumps(c.get("issues_info")) if c.get("issues_info") else None, c.get("created_time"), c.get("updated_time"),
-        cents(c.get("spend_cap")), _time(c.get("start_time")), _time(c.get("stop_time")), full,
+        spend_cap(c.get("spend_cap")), _time(c.get("start_time")), _time(c.get("stop_time")),
+        sorted(x for x in (c.get("special_ad_categories") or []) if x and x != "NONE") if full else None, full, full,
         bool(c.get(PARTIAL)), listed_at))
     if not written:
         return []

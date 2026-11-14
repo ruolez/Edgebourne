@@ -391,3 +391,68 @@ class OutsideEditAlertTests(unittest.TestCase):
     def test_an_ad_set_links_to_its_own_history(self):
         got = self.found([self.ev()], level="adset", entity={"id": "S", "name": "SoCal", "campaign_id": "C"})
         self.assertEqual((got[0]["href"], got[0]["lines"][0], got[0]["campaign_id"]), ("/adset.html?id=S&tab=history", "Ad set “SoCal”", "C"))
+
+
+class EditConsoleTests(unittest.TestCase):
+    """AM-C: an edit made here is never mistaken for one made in Ads Manager (D2 kept consistent)."""
+    def change(self, action, new_value, minutes=2, ok=True):
+        return [{"id": 9, "entity_id": "S", "action": action, "new_value": new_value, "ok": ok, "created_at": NOW - timedelta(minutes=minutes)}]
+
+    def test_a_targeting_event_after_our_targeting_change_with_the_same_fingerprint(self):
+        ev = {"field": "targeting", "old": "aaa", "new": "bbb"}
+        self.assertEqual([sh.explained_by_console("S", ev, self.change("targeting", "fp:bbb Ages 30–65"), NOW),
+                          sh.explained_by_console("S", ev, self.change("targeting", "fp:bbb Ages 30–65", minutes=12), NOW),
+                          sh.explained_by_console("S", ev, self.change("targeting", "fp:ccc Ages 30–65"), NOW)], [9, None, None])
+
+    def test_a_placements_change_explains_the_targeting_and_placements_events(self):
+        text = "fp:p1 tfp:t1 Instagram"
+        self.assertEqual([sh.explained_by_console("S", {"field": "placements", "new": "p1"}, self.change("placements", text), NOW),
+                          sh.explained_by_console("S", {"field": "targeting", "new": "t1"}, self.change("placements", text), NOW),
+                          sh.explained_by_console("S", {"field": "targeting", "new": "p1"}, self.change("placements", text), NOW)],
+                         [9, 9, None])
+
+    def test_bid_dates_and_goal_match_their_own_field_only(self):
+        import edit_rules as er
+        bid = f"{er.change_text('bid_amount', 1500)} COST_CAP Cost per result goal: $12.00 → $15.00"
+        goal = f"{er.change_text('optimization_goal', 'QUALITY_LEAD')} What it optimizes for: Leads → Conversion leads"
+        self.assertEqual([sh.explained_by_console("S", {"field": "bid_amount", "new": 1500}, self.change("bid", bid), NOW),
+                          sh.explained_by_console("S", {"field": "end_time", "new": "2026-12-01T07:59Z"}, self.change("schedule", "end 2026-12-01T07:59Z"), NOW),
+                          sh.explained_by_console("S", {"field": "start_time", "new": "2026-12-01T07:59Z"}, self.change("schedule", "end 2026-12-01T07:59Z"), NOW),
+                          sh.explained_by_console("S", {"field": "end_time", "new": None}, self.change("schedule", "end none"), NOW),
+                          sh.explained_by_console("S", {"field": "optimization_goal", "new": "QUALITY_LEAD"}, self.change("optimization", goal), NOW),
+                          sh.explained_by_console("S", {"field": "bid_amount", "new": 1700}, self.change("bid", bid), NOW),
+                          sh.explained_by_console("S", {"field": "bid_amount", "new": 1500}, self.change("bid", bid, ok=False), NOW)],
+                         [9, 9, None, 9, 9, None, None])
+
+    def test_every_edit_field_matches_in_the_format_the_edit_records(self):
+        import edit_rules as er
+        cases = [("spend_cap", "spend_cap", er.change_text("spend_cap", 50000) + " Campaign spending cap: No cap → $500.00", 50000),
+                 ("spend_cap", "spend_cap", er.change_text("spend_cap", None) + " Campaign spending cap: $500.00 → No cap", None),
+                 ("bid_strategy", "bid_strategy", er.change_text("bid_strategy", "COST_CAP") + " Bidding: Highest volume → Cost per result goal", "COST_CAP"),
+                 ("special_ad_categories", "special_categories",
+                  er.change_text("special_ad_categories", ["HOUSING", "CREDIT"]) + " Special ad category: none → Credit, Housing", "CREDIT,HOUSING"),
+                 ("frequency", "frequency", er.change_text("frequency_control_specs", {"max": 2, "days": 7}) + " How often people see it: x → y", "2/7"),
+                 ("attribution", "attribution", er.change_text("attribution_spec", "7d_click") + " How results are counted: a → b", "7d_click")]
+        self.assertEqual([sh.explained_by_console("S", {"field": f, "new": new}, self.change(action, text), NOW) for f, action, text, new in cases],
+                         [9] * len(cases))
+
+    def test_new_setup_fields_are_compared_only_once_stored(self):
+        meta = {"effective_status": "ACTIVE", "status": "ACTIVE", "optimization_goal": "QUALITY_LEAD", "targeting": {"age_min": 25},
+                "attribution_spec": [{"event_type": "CLICK_THROUGH", "window_days": 1}], "frequency_control_specs": None,
+                "_fields": "id,daily_budget,lifetime_budget,bid_strategy,bid_amount,start_time,end_time,targeting,optimization_goal,"
+                           "attribution_spec,frequency_control_specs"}
+        stored = {"status": "ACTIVE", "effective_status": "ACTIVE", "setup_seen_at": NOW, "optimization_goal": "LEAD_GENERATION",
+                  "targeting_fp": sh.targeting_fingerprint({"age_min": 25})}
+        before = sh.stored_snapshot("adset", stored)
+        after = sh.stored_snapshot("adset", {**stored, "edit_seen_at": NOW, "placements_fp": "auto",
+                                             "attribution": [{"event_type": "CLICK_THROUGH", "window_days": 7}]})
+        snap = sh.snapshot("adset", meta)
+        self.assertEqual(([e["field"] for e in sh.diff("adset", before, snap, NOW, None)],
+                          sorted(e["field"] for e in sh.diff("adset", after, snap, NOW, None))),
+                         ([], ["attribution", "optimization_goal"]))
+
+    def test_new_fields_in_plain_words(self):
+        h = lambda f, o, n: sh.headline({"field": f, "old": o, "new": n}, money=usd, tz=LA)  # noqa: E731
+        self.assertEqual([h("optimization_goal", "LEAD_GENERATION", "QUALITY_LEAD"), h("placements", "auto", "x1"),
+                          h("special_ad_categories", None, "HOUSING")],
+                         ["Optimized for: Leads → Conversion leads", "Where it shows changed", "Special ad category: Housing"])

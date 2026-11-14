@@ -187,6 +187,12 @@ export async function putBack(d, after = refreshPage) {
     await changeStatus({ level: plan.level, id: plan.id, name: plan.name, turnOn: plan.to === "ACTIVE", undoOf: d.change.id }, after);
   } else if (plan.kind === "version") {
     await restoreVersion({ adId: plan.id, number: plan.number, undoOf: d.change.id }, after);
+  } else if (plan.kind === "edit") {
+    // AM-C: Edit opens on the setting, with the old cost per result goal or goal filled in (or what it was, in words).
+    const { openEdit } = await import("./edit.js");
+    await openEdit({ level: plan.level, id: plan.id, focus: plan.field, undoOf: d.change.id,
+      prefill: plan.to_cents != null ? { bid_amount: plan.to_cents } : plan.to_value ? { [plan.field]: plan.to_value } : {},
+      note: plan.before ? `Before the change on ${esc(d.change.day)} it was: <b>${esc(plan.before)}</b>.` : `Before the change on ${esc(d.change.day)} it was <b>${money(plan.to_cents, { exact: true })}</b>.` }, after);
   }
 }
 

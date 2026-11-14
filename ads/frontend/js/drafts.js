@@ -29,7 +29,7 @@ function value(row, v) {
 
 function applyCell(d, row) {
   if (row.applied) return '<span class="pill ok dr-applied">Applied</span>';
-  if (row.apply === "budget" || row.apply === "status") {
+  if (row.apply === "budget" || row.apply === "status" || row.apply === "edit") {
     return `<button type="button" class="btn btn-small" data-dr-apply="${esc(d.id)}" data-field="${esc(row.field)}">Apply in the console</button>`;
   }
   return d.open_url ? `<a class="btn btn-small btn-quiet" href="${esc(d.open_url)}" target="_blank" rel="noopener noreferrer">Change it in Ads Manager</a>`
@@ -147,6 +147,13 @@ async function apply(d, id, field, reload, btn) {
   };
   if (row.apply === "status") {
     await changeStatus({ level, id, name, turnOn: row.new === "ACTIVE" }, done, btn);
+    return;
+  }
+  if (row.apply === "edit") {
+    // AM-C: the Edit form opens with the draft's value filled in and its setting outlined; the usual checks still run.
+    const { openEdit } = await import("./edit.js");
+    await openEdit({ level, id, focus: row.field, prefill: { [row.field]: row.new },
+      draft: { done: async () => { try { await api(`/api/drafts/${encodeURIComponent(id)}/applied`, { method: "POST", body: { field } }); } catch (err) { toast(err.message, "bad"); } } } }, reload);
     return;
   }
   // The budget dialog starts from what Meta has now (read fresh), with the draft's amount in the field.

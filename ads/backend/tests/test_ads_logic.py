@@ -178,6 +178,15 @@ class RemovalProblemTest(unittest.TestCase):
         archived = {**self.OFF, "status": "ARCHIVED", "effective_status": "ARCHIVED"}
         self.assertIsNone(ads_api.removal_problem(self.ADMIN, archived, "delete", archived["name"]))
 
+    def test_campaigns_and_ad_sets_follow_the_same_rules_in_their_own_words(self):
+        on = {**self.OFF, "status": "ACTIVE"}
+        self.assertEqual([ads_api.removal_problem(self.ADMIN, on, "archive", None, "campaign"),
+                          ads_api.removal_problem(self.ADMIN, self.OFF, "delete", "wrong", "adset"),
+                          ads_api.removal_problem(self.TEAMMATE, self.OFF, "delete", self.OFF["name"], "campaign"),
+                          ads_api.removal_problem(self.ADMIN, self.OFF, "delete", self.OFF["name"], "adset")],
+                         ["Switch the campaign off first", "Type the ad set's name exactly to delete it",
+                          "Only an admin can archive or delete campaigns", None])
+
 
 if __name__ == "__main__":
     unittest.main()

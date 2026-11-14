@@ -4,6 +4,8 @@
 // ONLY=am-link node qa/shots.cjs <dir>: only Settings → Ads Manager link (AM-A) connected, through Claude, waiting for the Mac and not connected.
 // ONLY=drafts node qa/shots.cjs <dir>: only the drafts from Ads Manager (AM-B): Ads → Campaigns with the panel, the Drafts view
 // (open, finished and staged-edit drafts) and New campaign filled in from a draft.
+// ONLY=edit node qa/shots.cjs <dir>: only AM-C: the Edit panel of the ad set (folded, then every section open), the review
+// with a money question (the campaign's spending cap removed), the copy dialog and the delete dialog.
 // Playwright: $PLAYWRIGHT_CORE, else the first intact copy on this Mac (the render pipeline's copy lost
 // its package files on 2026-11-10; any 1.64 drives the Chromium 1248 below).
 const PW = [process.env.PLAYWRIGHT_CORE, '/Users/ruolez/Desktop/Dev/meta-ads/creatives/2026-11-07-new5/src/node_modules/playwright-core',
@@ -57,6 +59,58 @@ db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) V
         ...['targets', 'alerts', 'reports-panel', 'replies', 'lead-quality', 'tracking', 'am-link', 'crm', 'ab', 'activity-panel', 'meta-app', 'auto', 'telegram', 'email', 'accounts-panel'].map((s) => `settings.html#${s}`)];
   const onlyAm = process.env.ONLY === 'am-link';
   const onlyDrafts = process.env.ONLY === 'drafts';
+  const onlyEdit = process.env.ONLY === 'edit';
+  const fakeGet = (path) => sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001${path}').read().decode())"`);
+  // AM-C: the Edit panel, the review with a money line, the copy dialog and the delete dialog (nothing is saved).
+  const editShots = async (page, tag, scheme) => {
+    const C = '120252638288040312', S = '120252672227950312';
+    await page.goto(`${BASE}/adset.html?id=${S}`);
+    await page.waitForSelector('#ed-open');
+    await page.click('#ed-open');
+    await page.waitForSelector('dialog.ed-panel .ed-sec');
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${OUT}/edit-adset-${tag}-${scheme}.png` });
+    await page.evaluate(() => {
+      document.querySelectorAll('dialog.ed-panel details.ed-sec').forEach((d) => { d.open = true; });
+      const dlg = document.querySelector('dialog.ed-panel');
+      dlg.style.height = 'auto'; dlg.style.maxHeight = 'none'; dlg.style.position = 'absolute';
+      dlg.querySelector('.ed-secs').style.overflow = 'visible';
+    });
+    await page.waitForTimeout(300);
+    await page.locator('dialog.ed-panel').screenshot({ path: `${OUT}/edit-adset-open-${tag}-${scheme}.png` });
+    await page.keyboard.press('Escape');
+    fakeGet(`/fake/_outside?id=${C}&spend_cap=50000`);
+    await page.goto(`${BASE}/campaign.html?id=${C}`);
+    await page.waitForSelector('#ed-open');
+    await page.click('#ed-open');
+    await page.waitForSelector('dialog.ed-panel #ed-sec-cap');
+    await page.click('#ed-sec-cap summary');
+    await page.check('#ed-cap-none');
+    await page.click('#ed-save');
+    await page.waitForSelector('dialog.ed-review [data-ed-q]');
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${OUT}/edit-review-${tag}-${scheme}.png` });
+    await page.click('dialog.ed-review #cd-cancel');
+    await page.keyboard.press('Escape');
+    fakeGet(`/fake/_outside?id=${C}&clear=spend_cap`);
+    await page.goto(`${BASE}/campaign.html?id=${C}`);
+    await page.waitForSelector('#ed-more');
+    await page.click('#ed-more summary');
+    await page.click('#cp-open');
+    await page.waitForSelector('dialog.cp-dialog #cp-go');
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${OUT}/copy-dialog-${tag}-${scheme}.png` });
+    await page.click('dialog.cp-dialog #cp-cancel');
+    await page.goto(`${BASE}/adset.html?id=${S}`);
+    await page.waitForSelector('#ed-more');
+    await page.click('#ed-more summary');
+    await page.screenshot({ path: `${OUT}/edit-more-${tag}-${scheme}.png` });
+    await page.click('#ed-delete');
+    await page.waitForSelector('dialog.ed-del-first');
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${OUT}/delete-dialog-${tag}-${scheme}.png` });
+    await page.keyboard.press('Escape');
+  };
   // AM-B: the fake's drafts stored for account 1 as a link read 12 minutes ago would (kept as they are when QA left some).
   if (!asClient) sh('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', `import json, urllib.request, datetime as dt, account_ctx, am_drafts, db, drafts_api
 with account_ctx.use(1):
@@ -105,6 +159,7 @@ with account_ctx.use(1):
         await page.waitForSelector('#stages');
         await page.screenshot({ path: `${OUT}/${tag0}lead-detail-${tag}-${scheme}.png`, fullPage: true });
       }
+      if (onlyEdit) { await editShots(page, tag, scheme); await ctx.close(); continue; }
       for (const p of (asClient ? CLIENT_PAGES : onlyAm ? [] : onlyDrafts ? DRAFT_PAGES : [...OWNER_PAGES, ...DRAFT_PAGES.slice(1)])) {
         await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
         if (p.includes('#')) await page.reload();
@@ -125,6 +180,7 @@ with account_ctx.use(1):
         await page.screenshot({ path: `${OUT}/settings-am-${state}-${tag}-${scheme}.png`, fullPage: true });
       }
       if (onlyAm) { await ctx.close(); continue; }
+      await editShots(page, tag, scheme);
       // FU-D: full access on, and a conversation with an image and a video preview.
       fullAccess(true);
       await page.goto(`${BASE}/desk.html#new`);

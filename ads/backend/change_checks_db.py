@@ -50,8 +50,8 @@ def entity_now(level, entity_id):
     if level == "ad":
         sql = "SELECT 'ad' AS level, id, name, adset_id, campaign_id, status, effective_status, creative_id FROM ads WHERE id = %s"
     elif level == "adset":
-        sql = ("SELECT 'adset' AS level, id, name, NULL AS adset_id, campaign_id, status, effective_status, daily_budget_cents "
-               "FROM adsets WHERE id = %s")
+        sql = ("SELECT 'adset' AS level, id, name, NULL AS adset_id, campaign_id, status, effective_status, daily_budget_cents, "
+               "bid_amount_cents, targeting_fp, optimization_goal FROM adsets WHERE id = %s")
     elif level == "campaign":
         sql = ("SELECT 'campaign' AS level, id, name, NULL AS adset_id, id AS campaign_id, status, effective_status, daily_budget_cents "
                "FROM campaigns WHERE id = %s")

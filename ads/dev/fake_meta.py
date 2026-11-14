@@ -22,7 +22,8 @@ TODAY = date.today()
 
 CAMPAIGN = {"id": "120252638288040312", "name": "Edge Bourne - Free intro call - Leads", "status": "ACTIVE",
             "effective_status": "ACTIVE", "objective": "OUTCOME_LEADS", "daily_budget": "2000",
-            "bid_strategy": "LOWEST_COST_WITHOUT_CAP", "start_time": f"{(TODAY - timedelta(days=10)).isoformat()}T09:00:00-0800"}
+            "bid_strategy": "LOWEST_COST_WITHOUT_CAP", "start_time": f"{(TODAY - timedelta(days=10)).isoformat()}T09:00:00-0800",
+            "special_ad_categories": []}
 ADSET = {"id": "120252672227950312", "name": "SoCal business owners - Instant form", "campaign_id": CAMPAIGN["id"],
          "status": "ACTIVE", "effective_status": "ACTIVE", "optimization_goal": "LEAD_GENERATION",
          "learning_stage_info": {"status": "LEARNING"},
@@ -38,6 +39,7 @@ ADSET = {"id": "120252672227950312", "name": "SoCal business owners - Instant fo
                                                         {"id": "6020530281783", "name": "Business page admins"}]}],
                        "targeting_automation": {"advantage_audience": 1}},
          "destination_type": "ON_AD", "billing_event": "IMPRESSIONS", "promoted_object": {"page_id": "1404203629446490"},
+         "attribution_spec": [{"event_type": "CLICK_THROUGH", "window_days": 7}, {"event_type": "VIEW_THROUGH", "window_days": 1}],
          "bid_strategy": "LOWEST_COST_WITHOUT_CAP", "start_time": f"{(TODAY - timedelta(days=10)).isoformat()}T09:00:00-0800"}
 TEXTS = {
     "N1 - One simple system": ("Everything in one system", "Notepads, spreadsheets, sticky notes, sales reports by hand. It works until the business grows.\nWe bring it all into one simple system your team can use. AI can handle the routine updates, if you want it. You own it.\nFree intro call for Southern California businesses."),
@@ -873,6 +875,164 @@ def fake_subscriptions():
     return jsonify(SUBSCRIPTIONS)
 
 
+# ---- AM-C: editing campaigns and ad sets, copies, archive / delete with their children ----
+DELIVERED = {ADSET["id"]}   # ad sets that have spent: Meta refuses their goal fields (fake rule, like Meta's)
+AFTER_DELIVERY = ("optimization_goal", "destination_type", "attribution_spec", "billing_event", "promoted_object")
+MUTABILITY = {"allow": set()}  # /fake/_mutability?field=&allow=1 relaxes one rule for a test
+COPY = {"active": False, "silent": None}  # /fake/_copy?active=1 (the next copy comes back on) / ?silent=<level> (no answer)
+NO_SPEND_CAP = "922337203685478"
+LOCALES = [{"key": 6, "name": "English (US)"}, {"key": 24, "name": "English (UK)"}, {"key": 23, "name": "Spanish"},
+           {"key": 1001, "name": "English (All)"}, {"key": 9, "name": "French (France)"}]
+INTERESTS = [{"id": "6003371567474", "name": "Entrepreneurship", "type": "interests", "audience_size_lower_bound": 300000000},
+             {"id": "6003020834693", "name": "Small business", "type": "interests", "audience_size_lower_bound": 180000000},
+             {"id": "6003277229526", "name": "Accounting software", "type": "interests", "audience_size_lower_bound": 20000000},
+             {"id": "6003384248805", "name": "QuickBooks", "type": "interests", "audience_size_lower_bound": 9000000}]
+CATEGORIES = [{"id": "6002714898572", "name": "Small business owners", "type": "behaviors"},
+              {"id": "6020530281783", "name": "Business page admins", "type": "behaviors"},
+              {"id": "6262428231783", "name": "Business decision makers", "type": "behaviors"}]
+
+
+def delivered(oid):
+    return oid in DELIVERED
+
+
+def campaign_of(obj):
+    return by_id(obj.get("campaign_id") or "") or {}
+
+
+def capped(strategy):
+    return strategy in ("COST_CAP", "LOWEST_COST_WITH_BID_CAP")
+
+
+def refuse(message, sub=None):
+    return jsonify({"error": {"message": f"{message} (fake)", "code": 100, **({"error_subcode": sub} if sub else {})}}), 400
+
+
+@app.route("/fake/_mutability")
+def fake_mutability():
+    field = request.args.get("field")
+    if field:
+        (MUTABILITY["allow"].add if request.args.get("allow") == "1" else MUTABILITY["allow"].discard)(field)
+    if request.args.get("delivered"):
+        (DELIVERED.add if request.args.get("on", "1") == "1" else DELIVERED.discard)(request.args["delivered"])
+    return jsonify({"allow": sorted(MUTABILITY["allow"]), "delivered": sorted(DELIVERED)})
+
+
+@app.route("/fake/_copy")
+def fake_copy():
+    if "active" in request.args:
+        COPY["active"] = request.args["active"] == "1"
+    if "silent" in request.args:
+        COPY["silent"] = request.args["silent"] or None
+    return jsonify(COPY)
+
+
+def _children(oid):
+    """An ad set's ads, or a campaign's ad sets and ads (as Meta lists them by id)."""
+    sets = [x for x in (ADSET, *NEW_ADSETS.values()) if x.get("campaign_id") == oid]
+    ads = [a for a in ADS.values() if a.get("adset_id") == oid or a.get("campaign_id") == oid]
+    return sets, ads
+
+
+def _renamed(name, a, top):
+    opts = json.loads(a.get("rename_options") or "null") or {}
+    strategy = opts.get("rename_strategy", "DEEP_RENAME")
+    if strategy == "NO_RENAME" or (strategy == "ONLY_TOP_LEVEL_RENAME" and not top):
+        return name
+    return name + (opts.get("rename_suffix") or " - Copy")
+
+
+def _copied_status():
+    if COPY["active"]:
+        COPY["active"] = False
+        return "ACTIVE"
+    return "PAUSED"
+
+
+def _answer_or_drop(level, body):
+    if COPY["silent"] == level:
+        COPY["silent"] = None
+        import socket
+        request.environ["werkzeug.socket"].shutdown(socket.SHUT_RDWR)  # made, but the answer never arrives
+    return jsonify(body)
+
+
+def copy_object(src_id, a):
+    """POST /{campaign|adset|ad}/copies, shaped like Meta's: deep_copy false here, status_option, rename_options."""
+    now_s = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000")
+    if src_id == CAMPAIGN["id"] or src_id in NEW_CAMPAIGNS:
+        src = by_id(src_id)
+        cid = str(next(ids))
+        status = _copied_status()
+        NEW_CAMPAIGNS[cid] = {**json.loads(json.dumps({k: v for k, v in src.items() if k not in ("id", "spend_cap")})), "id": cid,
+                              "name": _renamed(src["name"], a, True), "status": status, "effective_status": status, "created_time": now_s}
+        return _answer_or_drop("campaign", {"copied_campaign_id": cid, "ad_object_ids": [{"ad_object_type": "campaign", "source_id": src_id, "copied_id": cid}]})
+    if src_id == ADSET["id"] or src_id in NEW_ADSETS:
+        src = by_id(src_id)
+        target = by_id(a.get("campaign_id") or src["campaign_id"])
+        if target is None:
+            return refuse("Unknown campaign for the copy")
+        body = json.loads(json.dumps({k: v for k, v in src.items() if k not in ("id", "learning_stage_info")}))
+        if target.get("daily_budget") or target.get("lifetime_budget"):
+            body.pop("daily_budget", None)
+            body.pop("lifetime_budget", None)
+        elif not (body.get("daily_budget") or body.get("lifetime_budget")):
+            return refuse("The ad set needs a budget in a campaign without one")
+        sid = str(next(ids))
+        status = _copied_status()
+        NEW_ADSETS[sid] = {**body, "id": sid, "campaign_id": target["id"], "name": _renamed(src["name"], a, True), "status": status,
+                           "effective_status": status, "created_time": now_s}
+        return _answer_or_drop("adset", {"copied_adset_id": sid, "ad_object_ids": [{"ad_object_type": "adset", "source_id": src_id, "copied_id": sid}]})
+    if src_id in ADS:
+        src = ADS[src_id]
+        parent = by_id(a.get("adset_id") or src["adset_id"]) or ADSET
+        aid = str(next(ids))
+        status = _copied_status() if "status_option" in a else "PAUSED"
+        ADS[aid] = {**src, "id": aid, "adset_id": parent["id"], "campaign_id": parent["campaign_id"], "status": status,
+                    "effective_status": status, "name": _renamed(src["name"], a, True) if a.get("rename_options") else src["name"] + " - Copy",
+                    "created_time": now_s}
+        return _answer_or_drop("ad", {"copied_ad_id": aid, "ad_object_ids": [{"ad_object_type": "ad", "source_id": src_id, "copied_id": aid}]})
+    return refuse("Object does not exist")
+
+
+def edit_refusal(oid, obj, a):
+    """Meta's rules for changing a campaign or ad set after it's made, as the fake enforces them."""
+    if "objective" in a:
+        return refuse("The campaign objective can't be changed")
+    is_set = obj is ADSET or oid in NEW_ADSETS
+    if is_set and delivered(oid):
+        for key in AFTER_DELIVERY:
+            if key in a and key not in MUTABILITY["allow"]:
+                current = obj.get(key)
+                sent = json.loads(a[key]) if key in ("attribution_spec", "promoted_object") else a[key]
+                if sent != current:
+                    return refuse("This field can't be changed after the ad set has delivered", 1885)
+    if is_set and "bid_amount" in a and "bid_amount" not in MUTABILITY["allow"]:
+        camp = campaign_of(obj)
+        strategy = camp.get("bid_strategy") if (camp.get("daily_budget") or camp.get("lifetime_budget")) else a.get("bid_strategy", obj.get("bid_strategy"))
+        if not capped(strategy):
+            return refuse("bid_amount needs a cost cap or bid cap strategy")
+    if "end_time" in a and a["end_time"] not in ("0", ""):
+        try:
+            end = datetime.strptime(a["end_time"], "%Y-%m-%dT%H:%M:%S%z")
+        except ValueError:
+            return refuse("Invalid end_time")
+        if end <= datetime.now(timezone.utc):
+            return refuse("The end time can't be in the past")
+    if "spend_cap" in a and not is_set and a["spend_cap"] != NO_SPEND_CAP and int(a["spend_cap"]) < 10000:
+        return refuse("The campaign spending cap must be at least 100.00")
+    return None
+
+
+def cascade(oid, status):
+    """Archiving or deleting a campaign or ad set takes its children with it, as Meta does."""
+    sets, ads = _children(oid)
+    for x in sets + ads:
+        if x.get("status") != "DELETED":
+            x["status"] = status
+            x["effective_status"] = status
+
+
 @app.route("/v24.0/", methods=["GET"])
 def graph_ids():
     """Meta's multi-id read: GET /?ids=a,b&fields=…; an unknown id fails the whole call, as on Meta."""
@@ -934,6 +1094,21 @@ def graph(path):
         if parts == ["search"] and a.get("type") == "adgeolocationmeta":
             names = {p["key"]: p for p in PLACES}
             return jsonify({"data": {"cities": {k: {"key": k, "name": names[k]["name"]} for k in json.loads(a.get("cities") or "[]") if k in names}}})
+        if parts == ["search"] and a.get("type") == "adlocale":
+            q = (a.get("q") or "").lower()
+            return jsonify({"data": [l for l in LOCALES if q in l["name"].lower()]})
+        if parts == ["search"] and a.get("type") == "adinterest":
+            q = (a.get("q") or "").lower()
+            return jsonify({"data": [i for i in INTERESTS if q in i["name"].lower()]})
+        if parts == ["search"] and a.get("type") == "adTargetingCategory":
+            return jsonify({"data": [c for c in CATEGORIES if a.get("class") in (None, "", c["type"])]})
+        if len(parts) == 2 and parts[1] == "ads" and (parts[0] == CAMPAIGN["id"] or parts[0] in NEW_CAMPAIGNS or parts[0] == ADSET["id"] or parts[0] in NEW_ADSETS):
+            return jsonify({"data": [{k: v for k, v in ad_view(x).items() if k != "creative"} for x in _children(parts[0])[1]]})
+        if (len(parts) == 2 and parts[1] == "insights" and a.get("date_preset") == "maximum" and a.get("fields") == "spend"
+                and (parts[0] == CAMPAIGN["id"] or parts[0] in NEW_CAMPAIGNS or parts[0] == ADSET["id"] or parts[0] in NEW_ADSETS)):
+            key = "campaign_id" if (parts[0] == CAMPAIGN["id"] or parts[0] in NEW_CAMPAIGNS) else "adset_id"
+            total = sum(float(r["spend"]) for r in insights_rows("ad") if r[key] == parts[0])
+            return jsonify({"data": [{"spend": f"{total:.2f}"}] if total else []})
         if parts == ["search"] and a.get("type") == "adgeolocation":
             q = (a.get("q") or "").lower()
             return jsonify({"data": [p for p in PLACES if q in p["name"].lower()][:8]})
@@ -1217,15 +1392,30 @@ def graph(path):
             if "end_time" in a:
                 STUDIES[parts[0]]["end_time"] = int(a["end_time"])
             return jsonify({"success": True})
-        if len(parts) == 2 and parts[1] == "copies" and parts[0] in ADS:
-            src = ADS[parts[0]]
-            aid = str(next(ids))
-            ADS[aid] = {**src, "id": aid, "status": "PAUSED", "name": src["name"] + " - Copy"}
-            return jsonify({"copied_ad_id": aid})
+        if len(parts) == 2 and parts[1] == "copies":
+            return copy_object(parts[0], a)
         if len(parts) == 1:
             obj = by_id(parts[0])
             if obj is None:
                 return jsonify({"error": {"message": "Object does not exist (fake)", "code": 100}}), 400
+            if parts[0] not in ADS and parts[0] not in OTHER_ADS:
+                why = edit_refusal(parts[0], obj, a)
+                if why:
+                    return why
+                for key in ("optimization_goal", "destination_type", "billing_event"):
+                    if key in a:
+                        obj[key] = a[key]
+                for key in ("special_ad_categories", "attribution_spec", "frequency_control_specs", "promoted_object"):
+                    if key in a:
+                        obj[key] = json.loads(a[key])
+                if a.get("end_time") == "0":
+                    obj.pop("end_time", None)
+                    a = {k: v for k, v in a.items() if k != "end_time"}
+                if a.get("spend_cap") == NO_SPEND_CAP:
+                    obj.pop("spend_cap", None)
+                    a = {k: v for k, v in a.items() if k != "spend_cap"}
+                if a.get("status") in ("ARCHIVED", "DELETED"):
+                    cascade(parts[0], a["status"])
             if a.get("daily_budget") and int(a["daily_budget"]) < 100:
                 return jsonify({"error": {"message": "Budget too low (fake)", "code": 100}}), 400
             # lifetime_budget / end_time: QA moves a campaign to a lifetime budget (daily_budget="") and back.

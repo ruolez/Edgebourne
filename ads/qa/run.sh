@@ -3,6 +3,8 @@
 # starts from a fresh one (and a fresh sync); a second run without this sees the first run's
 # test campaigns and fails on them. Meta reads cached in the database go too.
 # Exits non-zero when any check FAILs or a page logs a console error (flows.cjs sets the code).
+# QA_ONLY='edit' (or 'core,link,edit', any of them) runs the shared setup plus only those check blocks of
+# flows.cjs while iterating; unset runs everything (see the header of qa/flows.cjs).
 set -e
 cd "$(dirname "$0")/.."
 docker restart edgebourne-fake-meta edgebourne-ads-backend >/dev/null

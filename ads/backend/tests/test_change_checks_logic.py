@@ -393,3 +393,42 @@ class SpendLimitNotJudgedTests(unittest.TestCase):
     def test_did_it_work_ignores_account_spending_limit_changes(self):
         cases = [{"ok": True, "level": "account", "action": a, "entity_id": "act_1"} for a in ("spend_limit", "spend_limit_restore")]
         self.assertEqual([cc.mode_for(c, None) for c in cases], [None, None])
+
+
+class EditChecksTests(unittest.TestCase):
+    """AM-C: a cost per result goal, audience, placements or goal change made in Edit gets its Did it work? check."""
+    SET = {"level": "adset", "id": "s1", "campaign_id": "c1"}
+    BID = {"id": 41, "action": "bid", "level": "adset", "entity_id": "s1", "entity_name": "SoCal", "ok": True,
+           "old_value": "1200 COST_CAP", "new_value": "1500 COST_CAP Cost per result goal $12.00 → $15.00"}
+    AUD = {"id": 42, "action": "targeting", "level": "adset", "entity_id": "s1", "entity_name": "SoCal", "ok": True,
+           "old_value": "fp:aaa Riverside area + 50 mi, ages 25–65", "new_value": "fp:bbb Ages 25–65 → 30–65"}
+
+    def test_each_edit_is_measured_on_the_ad_set_itself(self):
+        got = [cc.mode_for({**self.BID, "action": a}, self.SET) for a in ("bid", "targeting", "placements", "optimization")]
+        self.assertEqual(got + [cc.mode_for({**self.BID, "action": "rename"}, self.SET)], [("self", "adset", "s1")] * 4 + [None])
+
+    def test_put_it_back_counts_only_the_old_value(self):
+        self.assertEqual([cc.reverses(self.BID, "1200"), cc.reverses(self.BID, "1500"), cc.reverses(self.AUD, "fp:aaa"),
+                          cc.reverses(self.AUD, "fp:bbb")], [True, False, True, False])
+
+    def test_put_it_back_opens_edit_with_the_old_goal_or_says_what_it_was(self):
+        bid = cc.undo_plan(self.BID, {"status": "ACTIVE", "bid_amount_cents": 1500}, [], CENTS)
+        moved = cc.undo_plan(self.BID, {"status": "ACTIVE", "bid_amount_cents": 1700}, [], CENTS)
+        aud = cc.undo_plan(self.AUD, {"status": "ACTIVE", "targeting_fp": "bbb"}, [], CENTS)
+        self.assertEqual((bid["plan"], bool(moved["reason"]), aud["plan"]),
+                         ({"kind": "edit", "level": "adset", "id": "s1", "name": "SoCal", "field": "bid_amount", "to_cents": 1200},
+                          True, {"kind": "edit", "level": "adset", "id": "s1", "name": "SoCal", "field": "targeting",
+                                 "before": "Riverside area + 50 mi, ages 25–65"}))
+
+    def test_put_it_back_fills_in_the_old_optimization_goal(self):
+        goal = {**self.BID, "action": "optimization", "old_value": "LEAD_GENERATION",
+                "new_value": "QUALITY_LEAD What it optimizes for: Leads → Conversion leads"}
+        same = cc.undo_plan(goal, {"status": "ACTIVE", "optimization_goal": "QUALITY_LEAD"}, [], CENTS)
+        moved = cc.undo_plan(goal, {"status": "ACTIVE", "optimization_goal": "LINK_CLICKS"}, [], CENTS)
+        self.assertEqual((same["plan"], same["reason"], moved["plan"], bool(moved["reason"])),
+                         ({"kind": "edit", "level": "adset", "id": "s1", "name": "SoCal", "field": "optimization_goal",
+                           "to_value": "LEAD_GENERATION", "before": "Leads"}, None, None, True))
+
+    def test_the_inbox_title_names_the_edit(self):
+        self.assertEqual([cc.alert_title(self.BID, "SoCal", "worse"), cc.alert_title(self.AUD, "SoCal", "worse")],
+                         [f"Cost per result goal change on “SoCal”: {cc._verdict('worse')}", f"Audience change on “SoCal”: {cc._verdict('worse')}"])

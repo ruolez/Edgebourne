@@ -9,10 +9,16 @@ from datetime import timedelta
 
 import compare
 import experiments
+import status_history
 import words
 
 HORIZONS = (3, 7, 14)
-CHECKED = {"status", "budget", "update_creative", "restore_creative", "placement_media", "enhancement", "recommendation", "create"}
+CHECKED = {"status", "budget", "update_creative", "restore_creative", "placement_media", "enhancement", "recommendation", "create",
+           "bid", "targeting", "placements", "optimization"}
+# AM-C Edits: measured on the thing itself; their meta_changes values start with machine tokens (timeline.EDIT_TOKENS).
+EDITS = {"bid": ("bid_amount", 2), "targeting": ("targeting", 1), "placements": ("placements", 2), "optimization": ("optimization_goal", 1)}
+EDIT_WORDS = {"bid": "Cost per result goal change", "targeting": "Audience change", "placements": "Placements change",
+              "optimization": "Goal change"}
 LEVELS = ("campaign", "adset", "ad")
 DELTA_PCT = 10          # the smallest change worth a word
 LEAN = experiments.LEAN
@@ -46,7 +52,7 @@ def mode_for(change, entity):
         return None
     eid = change.get("entity_id")
     entity = entity or {}
-    if action in ("budget", "enhancement", "placement_media", "recommendation"):
+    if action in ("budget", "enhancement", "placement_media", "recommendation") or action in EDITS:
         return ("self", level, eid)
     if action in ("update_creative", "restore_creative"):
         return ("version", "ad", eid) if level == "ad" else None
@@ -331,6 +337,8 @@ def alert_title(change, name, state):
         what = f"Meta's automatic change on “{name}”"
     elif action == "recommendation":
         what = f"Meta's advice on “{name}”"
+    elif action in EDITS:
+        what = f"{EDIT_WORDS[action]} on “{name}”"
     else:
         what = f"New {'ad set' if change.get('level') == 'adset' else change.get('level') or 'ad'} “{name}”"
     return f"{what}: {_verdict(state)}"
@@ -359,6 +367,12 @@ def _back_number(change, versions):
     return max(before) if before else (current - 1 if current and current - 1 in numbers else None)
 
 
+def edit_machine(change, which="old_value"):
+    """The machine part of an Edit's value ('1200' of '1200 COST_CAP …', 'fp:aaa' of 'fp:aaa Ages …')."""
+    parts = str(change.get(which) or "").split(" ")
+    return parts[0] if change.get("action") in EDITS else None
+
+
 def reverses(change, value, versions=()):
     """Whether a write puts `change` back exactly: the old budget in cents, the old status, or (for a version change)
     the version {number, creative_id} with the old creative or the one Put it back would pick. Anything else is a
@@ -371,6 +385,8 @@ def reverses(change, value, versions=()):
             return False
     if action == "status":
         return value is not None and value == change.get("old_value")
+    if action in EDITS:
+        return value is not None and str(value).split(" ")[0] == edit_machine(change)
     if action in ("update_creative", "restore_creative") and isinstance(value, dict):
         if str(value.get("creative_id")) == str(change.get("old_value")):
             return True
@@ -417,4 +433,21 @@ def undo_plan(change, entity_now, versions, money):
         if not number:
             return {"plan": None, "reason": "Change it back on the ad's page."}
         return {"plan": {"kind": "version", **base, "number": number}, "reason": None}
+    if action in EDITS:
+        gone = _gone(entity_now, "changed")
+        if gone:
+            return {"plan": None, "reason": gone}
+        field, n = EDITS[action]
+        if action == "bid":
+            old, new = edit_machine(change), edit_machine(change, "new_value")
+            if not (new or "").isdigit() or entity_now.get("bid_amount_cents") != int(new):
+                return {"plan": None, "reason": "The cost per result goal was changed again since."}
+            return {"plan": {"kind": "edit", **base, "field": field, "to_cents": int(old) if (old or "").isdigit() else None}, "reason": None}
+        if action == "optimization":
+            old, new = edit_machine(change), edit_machine(change, "new_value")
+            if entity_now.get("optimization_goal") != new:
+                return {"plan": None, "reason": "What it optimizes for was changed again since."}
+            return {"plan": {"kind": "edit", **base, "field": field, "to_value": old, "before": status_history.goal_words(old)}, "reason": None}
+        before = " ".join(str(change.get("old_value") or "").split(" ")[n:]).strip()
+        return {"plan": {"kind": "edit", **base, "field": field, "before": before}, "reason": None}
     return {"plan": None, "reason": "Change it back on the ad's page."}

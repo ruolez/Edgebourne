@@ -230,9 +230,18 @@ class RatchetTests(unittest.TestCase):
     def test_no_dict_spend_cap_key_outside_the_rule_tables(self):
         """`data={"spend_cap": …}` or `**{"spend_cap": …}` would be a second write path: the key appears only where
         "spend_cap" names the alert rule, the stored-column map or a field read from an Ads Manager draft (am_drafts, AM-B:
-        a whitelist of what a draft may hold, never sent to Meta)."""
+        a whitelist of what a draft may hold, never sent to Meta) or a *campaign's* spending cap in edit_rules' tables (AM-C: a
+        campaign object's own field, written only as POST /{campaign id}, never an ad account; checked just below; timeline.py
+        names it as the History action that words it, drafts_api.py as a draft setting the Edit form applies)."""
         keyed = sorted(n for n, text in self.sources().items() if re.search(r"[\"']spend_cap[\"']\s*:", text))
-        self.assertEqual(keyed, ["alerts.py", "am_drafts.py", "diagnose.py", "inbox.py", "snooze.py", "status_history.py"])
+        self.assertEqual(keyed, ["alerts.py", "am_drafts.py", "diagnose.py", "drafts_api.py", "edit_rules.py", "inbox.py", "snooze.py", "status_history.py",
+                                 "timeline.py"])
+
+    def test_the_campaign_cap_never_reaches_an_ad_account(self):
+        """AM-C edits post to the campaign or ad set they read (edit_api posts to `row["id"]` only): no `act_` path in either
+        module, so the campaign cap can't become a second way to change the account's limit."""
+        src = self.sources()
+        self.assertEqual([n for n in ("edit_rules.py", "edit_api.py") if "act_" in src.get(n, "")], [])
 
     IMPORT = re.compile(r"^\s*(?:import\s+([\w.]+)|from\s+([\w.]+)\s+import)", re.M)
     WRITERS = {"meta_client", "requests", "urllib", "http", "httpx", "mcp", "am_link_api", "ads_api", "spend_limit"}

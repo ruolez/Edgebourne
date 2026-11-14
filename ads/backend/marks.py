@@ -11,6 +11,7 @@ LIST_MAX = 30  # rows in the changes list under the charts; each History has the
 ECHO = timedelta(minutes=15)
 CASCADE = ("CAMPAIGN_PAUSED", "ADSET_PAUSED")
 MONEY_FIELDS = ("daily_budget", "lifetime_budget", "spend_cap", "bid_strategy", "bid_amount")
+# AM-C setup fields Meta reports (status_history.EDIT_SETUP) chart as edits: the "created"/"targeting" rule below covers them.
 SWITCH_STATES = ("PAUSED", "ARCHIVED", "DELETED") + CASCADE
 NOT_CHARTED = ("subscribe", "unsubscribe", "copy")
 LEVEL_WORDS = {"campaign": "campaign", "adset": "ad set", "ad": "ad"}
@@ -22,16 +23,16 @@ def category(item):
     if kind == "version":
         return "edit"
     if kind == "change":
-        if field in ("budget", "recommendation", "recommendation_check", "spend_limit", "spend_limit_restore"):
+        if field in ("budget", "recommendation", "recommendation_check", "spend_limit", "spend_limit_restore", "bid", "bid_strategy", "spend_cap"):
             return "money"
-        if field in ("status", "archive", "delete"):
+        if field in ("status", "archive", "delete", "schedule", "copy_guard"):
             return "switch"
         return "edit"
     if field in MONEY_FIELDS:
         return "money"
     if field in ("configured_status", "start_time", "end_time"):
         return "switch"
-    if field in ("created", "targeting"):
+    if field in ("created", "targeting", "placements", "optimization_goal", "attribution", "frequency", "special_ad_categories"):
         return "edit"
     if field == "effective_status" and new in SWITCH_STATES:
         return "switch"

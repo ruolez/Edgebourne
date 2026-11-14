@@ -6,6 +6,7 @@ import { columnChart, marksPanel } from "./charts.js";
 import { count, dayLabel, explain, money, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
 import { openFromUrl } from "./outcome.js";
+import { archiveEntity, deleteEntity, fitMenu, moreMenuHtml, openCopy, openEdit } from "./edit.js";
 import { LIVE, bulkBarHtml, closePeek, figuresHtml, flatten, setBooked, listHtml, narrow, peek, statusCell, tableHtml, hasTrack, trackLegend, unlistedNote, wire, vsWords, rangeFoot } from "./manager.js";
 
 const $ = (id) => document.getElementById(id);
@@ -52,6 +53,7 @@ function render() {
     ${LEVEL === "campaign" ? `<a class="btn" href="/performance.html?campaign=${encodeURIComponent(e.id)}&range=${encodeURIComponent(state.range)}" id="en-results">${icon("chart")}Results</a>` : ""}
     ${me.role === "admin" && live ? (LEVEL === "campaign" ? `<a class="btn" href="${esc(withFrom(`/new-adset.html?campaign=${encodeURIComponent(e.id)}`))}">${icon("plus")}New ad set</a>` : `<a class="btn" href="${esc(withFrom(`/new-ad.html?adset=${encodeURIComponent(e.id)}`))}">${icon("plus")}New ad</a>`) : ""}
     ${me.role === "admin" ? `<a class="btn btn-claude-outline" href="/desk.html?ask=1&campaign=${encodeURIComponent(data.campaign.id)}">${icon("spark")}Ask Claude</a>` : ""}
+    ${me.role === "admin" && editable(e) ? `<button type="button" class="btn" id="ed-open">Edit</button>${moreMenuHtml()}` : ""}
     ${canControl && live ? `<span class="pk-sw">${switchHtml(e.status === "ACTIVE", `data-toggle="${LEVEL}:${e.id}" data-name="${esc(e.name)}"`, `${e.name} on or off`)} ${e.status === "ACTIVE" ? "On" : "Off"}</span>` : ""}`;
   const tabs = [...(LEVEL === "campaign" ? [["adsets", "Ad sets", rows.adset.length]] : []), ["ads", "Ads", rows.ad.length], ["history", "History", data.timeline.length]];
   const list = children();
@@ -88,6 +90,9 @@ function render() {
   document.body.classList.toggle("has-bulk", selected.size > 0);
 }
 
+// AM-C: the owner and this account's admins edit, copy, archive and delete what isn't archived or deleted.
+const editable = (e) => !["ARCHIVED", "DELETED"].includes(e.status) && !["ARCHIVED", "DELETED"].includes(e.effective_status);
+
 // An empty campaign or ad set says so and offers to make the first one inside it (admins, while it can run).
 function emptyHere(e, live) {
   const inCampaign = state.tab === "adsets";
@@ -120,9 +125,19 @@ async function load() {
   render();
   if (state.peek) openPeek(state.peek, { quiet: true });
   // An Inbox or Today link to a change's "Did it work?" (?check=N) opens it once, over the History.
-  if (!urlCheckDone) { urlCheckDone = true; openFromUrl(); }
+  if (!urlCheckDone) { urlCheckDone = true; openFromUrl(); openEditFromUrl(); }
 }
 let urlCheckDone = false;
+
+// ?edit=<field> (a copy made to change what Meta doesn't allow on the original, or a Put it back) opens Edit once.
+function openEditFromUrl() {
+  const q = new URLSearchParams(location.search);
+  const field = q.get("edit");
+  if (!field || me.role !== "admin" || !editable(data.entity)) return;
+  q.delete("edit");
+  history.replaceState(history.state, "", location.pathname + (q.toString() ? `?${q}` : "") + location.hash);
+  openEdit({ level: LEVEL, id, focus: field }, load);
+}
 
 // id's default is "", so writing the state always keeps ?id= in the address (it used to drop it on a change of dates).
 const KEYS = DEFAULTS;
@@ -163,6 +178,18 @@ if (me) {
   wire($("cr-all"), ctx);
   wire($("bulk"), ctx);
   wire($("en-actions"), ctx);
+  $("en-actions").addEventListener("toggle", (e) => { if (e.target.id === "ed-more") fitMenu(e.target); }, true);
+  $("en-actions").addEventListener("click", (e) => {
+    const ent = data && data.entity;
+    if (!ent) return;
+    const what = { level: LEVEL, id, name: ent.name };
+    if (e.target.closest("#ed-open")) openEdit({ level: LEVEL, id }, load);
+    const menu = e.target.closest("#ed-more .menu-pop button");
+    if (menu) menu.closest("details").open = false;
+    if (e.target.closest("#cp-open")) openCopy(what, () => load());
+    if (e.target.closest("#ed-archive")) archiveEntity(what, load);
+    if (e.target.closest("#ed-delete")) deleteEntity(what, load, () => { location.href = LEVEL === "adset" ? `/campaign.html?id=${encodeURIComponent(data.campaign.id)}` : "/ads.html"; });
+  });
   $("cr-all").addEventListener("click", (e) => {
     const t = e.target.closest("[data-tab]");
     if (t) { selected.clear(); dropPeek(); set({ tab: t.dataset.tab, sort: "spend", dir: "desc", peek: "" }); }

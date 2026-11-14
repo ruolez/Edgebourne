@@ -329,7 +329,7 @@ class EditRowsTests(unittest.TestCase):
         self.assertEqual(am_drafts.edit_rows(node, self.LIVE), [
             {"field": "daily_budget", "label": "Daily budget", "kind": "money", "old": 2000, "new": 2500, "now": 2000, "stale": False, "apply": "budget", "applied": None},
             {"field": "name", "label": "Name", "kind": "text", "old": "Edge Bourne - Free intro call - Leads", "new": "Intro call (Nov)",
-             "now": "Edge Bourne - Free intro call - Leads", "stale": False, "apply": "manager", "applied": None}])
+             "now": "Edge Bourne - Free intro call - Leads", "stale": False, "apply": "edit", "applied": None}])
 
     def test_a_budget_changed_since_the_draft_is_stale(self):
         node = self.node({"daily_budget": {"old": 2000, "new": 2500}})

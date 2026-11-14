@@ -13,8 +13,10 @@ ADVICE_ADD = re.compile(r"\(\+(\d+(?:\.\d+)?)/day\)")  # advice_api writes a bud
 NAMELESS = ("recommendation", "recommendation_check")
 TONE_RANK = {"bad": 3, "warn": 2, "ok": 1, "": 0}
 # Budget, bid, dates and audience: made outside the console when Meta reports them (status_history.SETUP).
-SETUP_FIELDS = ("daily_budget", "lifetime_budget", "spend_cap", "bid_strategy", "bid_amount", "start_time", "end_time", "targeting")
-ACCEPTED = {"big": "more than +20%", "recent": "under 3 days since the last change"}
+SETUP_FIELDS = ("daily_budget", "lifetime_budget", "spend_cap", "bid_strategy", "bid_amount", "start_time", "end_time", "targeting",
+                "placements", "optimization_goal", "attribution", "frequency", "special_ad_categories")
+ACCEPTED = {"big": "more than +20%", "recent": "under 3 days since the last change", "high": "more than 3× the target cost per lead",
+            "danger": "a removal or more than double"}
 # A decided suggestion, in the console's words (suggest.js DECIDED says the same).
 DECIDED = {"applied": "accepted and applied", "approved": "accepted", "declined": "declined",
            "failed": "accepted, but Meta refused", "revised": "sent back to Claude",
@@ -54,14 +56,20 @@ def change_title(c, money):
         return "Meta's advice set a different budget than shown"
     if action in ("spend_limit", "spend_limit_restore"):
         return _limit_title(action, old, new, ok, money)
+    if action in EDIT_TOKENS:
+        line = edit_words(action, new)
+        return (line or "Changed its settings") if ok else f"Tried to change: {line}" if line else "Tried to change its settings"
     tried = {"update_creative": "Tried to update the ad", "restore_creative": "Tried to switch back to an earlier version",
              "placement_media": "Tried to add a 9:16 video for Reels and Stories", "duplicate": "Tried to duplicate it",
              "enhancement": "Tried to change one of Meta's automatic changes", "create": "Tried to create it",
-             "recommendation": "Tried to apply Meta's advice"}
+             "recommendation": "Tried to apply Meta's advice", "copy": "Tried to make a copy",
+             "copy_guard": "Tried to switch off a copy Meta made on"}
     if not ok and action in tried:
         return tried[action]
     if action == "duplicate":
         return f"Duplicated as “{new}”"
+    if action == "copy":
+        return f"Made as a paused copy of “{old}”" if old else "Made as a paused copy"
     if action == "update_creative":
         return f"Updated the ad: {_plain(new)}" if _plain(new) else "Updated the ad"
     if action == "restore_creative":
@@ -77,9 +85,22 @@ def change_title(c, money):
     if action == "recommendation":
         words = ADVICE_ADD.sub(lambda m: f"(+{money(round(float(m.group(1)) * 100))} a day)", _plain(new))
         return f"Applied Meta's advice: {words}" if words else "Applied Meta's advice"
+    if action == "copy_guard":
+        return "Switched off a copy Meta made on"
     return {"archive": "Archived", "delete": "Deleted", "copy": "Copied", "subscribe": "Subscribed",
             "unsubscribe": "Unsubscribed", "comment_reply": "Replied to a comment", "comment_hide": "Hid a comment",
             "comment_show": "Showed a comment again"}.get(action, action.replace("_", " ").capitalize())
+
+
+# AM-C: Edit actions keep machine tokens first (what status_history.console_value compares), then the History line.
+EDIT_TOKENS = {"schedule": 2, "placements": 2, "bid": 2, "bid_strategy": 1, "spend_cap": 1, "targeting": 1, "optimization": 1,
+               "conversion_location": 1, "attribution": 1, "billing": 1, "frequency": 1, "special_categories": 1}
+
+
+def edit_words(action, text):
+    """The History line of an Edit's meta_changes value (everything after its machine tokens)."""
+    parts = str(text or "").split(" ")
+    return " ".join(parts[EDIT_TOKENS.get(action, 1):]).strip()
 
 
 def _limit_title(action, old, new, ok, money):
@@ -117,7 +138,7 @@ def checked_refusals(changes):
 def accepted_words(accepted):
     """'Confirmed knowingly: more than +20% and under 3 days since the last change' for the warnings a person
     confirmed on purpose, else None."""
-    said = [ACCEPTED[a] for a in ("big", "recent") if a in (accepted or [])]
+    said = [ACCEPTED[a] for a in ("big", "recent", "high", "danger") if a in (accepted or [])]
     return f"Confirmed knowingly: {' and '.join(said)}" if said else None
 
 

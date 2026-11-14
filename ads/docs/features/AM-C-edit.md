@@ -12,6 +12,12 @@ Unit key: `AM-C-edit` · Asked by Eugene 2026-11-13 · Meta: Graph API writes th
 > - AM-D adds the audience pickers to this form; this spec leaves room for them (the Audience section's "Custom audiences" row).
 > - Migration **047** (next free number when built). No bridge change.
 
+> **Built 2026-11-13, shipped after review the same day** (review fixes: foreign ad set ids refused, custom audiences server-side read-only, a moved end on something ended asks for the spend confirmation, lifetime pace from max(now, start), the 3-day rule on goal removals, D2 machine-token match, copy budgets read fresh). As specified, plus: migration 047 also widens `status_events_field_check` for the new D2 fields and adds
+> `edit_seen_at` (campaigns, ad sets) so the first sync after the update records nothing for them; a first cost per result goal (none → an
+> amount) starts no 3-day clock, so check 8's "raise again at once" is the first recent one; Delete on something already off offers "Keep it
+> off instead" in place of "Turn it off instead"; custom audiences are listed read-only until AM-D's pickers; language names come from a small
+> table plus Meta's `adlocale` search. QA: `QA_ONLY=edit sh qa/run.sh` (36 checks), screenshots `ONLY=edit node qa/shots.cjs <dir>`.
+
 ## Goal
 
 Eugene, 2026-11-13: *"our platform is intended to be able to create and much replace the ads manager … We currently are lacking implementations that have to do with campaign management."*

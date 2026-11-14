@@ -57,7 +57,8 @@ FIELDS = {
 }
 TYPES = {"campaign": "campaign", "campaign_group": "campaign", "adset": "adset", "ad_set": "adset", "ad": "ad"}
 # Staged edits the console applies with its own forms (AM-C wires them; until then "Change it in Ads Manager").
-EDIT_FIELDS = frozenset()
+# AM-C: staged edits the console's Edit form applies (prefilled from the draft); the rest stay "Change it in Ads Manager".
+EDIT_FIELDS = frozenset({"name", "bid_strategy", "bid_amount", "spend_cap", "start_time", "end_time", "stop_time", "optimization_goal"})
 
 GOALS = {"OUTCOME_LEADS": "Leads", "OUTCOME_SALES": "Sales", "OUTCOME_TRAFFIC": "Traffic", "OUTCOME_AWARENESS": "Awareness",
          "OUTCOME_ENGAGEMENT": "Engagement", "OUTCOME_APP_PROMOTION": "App promotion"}

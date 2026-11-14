@@ -31,7 +31,10 @@ SHOWN = "gone_at IS NULL OR finished_at > now() - interval '7 days'"
 FRESH = timedelta(minutes=5)       # older than this, Finish and Apply ask the Mac for a fresh read first
 APPLIED_WITHIN = timedelta(minutes=10)
 PAGES = {"campaign": "new-campaign", "adset": "new-adset", "ad": "new-ad"}
-CHANGE_ACTIONS = {"daily_budget": "budget", "status": "status"}
+CHANGE_ACTIONS = {"daily_budget": "budget", "status": "status",
+                  # AM-C: applied through the Edit form; its meta_changes value starts with edit_rules.change_text
+                  "name": "rename", "bid_strategy": "bid_strategy", "bid_amount": "bid", "spend_cap": "spend_cap", "start_time": "schedule",
+                  "end_time": "schedule", "stop_time": "schedule", "optimization_goal": "optimization"}
 TABLES = {"campaign": "campaigns", "adset": "adsets", "ad": "ads"}
 ENTITY_PAGES = {"campaign": "/campaign.html?id=", "adset": "/adset.html?id=", "ad": "/ad.html?id="}
 
@@ -299,18 +302,33 @@ def applied(draft_id):
     data = request.get_json(silent=True) or {}
     field = data.get("field")
     if field not in CHANGE_ACTIONS or field not in (node.get("fields") or {}):
-        return api_error("Only a budget or on/off change is applied from here.", 400)
+        return api_error("That setting isn't applied from here: change it in Ads Manager.", 400)
     user = current_user()
     change = db.query("""SELECT id, new_value FROM meta_changes WHERE entity_id = %s AND action = %s AND ok AND user_id = %s
                          AND created_at > %s ORDER BY id DESC LIMIT 1""",
                       (draft_id, CHANGE_ACTIONS[field], user["id"], utcnow() - APPLIED_WITHIN), one=True)
     if not change or (data.get("change_id") not in (None, "") and str(data["change_id"]) != str(change["id"])):
         return api_error("No change of that setting from you in the last 10 minutes.", 409)
-    if change["new_value"] != str(node["fields"][field].get("new")):  # another amount typed in the dialog: not the draft's
+    if not set_the_draft(field, change["new_value"], node["fields"][field].get("new")):  # another value typed: not the draft's
         return api_error("The change you made isn't the draft's value, so the draft's setting isn't applied.", 409)
     db.execute("UPDATE am_drafts SET applied = applied || %s WHERE draft_id = %s", (json.dumps({field: change["id"]}), draft_id))
     log_activity("draft.applied", subject=draft_id, details={"field": field, "change_id": change["id"]})
     return jsonify({"field": field, "change_id": change["id"]})
+
+
+def set_the_draft(field, change_value, draft_value):
+    """Whether a console change (its meta_changes new_value) set exactly the draft's value."""
+    if field in ("daily_budget", "status", "name"):
+        return change_value == str(draft_value)
+    import edit_rules
+    import timeline
+    if field in ("start_time", "end_time", "stop_time") and isinstance(draft_value, (int, float)) and not isinstance(draft_value, bool):
+        from datetime import datetime, timezone
+        draft_value = datetime.fromtimestamp(draft_value, timezone.utc).isoformat()
+    want = edit_rules.change_text(field, edit_rules.normal(field, draft_value))
+    action = CHANGE_ACTIONS[field]
+    got = " ".join(str(change_value or "").split(" ")[:timeline.EDIT_TOKENS.get(action, 1)])
+    return got.split(" ")[:len(want.split(" "))] == want.split(" ")
 
 
 # ---------------------------------------------------------------- the builders

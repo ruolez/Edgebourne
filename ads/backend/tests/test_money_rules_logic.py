@@ -192,3 +192,108 @@ class RecentChangeTest(unittest.TestCase):
     def test_under_an_hour(self):
         change = mr.budget_change(2400, 2600, self.CAP, last(datetime(2026, 11, 11, 14, 30, tzinfo=timezone.utc), 2000, 2400), t(11, 15))
         self.assertIn("last changed less than an hour ago", mr.change_problem(change, False))
+
+
+class BidChangeTest(unittest.TestCase):
+    """AM-C: a cost per result goal or bid cap moves money like a budget does."""
+    NOW = datetime(2026, 11, 13, 18, 0, tzinfo=timezone.utc)
+    CAP, TARGET = 10000, 1500
+
+    def bc(self, old, new, last=None):
+        return mr.bid_change(old, new, self.TARGET, self.CAP, last, self.NOW if last else None)
+
+    def last(self, hours, old=1000, new=1200):
+        from datetime import timedelta
+        return {"at": self.NOW - timedelta(hours=hours), "old": old, "new": new}
+
+    def flags(self, c):
+        return {k for k in ("big", "recent", "high", "over_cap", "rollback") if c[k]}
+
+    def test_each_case_in_the_spec_table(self):
+        cases = [self.bc(1200, 1500), self.bc(1200, 1400), self.bc(1200, 1400, self.last(48)), self.bc(1200, 1000, self.last(48)),
+                 self.bc(1200, 4600), self.bc(9000, 10500), self.bc(1200, None)]
+        self.assertEqual([self.flags(c) for c in cases],
+                         [{"big"}, set(), {"recent"}, {"rollback"}, {"big", "high"}, {"over_cap", "high"}, {"big"}])
+
+    def test_removing_the_cap_soon_after_a_raise_is_big_and_recent(self):
+        self.assertEqual([self.flags(self.bc(1400, None, self.last(48, 1200, 1400))), self.flags(self.bc(1400, None, self.last(100, 1200, 1400)))],
+                         [{"big", "recent"}, {"big"}])
+
+    def test_a_first_cap_is_no_raise(self):
+        c = self.bc(None, 1200)
+        self.assertEqual((self.flags(c), c["remove"], c["pct"]), (set(), False, None))
+
+    def test_without_a_target_nothing_is_high(self):
+        self.assertFalse(mr.bid_change(1200, 9000, None, self.CAP)["high"])
+
+
+class SpendCapChangeTest(unittest.TestCase):
+    def test_below_spent_refused_removal_and_two_and_a_half_times_danger(self):
+        cases = [mr.spend_cap_change(20000, 9000, 9000), mr.spend_cap_change(20000, None, 9000), mr.spend_cap_change(20000, 50000, 9000),
+                 mr.spend_cap_change(20000, 30000, 9000)]
+        self.assertEqual([(bool(c["refused"]), c["danger"]) for c in cases], [(True, False), (False, True), (False, True), (False, False)])
+
+    def test_a_first_cap_is_no_danger(self):
+        self.assertEqual(mr.spend_cap_change(None, 30000, 9000)["danger"], False)
+
+
+class SchedulePaceTest(unittest.TestCase):
+    NOW = datetime(2026, 11, 13, 18, 0, tzinfo=timezone.utc)
+
+    def test_lifetime_pace_is_what_is_left_per_day(self):
+        from datetime import timedelta
+        self.assertEqual([mr.lifetime_pace(30000, 10000, self.NOW, self.NOW + timedelta(days=10)),
+                          mr.lifetime_pace(30000, 10000, self.NOW, self.NOW + timedelta(days=5)),
+                          mr.lifetime_pace(30000, 10000, self.NOW, self.NOW - timedelta(days=1))], [2000, 4000, None])
+
+    def test_an_end_five_days_earlier_doubles_the_pace(self):
+        from datetime import timedelta
+        live = {"lifetime_budget": 30000, "spent": 10000, "end_time": self.NOW + timedelta(days=10), "start_time": self.NOW - timedelta(days=3),
+                "status": "ACTIVE"}
+        out = mr.schedule_money(live, {"end_time": self.NOW + timedelta(days=5)}, self.NOW, 10000)
+        self.assertEqual((out["pace"]["from"], out["pace"]["to"], out["pace"]["big"], out["turn_on"]), (2000, 4000, True, False))
+
+    def test_the_pace_counts_from_the_start_when_it_hasnt_started(self):
+        from datetime import timedelta
+        end = self.NOW + timedelta(days=30)
+        self.assertEqual([mr.lifetime_pace(30000, 0, self.NOW, end), mr.lifetime_pace(30000, 0, self.NOW, end, self.NOW + timedelta(days=29)),
+                          mr.lifetime_pace(30000, 0, self.NOW, end, self.NOW - timedelta(days=5))], [1000, 30000, 1000])
+
+    def test_a_later_start_on_an_unstarted_lifetime_budget_is_over_the_ceiling(self):
+        from datetime import timedelta
+        live = {"lifetime_budget": 300000, "spent": 0, "end_time": self.NOW + timedelta(days=30), "start_time": self.NOW + timedelta(days=1),
+                "status": "ACTIVE"}
+        out = mr.schedule_money(live, {"start_time": self.NOW + timedelta(days=29)}, self.NOW, 20000)
+        self.assertEqual((out["pace"]["to"], out["pace"]["over_cap"], out["turn_on"]), (300000, True, False))
+
+    def test_an_earlier_end_with_a_future_start_counts_the_real_window(self):
+        from datetime import timedelta
+        live = {"lifetime_budget": 300000, "spent": 0, "end_time": self.NOW + timedelta(days=30), "start_time": self.NOW + timedelta(days=20),
+                "status": "ACTIVE"}
+        out = mr.schedule_money(live, {"end_time": self.NOW + timedelta(days=21)}, self.NOW, 400000)
+        self.assertEqual((out["pace"]["from"], out["pace"]["to"], out["pace"]["big"]), (30000, 300000, True))
+
+    def test_a_new_end_on_an_ended_lifetime_budget_restarts_spending(self):
+        from datetime import timedelta
+        live = {"lifetime_budget": 1000000, "spent": 100000, "end_time": self.NOW - timedelta(days=1), "start_time": self.NOW - timedelta(days=20),
+                "status": "ACTIVE"}
+        out = mr.schedule_money(live, {"end_time": self.NOW + timedelta(hours=36)}, self.NOW, 20000)
+        self.assertEqual((out["pace"]["to"], out["pace"]["over_cap"], out["turn_on"]), (600000, True, True))
+
+    def test_no_end_date_on_an_ended_daily_ad_set_turns_it_back_on(self):
+        from datetime import timedelta
+        ended = {"lifetime_budget": None, "spent": 0, "end_time": self.NOW - timedelta(days=1), "start_time": self.NOW - timedelta(days=9),
+                 "status": "ACTIVE"}
+        running = {**ended, "end_time": self.NOW + timedelta(days=3)}
+        got = [mr.schedule_money(ended, {"end_time": None}, self.NOW, 10000)["turn_on"],
+               mr.schedule_money(ended, {"end_time": self.NOW + timedelta(days=2)}, self.NOW, 10000)["turn_on"],
+               mr.schedule_money({**ended, "status": "PAUSED"}, {"end_time": None}, self.NOW, 10000)["turn_on"],
+               mr.schedule_money(running, {"end_time": None}, self.NOW, 10000)["turn_on"]]
+        self.assertEqual(got, [True, True, False, False])
+
+    def test_an_earlier_start_on_a_running_ad_set_needs_the_turn_on_confirmation(self):
+        from datetime import timedelta
+        live = {"lifetime_budget": None, "spent": 0, "end_time": None, "start_time": self.NOW + timedelta(days=7), "status": "ACTIVE"}
+        out = mr.schedule_money(live, {"start_time": self.NOW + timedelta(days=2)}, self.NOW, 10000)
+        off = mr.schedule_money({**live, "status": "PAUSED"}, {"start_time": self.NOW + timedelta(days=2)}, self.NOW, 10000)
+        self.assertEqual((out["turn_on"], out["pace"], off["turn_on"]), (True, None, False))
