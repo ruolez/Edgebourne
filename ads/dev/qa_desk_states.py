@@ -227,7 +227,7 @@ try:
     listed = [a for t in (oc.get("/api/desk").get_json() or {}).get("tasks", []) if t["id"] == t1 for a in t.get("attachments", [])]
     full["the Claude page lists the preview without its bytes"] = listed[:1] == [{"id": att, "task_id": t1, "kind": "image", "name": "a.png",
                                                                                 "caption": "QA 4:5 static", "width": 4, "height": 5, "duration_ms": None,
-                                                                                "pruned": False, "drafted": False, "next": None}]
+                                                                                "pruned": False, "drafted": False, "next": None, "source": "claude"}]
     done(t1, g1["claim_token"])
     full["a finished request takes no more previews"] = up(t1, png, "a.png", {**run(g1["claim_token"]), "X-Bridge-Version": "3.0"}).status_code == 409
 

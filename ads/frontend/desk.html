@@ -11,10 +11,10 @@
   <meta name="theme-color" content="#0E0F11" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-title" content="EB Ads">
   <script src="/js/theme.js"></script>
-  <link rel="stylesheet" href="/css/tokens.css?v=1795712007">
-  <link rel="stylesheet" href="/css/app.css?v=1795712007">
-  <link rel="stylesheet" href="/css/shell.css?v=1795712007">
-  <link rel="stylesheet" href="/css/desk.css?v=1795712007">
+  <link rel="stylesheet" href="/css/tokens.css?v=1795712008">
+  <link rel="stylesheet" href="/css/app.css?v=1795712008">
+  <link rel="stylesheet" href="/css/shell.css?v=1795712008">
+  <link rel="stylesheet" href="/css/desk.css?v=1795712008">
 </head>
 <body>
   <div class="app">
@@ -25,29 +25,37 @@
         <div class="convs" id="convs" data-mode="list">
           <aside class="cl" aria-label="Conversations">
             <div class="cl-top">
-              <a class="btn btn-claude cl-new" href="#new">New conversation</a>
+              <div class="cl-bar">
+                <a class="btn btn-claude cl-new" href="#new">New conversation</a>
+                <button class="cl-mac" type="button" id="mac-open" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="11.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 20h7M12 16v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="led" id="mac-led" aria-hidden="true"></span><span class="sr-only" id="mac-summary">Your Mac</span></button>
+              </div>
               <input class="input cl-search" id="search" type="search" placeholder="Search conversations" aria-label="Search conversations" autocomplete="off">
             </div>
             <div class="cl-list" id="cl-list"></div>
-            <button class="cl-foot" type="button" id="mac-open"><span class="led" id="mac-led" aria-hidden="true"></span><span id="mac-summary"></span></button>
           </aside>
           <section class="cv" id="cv" aria-label="Conversation">
             <header class="cv-head" id="cv-head"></header>
-            <div class="cv-scroll" id="cv-scroll"><div class="cv-col" id="cv-col" aria-live="polite"></div></div>
+            <div class="cv-body">
+              <div class="cv-scroll" id="cv-scroll"><div class="cv-col" id="cv-col" aria-live="polite"></div></div>
+              <button class="cv-jump" type="button" id="cv-jump" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="cv-jump-text">Latest</span></button>
+            </div>
             <div class="cv-dock" id="cv-dock">
               <div class="cv-dock-in">
-                <div class="fa-bar" id="fa-bar" hidden></div>
-                <div class="cv-line" id="cv-line" hidden></div>
                 <form class="cv-box" id="ask-form" novalidate>
                   <div class="cv-chip" id="cv-chip" hidden></div>
+                  <div class="cv-files" id="cv-files" aria-label="Files to send with your message" hidden></div>
                   <label for="prompt" class="sr-only">Your message to Claude</label>
-                  <textarea id="prompt" name="prompt" rows="2" maxlength="4000"></textarea>
+                  <textarea id="prompt" name="prompt" rows="1" maxlength="4000"></textarea>
                   <div class="cv-box-foot">
+                    <button class="cv-tool" type="button" id="file-add" aria-label="Add a picture or video" title="Add a picture or video"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 11.5l-7.2 7.2a4.4 4.4 0 0 1-6.2-6.2l7.9-7.9a3 3 0 0 1 4.2 4.2l-7.8 7.8a1.5 1.5 0 0 1-2.2-2.1l7-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                    <input class="sr-only" type="file" id="file-input" tabindex="-1" aria-hidden="true" multiple>
                     <select class="input cv-scope" id="campaign" name="campaign_id" aria-label="Campaign"><option value="">All campaigns</option></select>
-                    <span class="cv-hint" id="cv-hint"></span>
+                    <div class="fa-bar" id="fa-bar" hidden></div>
+                    <span class="cv-grow"></span>
                     <span class="cv-btns" id="cv-btns"></span>
                   </div>
                 </form>
+                <p class="cv-hint" id="cv-hint" role="status" hidden></p>
                 <div class="cv-seeds" id="cv-seeds" hidden>
                   <button type="button" data-seed="review">Review the last 7 days against target</button>
                   <button type="button" data-seed="question">Why did cost per lead change?</button>
@@ -56,6 +64,7 @@
                 </div>
               </div>
             </div>
+            <div class="cv-drop" id="cv-drop" hidden>Drop to add to your message</div>
           </section>
         </div>
         <div class="stack desk-view" id="view" hidden></div>

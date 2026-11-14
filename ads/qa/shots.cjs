@@ -43,6 +43,10 @@ with account_ctx.use(1):
                    (t, attachments.MIMES[mime], mime, name, cap, len(data), hashlib.sha256(data).hexdigest(), m['width'], m['height'], m['duration_ms'], data))
 print(t)
 `).trim().split('\n').pop());
+  // CL: a conversation that shows and takes media: files sent with a message, an ad and a lead form shown large,
+  // Claude's picture, video and a page it built (dev/seed_media.py).
+  sh(`docker cp ${__dirname}/../dev/seed_media.py edgebourne-ads-backend:/tmp/seed_media.py`);
+  const mediaThread = Number(sh('docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python /tmp/seed_media.py').trim().split('\n').pop());
   const asClient = process.env.AS === 'client';
   const login = asClient ? ['qa-shots-client@example.com', 'shots-client-123'] : ['eugene@edgebourne.com', 'localdev-pass-123'];
   const tag0 = asClient ? 'client-' : '';
@@ -295,6 +299,27 @@ with account_ctx.use(1):
       await page.waitForTimeout(900);
       await page.screenshot({ path: `${OUT}/fud-conv-${tag}-${scheme}.png`, fullPage: true });
       fullAccess(false);
+      // CL: the media conversation from its first message, at its end, and the viewer on a picture and on the page.
+      await page.goto(`${BASE}/desk.html#r/${mediaThread}`);
+      await page.reload();
+      await page.waitForSelector('.cv-show');
+      await page.waitForTimeout(1500);
+      await page.evaluate(() => { document.getElementById('cv-scroll').scrollTop = 0; });
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${OUT}/cl-media-top-${tag}-${scheme}.png` });
+      await page.evaluate(() => { const b = document.getElementById('cv-scroll'); b.scrollTop = b.scrollHeight; });
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: `${OUT}/cl-media-end-${tag}-${scheme}.png` });
+      await page.locator('#cv-col .att-open').first().click();
+      await page.waitForSelector('dialog.lb[open] img.lb-media');
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${OUT}/cl-viewer-${tag}-${scheme}.png` });
+      await page.keyboard.press('ArrowRight');
+      await page.keyboard.press('ArrowRight');
+      await page.waitForSelector('dialog.lb[open] iframe.lb-page');
+      await page.waitForTimeout(600);
+      await page.screenshot({ path: `${OUT}/cl-viewer-page-${tag}-${scheme}.png` });
+      await page.keyboard.press('Escape');
       // FU-A: the ad account picker (Settings → Accounts → Add ad account).
       await page.goto(`${BASE}/settings.html#accounts-panel`);
       await page.reload();
@@ -359,7 +384,7 @@ with account_ctx.use(1):
     if (amSnapsBefore === '0') psql("DELETE FROM am_snapshots WHERE account_id = 1 AND scope = '' AND run_id IS NULL");
   }
   if (asClient) sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "UPDATE users SET is_active = FALSE WHERE email = '${login[0]}'"`);
-  sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "DELETE FROM desk_reports WHERE task_id = ${fudTask}; DELETE FROM desk_tasks WHERE id = ${fudTask}"`);
+  sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "DELETE FROM desk_reports WHERE task_id = ${fudTask}; DELETE FROM desk_tasks WHERE id = ${fudTask} OR id = ${mediaThread} OR thread_id = ${mediaThread}"`);
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');
 
   // AM-E: the screens that show what the link read (the link connected, reads from 12 minutes ago).

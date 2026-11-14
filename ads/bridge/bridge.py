@@ -19,6 +19,7 @@ import importlib.machinery
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -406,6 +407,12 @@ def session_args(cfg, task):
     return ["--session-id", own]
 
 
+def empty_inbox(workdir):
+    """The files people sent with their messages (`desk fetch` puts them in reports/desk/inbox/) are there only for
+    the run that fetched them: the workspace is shared by every business, so the next run starts with none."""
+    shutil.rmtree(os.path.join(workdir, "reports", "desk", "inbox"), ignore_errors=True)
+
+
 def run_task(cfg, token, task):
     task_id = task["id"]
     claim = task.get("claim_token")  # this run's pass: only it can use the task from now on
@@ -413,6 +420,7 @@ def run_task(cfg, token, task):
     confirm = read_task(cfg, token, task_id, claim) if claim and task.get("access") == "full" else None
     access = run_access(task, confirm.get("access") if isinstance(confirm, dict) else None)
     log(f"task {task_id} ({task['kind']}{', full access' if access == 'full' else ''}): starting Claude")
+    empty_inbox(cfg["workdir"])
     post_status(cfg, token, task_id, claim, status="running", progress="Claude is starting on your Mac")
     out_path = os.path.join(LOG_DIR, f"task-{task_id}.log")
     render = task.get("kind") in ("render", "advice") or access == "full"  # long runs: they render video on this Mac

@@ -46,10 +46,49 @@ class MeasureTests(unittest.TestCase):
                           attachments.measure("video/mp4", mp4(720, 1280, 600, 5400, moov_last=True))],
                          [{"width": 1080, "height": 1920, "duration_ms": 9000}, {"width": 720, "height": 1280, "duration_ms": 9000}])
 
+    def test_a_phones_mov_is_measured_like_an_mp4(self):
+        self.assertEqual(attachments.measure("video/quicktime", mp4(1920, 1080, 600, 3000)), {"width": 1920, "height": 1080, "duration_ms": 5000})
+
+    def test_a_page_has_no_size_of_its_own(self):
+        self.assertEqual(attachments.measure("text/html", b"<!doctype html><html></html>"), {"width": None, "height": None, "duration_ms": None})
+
     def test_unreadable_bytes_give_nothing_rather_than_a_guess(self):
         empty = {"width": None, "height": None, "duration_ms": None}
         self.assertEqual([attachments.measure("image/png", b"\x89PNG\r\n\x1a\n"), attachments.measure("video/mp4", b"\x00\x00\x00\x18ftyp"),
                           attachments.measure("image/jpeg", b"\xff\xd8\xff\xe0\x00"), attachments.measure("image/gif", b"GIF89a")], [empty] * 4)
+
+
+class PageTests(unittest.TestCase):
+    """A page Claude built: one HTML document in UTF-8, taken only when the Mac says it is a page."""
+
+    def test_an_html_document_passes_with_or_without_a_byte_order_mark(self):
+        pages = [b"<!doctype html><html><body>Hi</body></html>", b"\xef\xbb\xbf\n  <!DOCTYPE HTML>\n<html>", b"<html lang='en'><p>x</p></html>"]
+        self.assertEqual([attachments.page_problem(p) for p in pages], [None, None, None])
+
+    def test_other_bytes_and_oversize_pages_are_refused_in_words(self):
+        cases = [b"\x89PNG\r\n\x1a\n", b"just some text", b"<svg xmlns='http://www.w3.org/2000/svg'>", b"<!doctype html>\xff\xfe", b"",
+                 b"<!doctype html>" + b"x" * attachments.MAX_BYTES["page"]]
+        self.assertEqual([bool(attachments.page_problem(c)) for c in cases], [True] * len(cases))
+
+    def test_a_shown_page_gets_no_origin_no_scripts_no_requests_and_only_the_console_frames_it(self):
+        parts = [p.strip() for p in attachments.PAGE_CSP.split(";")]
+        self.assertEqual(("sandbox" in parts, "default-src 'none'" in parts, "frame-ancestors 'self'" in parts, "form-action 'none'" in parts,
+                          any("script" in p or "allow-" in p or "http" in p or "connect" in p for p in parts)), (True, True, True, True, False))
+
+    def test_html_is_never_one_of_the_types_read_from_bytes(self):
+        """A page can't arrive by accident: sniff never says text/html, so only the declared path stores one."""
+        self.assertEqual(attachments.sniff(b"<!doctype html><html></html>" + b" " * 40), None)
+
+
+class FileIdTests(unittest.TestCase):
+    """The ids of the files sent with a message, from the request body."""
+
+    def test_whole_numbers_once_each_in_order(self):
+        self.assertEqual([attachments.clean_file_ids(v) for v in ([3, 1, 3, 2], [], None, "")], [[3, 1, 2], [], [], []])
+
+    def test_anything_else_or_too_many_is_refused(self):
+        cases = ["3", [True], [1.5], ["7"], [0], [-2], {"id": 1}, [[1]], list(range(1, attachments.MAX_FILES + 2))]
+        self.assertEqual([attachments.clean_file_ids(c) for c in cases], [None] * len(cases))
 
 
 class PruneTests(unittest.TestCase):

@@ -190,6 +190,42 @@ def board(tasks):
             "cleared": newest(k for k, t in threads.items() if t["cleared"])}
 
 
+SHOW_TYPES = ("ad", "form")
+SHOW_PLACEMENTS = ("MOBILE_FEED_STANDARD", "INSTAGRAM_REELS", "INSTAGRAM_STORY")
+PLACEMENT_WORDS = {"feed": "MOBILE_FEED_STANDARD", "reels": "INSTAGRAM_REELS", "stories": "INSTAGRAM_STORY", "story": "INSTAGRAM_STORY"}
+MAX_SHOWS = 6
+
+
+def clean_show(raw):
+    """({type, id, caption, placement}, None) for something an answer shows large (`desk show`), or (None, why).
+    The id is Meta's digits only; whether it belongs to this account is the caller's check."""
+    raw = raw if isinstance(raw, dict) else {}
+    kind = str(raw.get("type") or "")
+    ident = str(raw.get("id") or "").strip()
+    if kind not in SHOW_TYPES:
+        return None, "Show an ad or a lead form (--ad ID or --form ID)"
+    if not ident.isdigit() or len(ident) > 32:
+        return None, "That id isn't one of Meta's (digits only)"
+    place = str(raw.get("placement") or "").strip()
+    place = PLACEMENT_WORDS.get(place.lower(), place)
+    if place and (kind != "ad" or place not in SHOW_PLACEMENTS):
+        return None, "A placement is feed, reels or stories, and only for an ad"
+    return {"type": kind, "id": ident, "caption": str(raw.get("caption") or "").strip()[:300] or None, "placement": place or None}, None
+
+
+def add_show(shows, show):
+    """(the answer's list with `show` in it, None), or (None, why). Showing the same thing again replaces it."""
+    kept = [s for s in shows or [] if (s.get("type"), s.get("id")) != (show["type"], show["id"])]
+    if len(kept) >= MAX_SHOWS:
+        return None, f"An answer shows at most {MAX_SHOWS} ads or forms large; name the others in the report"
+    return kept + [show], None
+
+
+def file_note(files):
+    """The files a person sent with a message, as the follow-up's transcript names them."""
+    return [{"id": f["id"], "name": f["name"], "kind": f["kind"]} for f in files or []]
+
+
 SUGGESTION_FIELDS = ("id", "kind", "title", "status", "rationale", "entity_name", "field", "current_value", "proposed_value", "payload", "failure")
 
 
@@ -197,6 +233,7 @@ def transcript(turns, limit=6, body=6000):
     """The conversation so far for a follow-up run: what was asked, said and decided, oldest first."""
     cut = lambda text: text if len(text) <= body else text[:body] + "…"  # noqa: E731
     return [{"id": t["id"], "kind": t["kind"], "you": t["prompt"], "status": t["status"], "claude": t.get("summary"), "error": t.get("error"),
+             "files": file_note(t.get("files")),
              "reports": [{"title": r["title"], "body": cut(r["body"])} for r in t["reports"]],
              "suggestions": [{k: p.get(k) for k in SUGGESTION_FIELDS} for p in t["proposals"]]} for t in turns[-limit:]]
 

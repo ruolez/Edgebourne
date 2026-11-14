@@ -232,6 +232,8 @@ def prune():
         # FU-D: Claude's previews keep their row ("Preview removed after 30 days"); only the bytes go.
         db.execute("""UPDATE desk_attachments SET body = NULL, pruned_at = now()
                       WHERE body IS NOT NULL AND created_at < now() - interval '30 days'""")
+        # A file added to a message that was never sent belongs to nothing: the whole row goes after a day.
+        db.execute("DELETE FROM desk_attachments WHERE task_id IS NULL AND created_at < now() - interval '1 day'")
 
 
 def start():

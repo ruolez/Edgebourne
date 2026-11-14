@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { boot, confirmDialog, esc, fieldErrors, icon, toast, when, errorState, guardLeaving, markSaved, withFrom } from "./ui.js";
 import { count } from "./format.js";
+import { formScreens } from "./formsketch.js";
 
 const $ = (id) => document.getElementById(id);
 let meta = { standard: {}, limits: {}, max_custom: 3, max_options: 6, privacy_default: "" };
@@ -15,7 +16,6 @@ const touched = new Set();
 const linkedForm = () => { const m = location.hash.match(/form=([^&]+)/); return m ? decodeURIComponent(m[1]) : null; };
 
 const EXTRA = ["COMPANY_NAME", "JOB_TITLE", "CITY", "ZIP"];
-const SAMPLE = { FULL_NAME: "Maria Lopez", EMAIL: "maria@example.com", PHONE: "(555) 123-4567", COMPANY_NAME: "Lopez Plumbing", JOB_TITLE: "Owner", CITY: "Fontana", ZIP: "92335" };
 const blank = () => ({
   name: "", intro_title: "", intro_bullets: [], standard: [], custom: [], higher_intent: false,
   privacy_url: meta.privacy_default, thanks_title: "Thanks, you're all set", thanks_body: "",
@@ -122,19 +122,8 @@ function readSpec() {
 }
 
 function phone() {
-  const s = spec;
-  const biz = me.account.name;
-  const head = `<div class="ph-brand"><span class="ph-logo">${esc(biz.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase())}</span><b>${esc(biz)}</b></div>`;
-  const btn = (t) => `<span class="ph-btn">${esc(t)}</span>`;
-  const screens = {
-    intro: `${head}<h4>${esc(s.intro_title || "Your headline")}</h4>${s.intro_bullets.length ? `<ul>${s.intro_bullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}${btn("Continue")}`,
-    questions: `${head}<p class="ph-sub">Contact information</p>${["FULL_NAME", "EMAIL", "PHONE", ...s.standard].map((t) => `<label class="ph-field"><small>${esc(meta.standard[t] || t)}</small><span>${esc(SAMPLE[t] || "")}</span></label>`).join("")}
-      ${s.custom.map((q) => `<p class="ph-q">${esc(q.label || "Your question")}</p>${q.options.length ? q.options.map((o) => `<span class="ph-opt">${esc(o)}</span>`).join("") : '<span class="ph-field"><span class="muted">Type your answer</span></span>'}`).join("")}
-      <p class="ph-legal">By clicking Submit, you agree to send your info to ${esc(biz)}, who agrees to use it according to their <u>privacy policy</u>.</p>${btn(s.higher_intent ? "Next" : "Submit")}`,
-    review: `${head}<h4>Review your info</h4><p class="ph-sub">Make sure everything is correct before you submit.</p>${["FULL_NAME", "EMAIL", "PHONE"].map((t) => `<p class="ph-review"><small>${esc(meta.standard[t] || t)}</small>${esc(SAMPLE[t])}</p>`).join("")}${btn("Submit")}`,
-    thanks: `${head}<div class="ph-done">✓</div><h4>${esc(s.thanks_title || "Thanks, you're all set")}</h4>${s.thanks_body ? `<p>${esc(s.thanks_body)}</p>` : ""}${s.thanks_button === "website" ? btn(s.thanks_button_text || "Visit our website") : ""}`,
-  };
-  if (!screens[step] || (step === "review" && !s.higher_intent)) step = "intro";
+  const screens = formScreens(spec, me.account.name, meta.standard);
+  if (!screens[step] || (step === "review" && !spec.higher_intent)) step = "intro";
   $("phone").innerHTML = screens[step];
   document.querySelectorAll("#steps [data-show-step]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.showStep === step)));
 }

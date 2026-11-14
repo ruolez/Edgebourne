@@ -286,10 +286,14 @@ class TranscriptTest(unittest.TestCase):
              "field": "budget", "current_value": "$20/day", "proposed_value": "$24/day", "payload": None, "failure": "Meta said no", "secret": "x"}
         out = desk_view.transcript([self.turn(1, reports=[{"title": "R", "body": "text", "id": 3}], proposals=[p])])
         self.assertEqual(out, [{"id": 1, "kind": "review", "you": "ask 1", "status": "done", "claude": "said 1", "error": None,
-                                "reports": [{"title": "R", "body": "text"}],
+                                "files": [], "reports": [{"title": "R", "body": "text"}],
                                 "suggestions": [{"id": 7, "kind": "budget", "title": "Raise", "status": "declined", "rationale": "cheap",
                                                  "entity_name": "C", "field": "budget", "current_value": "$20/day",
                                                  "proposed_value": "$24/day", "payload": None, "failure": "Meta said no"}]}])
+
+    def test_the_files_sent_with_a_message_are_named_never_carried(self):
+        sent = [{"id": 31, "name": "clip.mov", "kind": "video", "task_id": 1, "width": 1080, "next": None, "pruned": False}]
+        self.assertEqual(desk_view.transcript([self.turn(1, files=sent)])[0]["files"], [{"id": 31, "name": "clip.mov", "kind": "video"}])
 
     def test_long_reports_are_cut_and_only_recent_turns_kept(self):
         turns = [self.turn(i, reports=[{"title": "R", "body": "x" * 9000}]) for i in range(1, 9)]
@@ -521,3 +525,30 @@ class SpendLimitReviewTest(unittest.TestCase):
         items = desk_view.review([(proposal(1, 9, title="A", kind="spend_limit", entity_id="act_1"), self.PLAN),
                                   (proposal(2, 9, title="B", kind="spend_limit", entity_id="act_1"), {**self.PLAN, "to": 30000})])
         self.assertEqual([i["conflict"] for i in items], ["spend_limit:act_1", "spend_limit:act_1"])
+
+
+class ShowTests(unittest.TestCase):
+    """`desk show`: an ad or a lead form shown large in an answer. Only Meta's digits pass as an id; whether the thing
+    belongs to the account is checked by the route against the account's own rows."""
+
+    def test_an_ad_with_a_placement_in_plain_words_and_a_form(self):
+        ad = desk_view.clean_show({"type": "ad", "id": " 120252672229400312 ", "placement": "Reels", "caption": "  The one that runs  "})
+        form = desk_view.clean_show({"type": "form", "id": 1132280359202136})
+        self.assertEqual((ad, form), (({"type": "ad", "id": "120252672229400312", "caption": "The one that runs", "placement": "INSTAGRAM_REELS"}, None),
+                                      ({"type": "form", "id": "1132280359202136", "caption": None, "placement": None}, None)))
+
+    def test_anything_else_is_refused_with_a_reason(self):
+        cases = [{"type": "campaign", "id": "1"}, {"type": "ad", "id": "act_1"}, {"type": "ad", "id": "1 OR 1=1"}, {"type": "ad", "id": "../x"},
+                 {"type": "ad", "id": "1" * 33}, {"type": "form", "id": "5", "placement": "feed"}, {"type": "ad", "id": "5", "placement": "RIGHT_COLUMN"},
+                 None, "ad", {"id": "5"}]
+        results = [desk_view.clean_show(c) for c in cases]
+        self.assertEqual([(show, bool(why)) for show, why in results], [(None, True)] * len(cases))
+
+    def test_showing_the_same_thing_again_replaces_it_and_an_answer_holds_six(self):
+        show = lambda i, caption=None: {"type": "ad", "id": str(i), "caption": caption, "placement": None}  # noqa: E731
+        five = [show(i) for i in range(5)]
+        again, _ = desk_view.add_show(five, show(2, "now with words"))
+        sixth, _ = desk_view.add_show(five, show(9))
+        seventh, why = desk_view.add_show(sixth, show(10))
+        self.assertEqual(([s["id"] for s in again], again[-1]["caption"], len(sixth), seventh, bool(why)),
+                         (["0", "1", "3", "4", "2"], "now with words", 6, None, True))

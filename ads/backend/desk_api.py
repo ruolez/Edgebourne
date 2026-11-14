@@ -51,7 +51,7 @@ WAIT_MAX = 25
 TASK_COLS = """t.id, t.kind, t.prompt, t.campaign_id, c.name AS campaign_name, t.status, t.progress,
                t.summary, t.error, t.created_at, t.claimed_at, t.finished_at, t.updated_at,
                u.name AS created_by_name, t.options, t.scorecard, t.archived_at, t.seen_at, t.queue_rank,
-               t.thread_id, t.steps, t.swipe_ids, t.mentions, t.access, t.access_note"""
+               t.thread_id, t.steps, t.swipe_ids, t.mentions, t.access, t.access_note, t.shows"""
 TASK_FROM = "desk_tasks t LEFT JOIN campaigns c ON c.id = t.campaign_id LEFT JOIN users u ON u.id = t.created_by"
 
 
@@ -69,6 +69,8 @@ def bridge_status():
         "online": online,
         "can_stop": not online or version_tuple(settings_store.get("bridge_version") or "0") >= STOP_BRIDGE,
         "can_reply": not online or version_tuple(settings_store.get("bridge_version") or "0") >= REPLY_BRIDGE,
+        # From 3.2 the helper fetches the files sent with a message and can show pages, ads and lead forms.
+        "can_show": not online or version_tuple(settings_store.get("bridge_version") or "0") >= MEDIA_BRIDGE,
         "host": settings_store.get("bridge_host"),
         "version": settings_store.get("bridge_version"),
         "outdated": bridge_outdated(),
@@ -80,6 +82,7 @@ def bridge_status():
 
 STOP_BRIDGE = (1, 8)  # desk 1.8 ends the Claude run when its request is stopped here
 REPLY_BRIDGE = (1, 9)  # desk 1.9 continues the Claude session of the turn being replied to
+MEDIA_BRIDGE = (3, 2)  # desk 3.2 fetches a message's files (`desk fetch`) and shows pages, ads and forms (`desk show`)
 MIN_BRIDGE = (1, 6)  # desk 1.6 names the task's account; older ones answer every account as account 1
 SIGN_IN_TROUBLE = re.compile(r"(invalid api key|oauth token (has )?expired|authentication_error|please run /login|"
                              r"setup-token|not logged in|401 unauthorized|credit balance)", re.I)
@@ -167,8 +170,9 @@ def tasks_with_results(where="TRUE", params=(), limit=50):
     checks = change_checks_db.proposal_checks(proposals)
     for p in proposals:
         p["check"] = checks.get(p["id"])
-    # FU-D: the previews Claude attached (never their bytes; GET /api/desk/attachments/<id> serves those).
-    previews = db.query("""SELECT id, task_id, kind, name, caption, width, height, duration_ms, body IS NULL AS pruned, meta_ref
+    # FU-D: what Claude attached (`attachments`) and what the person sent with the message (`files`); never their
+    # bytes (GET /api/desk/attachments/<id> serves those).
+    previews = db.query("""SELECT id, task_id, kind, name, caption, width, height, duration_ms, body IS NULL AS pruned, meta_ref, source
                            FROM desk_attachments WHERE task_id = ANY(%s) ORDER BY id""", (ids,))
     for a in previews:
         ref = a.pop("meta_ref")
@@ -177,7 +181,8 @@ def tasks_with_results(where="TRUE", params=(), limit=50):
     for t in tasks:
         t["reports"] = [r for r in reports if r["task_id"] == t["id"]]
         t["proposals"] = [p for p in proposals if p["task_id"] == t["id"]]
-        t["attachments"] = [a for a in previews if a["task_id"] == t["id"]]
+        t["attachments"] = [a for a in previews if a["task_id"] == t["id"] and a["source"] != "user"]
+        t["files"] = [a for a in previews if a["task_id"] == t["id"] and a["source"] == "user"]
     return tasks
 
 
@@ -196,6 +201,7 @@ def desk_story(tasks):
     for t in tasks:
         if (t.get("options") or {}).get("ad_id"):
             ad_ids.add(t["options"]["ad_id"])
+        ad_ids.update(s["id"] for s in t.get("shows") or [] if s.get("type") == "ad")
         for p in t["proposals"]:
             p["about_ad"] = desk_view.proposal_ad(p, t)
             if p["about_ad"]:
@@ -307,10 +313,14 @@ def create_task():
     origin = ORIGINS.get(data.get("origin"))
     options = {origin: True} if origin else {}
     user = current_user()
+    files, refused = files_for(data, user)
+    if refused:
+        return refused
     task = db.execute(
         "INSERT INTO desk_tasks (kind, prompt, campaign_id, created_by, options, full_session) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
         (kind, prompt, campaign_id, user["id"], json.dumps(options), full_session_for(user, kind, options)), returning=True,
     )
+    tie_files(task["id"], files, user)
     log_activity("desk.task_created", subject=str(task["id"]), details={"kind": kind})
     return jsonify(tasks_with_results("t.id = %s", [task["id"]], 1)[0]), 201
 
@@ -409,7 +419,31 @@ def clean_reply(data):
     """A reply's body: the words, what it is about (a suggestion, or a preview for "Change it", FU-D) and Stop first.
     Anything else (an `access`, `full` or `options` field) is dropped: who may get full access is the server's call."""
     return {"prompt": str(data.get("prompt") or "").strip(), "about_proposal": _whole(data.get("about_proposal")),
-            "about_attachment": _whole(data.get("about_attachment")), "stop_first": bool(data.get("stop_first"))}
+            "about_attachment": _whole(data.get("about_attachment")), "stop_first": bool(data.get("stop_first")),
+            "files": data.get("files")}
+
+
+def files_for(data, user):
+    """(ids, None) for the files sent with a message, or (None, a refusal): each one uploaded by this person on the
+    Claude page (POST /api/desk/uploads) and not sent with another message yet."""
+    import attachments as att
+    ids = att.clean_file_ids(data.get("files"))
+    if ids is None:
+        return None, api_error(f"A message takes up to {att.MAX_FILES} files", 400, field="files")
+    if ids:
+        n = db.query("""SELECT COUNT(*) AS n FROM desk_attachments
+                        WHERE id = ANY(%s) AND task_id IS NULL AND source = 'user' AND created_by = %s AND body IS NOT NULL""",
+                     (ids, user["id"]), one=True)["n"]
+        if n != len(ids):
+            return None, api_error("One of the files isn't there any more. Add it again.", 409, field="files")
+    return ids, None
+
+
+def tie_files(task_id, ids, user):
+    """The files now belong to the message they were sent with."""
+    if ids:
+        db.execute("""UPDATE desk_attachments SET task_id = %s
+                      WHERE id = ANY(%s) AND task_id IS NULL AND source = 'user' AND created_by = %s""", (task_id, ids, user["id"]))
 
 
 @bp.post("/tasks/<int:task_id>/reply")
@@ -427,6 +461,10 @@ def reply(task_id):
     if not anchor:
         return api_error("That conversation doesn't exist", 404)
     root = anchor["root"]
+    user = current_user()
+    files, refused = files_for(data, user)  # before anything below changes a suggestion or stops a run
+    if refused:
+        return refused
     last = db.query(f"SELECT id, kind, campaign_id, status, options FROM desk_tasks WHERE {THREAD_SQL} = %s ORDER BY id DESC LIMIT 1",
                     (root,), one=True)
     if last["status"] in ("claimed", "running") and data.get("stop_first"):
@@ -452,9 +490,9 @@ def reply(task_id):
         if not sent:
             return api_error("That suggestion was already decided", 409)
         options["about"] = {"id": sent["id"], "title": sent["title"]}
-    user = current_user()
     task_id_new = queue_reply(root, last["kind"], last["campaign_id"], prompt, options, user["id"],
                               full_session_for(user, last["kind"], options))
+    tie_files(task_id_new, files, user)
     task = {"id": task_id_new}
     log_activity("desk.task_created", subject=str(task["id"]), details={"kind": last["kind"], "reply_to": root})
     return jsonify(tasks_with_results("t.id = %s", [task["id"]], 1)[0]), 201
@@ -792,6 +830,8 @@ def claim_skip(version):
     passes (before 2.0) runs only what the owners wrote: its runs read every file and the web."""
     return (("" if version >= ADVICE_BRIDGE else " AND kind <> 'advice'")
             + ("" if version >= REPLY_BRIDGE else " AND options->>'reply' IS NULL")
+            # A message with files waits for a helper that can fetch them: an older one would answer without them.
+            + ("" if version >= MEDIA_BRIDGE else " AND NOT EXISTS (SELECT 1 FROM desk_attachments a WHERE a.task_id = q.id AND a.source = 'user')")
             + ("" if version >= CLAIM_BRIDGE else f" AND NOT EXISTS ({NOT_OWNER_TURN.format(root='COALESCE(q.thread_id, q.id)')})"))
 
 
@@ -1358,14 +1398,21 @@ def add_attachment(task_id):
     if not _open_task(task_id):
         return api_error("This task isn't open any more", 409)
     data = f.stream.read(att.MAX_BYTES["video"] + 1)
-    mime = att.sniff(data[:att.HEAD])
-    if not mime:
-        return api_error(att.REFUSED, 400)
+    if (request.form.get("kind") or "") == "page":
+        # A page is taken only when the Mac says it is one (`desk attach` of an .html file): never guessed from bytes.
+        problem = att.page_problem(data)
+        if problem:
+            return api_error(problem, 400)
+        mime = "text/html"
+    else:
+        mime = att.sniff(data[:att.HEAD])
+        if mime not in att.CLAUDE_MIMES:
+            return api_error(att.REFUSED, 400)
     kind = att.MIMES[mime]
     too = att.too_big(kind, len(data))
     if too:
         return api_error(too, 400)
-    if db.query("SELECT COUNT(*) AS n FROM desk_attachments WHERE task_id = %s", (task_id,), one=True)["n"] >= att.MAX_PER_TASK:
+    if db.query("SELECT COUNT(*) AS n FROM desk_attachments WHERE task_id = %s AND source = 'claude'", (task_id,), one=True)["n"] >= att.MAX_PER_TASK:
         return api_error(f"An answer can show at most {att.MAX_PER_TASK} previews", 400)
     name = os.path.basename(f.filename or "")[:120] or f"preview.{mime.split('/')[1]}"
     caption = (request.form.get("caption") or "").strip()[:300] or None
@@ -1383,21 +1430,77 @@ def add_attachment(task_id):
     return jsonify({"id": row["id"], "kind": kind, "mime": mime, **size}), 201
 
 
+@agent_bp.get("/tasks/<int:task_id>/files")
+@agent_required
+def task_files(task_id):
+    """`desk fetch`: the files the person sent in this conversation (this message's and the earlier ones'), newest
+    message first. Only their names here; each one's bytes come from the route below."""
+    root = db.query(f"SELECT {THREAD_SQL} AS root FROM desk_tasks WHERE id = %s", (task_id,), one=True)
+    if not root:
+        return api_error("Task not found", 404)
+    rows = db.query(f"""SELECT a.id, a.task_id, a.kind, a.mime, a.name, a.size_bytes, a.body IS NULL AS pruned
+                        FROM desk_attachments a JOIN desk_tasks t ON t.id = a.task_id
+                        WHERE a.source = 'user' AND COALESCE(t.thread_id, t.id) = %s AND a.task_id <= %s
+                        ORDER BY a.task_id DESC, a.id""", (root["root"], task_id))
+    return jsonify({"files": rows})
+
+
+@agent_bp.get("/tasks/<int:task_id>/files/<int:att_id>")
+@agent_required
+def task_file(task_id, att_id):
+    """One of this conversation's files, for the run that works on it (its pass covers only its own request)."""
+    row = db.query(f"""SELECT a.id, a.mime, a.name, a.sha256, a.body FROM desk_attachments a JOIN desk_tasks t ON t.id = a.task_id
+                       WHERE a.id = %s AND a.source = 'user'
+                         AND COALESCE(t.thread_id, t.id) = (SELECT {THREAD_SQL} FROM desk_tasks WHERE id = %s)""", (att_id, task_id), one=True)
+    if not row:
+        return api_error("That file isn't in this conversation", 404)
+    if row["body"] is None:
+        return api_error("That file was removed after 30 days. Ask for it again.", 410)
+    return _file_response(row)
+
+
+@agent_bp.post("/tasks/<int:task_id>/shows")
+@agent_required
+def add_show(task_id):
+    """`desk show`: something already in the account shown large in this answer: an ad as Meta shows it, or a lead
+    form. Only what belongs to the request's account (the ad is in its synced ads, the form on its Page); nothing is
+    copied here, the Claude page reads it when it draws the answer."""
+    show, why = desk_view.clean_show(request.get_json(silent=True) or {})
+    if why:
+        return api_error(why, 400)
+    task = db.query("SELECT shows FROM desk_tasks WHERE id = %s AND status IN ('claimed', 'running')", (task_id,), one=True)
+    if not task:
+        return api_error("This task isn't open any more", 409)
+    if show["type"] == "ad":
+        ad = db.query("SELECT name FROM ads WHERE id = %s AND effective_status <> 'DELETED'", (show["id"],), one=True)
+        if not ad:
+            return api_error("No ad with that id in this account (use the id from desk snapshot)", 404)
+        show["name"] = ad["name"]
+    else:
+        import forms_api
+        import meta_client
+        try:
+            form = next((f for f in forms_api.page_forms() if str(f["id"]) == show["id"]), None)
+        except meta_client.MetaError as exc:
+            return api_error(f"Meta didn't list the Page's lead forms: {exc}", 502)
+        if not form:
+            return api_error("No lead form with that id on this account's Page", 404)
+        show["name"] = form.get("name")
+    shows, why = desk_view.add_show(task["shows"], show)
+    if why:
+        return api_error(why, 400)
+    db.execute("UPDATE desk_tasks SET shows = %s, updated_at = now() WHERE id = %s", (json.dumps(shows), task_id))
+    return jsonify({"shows": shows}), 201
+
+
 def _attachment(att_id):
-    return db.query("""SELECT id, task_id, kind, mime, name, sha256, size_bytes, body, meta_ref, drafted_at
+    return db.query("""SELECT id, task_id, kind, mime, name, sha256, size_bytes, body, meta_ref, drafted_at, source, created_by
                        FROM desk_attachments WHERE id = %s""", (att_id,), one=True)
 
 
-@bp.get("/attachments/<int:att_id>")
-@admin_required
-def attachment_file(att_id):
-    """The preview's bytes, same origin (the CSP holds), typed from the row, with Range requests (Safari's video)."""
+def _file_response(row):
+    """A picture's or video's bytes, typed from the row, with Range requests (Safari's video)."""
     from flask import Response
-    row = _attachment(att_id)
-    if not row:
-        return api_error("That preview doesn't exist", 404)
-    if row["body"] is None:
-        return api_error("Preview removed after 30 days", 410)
     body = bytes(row["body"])
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", row["name"])[:80] or "preview"
     resp = Response(body, mimetype=row["mime"])
@@ -1406,6 +1509,88 @@ def attachment_file(att_id):
     resp.keep_cache = True  # app.no_cache leaves this one cacheable
     resp.set_etag(row["sha256"])
     return resp.make_conditional(request, accept_ranges=True, complete_length=len(body))
+
+
+@bp.get("/attachments/<int:att_id>")
+@admin_required
+def attachment_file(att_id):
+    """A picture's or video's bytes, same origin (the CSP holds). A page is never served from here: as HTML on the
+    console's own origin it could act as the person looking at it (attachment_page serves it with scripts off)."""
+    row = _attachment(att_id)
+    if not row or row["mime"] == "text/html":
+        return api_error("That preview doesn't exist", 404)
+    if row["body"] is None:
+        return api_error("Preview removed after 30 days", 410)
+    return _file_response(row)
+
+
+@bp.get("/attachments/<int:att_id>/page")
+@admin_required
+def attachment_page(att_id):
+    """A page Claude built, for the frame in its answer. The policy on the answer (attachments.PAGE_CSP) gives the page no
+    origin, scripts, requests or forms, wherever it is opened; nginx sends this one path without the console's own
+    frame rules so the Claude page may frame it."""
+    from flask import Response
+    import attachments as att
+    row = _attachment(att_id)
+    if not row or row["mime"] != "text/html":
+        return api_error("That page doesn't exist", 404)
+    if row["body"] is None:
+        return api_error("Preview removed after 30 days", 410)
+    resp = Response(bytes(row["body"]), mimetype="text/html")
+    resp.headers["Content-Security-Policy"] = att.PAGE_CSP
+    resp.headers["Cache-Control"] = "private, max-age=3600"
+    resp.keep_cache = True
+    resp.set_etag(row["sha256"])
+    return resp.make_conditional(request)
+
+
+# ---------------------------------------------------------------- files a person sends with a message
+
+@bp.post("/uploads")
+@admin_required
+def add_upload():
+    """A picture or video being added to a message on the Claude page. Typed from its bytes and size-capped like
+    Claude's own previews; it belongs to no message until one is sent with its id (files_for), and is removed after a
+    day if none is."""
+    import os
+    import attachments as att
+    f = request.files.get("file")
+    if not f:
+        return api_error("Choose a file", 400)
+    data = f.stream.read(att.MAX_BYTES["video"] + 1)
+    mime = att.sniff(data[:att.HEAD])
+    if not mime:
+        return api_error("Claude takes JPG, PNG or WebP pictures and MP4 or MOV videos", 400)
+    kind = att.MIMES[mime]
+    if len(data) > att.MAX_BYTES[kind]:
+        return api_error(f"That {'video is too big (up to 60 MB)' if kind == 'video' else 'picture is too big (up to 10 MB)'}", 413)
+    user = current_user()
+    db.execute(f"DELETE FROM desk_attachments WHERE task_id IS NULL AND created_at < now() - interval '{att.UNSENT_HOURS} hours'")
+    waiting = db.query("SELECT COUNT(*) AS n FROM desk_attachments WHERE task_id IS NULL AND created_by = %s", (user["id"],), one=True)["n"]
+    if waiting >= att.MAX_FILES * 2:
+        return api_error("Send or remove the files you already added first", 409)
+    kept = db.query("SELECT id, size_bytes, created_at FROM desk_attachments WHERE body IS NOT NULL AND task_id IS NOT NULL")
+    drop = att.to_prune(kept, len(data))
+    if drop:
+        db.execute("UPDATE desk_attachments SET body = NULL, pruned_at = now() WHERE id = ANY(%s)", (drop,))
+    name = os.path.basename(f.filename or "")[:120] or f"file.{mime.split('/')[1]}"
+    size = att.measure(mime, data)
+    row = db.execute(
+        """INSERT INTO desk_attachments (task_id, kind, mime, name, size_bytes, sha256, width, height, duration_ms, body, source, created_by)
+           VALUES (NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'user', %s) RETURNING id""",
+        (kind, mime, name, len(data), hashlib.sha256(data).hexdigest(), size["width"], size["height"], size["duration_ms"], data, user["id"]),
+        returning=True)
+    return jsonify({"id": row["id"], "kind": kind, "name": name, **size}), 201
+
+
+@bp.delete("/uploads/<int:att_id>")
+@admin_required
+def remove_upload(att_id):
+    """Takes a file back out of a message that hasn't been sent (only the person who added it)."""
+    db.execute("DELETE FROM desk_attachments WHERE id = %s AND task_id IS NULL AND source = 'user' AND created_by = %s",
+               (att_id, current_user()["id"]))
+    return jsonify({"ok": True})
 
 
 @bp.post("/attachments/<int:att_id>/draft")

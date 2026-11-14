@@ -1,13 +1,16 @@
 import { api } from "./api.js";
-import { boot, confirmDialog, editing, esc, keepFocus, onRefresh, previewSkeleton, refreshClaudeNow, setCrumbs, setFullAccessDot, toast } from "./ui.js";
+import { boot, confirmDialog, editing, esc, icon, keepFocus, onRefresh, previewSkeleton, refreshClaudeNow, setCrumbs, setFullAccessDot, toast } from "./ui.js";
 import { clockZone } from "./format.js";
-import { sizeAttachments } from "./attach.js";
+import { sizeAttachments, threadMedia } from "./attach.js";
 import { ACTIVE, wireTaskActions } from "./tasks.js";
 import { adsView, fillPreview, index, loadPreviews } from "./board.js";
-import { clock, decideHtml, decideKey, headHtml, liveTurn, listHtml, queuedTurn, threadTitle, turnHtml, turnKey, turnTitle } from "./conversation.js";
+import { answerText, clock, decideHtml, decideKey, headHtml, liveTurn, listHtml, turnHtml, turnKey, turnTitle } from "./conversation.js";
 import { acceptSheet, declineMany } from "./decide.js";
 import { PLACEMENTS, openSwipe, openViewer } from "./viewer.js";
 import { schedulesView, wireSchedules } from "./schedules.js";
+import { openLightbox } from "./lightbox.js";
+import { loadShows, showClick } from "./shows.js";
+import { FILE_TYPES, fileBox } from "./filebox.js";
 
 const $ = (id) => document.getElementById(id);
 const SEEDS = {
@@ -31,6 +34,7 @@ let view = "chat";
 let selected = null;        // "new", "decide", a conversation id, or null for the default
 let wantedTask = null;      // a run named in the address, until the data arrives
 let wantedProposal = null;
+let wantsMac = false;       // the address asked for the Mac's details (#mac, from the status line on other pages)
 let about = null;           // the suggestion the reply is about
 let aboutPreview = null;    // FU-D: the preview "Change it" is about ({id, title})
 let full = null;            // FU-D: this sign-in's full access ({allowed, on, until, home}), only for the owner who may turn it on
@@ -42,10 +46,13 @@ let showCleared = false;
 let colFor = null;          // what #cv-col holds right now
 let decideShown = "";
 let undoTimer;
+let unseenBelow = false;    // something new arrived under what is on screen
 const turnKeys = new Map();
 const drafts = new Map();
 const openSecs = new Map();
+const openSteps = new Set();     // answers whose steps someone opened stay open across polls
 const phone = window.matchMedia("(max-width: 960px)");
+let files = null;                // the files being added to the message (filebox.js)
 
 const ago = (secs) => {
   if (secs == null) return "never";
@@ -81,11 +88,13 @@ const OFF_STATES = new Set(["offline", "not_set_up", "sign_in"]);
 const macStatus = () => (data && data.bridge.status) || { state: "idle", title: "", detail: "" };
 const macWait = () => { const m = macStatus(); return OFF_STATES.has(m.state) ? `${m.title}. ${m.detail}` : ""; };
 
+// The Mac behind this page: a small button by New conversation (its light says on or off), its details in a
+// dialog. Its status in words is on every page's sidebar; here it is repeated only where it explains a wait.
 function renderMac(bridge) {
   const m = bridge.status || macStatus();
   $("mac-led").className = `led ${m.state === "offline" || m.state === "not_set_up" ? "off" : m.state === "sign_in" ? "bad" : "on"}`;
   $("mac-summary").textContent = `${m.title}${m.state === "offline" && bridge.last_seen ? ` · last seen ${ago(bridge.last_seen)}` : ""}`;
-  $("mac-open").title = m.detail;
+  $("mac-open").title = `${m.title}${m.detail ? `. ${m.detail}` : ""}`;
   const keyBox = freshKey ? `
     <div class="note claude-note stack">
       <b>Your Mac key (shown only now)</b>
@@ -101,6 +110,7 @@ function renderMac(bridge) {
       ${bridge.link_words ? `<div><dt>Ads Manager link</dt><dd id="mac-link-words">${esc(bridge.link_words)} · <a href="settings.html#am-link">Settings</a></dd></div>` : ""}
     </dl>
     ${bridge.needs_update ? `<div class="note warn" id="mac-update"><b>Update the helper on your Mac</b> (version ${esc(bridge.version || "?")}). Until it's on 2.0, conversations from teammates and clients wait in line, and Claude works without the limits each conversation should have. Run the command below on the Mac.</div>` : ""}
+    ${!bridge.needs_update && bridge.can_show === false ? `<div class="note warn" id="mac-media"><b>Update the helper on your Mac</b> (version ${esc(bridge.version || "?")}). From 3.2 Claude can open the pictures and videos you send, and show pages, ads and lead forms in its answers. Until then a message with files waits in line. Run the command below on the Mac.</div>` : ""}
     ${keyBox}
     <div class="stack tight">
       <b>Set up or reinstall on your Mac</b>
@@ -137,6 +147,7 @@ function readHash() {
   wantedProposal = null;
   if (h === "ads" || h === "schedules") { view = h; return; }
   view = "chat";
+  if (h === "mac") { wantsMac = true; selected = phone.matches ? "list" : null; return; }
   const run = h.match(/^r\/(\d+)/);
   const prop = h.match(/^p\/(\d+)/);
   if (run) wantedTask = Number(run[1]);
@@ -178,9 +189,39 @@ function markSeen(th) {
   th.fresh = [];
 }
 
+// ---------------------------------------------------------------- where the conversation is scrolled to
+
+const fromBottom = () => { const box = $("cv-scroll"); return box.scrollHeight - box.scrollTop - box.clientHeight; };
+
 function scrollToEl(el) {
   const box = $("cv-scroll");
   box.scrollTop = Math.max(0, el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 16);
+}
+
+function scrollToEnd() {
+  const box = $("cv-scroll");
+  box.scrollTop = box.scrollHeight;
+}
+
+// "Latest" shows while the newest message is out of view below (reading an earlier part of the conversation),
+// and "New below" when something arrived under what is on screen.
+const lastTurn = () => $("cv-col").lastElementChild;
+function paintJump() {
+  const last = typeof colFor === "number" ? lastTurn() : null;
+  const below = Boolean(last) && last.getBoundingClientRect().top > $("cv-scroll").getBoundingClientRect().bottom - 48;
+  if (fromBottom() < 96) unseenBelow = false;
+  $("cv-jump").hidden = !below && !unseenBelow;
+  $("cv-jump").classList.toggle("has-new", unseenBelow);
+  $("cv-jump-text").textContent = unseenBelow ? "New below" : "Latest";
+}
+
+function jumpToLatest() {
+  const last = lastTurn();
+  if (!last) return;
+  const to = unseenBelow ? last.querySelector(".cv-claude") || last : last;
+  unseenBelow = false;
+  const box = $("cv-scroll");
+  box.scrollTo({ top: Math.max(0, to.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 16), behavior: "smooth" });
 }
 
 function flash(el) {
@@ -188,53 +229,56 @@ function flash(el) {
   setTimeout(() => el.classList.remove("flash"), 1600);
 }
 
+// Draws the turns that changed. Someone reading the end keeps reading it: live steps stay in view, and a
+// finished answer is brought to its first line. Someone scrolled up is left where they are and told.
 function syncTurns(th) {
   const col = $("cv-col");
   const opened = colFor !== th.id;
-  if (opened) { col.innerHTML = ""; turnKeys.clear(); colFor = th.id; }
+  const pinned = !opened && fromBottom() < 96;
+  if (opened) { col.innerHTML = ""; turnKeys.clear(); colFor = th.id; unseenBelow = false; }
   [...col.children].forEach((el) => { if (!th.turns.includes(Number(el.dataset.turn))) el.remove(); });
+  let changed = null;
   th.turns.forEach((id, i) => {
     const t = ix.tasks.get(id);
-    const key = turnKey(t, data);
+    const key = turnKey(t, th, data);
     const old = col.querySelector(`[data-turn="${id}"]`);
     if (old && turnKeys.get(id) === key) return;
     const el = document.createElement("div");
     el.className = "cv-turn";
     el.id = `turn-${id}`;
     el.dataset.turn = id;
-    el.innerHTML = turnHtml(t, th, data, ix, { openSecs });
+    el.dataset.status = t.status;
+    el.innerHTML = turnHtml(t, th, data, ix, { openSecs, openSteps });
     sizeAttachments(el);
     if (old) old.replaceWith(el); else col.insertBefore(el, col.children[i] || null);
     turnKeys.set(id, key);
     loadPreviews(el);
+    loadShows(el);
+    changed = { el, live: t.status === "claimed" || t.status === "running", was: old && old.dataset.status };
   });
+  if (!opened && changed) {
+    if (!pinned) unseenBelow = unseenBelow || changed.was !== changed.el.dataset.status;
+    else if (changed.live || changed.was === changed.el.dataset.status) scrollToEnd();
+    else scrollToEl(changed.el.querySelector(".cv-claude") || changed.el);
+  }
   return opened;
 }
 
-function renderDock(sel) {
-  const th = typeof sel === "number" ? data.board.threads[sel] : null;
-  const line = $("cv-line");
-  const form = $("ask-form");
-  const queued = th ? queuedTurn(th, ix) : null;
-  $("cv-dock").hidden = sel === "decide" || sel == null;
-  $("cv-seeds").hidden = sel !== "new";
-  $("campaign").hidden = sel !== "new";
-  line.hidden = !queued;
-  form.hidden = false;
-  if (queued) {
-    const pos = data.board.queue.indexOf(queued.id);
-    const mine = th.turns.filter((id) => ix.tasks.get(id).status === "queued").length;
-    line.innerHTML = `<span>${mine > 1 ? `${mine} messages waiting in this conversation.` : th.state === "working" ? "Your follow-up runs as soon as this finishes." : pos ? `${pos + 1}${["st", "nd", "rd"][pos] || "th"} in line. Starts when your Mac is free.` : macWait() || "Next in line."}</span>
-      ${pos > 0 ? `<button class="btn btn-small" type="button" data-next="${queued.id}">Run next</button>` : ""}
-      <button class="btn btn-small" type="button" data-cancel="${queued.id}">Cancel</button>`;
-  }
-  renderDockFoot(sel, th);
-}
+// ---------------------------------------------------------------- the reply box
 
 const stopButton = (th) => `<button class="btn btn-small cv-stop" type="button" data-stop="${th.id}"><span class="sq" aria-hidden="true"></span>Stop</button>`;
+const sendButton = (label, off) => `<button class="cv-send" type="submit" title="${label}" ${off ? "disabled" : ""}>${icon("send")}<span class="sr-only">${label}</span></button>`;
 
 // One send at a time: Enter again (or a key repeat) while it's on its way must not queue a second run.
 let sending = false;
+
+function renderDock(sel) {
+  const th = typeof sel === "number" ? data.board.threads[sel] : null;
+  $("cv-dock").hidden = sel === "decide" || sel == null;
+  $("cv-seeds").hidden = sel !== "new";
+  $("campaign").hidden = sel !== "new" || !data.campaigns.length;
+  renderDockFoot(sel, th);
+}
 
 function renderDockFoot(sel, th) {
   dockFoot(sel, th);
@@ -245,59 +289,70 @@ function refreshDockFoot() {
   if (data) renderDockFoot(current(), typeof current() === "number" ? data.board.threads[current()] : null);
 }
 
+// The box says only what changes what you'd do: why a message would wait, or what Stop means. Everything else
+// (that Claude remembers the conversation, that nothing changes without a yes) goes without saying.
 function dockFoot(sel, th) {
   const has = $("prompt").value.trim();
   const live = th && th.state === "working";
-  const hint = $("cv-hint");
   const btns = $("cv-btns");
+  const say = (text = "", warn = false) => { const h = $("cv-hint"); h.textContent = text; h.hidden = !text; h.classList.toggle("warn", warn); };
   $("prompt").placeholder = sel === "new" ? "Ask anything about your ads…" : about || aboutPreview ? "What should Claude change about this?" : live ? "Add something for Claude…" : "Reply to Claude…";
   $("cv-chip").hidden = !about && !aboutPreview;
   if (about) $("cv-chip").innerHTML = `<span>About: ${esc(about.title)}</span><button type="button" data-unchip aria-label="Remove">×</button>`;
   else if (aboutPreview) $("cv-chip").innerHTML = `<span>About this preview: ${esc(aboutPreview.title)}</span><button type="button" data-unchip aria-label="Remove">×</button>`;
+  // Files go up as they are added; the message waits for them, and needs words saying what to do with them.
+  const uploading = files && files.busy();
+  const wordless = files && files.count() && !has;
+  const blocked = !has || uploading;
+  const away = awayNote();
   if (live && stopSure === th.id) {
-    hint.textContent = "Stop Claude here? Nothing changes on your ads.";
+    say("Stop Claude here? Nothing changes on your ads.");
     btns.innerHTML = `<button class="btn btn-small btn-quiet" type="button" data-keep>Keep going</button><button class="btn btn-small btn-danger" type="button" data-stop="${th.id}">Stop it</button>`;
     return;
   }
   if (live) {
-    const t = liveTurn(th, ix);
     if (has) {
-      hint.textContent = "Claude is still working.";
-      btns.innerHTML = `${data.bridge.can_stop ? '<button class="btn btn-small" type="button" data-stop-send>Stop and send</button>' : ""}<button class="btn btn-small btn-claude" type="submit">Send when it’s done</button>`;
+      say(uploading ? "Adding your files…" : "Claude is still working.");
+      btns.innerHTML = `${data.bridge.can_stop ? `<button class="btn btn-small" type="button" data-stop-send ${uploading ? "disabled" : ""}>Stop and send</button>` : ""}<button class="btn btn-small btn-claude" type="submit" ${uploading ? "disabled" : ""}>Send when it’s done</button>`;
     } else {
-      hint.innerHTML = `Working · <time data-since="${new Date(t.claimed_at || t.created_at).getTime()}"></time>`;
+      say(wordless ? "Say what Claude should do with it." : "");
       btns.innerHTML = data.bridge.can_stop ? stopButton(th) : "";
-      tick();
     }
     return;
   }
+  // Why a message would wait is said once on the screen: by the line in the list when something already waits
+  // there (wide screens show it beside this box), else here.
+  const lineShown = !phone.matches && (data.board.working.length || data.board.queue.length);
+  const off = lineShown ? "" : macWait();
+  const words = uploading ? "Adding your files…" : wordless ? "Say what Claude should do with it." : "";
   if (sel === "new") {
-    hint.textContent = macWait() || "It never changes anything without your yes.";
-    btns.innerHTML = `<button class="btn btn-small" type="button" data-add-line ${has ? "" : "disabled"}>Add to line</button><button class="btn btn-small btn-claude" type="submit" ${has ? "" : "disabled"}>Send</button>`;
+    // "Add to line" keeps you here to write the next one: worth a button only while something is ahead of it.
+    const lined = data.board.working.length || data.board.queue.length || macWait();
+    say(words || [off, away].filter(Boolean).join(" "), Boolean(!words && off));
+    btns.innerHTML = `${lined && has ? `<button class="btn btn-small" type="button" data-add-line ${blocked ? "disabled" : ""}>Add to line</button>` : ""}${sendButton("Send", blocked)}`;
     return;
   }
   if (th && th.state === "queued") {
-    hint.textContent = "Waiting in line. You can add more.";
-    btns.innerHTML = `<button class="btn btn-small btn-claude" type="submit" ${has ? "" : "disabled"}>Add to line</button>`;
+    say(words || off, Boolean(!words && off));
+    btns.innerHTML = sendButton("Add to line", blocked);
     return;
   }
-  hint.textContent = sel === "new"
-    ? (macWait() || "It never changes anything without your yes.")
-    : !data.bridge.can_reply ? "Your Mac helper needs an update before Claude can pick this up." : macWait() || "Claude remembers this conversation.";
-  btns.innerHTML = `<button class="btn btn-small btn-claude" type="submit" ${has ? "" : "disabled"}>Send</button>`;
+  const old = !data.bridge.can_reply ? "Your Mac helper needs an update before Claude can pick this up." : "";
+  say(words || old || [off, away].filter(Boolean).join(" "), Boolean(!words && (old || off)));
+  btns.innerHTML = sendButton("Send", blocked);
 }
 
 function renderConv(sel) {
   $("cv").dataset.state = sel === "new" ? "new" : sel === "decide" ? "decide" : sel == null ? "none" : "thread";
   $("convs").dataset.mode = sel == null ? "list" : "conv";
   document.body.classList.toggle("in-conv", sel != null);
-  if (sel == null) { colFor = null; return; }
+  if (sel == null) { colFor = null; paintJump(); return; }
   $("cv-head").innerHTML = headHtml(sel, data, ix);
   const col = $("cv-col");
   if (sel === "new") {
     if (colFor !== "new") {
       colFor = "new";
-      col.innerHTML = '<div class="cv-intro"><h2>What should Claude look at?</h2><p>It reads your ads, results and lead stages, and answers here.</p></div>';
+      col.innerHTML = '<div class="cv-intro"><h2>What should Claude look at?</h2><p>It reads your ads, results and lead stages and answers here. Nothing changes on Meta without your yes.</p></div>';
       $("cv-scroll").scrollTop = 0;
     }
   } else if (sel === "decide") {
@@ -328,6 +383,7 @@ function renderConv(sel) {
   }
   if (wantedProposal && ix.taskOf.has(wantedProposal)) wantedProposal = null;
   if (wantedTask && ix.tasks.has(wantedTask)) wantedTask = null;
+  paintJump();
 }
 
 let shownView = null;
@@ -336,6 +392,8 @@ const VIEW_HEADS = {
   schedules: ["Schedules", "Regular reviews, on the days and times you pick."],
 };
 
+// Claude's three views. Phones show them as pills under the top bar; wide screens put them in the top line
+// itself, in place of the last breadcrumb, so there is one bar above the page instead of two.
 function renderSubnav() {
   const nav = document.querySelector(".subnav");
   if (!nav) return;
@@ -349,6 +407,10 @@ function renderSubnav() {
   nav.querySelectorAll("[data-sub]").forEach((a) => {
     if (a.dataset.sub === view) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
+  const line = document.querySelector(".topline");
+  const after = phone.matches ? line : line && line.querySelector(".crumbs");
+  if (after && nav.previousElementSibling !== after) after.after(nav);
+  document.body.toggleAttribute("data-claude-views", !phone.matches);
 }
 
 function renderList(sel) {
@@ -381,6 +443,9 @@ function drawView() {
     renderConv(sel);
     renderList(sel);
     tick();
+    // The status line on other pages links here as #mac while the Mac can't work; the address then goes back to
+    // the list, so the same link opens the details again.
+    if (wantsMac) { wantsMac = false; history.replaceState(null, "", "#list"); if (!$("mac-dialog").open) $("mac-dialog").showModal(); }
     return;
   }
   document.body.classList.remove("in-conv");
@@ -477,19 +542,33 @@ function previewProposal(id, compare) {
   openViewer({ title: p.title, panes: compare ? [now, proposed] : [proposed], format: reels ? "INSTAGRAM_REELS" : PLACEMENTS[0][0], placements: reels ? [["INSTAGRAM_REELS", "Reels"]] : PLACEMENTS });
 }
 
+// Your message shows the moment you send it; the server's copy takes its place when it answers.
+function showSending(prompt) {
+  const ghost = document.createElement("div");
+  ghost.className = "cv-turn cv-pending";
+  ghost.dataset.turn = "sending";
+  ghost.innerHTML = `<div class="cv-you"><p class="cv-said">${esc(prompt)}</p></div><p class="cv-wait"><span>Sending…</span></p>`;
+  $("cv-col").append(ghost);
+  scrollToEnd();
+  return ghost;
+}
+
 async function send({ stopFirst = false, stay = false } = {}) {
   if (sending) return;
   const prompt = $("prompt").value.trim();
-  if (!prompt) { $("prompt").focus(); return; }
+  if (!prompt || (files && files.busy())) { $("prompt").focus(); return; }
   const sel = current();
+  const sent = files ? files.ids() : [];
+  let ghost = null;
   sending = true;
   $("cv-btns").querySelectorAll("button").forEach((b) => { b.disabled = true; });
   try {
     if (sel === "new") {
       // Words that came in a link (Tests' "Make more like this" quotes a name an admin wrote) never run with full access.
-      const t = await api("/api/desk/tasks", { method: "POST", body: { kind, prompt, campaign_id: $("campaign").value, origin: prefilled ? "prefill" : undefined } });
+      const t = await api("/api/desk/tasks", { method: "POST", body: { kind, prompt, campaign_id: $("campaign").value, origin: prefilled ? "prefill" : undefined, files: sent.length ? sent : undefined } });
       prefilled = false;
       $("prompt").value = "";
+      if (files) files.take();
       drafts.delete("new");
       kind = "question";
       fitPrompt();
@@ -508,24 +587,50 @@ async function send({ stopFirst = false, stay = false } = {}) {
     }
     const th = data.board.threads[sel];
     const lastTurn = th.turns.at(-1);
-    await api(`/api/desk/tasks/${lastTurn}/reply`, { method: "POST", body: { prompt, about_proposal: about ? about.id : undefined, about_attachment: aboutPreview ? aboutPreview.id : undefined, stop_first: stopFirst } });
     $("prompt").value = "";
+    fitPrompt();
+    ghost = showSending(prompt);
+    await api(`/api/desk/tasks/${lastTurn}/reply`, { method: "POST", body: { prompt, about_proposal: about ? about.id : undefined, about_attachment: aboutPreview ? aboutPreview.id : undefined, stop_first: stopFirst, files: sent.length ? sent : undefined } });
+    if (files) files.take();
     drafts.delete(sel);
     about = null;
     aboutPreview = null;
     stopSure = null;
-    fitPrompt();
     await load(true);
     refreshClaudeNow();
     const you = [...$("cv-col").querySelectorAll(".cv-you")].pop();
     if (you) scrollToEl(you);
-  } catch (err) { sending = false; toast(err.message, "bad"); renderDock(sel); }
-  finally { sending = false; refreshDockFoot(); }
+  } catch (err) {
+    // It didn't go: the words are back in the box, as typed.
+    if (ghost) { ghost.remove(); $("prompt").value = prompt; fitPrompt(); }
+    sending = false;
+    toast(err.message, "bad");
+    renderDock(sel);
+  } finally { sending = false; if (ghost) ghost.remove(); refreshDockFoot(); }
+}
+
+// The viewer steps through everything this conversation shows, in the order it was said.
+function openMedia(id) {
+  const sel = current();
+  const th = typeof sel === "number" ? data.board.threads[sel] : null;
+  const all = data.tasks.flatMap((t) => [...(t.files || []), ...(t.attachments || [])]);
+  const items = th ? threadMedia(th, ix) : all.filter((a) => a.id === id);
+  if (!items.some((a) => a.id === id)) return;
+  openLightbox(items, id, { change: (a) => changePreview(a.id), draft: (a) => draftPreview(a.id) });
+}
+
+async function copyAnswer(id, btn) {
+  try {
+    await navigator.clipboard.writeText(answerText(ix.tasks.get(id)));
+    toast("Copied");
+  } catch (err) { toast("Couldn't copy. Select the text instead.", "bad"); }
+  btn.blur();
 }
 
 async function onClick(e) {
   const hit = (name) => e.target.closest(`[${name}]`);
   let el;
+  if (showClick(e)) return;
   if ((el = hit("data-accept"))) { acceptSheet([Number(el.dataset.accept)], reload); return; }
   if ((el = hit("data-accept-task"))) { acceptSheet(pendingOf(Number(el.dataset.acceptTask)), reload); return; }
   if (hit("data-accept-all")) { acceptSheet(pendingAll().map((p) => p.id), reload); return; }
@@ -555,6 +660,7 @@ async function onClick(e) {
   if (hit("data-unchip")) { about = null; aboutPreview = null; renderDock(current()); return; }
   if (hit("data-fa-on")) { turnOnFull(); return; }
   if (hit("data-fa-lock")) { lockFull(); return; }
+  if ((el = hit("data-att-open"))) { openMedia(Number(el.dataset.attOpen)); return; }
   if ((el = hit("data-att-draft"))) { draftPreview(Number(el.dataset.attDraft), el); return; }
   if ((el = hit("data-att-change"))) { changePreview(Number(el.dataset.attChange)); return; }
   if ((el = hit("data-view-cr"))) { previewCr(el.dataset.viewCr); return; }
@@ -570,6 +676,23 @@ async function onClick(e) {
     fillPreview(box);
     return;
   }
+  if ((el = hit("data-steps"))) {
+    const id = Number(el.dataset.steps);
+    const open = !openSteps.has(id);
+    if (open) openSteps.add(id); else openSteps.delete(id);
+    el.setAttribute("aria-expanded", String(open));
+    const box = document.querySelector(`[data-steps-for="${id}"]`);
+    if (box) box.hidden = !open;
+    return;
+  }
+  if ((el = hit("data-earlier"))) {
+    openSteps.add(Number(el.dataset.earlier));
+    const list = el.closest(".cv-trail");
+    list.querySelectorAll("li[hidden]").forEach((li) => { li.hidden = false; });
+    el.closest("li").remove();
+    return;
+  }
+  if ((el = hit("data-copy-turn"))) { copyAnswer(Number(el.dataset.copyTurn), el); return; }
   if ((el = hit("data-seed"))) { kind = el.dataset.seed; $("prompt").value = SEEDS[kind]; fitPrompt(); renderDock("new"); $("prompt").focus(); return; }
   if (hit("data-show-cleared")) { showCleared = !showCleared; renderList(current()); return; }
   if ((el = hit("data-next"))) { act(`/api/desk/tasks/${el.dataset.next}/next`, undefined, "Moved to the front of the line"); return; }
@@ -606,7 +729,9 @@ function announceFinished() {
   const active = new Set(data.tasks.filter((t) => ACTIVE.has(t.status)).map((t) => t.id));
   if (lastActive) {
     const done = data.tasks.filter((t) => lastActive.has(t.id) && !active.has(t.id) && t.status === "done");
-    if (done.length) toast(done.length === 1 ? `Claude finished: ${turnTitle(done[0]).slice(0, 70)}` : `Claude finished ${done.length} answers`);
+    // An answer landing in the conversation on screen needs no toast: it is right there.
+    const elsewhere = done.filter((t) => view !== "chat" || threadOf(t) !== colFor || document.hidden);
+    if (elsewhere.length) toast(elsewhere.length === 1 ? `Claude finished: ${turnTitle(elsewhere[0]).slice(0, 70)}` : `Claude finished ${elsewhere.length} answers`);
   }
   lastActive = active;
 }
@@ -618,23 +743,29 @@ function tick() {
 
 // ---------------------------------------------------------------- FU-D: full access for the owner's own requests
 
-// The line above the composer, on the new-conversation view and in every conversation. Only the owner who may
+// One control in the reply box, on the new-conversation view and in every conversation. Only the owner who may
 // turn it on sees it; amber (careful), not violet (Claude). It works only in his own account (`home`): in another
 // account its admins read the answers and its own people write the Meta names a run reads.
+const fullOn = () => Boolean(full && full.on && full.until && new Date(full.until) > new Date());
+
+function awayNote() {
+  if (!full || !full.allowed) return "";
+  const me = window.ebadsMe;
+  const home = full.home || { id: 1, name: "your own account" };
+  return me.account && me.account.id !== home.id ? `Full access works only in ${home.name}: requests in ${me.account.name} keep the read-only tools.` : "";
+}
+
 function renderFull() {
   const bar = $("fa-bar");
   if (!full || !full.allowed) { bar.hidden = true; bar.innerHTML = ""; return; }
-  const on = Boolean(full.on && full.until && new Date(full.until) > new Date());
-  const me = window.ebadsMe;
-  const home = full.home || { id: 1, name: "your own account" };
-  const away = me.account && me.account.id !== home.id;
-  const elsewhere = away ? `<span class="fa-shared">Only in ${esc(home.name)}: requests in ${esc(me.account.name)} keep the read-only tools.</span>` : "";
+  const on = fullOn();
   bar.hidden = false;
   bar.classList.toggle("fa-on", on);
   bar.innerHTML = on
-    ? `<span class="fa-text"><b>Full access on</b> · until ${esc(clockZone(full.until))}</span><button type="button" class="fa-btn" data-fa-lock>Lock now</button>${elsewhere}`
-    : `<span class="fa-text">Claude runs with read-only tools on your Mac.</span><button type="button" class="fa-btn" data-fa-on>Turn on full access</button>${elsewhere}`;
+    ? `<span class="fa-chip" title="Full access is on until ${esc(clockZone(full.until))}">${icon("unlock")}<span><b>Full access</b><span class="fa-long"> · until ${esc(clockZone(full.until))}</span></span></span><button type="button" class="fa-btn" data-fa-lock>Lock</button>`
+    : `<button type="button" class="fa-chip" data-fa-on title="Claude runs with read-only tools on your Mac. Turn on full access for files, video rendering and the web.">${icon("lock")}<span>Read-only<span class="fa-long"> tools</span></span></button>`;
   setFullAccessDot(on);
+  refreshDockFoot();
 }
 
 async function turnOnFull() {
@@ -666,15 +797,14 @@ async function lockFull() {
   } catch (err) { toast(err.message, "bad"); }
 }
 
-async function draftPreview(id, btn) {
+async function draftPreview(id, btn = null) {
   const yes = await confirmDialog({ title: "Upload as draft?", body: "<p>Upload this to the ad account's media library and start a new ad with it? The ad is created switched off; nothing spends until you turn it on.</p>", confirm: "Upload as draft" });
   if (!yes) return;
-  btn.disabled = true;
-  btn.textContent = "Uploading…";
+  if (btn) { btn.disabled = true; btn.textContent = "Uploading…"; }
   try {
     const r = await api(`/api/desk/attachments/${id}/draft`, { method: "POST" });
     location.href = r.next;
-  } catch (err) { toast(err.message, "bad"); btn.disabled = false; btn.textContent = "Upload as draft"; }
+  } catch (err) { toast(err.message, "bad"); if (btn) { btn.disabled = false; btn.textContent = "Upload as draft"; } }
 }
 
 function changePreview(id) {
@@ -691,6 +821,44 @@ function changePreview(id) {
   p.setSelectionRange(p.value.length, p.value.length);
 }
 
+// ---------------------------------------------------------------- files with a message
+
+// The Mac helper opens them from 3.2 on; an older one would answer without having seen them.
+function filesAllowed() {
+  if (data && data.bridge.can_show === false) { toast("Update the helper on your Mac first: it opens the files you send from version 3.2.", "bad"); return false; }
+  if (current() === "decide" || current() == null) return false;
+  return true;
+}
+
+function wireFiles() {
+  files = fileBox($("cv-files"), { onChange: refreshDockFoot, onProblem: (m) => toast(m, "bad") });
+  const input = $("file-input");
+  input.accept = FILE_TYPES;
+  $("file-add").addEventListener("click", () => { if (filesAllowed()) input.click(); });
+  input.addEventListener("change", () => { files.add(input.files); input.value = ""; $("prompt").focus(); });
+  // A screenshot pasted into the box goes with the message.
+  $("prompt").addEventListener("paste", (e) => {
+    const list = [...((e.clipboardData && e.clipboardData.files) || [])];
+    if (!list.length) return;
+    e.preventDefault();
+    if (filesAllowed()) files.add(list);
+  });
+  // Dropped anywhere on the conversation.
+  const cv = $("cv");
+  const carries = (e) => e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+  let depth = 0;
+  const lift = () => { depth = 0; $("cv-drop").hidden = true; };
+  cv.addEventListener("dragenter", (e) => { if (!carries(e)) return; e.preventDefault(); depth += 1; $("cv-drop").hidden = $("cv-dock").hidden; });
+  cv.addEventListener("dragover", (e) => { if (carries(e)) e.preventDefault(); });
+  cv.addEventListener("dragleave", (e) => { if (!carries(e)) return; depth -= 1; if (depth <= 0) lift(); });
+  cv.addEventListener("drop", (e) => {
+    if (!carries(e)) return;
+    e.preventDefault();
+    lift();
+    if (!$("cv-dock").hidden && filesAllowed()) { files.add(e.dataTransfer.files); $("prompt").focus(); }
+  });
+}
+
 async function load(force) {
   try {
     data = await api("/api/desk", { reuse: true });
@@ -700,9 +868,9 @@ async function load(force) {
     sel.innerHTML = '<option value="">All campaigns</option>' + data.campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
     sel.value = keep || sel.dataset.want || "";
     delete sel.dataset.want;
-    announceFinished();
-    const json = JSON.stringify([data.tasks, data.ads, data.board, data.bridge.online, data.bridge.status, data.bridge.can_stop, data.bridge.can_reply]);
+    const json = JSON.stringify([data.tasks, data.ads, data.board, data.bridge.online, data.bridge.status, data.bridge.can_stop, data.bridge.can_reply, data.bridge.can_show]);
     if (force || json !== lastJson) { lastJson = json; renderView(); }
+    announceFinished();
   } catch (err) { toast(err.message, "bad"); }
   clearTimeout(pollTimer);
   const busy = data && data.tasks.some((t) => ACTIVE.has(t.status));
@@ -739,6 +907,9 @@ if (me) {
   $("search").addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); if (data) renderList(current()); });
   $("mac-open").addEventListener("click", () => $("mac-dialog").showModal());
   $("mac-close").addEventListener("click", () => $("mac-dialog").close());
+  $("cv-scroll").addEventListener("scroll", paintJump, { passive: true });
+  $("cv-jump").addEventListener("click", jumpToLatest);
+  wireFiles();
   wireTaskActions(main, reload, null);
   wireSchedules($("view"), async () => { schedDirty.clear(); await loadSchedules(); reload(); });
   $("view").addEventListener("input", (e) => { const f = e.target.closest("form[data-rule]"); if (f) schedDirty.add(f.dataset.rule); });

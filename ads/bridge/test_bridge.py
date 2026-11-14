@@ -385,6 +385,111 @@ class AttachInputTests(unittest.TestCase):
         self.assertEqual(self.check("creatives/2026-11-13-desk-41/out/a.png", task_id=4), None)
 
 
+class PageHtmlTests(unittest.TestCase):
+    """`desk attach page.html`: the page leaves the Mac as one self-contained document. Its own pictures and stylesheets
+    (from the request's folder) are put inside; scripts and anything that would send the frame elsewhere are left
+    out; a file outside the request's own folder is never read into it, whatever the page names."""
+    ID = 41
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = os.path.realpath(self.tmp.name)
+        self.work = os.path.join(root, "work")
+        self.own = os.path.join(self.work, "creatives", "2026-11-14-desk-41")
+        os.makedirs(os.path.join(self.own, "img"))
+        os.makedirs(os.path.join(self.work, "creatives", "2026-11-07-burdanova"))
+        files = {"creatives/2026-11-14-desk-41/img/a.png": b"PNGDATA", "creatives/2026-11-14-desk-41/bg.jpg": b"JPGDATA",
+                 "creatives/2026-11-14-desk-41/site.css": b"body{background:url(bg.jpg)} .x{background:url('https://example.com/r.png')}",
+                 "creatives/2026-11-14-desk-41/notes.txt": b"PRIVATE NOTES", "creatives/2026-11-07-burdanova/card.png": b"THEIRS", ".env": b"ACCESS_TOKEN=secret"}
+        for rel, body in files.items():
+            with open(os.path.join(self.work, rel), "wb") as fh:
+                fh.write(body)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def page(self, html):
+        path = os.path.join(self.own, "page.html")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(html)
+        return desk.page_html(path, self.work, self.ID).decode("utf-8")
+
+    def b64(self, raw):
+        return base64.b64encode(raw).decode()
+
+    def test_its_own_pictures_and_stylesheets_are_put_inside(self):
+        out = self.page('<!doctype html><html><head><link rel="stylesheet" href="site.css"><style>h1{background:url("img/a.png")}</style></head>'
+                        '<body><img src="img/a.png" alt="A"><div style="background-image:url(bg.jpg)"></div></body></html>')
+        self.assertEqual((out.count(f"data:image/png;base64,{self.b64(b'PNGDATA')}"), out.count(f"data:image/jpeg;base64,{self.b64(b'JPGDATA')}"),
+                          "site.css" in out, 'src="img/a.png"' in out, "https://example.com/r.png" in out), (2, 2, False, False, True))
+
+    def test_scripts_and_anything_that_moves_the_frame_are_left_out(self):
+        out = self.page('<!doctype html><html><head><base href="https://evil.example/"><meta http-equiv="refresh" content="0;url=https://evil.example">'
+                        '<script src="x.js"></script><script>fetch("/api/desk")</script></head><body><p>Kept</p><SCRIPT type="module">1</SCRIPT></body></html>')
+        self.assertEqual(("<script" in out.lower(), "refresh" in out, "<base" in out, "<p>Kept</p>" in out), (False, False, False, True))
+
+    def test_a_file_outside_the_requests_own_folder_is_never_read_into_the_page(self):
+        out = self.page('<!doctype html><html><body><img src="../../.env"><img src="../2026-11-07-burdanova/card.png"><img src="notes.txt">'
+                        '<img src="/etc/passwd"><img src="file:///etc/passwd"><div style="background:url(../../.env)"></div></body></html>')
+        self.assertEqual(("data:" in out, self.b64(b"ACCESS_TOKEN=secret") in out, self.b64(b"THEIRS") in out, self.b64(b"PRIVATE NOTES") in out),
+                         (False, False, False, False))
+
+    def test_a_page_too_big_with_its_pictures_inside_is_refused(self):
+        with open(os.path.join(self.own, "img", "big.png"), "wb") as fh:
+            fh.truncate(3 * 1024 * 1024)
+        with self.assertRaises(ValueError):
+            self.page('<!doctype html><html><body><img src="img/big.png"></body></html>')
+
+    def test_attach_takes_an_html_file_from_the_requests_folder_only(self):
+        with open(os.path.join(self.own, "page.html"), "w") as fh:
+            fh.write("<!doctype html><html></html>")
+        with open(os.path.join(self.work, "creatives", "2026-11-07-burdanova", "page.html"), "w") as fh:
+            fh.write("<!doctype html><html></html>")
+        self.assertEqual(desk.attach_input(self.work, os.path.join(self.own, "page.html"), self.ID), (os.path.join(self.own, "page.html"), "text/html"))
+        with self.assertRaises(ValueError):
+            desk.attach_input(self.work, os.path.join(self.work, "creatives", "2026-11-07-burdanova", "page.html"), self.ID)
+
+
+class InboxTests(unittest.TestCase):
+    """The files a person sent with a message: `desk fetch` names them safely, and the bridge empties the folder before
+    every run, so a run finds only what it fetched itself (the workspace is shared by every business)."""
+
+    def test_a_fetched_file_is_named_by_its_id_and_a_name_no_path_can_hide_in(self):
+        names = [desk.inbox_name(12, "../../My clip (1).MOV", "video/quicktime"), desk.inbox_name(7, ".env", "image/png"),
+                 desk.inbox_name(8, "", "image/jpeg"), desk.inbox_name(9, "a/b\\c.webp", "image/webp"), desk.inbox_name(3, "x.html", "text/html")]
+        self.assertEqual(names, ["12-My_clip_1.mov", "7-env.png", "8-file.jpg", "9-b_c.webp", "3-x"])
+
+    def test_the_bridge_empties_the_inbox_and_leaves_the_rest_of_the_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for rel in ("reports/desk/inbox/task5/1-clip.mp4", "reports/desk/tmp/task5-report.md", "reports/log.md"):
+                os.makedirs(os.path.dirname(os.path.join(tmp, rel)), exist_ok=True)
+                open(os.path.join(tmp, rel), "w").close()
+            bridge.empty_inbox(tmp)
+            bridge.empty_inbox(tmp)  # nothing there: no error
+            self.assertEqual([os.path.exists(os.path.join(tmp, p)) for p in ("reports/desk/inbox", "reports/desk/tmp/task5-report.md", "reports/log.md")],
+                             [False, True, True])
+
+    def test_fetch_writes_into_the_requests_own_inbox_and_says_what_is_gone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            got = []
+            real = desk.get_bytes
+            desk.get_bytes = lambda cfg, token, path, timeout=600: got.append(path) or b"BYTES"
+            try:
+                listed = [{"id": 31, "task_id": 5, "kind": "video", "mime": "video/mp4", "name": "raw clip.mp4", "size_bytes": 5, "pruned": False},
+                          {"id": 30, "task_id": 4, "kind": "image", "mime": "image/png", "name": "old.png", "size_bytes": 9, "pruned": True}]
+                out = desk.fetch_files({"workdir": tmp, "base_url": "http://x"}, "key", 5, listed)
+                again = desk.fetch_files({"workdir": tmp, "base_url": "http://x"}, "key", 5, listed)
+            finally:
+                desk.get_bytes = real
+            path = os.path.join("reports", "desk", "inbox", "task5", "31-raw_clip.mp4")
+            with open(os.path.join(tmp, path), "rb") as fh:
+                body = fh.read()
+            self.assertEqual((out, again == out, got, body),
+                             ([{"name": "raw clip.mp4", "kind": "video", "message": 5, "path": path},
+                               {"name": "old.png", "kind": "image", "message": 4, "gone": "removed after 30 days: ask for it again"}],
+                              True, ["/api/agent/tasks/5/files/31"], b"BYTES"))
+
+
 class ReadBodyTests(unittest.TestCase):
     """`--file` for report / propose / scorecard / swipe / benchmarks: `desk` runs outside Claude's sandbox, so it reads
     only files in the workspace (never .env), or a run could post ~/.ssh into a report."""

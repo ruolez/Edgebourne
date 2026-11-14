@@ -990,15 +990,16 @@ db.execute(\\"INSERT INTO ads (id, name, campaign_id, status, effective_status) 
   await page.goto(BASE + '/desk.html', { waitUntil: 'networkidle' });
   await page.waitForSelector('#cl-list .cl-group');
   const groupNames = await page.locator('#cl-list .cl-head h2').allTextContents();
-  check('the list shows what is on the Mac, then the days', groupNames[0] === 'On your Mac' && groupNames.includes('Today'), groupNames.join());
-  check('a finished conversation is marked New until opened', (await page.locator('#cl-list .cl-new-tag').count()) === 4, String(await page.locator('#cl-list .cl-new-tag').count()));
+  check('the list shows what Claude is working on, then the days', groupNames[0] === 'Working now' && groupNames.includes('Today'), groupNames.join());
+  check('a finished conversation is marked as new (bold; a green dot unless it failed) until opened', (await page.locator('#cl-list .cl-row.is-fresh').count()) === 4
+    && (await page.locator('#cl-list .cl-row.is-fresh .cl-dot.fresh').count()) === 3, String(await page.locator('#cl-list .cl-row.is-fresh').count()));
   const freshRow = page.locator('#cl-list .cl-row', { hasText: 'most qualified leads' });
   await freshRow.click();
   await page.waitForFunction(() => /most qualified leads.*Claude.*N1 v2/s.test(document.querySelector('#cv-col')?.textContent || ''));
   check('a conversation shows the question and the answer together', await page.isVisible('#cv-col .cv-claude'));
   await page.click('a.cl-decide');
   await page.waitForSelector('#cv-col .cv-group');
-  check('opening it clears New', (await page.locator('#cl-list .cl-new-tag').count()) === 3);
+  check('opening it clears the mark', (await page.locator('#cl-list .cl-row.is-fresh').count()) === 3);
   check('Review all shows every suggestion under its question', (await page.locator('#cv-col .cv-group').count()) === 4 && (await page.locator('#cv-col .sg').count()) === 10, `${await page.locator('#cv-col .cv-group').count()} ${await page.locator('#cv-col .sg').count()}`);
   await page.click('[data-accept-all]');
   await page.waitForSelector('dialog.accept-sheet #cd-ok:not(:empty)');
@@ -1079,7 +1080,7 @@ db.execute(\\"INSERT INTO ads (id, name, campaign_id, status, effective_status) 
 with account_ctx.use(1):
     t=desk_api.task_payload(${revision.id}); print(json.dumps({'n':len(t['thread']),'first':t['thread'][0]['you'],'resume':t['resume_from']},default=str))"`));
   check('the Mac gets the whole conversation and the turn to continue', payload.n === 2 && /Two headlines/.test(payload.first) && !!payload.resume, JSON.stringify(payload));
-  await page.click('#cv-line [data-cancel]');
+  await page.locator('#cv-col .cv-wait [data-cancel]').last().click();
   await page.waitForFunction(() => /Cancelled before it started/.test(document.querySelector('#cv-col')?.textContent || ''));
   check('a follow-up can be cancelled and stays in the conversation', await page.isVisible('#prompt'));
 
@@ -1132,7 +1133,7 @@ with account_ctx.use(1):
   const lineRows = () => page.evaluate(() => [...document.querySelectorAll('#cl-list .cl-dot.pos')].map((d) => d.closest('.cl-row').querySelector('b').textContent));
   const before5 = await lineRows();
   await openConv('Three new ideas for restaurant');
-  await page.click('#cv-line [data-next]');
+  await page.click('#cv-col .cv-wait [data-next]');
   await page.waitForFunction(() => /restaurant owners/.test(document.querySelector('#cl-list .cl-dot.pos')?.closest('.cl-row').textContent || ''));
   check('Run next moves a job to the front', (await lineRows())[0].includes('restaurant owners'), before5.join(' | '));
   await page.locator('#cl-list .cl-item', { hasText: 'Why did cost per lead' }).locator('[data-cancel]').click();
@@ -1145,12 +1146,12 @@ with account_ctx.use(1):
   await page.fill('#prompt', 'And keep the sound.');
   check('typing while it works offers both choices', /Stop and send/.test(await page.textContent('#cv-btns')) && /Send when it.s done/.test(await page.textContent('#cv-btns')));
   await page.locator('#cv-btns button[type=submit]').click();
-  await page.waitForFunction(() => /follow-up runs as soon as this finishes/.test(document.querySelector('#cv-line')?.textContent || ''));
+  await page.waitForFunction(() => /Runs as soon as Claude finishes this one/.test(document.querySelector('#cv-col .cv-wait')?.textContent || ''));
   const waitingJobs = (await desk()).tasks;
   const followUp = waitingJobs.find((t) => t.prompt.trim() === 'And keep the sound.');
   const runningN2 = waitingJobs.filter((t) => ['claimed', 'running'].includes(t.status));
   check('a follow-up can wait for the running job', followUp?.status === 'queued' && runningN2.length === 1, `${followUp?.status} behind ${runningN2.length} running`);
-  await page.click('#cv-line [data-cancel]');
+  await page.locator('#cv-col .cv-wait [data-cancel]').last().click();
   await page.waitForSelector('#cv-btns [data-stop]');
   await page.click('#cv-btns [data-stop]');
   await page.waitForFunction(() => /Stop Claude here/.test(document.querySelector('#cv-hint')?.textContent || ''));
@@ -1164,22 +1165,24 @@ with account_ctx.use(1):
   macSeen(3600);  // the Mac went quiet an hour ago
   await page.click('[data-clear="queue"]');
   await page.click('dialog.confirm #cd-ok');
-  await page.waitForFunction(() => /Anything you send waits/.test(document.querySelector('#cl-list .cl-now')?.textContent || ''));
+  await page.waitForFunction(() => !document.querySelector('#cl-list .cl-now') && /Anything you send waits/.test(document.querySelector('#cv-hint')?.textContent || ''));
   d = await desk();
-  check('Clear the line cancels everything not started, and the panel stays', d.tasks.filter((t) => t.status === 'queued').length === 0 && await page.isVisible('#cl-list .cl-now'),
+  check('Clear the line cancels everything not started, and the empty line leaves the list', d.tasks.filter((t) => t.status === 'queued').length === 0 && !(await page.locator('#cl-list .cl-now').count()),
     d.tasks.filter((t) => t.status === 'queued').map((t) => t.prompt.slice(0, 30)).join(' | '));
-  check('with the Mac offline the panel says requests wait, not that they start right away (A3-108)',
-    /waits until it.s back/.test(await page.textContent('#cl-list .cl-now')) && !/starts right away/.test(await page.textContent('#cl-list .cl-now')));
+  check('with the Mac offline the reply box says a message would wait, not that it starts right away (A3-108)',
+    /waits until it.s back/.test(await page.textContent('#cv-hint')) && !/starts right away/.test(await page.textContent('#cv-hint')) && await page.isVisible('#cv-hint'));
   await page.waitForFunction(() => /Your Mac is offline/.test(document.querySelector('.rail .claude-now')?.textContent || ''), null, { timeout: 15000 });
   check('the status line says the Mac is offline, not that Claude is idle', !/Claude is idle/.test(await page.textContent('.rail .claude-now')) && (await desk()).tasks.every((t) => !['queued', 'claimed', 'running'].includes(t.status)));
   {
     const now = await getJson('/api/desk/now');
     const rail = await page.textContent('.rail .claude-now b');
-    const panel = await page.textContent('#cl-list .cl-now [data-mac]');
+    const panel = await page.textContent('#cv-hint');
     const foot = await page.textContent('#mac-summary');
-    check('the Mac status says the same thing in the sidebar, the list and the Mac button (offline vs idle)', now.mac.state === 'offline'
-      && rail.startsWith(now.mac.title) && panel.startsWith(`${now.mac.title}.`) && panel.includes(now.mac.detail) && foot.startsWith(now.mac.title) && /last seen/.test(foot),
-      `${now.mac.title} | ${rail} | ${panel} | ${foot}`);
+    const said = await page.evaluate((title) => [...document.querySelectorAll('.main *')].filter((el) => el.children.length === 0 && el.offsetParent !== null && !el.closest('.sr-only')
+      && el.textContent.includes(title)).length, now.mac.title);
+    check('the Mac status says the same thing in the sidebar, by the reply box and on the Mac button, and the page says it once (offline vs idle)', now.mac.state === 'offline'
+      && rail.startsWith(now.mac.title) && panel.startsWith(`${now.mac.title}.`) && panel.includes(now.mac.detail) && foot.startsWith(now.mac.title) && /last seen/.test(foot) && said === 1,
+      `${now.mac.title} | ${rail} | ${panel} | ${foot} | said ${said}×`);
   }
 
   const dayCount = await page.locator('#cl-list .cl-item').count();
@@ -1216,7 +1219,8 @@ with account_ctx.use(1):
   await page.waitForFunction(() => /First follow-up/.test(document.querySelector('#cv-col')?.textContent || ''));
   await sendReply('Second follow-up.');
   await page.waitForFunction(() => /Second follow-up/.test(document.querySelector('#cv-col')?.textContent || ''));
-  check('several messages can wait in one conversation', /3 messages waiting/.test(await page.textContent('#cv-line')), await page.textContent('#cv-line'));
+  check('several messages can wait in one conversation, each saying so under itself', (await page.locator('#cv-col .cv-wait').count()) === 3 && (await page.locator('#cv-col .cv-wait [data-cancel]').count()) === 3
+    && (await page.locator('#cv-col .cv-claude').count()) === 0, String(await page.locator('#cv-col .cv-wait').count()));
   check('a waiting message says what it waits for while the Mac is offline', /Your Mac is offline\. It starts when your Mac is back online\./.test(await page.textContent('#cv-col')));
   d = await desk();
   const order = d.board.queue.map((id) => d.tasks.find((t) => t.id === id).prompt.split(' ').slice(0, 2).join(' '));
@@ -1236,8 +1240,9 @@ with account_ctx.use(1):
   await page.goto(BASE + '/desk.html#list', { waitUntil: 'networkidle' });
   await page.click('[data-clear="queue"]');
   await page.click('dialog.confirm #cd-ok');
-  await page.waitForFunction(() => /Claude is idle/.test(document.querySelector('#cl-list .cl-now')?.textContent || ''));
-  check('with the Mac online an empty line says anything sent starts right away', /starts right away/.test(await page.textContent('#cl-list .cl-now')));
+  await page.waitForFunction(() => !document.querySelector('#cl-list .cl-now'));
+  check('with the Mac online and nothing in line the page has nothing to say about waiting: no line in the list, no note by the reply box',
+    !(await page.locator('#cl-list .cl-now').count()) && await page.isHidden('#cv-hint'), await page.textContent('#cv-hint'));
   await page.waitForFunction(() => /Claude is idle/.test(document.querySelector('.rail .claude-now')?.textContent || ''), null, { timeout: 15000 });
   check('the status line says when Claude is idle', /Nothing in line/.test(await page.textContent('.rail .claude-now')));
   await page.screenshot({ path: `${OUT}/flow-5-board-cleared.png` });
@@ -1257,6 +1262,145 @@ with account_ctx.use(1):
   check('a Claude run reaches only its own request and account; lost, silent and stopped runs end right; Run next is first across accounts; mentions stored; 304 when unchanged; a helper before 2.0 takes only the owners\' requests; '
     + 'FU-D: full access only for the owner\'s own typed, unlocked requests in his own account on desk 3.0 (locked, signed out, another account, someone else in the thread, automatic runs, a link\'s words, the Research page, a requeued claim, a forged body, an old helper: usual tools), previews only with the pass, typed and capped, five wrong passwords block even sent at once, nobody else resets him, a temporary password never unlocks',
     states.failed.length === 0 && states.passed === 46, JSON.stringify(states));
+  }
+
+  {
+  // The Claude page shows and takes media (2026-11-14): files sent with a message, Claude's pictures, video and a page
+  // it built, an ad and a lead form from the account shown large, one full-screen viewer for all of it.
+  sh('docker cp dev/media/preview.png edgebourne-ads-backend:/tmp/qa-preview.png && docker cp dev/media/preview.mp4 edgebourne-ads-backend:/tmp/qa-preview.mp4 && docker cp dev/seed_media.py edgebourne-ads-backend:/tmp/seed_media.py');
+  const mediaThread = Number(sh('docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python /tmp/seed_media.py').trim().split('\n').pop());
+  await page.goto(`${BASE}/desk.html#r/${mediaThread}`);
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('#cv-col .att-list');
+  const bars = await page.evaluate(() => { const nav = document.querySelector('.subnav'), head = document.querySelector('#cv-head').getBoundingClientRect(),
+    line = document.querySelector('.topline').getBoundingClientRect(), body = document.querySelector('#cv .cv-body').getBoundingClientRect();
+    return { inLine: !!nav.closest('.topline'), views: [...nav.querySelectorAll('a')].map((a) => a.textContent).join(), head: Math.round(head.height), gap: Math.round(body.top - line.bottom),
+      h1: document.querySelector('#cv-head h1').textContent, crumbs: [...document.querySelectorAll('.topline .crumbs > *')].filter((el) => el.offsetParent !== null).map((el) => el.textContent).join('') }; });
+  check('on a wide screen there is one bar above a conversation: Claude\'s views sit in the top line after "Claude", and the conversation keeps its heading for screen readers only',
+    bars.inLine && bars.views === 'Conversations,By ad,Schedules' && bars.head <= 1 && bars.gap <= 1 && /Here is the clip/.test(bars.h1) && bars.crumbs === 'Claude', JSON.stringify(bars));
+  const firstTurn = page.locator(`.cv-turn[data-turn="${mediaThread}"]`);
+  const sentTiles = await firstTurn.evaluate((el) => ({ tiles: el.querySelectorAll('.cv-you .cv-sent .cv-file').length, pictures: el.querySelectorAll('.cv-sent .cv-file img').length,
+    video: (el.querySelector('.cv-sent .cv-file small') || {}).textContent, names: [...el.querySelectorAll('.cv-sent .cv-file')].map((f) => f.title).join() }));
+  check('the files sent with a message show in it as tiles: the video with its length, and the picture', sentTiles.tiles === 2 && sentTiles.pictures === 1 && /^[\d.]+ s$/.test(sentTiles.video || '')
+    && sentTiles.names === 'yesterday clip.mp4,ad I like.png', JSON.stringify(sentTiles));
+  await firstTurn.locator('.cv-show [data-show-cr] iframe').waitFor({ timeout: 15000 });
+  const shownSrc = await firstTurn.locator('[data-show-cr] iframe').getAttribute('src');
+  await firstTurn.locator('[data-show-place="INSTAGRAM_REELS"]').click();
+  await page.waitForFunction(() => /INSTAGRAM_REELS/.test(document.querySelector('[data-show-cr] iframe')?.src || ''));
+  const shownCr = await firstTurn.evaluate((el) => { const card = el.querySelector('.cv-show[data-show="cr"]'); return { cards: el.querySelectorAll('.cv-show').length, text: card.querySelector('.cv-show-side').textContent.replace(/\s+/g, ' ').trim(),
+    open: card.querySelector('.cv-show-do a').getAttribute('href'), places: [...card.querySelectorAll('[data-show-place]')].map((b) => b.textContent).join(),
+    chips: [...el.querySelectorAll('.cv-cr')].map((c) => c.dataset.viewCr).join() }; });
+  check('an ad shown in an answer is Meta\'s own preview, large, with its placements, its name and status beside it, and no small chip repeating it',
+    shownCr.cards === 2 && /facebook\.com/.test(shownSrc) && shownCr.places === 'Feed,Reels,Stories' && /N3 - Same work twice/.test(shownCr.text) && /Running since Nov 8/.test(shownCr.text)
+    && shownCr.open === '/ad.html?id=120252672230740312' && !shownCr.chips.includes('120252672230740312'), `${shownSrc} ${JSON.stringify(shownCr)}`);
+  await firstTurn.locator('[data-show-step="questions"]').waitFor({ timeout: 15000 });
+  const formSteps = (await firstTurn.locator('[data-show-step]').allTextContents()).join();
+  await firstTurn.locator('[data-show-step="questions"]').click();
+  await page.waitForFunction(() => /Contact information/.test(document.querySelector('[data-show-form]')?.textContent || ''));
+  const formText = await firstTurn.locator('.cv-show[data-show="form"]').textContent();
+  check('a lead form shown in an answer is drawn on a phone, step by step, by name', /^Intro,Questions,(Review,)?Thanks$/.test(formSteps) && /Full name/.test(formText) && /EB \| Free AI workflow review/.test(formText)
+    && (await firstTurn.locator('.cv-show[data-show="form"] .cv-show-do a').getAttribute('href')) === '/forms.html#form=1132280359202136', `${formSteps} | ${formText.replace(/\s+/g, ' ').slice(0, 160)}`);
+  const made = page.locator('#cv-col .cv-turn').nth(1);
+  const att = await made.evaluate((el) => ({ n: el.querySelector('.att-list').dataset.n, kinds: [...el.querySelectorAll('.att-item')].map((f) => (f.querySelector('iframe') ? 'page' : f.querySelector('video') ? 'video' : 'image')).join(),
+    frame: el.querySelector('.att-frame iframe').getAttribute('src'), sandbox: el.querySelector('.att-frame iframe').getAttribute('sandbox'), pageDraft: !!el.querySelector('.att-item.is-page [data-att-draft]'),
+    drafts: el.querySelectorAll('[data-att-draft]').length, changes: el.querySelectorAll('[data-att-change]').length, heading: !!el.querySelector('.att-list .cv-label'),
+    meta: el.querySelector('.cv-meta').textContent.replace(/\s+/g, ' ').trim(), who: !!el.querySelector('.cv-who') }));
+  const pageHead = await page.evaluate(async (u) => { const r = await fetch(u); return [r.status, r.headers.get('Content-Security-Policy') || '', r.headers.get('Content-Type') || '']; }, att.frame);
+  const plainPage = await page.evaluate(async (u) => (await fetch(`${u.replace(/\/page$/, '')}?qa_crafted=1`)).status, att.frame);
+  const inFrame = await page.frameLocator('#cv-col .att-frame iframe').locator('h1').textContent({ timeout: 15000 });
+  check('a page Claude built shows inside its answer, in a frame that gives it no origin, scripts or requests; it is never served from the plain file address and has no Upload as draft',
+    att.kinds === 'image,video,page' && att.n === '2' && /^\/api\/desk\/attachments\/\d+\/page$/.test(att.frame) && att.sandbox === '' && pageHead[0] === 200 && /^sandbox;/.test(pageHead[1])
+    && /default-src 'none'/.test(pageHead[1]) && /text\/html/.test(pageHead[2]) && plainPage === 404 && /order without calling/.test(inFrame) && !att.pageDraft && att.drafts === 2 && att.changes === 3,
+    `${JSON.stringify(att)} ${JSON.stringify(pageHead)} ${plainPage} ${inFrame}`);
+  check('an answer says how it went once, under itself: when, how long, its steps on request and how it ran, with no heading over the previews',
+    /^\d{1,2}:\d{2}\s?(AM|PM) · 2 min\s?4 steps\s?Full access$/.test(att.meta) && !att.heading && !att.who, att.meta);
+  await made.locator('[data-steps]').click();
+  const stepsOpen = await made.evaluate((el) => ({ shown: !el.querySelector('[data-steps-for]').hidden, lines: el.querySelectorAll('[data-steps-for] .cv-trail li').length, pressed: el.querySelector('[data-steps]').getAttribute('aria-expanded') }));
+  await made.locator('[data-steps]').click();
+  check('the steps of a finished answer open in place and close again', stepsOpen.shown && stepsOpen.lines === 4 && stepsOpen.pressed === 'true' && await made.locator('[data-steps-for]').isHidden(), JSON.stringify(stepsOpen));
+
+  // One viewer for everything a conversation shows.
+  await made.locator('.att-open').click();
+  await page.waitForSelector('dialog.lb[open] img.lb-media');
+  const lbRead = () => page.evaluate(() => ({ count: (document.querySelector('dialog.lb .lb-title span') || {}).textContent, title: document.querySelector('dialog.lb .lb-title b').textContent,
+    thumbs: document.querySelectorAll('dialog.lb .lb-thumb').length, acts: [...document.querySelectorAll('dialog.lb .lb-do .lb-btn')].map((b) => b.textContent).join() }));
+  const lbImage = await lbRead();
+  await page.keyboard.press('ArrowRight');
+  await page.waitForSelector('dialog.lb[open] video.lb-media');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForSelector('dialog.lb[open] iframe.lb-page[data-width="phone"]');
+  const lbPage = await lbRead();
+  await page.click('dialog.lb [data-lb-width="wide"]');
+  const lbWide = await page.evaluate(() => { const f = document.querySelector('dialog.lb iframe.lb-page'); return { width: f.dataset.width, sandbox: f.getAttribute('sandbox'), px: Math.round(f.getBoundingClientRect().width) }; });
+  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowLeft');
+  await page.waitForFunction(() => document.querySelector('dialog.lb .lb-title b')?.textContent === 'ad I like.png');
+  const lbMine = await lbRead();
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(() => document.querySelector('dialog.lb .lb-title b')?.textContent === '4:5 static, version A');
+  check('the viewer steps through everything the conversation shows with the arrow keys: Claude\'s picture with Change it and Upload as draft, the page at phone and desktop width, a sent file to look at only',
+    lbImage.count === '3 / 5' && lbImage.title === '4:5 static, version A' && lbImage.thumbs === 5 && lbImage.acts === 'Change it,Upload as draft' && lbPage.title === 'Landing page draft' && lbPage.acts === 'Change it'
+    && lbWide.width === 'wide' && lbWide.sandbox === '' && lbWide.px > 900 && lbMine.count === '2 / 5' && lbMine.acts === '', JSON.stringify({ lbImage, lbPage, lbWide, lbMine }));
+  await page.click('dialog.lb [data-lb-change]');
+  await page.waitForSelector('#cv-chip:not([hidden])');
+  check('Change it in the viewer closes it and points the reply at that preview', (await page.locator('dialog.lb').count()) === 0 && /About this preview: 4:5 static, version A/.test(await page.textContent('#cv-chip'))
+    && (await page.inputValue('#prompt')).startsWith('About this preview (4:5 static, version A): '), await page.inputValue('#prompt'));
+  await page.click('[data-unchip]');
+  await page.fill('#prompt', '');
+  await made.locator('.att-open').click();
+  await page.waitForSelector('dialog.lb[open]');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('dialog.lb', { state: 'detached' });
+
+  // Files with a message: added, uploaded at once, sent with the words.
+  const refPng = require('fs').readFileSync('dev/media/preview.png');
+  await page.setInputFiles('#file-input', [{ name: 'reference.png', mimeType: 'image/png', buffer: refPng }]);
+  await page.waitForFunction(() => document.querySelector('#cv-files .cv-file')?.dataset.state === 'ok', null, { timeout: 20000 });
+  const wordless = { hint: await page.textContent('#cv-hint'), off: await page.locator('#cv-btns .cv-send').isDisabled() };
+  await page.setInputFiles('#file-input', [{ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('not a picture') }]);
+  await page.waitForFunction(() => /JPG, PNG or WebP pictures and MP4 or MOV videos/.test(document.querySelector('.toast')?.textContent || ''));
+  await page.fill('#prompt', 'QA media: make this one square');
+  const turnsWas = await page.locator('#cv-col .cv-turn').count();
+  const ready = !(await page.locator('#cv-btns .cv-send').isDisabled()) && (await page.locator('#cv-files .cv-file').count()) === 1;
+  await page.click('#cv-btns .cv-send');
+  await page.waitForFunction((n) => document.querySelectorAll('#cv-col .cv-turn:not(.cv-pending)').length === n + 1, turnsWas);
+  const sentTask = (await getJson('/api/desk')).tasks.find((t) => t.prompt === 'QA media: make this one square');
+  check('a picture added to a message goes up at once and waits for words; a file Claude can\'t take is refused in words; the message is sent with its file and the box is empty again',
+    wordless.off && /Say what Claude should do with it/.test(wordless.hint) && ready && sentTask && sentTask.thread_id === mediaThread && sentTask.files.length === 1 && sentTask.files[0].name === 'reference.png'
+    && sentTask.files[0].source === 'user' && (await page.locator('#cv-col .cv-turn').last().locator('.cv-sent .cv-file img').count()) === 1 && await page.isHidden('#cv-files')
+    && (await page.inputValue('#prompt')) === '', JSON.stringify({ wordless, ready, files: sentTask && sentTask.files }));
+  await page.screenshot({ path: `${OUT}/flow-5-media.png` });
+
+  // A phone: the conversation with its media and the new-conversation box keep every control at 44 px and the page inside the width.
+  const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await page.context().storageState() });
+  const mp = await mctx.newPage();
+  const smallMedia = [];
+  let sideways = 0;
+  for (const hash of [`r/${mediaThread}`, 'new']) {
+    await mp.goto(`${BASE}/desk.html#${hash}`);
+    await mp.reload();
+    await mp.waitForSelector('#prompt');
+    await mp.waitForTimeout(1500);
+    smallMedia.push(...(await mp.evaluate(guards.smallTargets)).map((x) => `${hash}: ${x}`));
+    // Nothing in the reply box runs past the screen either (the box clips what the page's own width wouldn't show).
+    sideways = Math.max(sideways, await mp.evaluate(() => Math.max(document.documentElement.scrollWidth, ...[...document.querySelectorAll('#ask-form .cv-box-foot > *')]
+      .filter((el) => el.offsetParent !== null).map((el) => Math.ceil(el.getBoundingClientRect().right))) - innerWidth));
+  }
+  await mp.goto(`${BASE}/desk.html#r/${mediaThread}`);
+  await mp.reload();
+  await mp.waitForSelector('#cv-col .att-open');
+  await mp.locator('#cv-col .att-open').first().click();
+  await mp.waitForSelector('dialog.lb[open] img.lb-media');
+  const smallViewer = (await mp.evaluate(guards.smallTargets)).filter((x) => /lb-/.test(x));
+  await mp.screenshot({ path: `${OUT}/flow-5-media-phone.png` });
+  check('on a phone a conversation with media, the new-conversation box and the viewer keep every control at 44 × 44 px with nothing past the edge',
+    smallMedia.length === 0 && smallViewer.length === 0 && sideways <= 0, `${smallMedia.slice(0, 6).join(' | ')} ${smallViewer.slice(0, 4).join(' | ')} sideways ${sideways}`);
+  await mctx.close();
+  sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -qtAc "DELETE FROM desk_tasks WHERE id = ${mediaThread} OR thread_id = ${mediaThread}"`);
+  // The same against the database: who may send, fetch, show and look.
+  const media = JSON.parse(sh('docker cp dev/qa_desk_media.py edgebourne-ads-backend:/app/qa_desk_media.py && docker exec -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python qa_desk_media.py; docker exec edgebourne-ads-backend rm -f /app/qa_desk_media.py').trim().split('\n').pop());
+  check('the Claude page\'s media against the database: a person\'s files are typed from their bytes, their own and sent once; a helper before 3.2 leaves them in line; a run fetches only its conversation\'s files with its pass; '
+    + 'an ad or lead form is shown only from the account; a page is stored only when declared, served with scripts off and never as a plain file; another account, a teammate and a client see none of it',
+    media.failed.length === 0 && media.passed === 17, JSON.stringify(media));
   }
 
   // Tests (experiments): set one up, read the verdict, finish it; Claude's suggested test becomes one on approval.
@@ -7768,8 +7912,9 @@ print(json.dumps(out))
     // 1. Off: a quiet line with Turn on full access.
     await openDesk();
     const offText = await page.textContent('#fa-bar');
-    check('FU-D: on the Claude page the owner sees "Claude runs with read-only tools on your Mac. Turn on full access"', /read-only tools on your Mac/.test(offText)
-      && (await page.locator('#fa-bar [data-fa-on]').count()) === 1 && !(await page.$('#fa-bar.fa-on')), offText);
+    check('FU-D: on the Claude page the owner sees "Read-only tools" in the reply box, which says what it means and turns full access on', /^Read-only tools$/.test(offText.trim())
+      && /read-only tools on your Mac\. Turn on full access/.test(await page.getAttribute('#fa-bar [data-fa-on]', 'title'))
+      && (await page.locator('#ask-form #fa-bar [data-fa-on]').count()) === 1 && !(await page.$('#fa-bar.fa-on')), offText);
     // 2. A wrong password: the error under the field, nothing turned on (refusal).
     await unlockDialog('not-the-password');
     await page.waitForSelector('dialog.confirm #cd-err:not([hidden])');
@@ -7789,20 +7934,20 @@ print(json.dumps(out))
     const onText = await page.textContent('#fa-bar');
     const meOn = (await call('GET', '/api/auth/me')).body.full_access;
     const notes = sql("SELECT channel || ':' || (lines->>0) FROM notifications WHERE user_id = 1 AND title = 'Full access to your Mac was turned on' ORDER BY id DESC LIMIT 1");
-    check('FU-D: the right password turns it on: "Full access on · until …", an amber dot by Claude in the sidebar, /me says on, and an email says from where',
-      /Full access on · until \d{1,2}:\d{2}\s?(AM|PM)/.test(onText) && /Lock now/.test(onText) && await page.isVisible('.rail [data-fa-dot]') && meOn.on === true && meOn.allowed === true
+    check('FU-D: the right password turns it on: "Full access · until …" with Lock beside it, an amber dot by Claude in the sidebar, /me says on, and an email says from where',
+      /Full access · until \d{1,2}:\d{2}\s?(AM|PM)/.test(onText) && /Lock$/.test(onText.trim()) && await page.isVisible('.rail [data-fa-dot]') && meOn.on === true && meOn.allowed === true
       && Number(sql("SELECT count(*) FROM notifications WHERE user_id = 1 AND title = 'Full access to your Mac was turned on'")) === notesBefore + 1
       && /^email:Full access to your Mac was turned on from Chrome on Mac at \d{1,2}:\d{2} (AM|PM)\./.test(notes), `${onText} | ${notes}`);
     // Only in the owner's own account: in another account the bar says so and his requests there keep the usual tools.
     await call('POST', '/api/accounts/switch', { id: 2 });
     await openDesk();
-    const awayText = await page.textContent('#fa-bar');
+    const awayText = `${await page.textContent('#fa-bar')} | ${await page.textContent('#cv-hint')}`;
     const awayTask = await call('POST', '/api/desk/tasks', { kind: 'question', prompt: 'QA FU-D: asked in another account' });
     const awayMarked = sql(`SELECT count(*) FROM desk_tasks WHERE id = ${awayTask.body.id} AND full_session IS NOT NULL`);
     await call('POST', `/api/desk/tasks/${awayTask.body.id}/cancel`, {});
     await call('POST', '/api/accounts/switch', { id: 1 });
-    check('FU-D: in another account the bar stays on but says "Only in Edge Bourne: requests in Burdanova QA keep the read-only tools", and a request there isn\'t marked',
-      /Full access on · until/.test(awayText) && /Only in Edge Bourne: requests in Burdanova QA keep the read-only tools\./.test(awayText) && awayMarked === '0', `${awayText} | ${awayMarked}`);
+    check('FU-D: in another account the control stays on but the reply box says "Full access works only in Edge Bourne: requests in Burdanova QA keep the read-only tools", and a request there isn\'t marked',
+      /Full access · until/.test(awayText) && /Full access works only in Edge Bourne: requests in Burdanova QA keep the read-only tools\./.test(awayText) && awayMarked === '0', `${awayText} | ${awayMarked}`);
     // The Research page (no bar there) and words from a link (Tests' "Make more like this") never run with full access.
     await page.goto(`${BASE}/research.html#tab=search`);
     await page.waitForSelector('#ask-form #prompt');
@@ -7828,7 +7973,7 @@ print(json.dumps(out))
     const ranFull = await turn1.locator('.fa-tag').textContent().catch(() => '');
     const srcs = await page.$$eval(`.cv-turn[data-turn="${t1}"] .att-media`, (els) => els.map((e) => [e.tagName, e.getAttribute('src'), e.style.aspectRatio]));
     const range = await page.evaluate(async (u) => { const r = await fetch(u, { headers: { Range: 'bytes=0-1' } }); return [r.status, r.headers.get('Content-Type'), (await r.arrayBuffer()).byteLength]; }, srcs[1] && srcs[1][1]);
-    check('FU-D: a request typed with full access on runs with full access ("Ran with full access")', m1.id === t1 && m1.access === 'full' && ranFull === 'Ran with full access', JSON.stringify(m1));
+    check('FU-D: a request typed with full access on runs with full access (the answer is tagged "Full access")', m1.id === t1 && m1.access === 'full' && ranFull === 'Full access', JSON.stringify(m1));
     check('FU-D: the previews Claude attached show in the turn: an image and a video from /api/desk/attachments/<id>, shaped from their size; the video answers a Range request with 206',
       m1.attached.every((a) => a[0] === 201) && srcs.length === 2 && srcs[0][0] === 'IMG' && srcs[1][0] === 'VIDEO' && srcs.every((x) => /^\/api\/desk\/attachments\/\d+$/.test(x[1]))
       && srcs[0][2] === '432 / 540' && srcs[1][2] === '360 / 640' && range[0] === 206 && range[1] === 'video/mp4' && range[2] === 2, `${JSON.stringify(srcs)} ${JSON.stringify(range)}`);
@@ -7874,8 +8019,8 @@ print(json.dumps(out))
     const t2 = await sendAsk('QA FU-D: a question after Lock now');
     const m2 = mac(t2);
     const turn2 = await turn(t2);
-    check('FU-D: Lock now turns it off (dot gone); the next request runs with "the usual tools" and no note', dotHidden && m2.access === 'sandbox'
-      && (await turn2.locator('.fa-ran').textContent()) === 'Ran with the usual tools' && (await turn2.locator('.fa-why').count()) === 0, JSON.stringify(m2));
+    check('FU-D: Lock turns it off (dot gone); the next request runs with the usual tools, which needs no tag and no note', dotHidden && m2.access === 'sandbox'
+      && (await turn2.locator('.fa-tag').count()) === 0 && (await turn2.locator('.fa-why').count()) === 0, JSON.stringify(m2));
     // 6. Typed while on, locked before the Mac took it: the turn says so.
     await page.goto(`${BASE}/desk.html#new`);
     await page.waitForSelector('#fa-bar [data-fa-on]');

@@ -136,6 +136,11 @@ class ClaimRefusalTests(unittest.TestCase):
 class ClaimSkipTests(unittest.TestCase):
     VERSIONS = [(0, 0), (1, 6), (1, 7), (1, 9), (2, 0)]
 
+    def test_a_message_with_files_waits_for_a_helper_that_can_fetch_them(self):
+        """Before 3.2 the Mac has no `desk fetch`: Claude would answer without having seen the files."""
+        waits = ["a.source = 'user'" in desk_api.claim_skip(v) for v in [(2, 0), (3, 1), (3, 2), (4, 0)]]
+        self.assertEqual(waits, [True, True, False, False])
+
     def test_an_older_mac_helper_leaves_advice_runs_and_follow_ups_in_line(self):
         skips = [desk_api.claim_skip(v) for v in self.VERSIONS]
         self.assertEqual([("kind <> 'advice'" in s, "options->>'reply' IS NULL" in s) for s in skips],
@@ -220,11 +225,18 @@ class AttachmentSniffTests(unittest.TestCase):
 
     def test_anything_else_is_refused(self):
         import attachments
-        mov = b"\x00\x00\x00\x14ftypqt  \x00\x00\x02\x00qt  \x00\x00\x00\x08moov"
         html_in_mp4 = self.FTYP + b"<!doctype html><script>alert(1)</script>"
-        cases = [b"GIF89a\x01\x00\x01\x00", b"<!doctype html><html>", b"<svg xmlns='http://www.w3.org/2000/svg'>", mov, html_in_mp4,
+        html_in_mov = b"\x00\x00\x00\x14ftypqt  \x00\x00\x02\x00qt  <!doctype html><script>"
+        cases = [b"GIF89a\x01\x00\x01\x00", b"<!doctype html><html>", b"<svg xmlns='http://www.w3.org/2000/svg'>", html_in_mp4, html_in_mov,
                  b"RIFF\x24\x00\x00\x00WAVEfmt ", b"\x00\x00\x00\x18ftyp", b"", b"\x89PNG"]
         self.assertEqual([attachments.sniff(b) for b in cases], [None] * len(cases))
+
+    def test_a_phones_mov_is_a_video_a_person_may_send_and_never_one_claude_attaches(self):
+        """Meta's media library (Upload as draft) takes MP4, so Claude's previews stay MP4; a raw clip from a phone is QuickTime."""
+        import attachments
+        mov = b"\x00\x00\x00\x14ftypqt  \x00\x00\x02\x00qt  \x00\x00\x00\x08moov"
+        mime = attachments.sniff(mov)
+        self.assertEqual((mime, attachments.MIMES[mime], mime in attachments.CLAUDE_MIMES), ("video/quicktime", "video", False))
 
     def test_size_rule_per_kind(self):
         import attachments
@@ -245,4 +257,7 @@ class CleanReplyTests(unittest.TestCase):
     def test_the_rest_of_the_reply(self):
         self.assertEqual(desk_api.clean_reply({"prompt": "  Bigger headline  ", "about_proposal": "5", "stop_first": 1, "full": True,
                                                "options": {"access": "full"}}),
-                         {"prompt": "Bigger headline", "about_proposal": 5, "about_attachment": None, "stop_first": True})
+                         {"prompt": "Bigger headline", "about_proposal": 5, "about_attachment": None, "stop_first": True, "files": None})
+
+    def test_the_files_sent_with_a_reply_are_passed_on_as_typed_for_their_own_check(self):
+        self.assertEqual(desk_api.clean_reply({"prompt": "Cut this to 9 seconds", "files": [12, 13]})["files"], [12, 13])

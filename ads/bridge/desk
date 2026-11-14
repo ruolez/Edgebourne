@@ -21,8 +21,13 @@ by hand keeps the pass in ~/.config/ads-desk/claims.json for the later calls.
   desk propose <id> [--file F]           proposals JSON from F or stdin
   desk scorecard <id> [--file F]         polish results JSON from F or stdin
   desk upload <path>                     image/video into the ad account's media library (prints hash / video_id)
-  desk attach <id> <path> [--caption T]  show a preview (JPG/PNG/WebP up to 10 MB, MP4 up to 60 MB, from this request's
-                                         own folder creatives/<date>-desk-<id>/) in its answer on the Claude page (prints {"id": …})
+  desk attach <id> <path> [--caption T]  show a preview (JPG/PNG/WebP up to 10 MB, MP4 up to 60 MB, or an .html page up to 3 MB
+                                         with its local pictures inside, from this request's own folder
+                                         creatives/<date>-desk-<id>/) in its answer on the Claude page (prints {"id": …})
+  desk show <id> --ad ID | --form ID [--placement feed|reels|stories] [--caption T]
+                                         show an ad as Meta shows it, or a lead form, large in the answer
+  desk fetch <id>                        the pictures and videos sent with this conversation's messages, into
+                                         reports/desk/inbox/task<id>/ (prints their paths)
   desk probe <video>                     duration, size, streams of a video in the workspace (JSON)
   desk frames <video> --task ID [--every S]
                                          frames every S seconds (default 1) + a contact sheet, into
@@ -47,9 +52,10 @@ import socket
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
-VERSION = "3.1"
+VERSION = "3.2"
 # ADS_DESK_CONFIG points a test run at another dashboard (e.g. the local dev stack).
 CONFIG = os.environ.get("ADS_DESK_CONFIG") or os.path.expanduser("~/.config/ads-desk/config.json")
 SERVICE = "ads-desk"
@@ -146,12 +152,14 @@ def upload(cfg, token, path):
     return post_file(cfg, token, "/api/agent/media/upload", path, ctype)
 
 
-def post_file(cfg, token, api_path, path, ctype, fields=None):
-    """Multipart POST of one file (plus text fields) with the run's pass."""
+def post_file(cfg, token, api_path, path, ctype, fields=None, data=None):
+    """Multipart POST of one file (plus text fields) with the run's pass. `data`: the bytes to send under the
+    file's name instead of what is on disk (a page with its pictures put inside)."""
     import uuid
     boundary = uuid.uuid4().hex
-    with open(path, "rb") as fh:
-        data = fh.read()
+    if data is None:
+        with open(path, "rb") as fh:
+            data = fh.read()
     parts = b"".join(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
                      for k, v in (fields or {}).items() if v is not None)
     head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{os.path.basename(path)}\"\r\n"
@@ -186,8 +194,13 @@ def media_input(workdir, path):
     return real, fmt
 
 
-ATTACH_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".mp4": "video/mp4"}
+ATTACH_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".mp4": "video/mp4",
+                ".html": "text/html", ".htm": "text/html"}
 ATTACH_MAX = {"image": 10 * 1024 * 1024, "video": 60 * 1024 * 1024}
+PAGE_MAX = 3 * 1024 * 1024
+# What a page may carry inside itself: its pictures, fonts and stylesheets (never a script, a video or any other file).
+INLINE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif",
+                ".svg": "image/svg+xml", ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".css": "text/css"}
 
 
 def own_folder(rel, task_id):
@@ -210,11 +223,119 @@ def attach_input(workdir, path, task_id):
     if not own_folder(os.path.relpath(real, root).split(os.sep), task_id):
         raise ValueError(f"{path} isn't in this request's own folder: render into creatives/<today>-desk-{int(task_id)}/ and attach from there")
     if not ctype or not os.path.isfile(real):
-        raise ValueError(f"{path} isn't a preview file (JPG, PNG, WebP or MP4)")
+        raise ValueError(f"{path} isn't a preview file (JPG, PNG, WebP, MP4 or an .html page)")
     kind = ctype.split("/")[0]
-    if os.path.getsize(real) > ATTACH_MAX[kind]:
+    if kind in ATTACH_MAX and os.path.getsize(real) > ATTACH_MAX[kind]:
         raise ValueError(f"{path} is too big for a preview ({'images up to 10 MB' if kind == 'image' else 'videos up to 60 MB'})")
     return real, ctype
+
+
+def page_part(ref, base, root, task_id):
+    """The real path of a local file a page refers to (`ref`, relative to the folder `base`), or None when it isn't
+    one the page may carry: something remote, a kind not on INLINE_TYPES, or a file outside the request's own folder
+    (a page naming ../../.env must never get that file put inside it)."""
+    ref = urllib.parse.unquote(str(ref or "").strip().split("#")[0].split("?")[0])
+    if not ref or re.match(r"^([a-z][a-z0-9+.-]*:|//)", ref, re.I):
+        return None
+    real = os.path.realpath(os.path.join(base, ref))
+    if os.path.splitext(real)[1].lower() not in INLINE_TYPES or not os.path.isfile(real):
+        return None
+    if os.path.commonpath([root, real]) != root or not own_folder(os.path.relpath(real, root).split(os.sep), task_id):
+        return None
+    return real
+
+
+def data_url(real):
+    import base64
+    with open(real, "rb") as fh:
+        return f"data:{INLINE_TYPES[os.path.splitext(real)[1].lower()]};base64,{base64.b64encode(fh.read()).decode()}"
+
+
+def page_css(css, base, root, task_id):
+    """A stylesheet with the local files its url(…) name put inside."""
+    def swap(m):
+        real = page_part(m.group(2), base, root, task_id)
+        return f"url({data_url(real)})" if real else m.group(0)
+    return re.sub(r"url\(\s*(['\"]?)([^'\")]+)\1\s*\)", swap, css)
+
+
+def page_html(real, workdir, task_id):
+    """A page as one self-contained HTML document (bytes), or ValueError: its local stylesheets, pictures and fonts
+    are put inside as data: URLs, and its scripts are left out. The console shows a page with scripts and requests
+    switched off, so anything still pointing elsewhere simply doesn't load."""
+    root = os.path.realpath(workdir)
+    base = os.path.dirname(real)
+    try:
+        with open(real, encoding="utf-8") as fh:
+            html = fh.read()
+    except UnicodeDecodeError:
+        raise ValueError(f"{real} isn't UTF-8 text") from None
+    html = re.sub(r"<script\b[^>]*>.*?</script\s*>", "", html, flags=re.I | re.S)
+    html = re.sub(r"<script\b[^>]*/>", "", html, flags=re.I)
+    # Nothing that sends the frame somewhere else by itself.
+    html = re.sub(r"<meta\b[^>]*http-equiv\s*=\s*['\"]?refresh[^>]*>", "", html, flags=re.I | re.S)
+    html = re.sub(r"<base\b[^>]*>", "", html, flags=re.I | re.S)
+
+    def sheet(m):
+        href = re.search(r"\bhref\s*=\s*(['\"])(.*?)\1", m.group(0), re.I | re.S)
+        part = href and re.search(r"\brel\s*=\s*(['\"]?)stylesheet\1", m.group(0), re.I) and page_part(href.group(2), base, root, task_id)
+        if not part or not part.lower().endswith(".css"):
+            return m.group(0)
+        with open(part, encoding="utf-8", errors="replace") as fh:
+            return f"<style>{page_css(fh.read(), os.path.dirname(part), root, task_id)}</style>"
+    html = re.sub(r"<link\b[^>]*>", sheet, html, flags=re.I | re.S)
+    html = re.sub(r"(<style\b[^>]*>)(.*?)(</style\s*>)", lambda m: m.group(1) + page_css(m.group(2), base, root, task_id) + m.group(3), html, flags=re.I | re.S)
+
+    def attr(m):
+        real_part = page_part(m.group(3), base, root, task_id)
+        return f"{m.group(1)}{m.group(2)}{data_url(real_part)}{m.group(2)}" if real_part and not real_part.lower().endswith(".css") else m.group(0)
+    html = re.sub(r"(\b(?:src|poster)\s*=\s*)(['\"])(.*?)\2", attr, html, flags=re.I | re.S)
+    html = re.sub(r"(\bstyle\s*=\s*)(\")(.*?)\2", lambda m: m.group(1) + m.group(2) + page_css(m.group(3), base, root, task_id) + m.group(2), html, flags=re.I | re.S)
+    out = html.encode("utf-8")
+    if len(out) > PAGE_MAX:
+        raise ValueError(f"That page is {len(out) // 1024} KB with its pictures inside; a page takes up to 3 MB. Use fewer or smaller pictures (JPG).")
+    return out
+
+
+def inbox_name(att_id, name, mime):
+    """A safe file name for a fetched file: its id, then its own name without anything a path could use."""
+    ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "video/mp4": ".mp4", "video/quicktime": ".mov"}.get(mime, "")
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(os.path.basename(str(name or "")))[0]).strip("_")[:60] or "file"
+    return f"{int(att_id)}-{stem}{ext}"
+
+
+def get_bytes(cfg, token, path, timeout=600):
+    """GET one file's bytes with the run's pass."""
+    req = urllib.request.Request(cfg["base_url"].rstrip("/") + path, headers=headers(token, claim_for(path)))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            return res.read()
+    except urllib.error.HTTPError as exc:
+        try:
+            msg = json.loads(exc.read()).get("error")
+        except Exception:
+            msg = None
+        raise DeskError(exc.code, msg or f"HTTP {exc.code}") from None
+
+
+def fetch_files(cfg, token, task_id, listed):
+    """Writes this conversation's files into reports/desk/inbox/task<id>/ and returns what `desk fetch` prints:
+    [{path (from the workspace), name, kind, message}] plus the ones that are gone."""
+    root = os.path.realpath(cfg["workdir"])
+    folder = os.path.join(root, "reports", "desk", "inbox", f"task{int(task_id)}")
+    os.makedirs(folder, exist_ok=True)
+    out = []
+    for f in listed:
+        entry = {"name": f["name"], "kind": f["kind"], "message": f["task_id"]}
+        if f.get("pruned"):
+            out.append({**entry, "gone": "removed after 30 days: ask for it again"})
+            continue
+        target = os.path.join(folder, inbox_name(f["id"], f["name"], f["mime"]))
+        if not os.path.isfile(target) or os.path.getsize(target) != f["size_bytes"]:
+            with open(target, "wb") as fh:
+                fh.write(get_bytes(cfg, token, f"/api/agent/tasks/{int(task_id)}/files/{int(f['id'])}"))
+        out.append({**entry, "path": os.path.relpath(target, root)})
+    return out
 
 
 def media_head(tool, real, fmt):
@@ -405,6 +526,9 @@ def main(argv=None):
     sp = sub.add_parser("scorecard"); sp.add_argument("id", type=int); sp.add_argument("--file")
     sp = sub.add_parser("upload"); sp.add_argument("path")
     sp = sub.add_parser("attach"); sp.add_argument("id", type=int); sp.add_argument("path"); sp.add_argument("--caption")
+    sp = sub.add_parser("show"); sp.add_argument("id", type=int); sp.add_argument("--ad"); sp.add_argument("--form")
+    sp.add_argument("--placement", choices=["feed", "reels", "stories"]); sp.add_argument("--caption")
+    sub.add_parser("fetch").add_argument("id", type=int)
     sp = sub.add_parser("probe"); sp.add_argument("path")
     sp = sub.add_parser("frames"); sp.add_argument("path"); sp.add_argument("--task", type=int, required=True)
     sp.add_argument("--every", type=float, default=1.0)
@@ -437,8 +561,13 @@ def main(argv=None):
         except ValueError as exc:
             sys.exit(str(exc))
         try:
+            page = page_html(real, cfg["workdir"], a.id) if ctype == "text/html" else None
+        except ValueError as exc:
+            sys.exit(str(exc))
+        try:
             print(json.dumps(post_file(cfg, key(cfg), f"/api/agent/tasks/{a.id}/attachments", real, ctype,
-                                       {"caption": (a.caption or "").strip()[:300] or None})))
+                                       {"caption": (a.caption or "").strip()[:300] or None, "kind": "page" if page is not None else None},
+                                       data=page)))
         except DeskError as exc:
             sys.exit(f"Desk said no ({exc.status}): {exc}")
         except (urllib.error.URLError, OSError) as exc:
@@ -537,6 +666,16 @@ def main(argv=None):
             if not os.path.isfile(real):
                 sys.exit(f"No file at {a.path}")
             print(json.dumps(upload(cfg, token, real)))
+        elif a.cmd == "show":
+            if bool(a.ad) == bool(a.form):
+                sys.exit("Name one thing to show: --ad ID or --form ID")
+            body = {"type": "ad" if a.ad else "form", "id": a.ad or a.form, "placement": a.placement, "caption": a.caption}
+            print(json.dumps(go("POST", f"/api/agent/tasks/{a.id}/shows", body)[1]))
+        elif a.cmd == "fetch":
+            if not cfg.get("workdir"):
+                sys.exit("No workspace is set for this Mac (run ads/bridge/install.sh)")
+            listed = go("GET", f"/api/agent/tasks/{a.id}/files")[1]["files"]
+            print(json.dumps(fetch_files(cfg, token, a.id, listed), indent=2))
         elif a.cmd == "watched":
             print(json.dumps(go("GET", "/api/agent/watched")[1], indent=2))
         elif a.cmd == "swipe":

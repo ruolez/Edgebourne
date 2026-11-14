@@ -1,10 +1,21 @@
-"""FU-D: previews Claude made in a conversation (desk_attachments). Pure: the type from the bytes, the size rules,
-the picture's size and length read from the bytes, and which old bodies go when an account would pass its budget."""
+"""FU-D: what a conversation on the Claude page holds (desk_attachments): the pictures, videos and pages Claude made
+and the files a person sent with a message. Pure: the type from the bytes, the size rules, the picture's size and
+length read from the bytes, and which old bodies go when an account would pass its budget."""
 import struct
 
-MIMES = {"image/jpeg": "image", "image/png": "image", "image/webp": "image", "video/mp4": "video"}
-MAX_BYTES = {"image": 10 * 1024 * 1024, "video": 60 * 1024 * 1024}
+MIMES = {"image/jpeg": "image", "image/png": "image", "image/webp": "image", "video/mp4": "video",
+         "video/quicktime": "video", "text/html": "page"}
+# What Claude may attach as a preview: Meta's media library takes these (Upload as draft), a phone's .mov it does not.
+CLAUDE_MIMES = ("image/jpeg", "image/png", "image/webp", "video/mp4")
+MAX_BYTES = {"image": 10 * 1024 * 1024, "video": 60 * 1024 * 1024, "page": 3 * 1024 * 1024}
+SIZE_WORDS = {"image": "images up to 10 MB", "video": "videos up to 60 MB", "page": "pages up to 3 MB"}
 MAX_PER_TASK = 12
+MAX_FILES = 6        # files a person sends with one message
+UNSENT_HOURS = 24    # a file added to a message that was never sent is removed after this
+# A page Claude built is shown in a frame with no origin of its own: no scripts, no requests, no forms, whatever its
+# HTML says. Pictures and fonts travel inside it as data: URLs (`desk attach` inlines them on the Mac).
+PAGE_CSP = ("sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; "
+            "frame-ancestors 'self'; base-uri 'none'; form-action 'none'")
 ACCOUNT_BUDGET = 1024 * 1024 * 1024  # bodies kept per account; the oldest go first
 KEEP_DAYS = 30
 HEAD = 4096  # bytes the sniffer looks at
@@ -25,8 +36,11 @@ def sniff(head):
         return "image/webp"
     if head[4:8] == b"ftyp" and len(head) >= 16:
         size = struct.unpack(">I", head[:4])[0]
-        if 16 <= size <= 256 and head[8:12] in MP4_BRANDS and head[size + 4:size + 8] in MP4_BOXES:
-            return "video/mp4"
+        if 16 <= size <= 256 and head[size + 4:size + 8] in MP4_BOXES:
+            if head[8:12] in MP4_BRANDS:
+                return "video/mp4"
+            if head[8:12] == b"qt  ":
+                return "video/quicktime"
     return None
 
 
@@ -35,7 +49,39 @@ def too_big(kind, size):
     limit = MAX_BYTES.get(kind)
     if limit is None or size <= limit:
         return None
-    return f"That preview is too big ({'images up to 10 MB' if kind == 'image' else 'videos up to 60 MB'})"
+    return f"That preview is too big ({SIZE_WORDS[kind]})"
+
+
+def page_problem(data):
+    """Why these bytes can't be shown as a page, or None: one HTML document in UTF-8, within the size for pages.
+    What it may do once shown is not decided here (PAGE_CSP switches scripts and requests off)."""
+    data = bytes(data or b"")
+    if len(data) > MAX_BYTES["page"]:
+        return too_big("page", len(data))
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return "A page must be an HTML file in UTF-8"
+    head = text.lstrip("\ufeff \t\r\n")[:1024].lower()
+    if not (head.startswith("<!doctype html") or head.startswith("<html")):
+        return "A page must be an HTML file (it starts with <!doctype html>)"
+    return None
+
+
+def clean_file_ids(raw, limit=MAX_FILES):
+    """The ids of the files sent with a message, from a request body: positive whole numbers, each once, in order.
+    None when the body holds anything else or more than a message takes."""
+    if raw in (None, "", []):
+        return []
+    if not isinstance(raw, list) or len(raw) > limit:
+        return None
+    out = []
+    for v in raw:
+        if isinstance(v, bool) or not isinstance(v, int) or v <= 0:
+            return None
+        if v not in out:
+            out.append(v)
+    return out
 
 
 def _png(data):
@@ -119,7 +165,7 @@ def measure(mime, data):
     data = bytes(data or b"")
     out = {"width": None, "height": None, "duration_ms": None}
     try:
-        if mime == "video/mp4":
+        if mime in ("video/mp4", "video/quicktime"):
             size, duration = _mp4(data)
             out["duration_ms"] = duration
         else:
