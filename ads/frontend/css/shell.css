@@ -6,37 +6,36 @@ body { font-family: var(--font-ui); }
 .app { display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); min-height: 100vh; }
 .app > * { min-width: 0; }
 
-/* Sidebar, top to bottom: where you are (console, ad account, search), where you can go, what is going on
-   (one status card), the console's own corner (Settings, theme, you). Rows share one grid: an 18px icon
-   column 10px in, 12px to the label, 36px tall. */
+/* Sidebar, top to bottom: where you are (the console or the ad account, search), every page, then one quiet
+   corner (what is going on, Settings, you). Rows share one grid: an 18px icon column 10px in, 12px to the
+   label, 32px tall. The head and the corner stay put; only the list of pages scrolls when a window is short. */
 .rail {
   background: var(--canvas); border-right: 1px solid var(--line);
-  display: flex; flex-direction: column; gap: 18px; padding: 14px 12px 12px;
-  position: sticky; top: 0; height: 100vh; overflow-y: auto; scrollbar-width: thin;
+  display: flex; flex-direction: column; gap: 14px; padding: 14px 12px 10px;
+  position: sticky; top: 0; height: 100vh; overflow: hidden;
 }
-.rail-head { display: flex; flex-direction: column; gap: 10px; }
+.rail-head { flex: none; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 6px; text-decoration: none; color: var(--ink); }
 .brand img { width: 28px; height: 28px; }
 .brand span { font-weight: 600; font-size: var(--t-m); letter-spacing: -.01em; }
+/* With more than one ad account the account takes the console's place beside the logo: one row, not two. */
+.rail-head.has-acct { grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; align-items: center; }
+.rail-head.has-acct .brand { padding: 0 0 0 4px; border-radius: var(--radius-s); }
+.rail-head.has-acct .brand span { display: none; }
+.rail-head.has-acct .jump { grid-column: 1 / -1; }
 
-/* The ad account: its initial, its name, and the way to another one (a select, or + to add the second). */
+/* The ad account: its name and the way to another one. */
 .rail .acct, .rail .acct-name {
-  display: flex; flex-direction: row; align-items: center; gap: 8px; min-height: 36px; margin: 0; padding: 0 2px 0 9px;
-  border-radius: var(--radius-s); font-size: var(--t-s); font-weight: 500; line-height: 1.3; color: var(--ink);
+  display: flex; flex-direction: row; align-items: center; gap: 8px; min-height: 36px; margin: 0; padding: 0 2px 0 10px;
+  border-radius: var(--radius-s); font-size: var(--t-m); font-weight: 600; line-height: 1.3; color: var(--ink);
 }
-.rail .acct-name { padding: 6px 9px; overflow-wrap: anywhere; }
+.rail .acct-name { padding: 6px 4px; overflow-wrap: anywhere; }
 .rail .acct:has(.acct-select) { background: var(--surface); box-shadow: var(--shadow-1); }
 .rail .acct:has(.acct-select):hover { box-shadow: var(--shadow-2); }
 .rail .acct:has(.acct-select:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
-.rail .acct::before, .rail .acct-name::before {
-  content: attr(data-initial); flex: none; width: 20px; height: 20px; border-radius: var(--radius-xs); display: grid; place-items: center;
-  background: var(--ink); color: var(--canvas); font-size: var(--t-xs); font-weight: 600; line-height: 1;
-}
-.rail .acct[data-initial=""]::before { content: "\2217"; }
-.rail .acct-only { flex: 1; min-width: 0; font-size: var(--t-s); font-weight: 500; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail .acct-select {
   flex: 1; min-width: 0; width: auto; min-height: 34px; padding: 0 2px 0 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: 0;
-  font-size: var(--t-s); font-weight: 500; color: var(--ink); cursor: pointer; text-overflow: ellipsis;
+  font-size: var(--t-m); font-weight: 600; letter-spacing: -.01em; color: var(--ink); cursor: pointer; text-overflow: ellipsis;
 }
 .acct-add {
   flex: none; width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: var(--radius-s);
@@ -58,20 +57,38 @@ kbd {
   background: var(--surface); color: var(--ink-3);
 }
 
-.nav { display: flex; flex-direction: column; gap: 18px; }
-.nav-group { display: flex; flex-direction: column; gap: 2px; }
-.nav-label { font-size: var(--t-xs); font-weight: 500; color: var(--ink-3); padding: 0 10px 6px; letter-spacing: .02em; }
-.nav a, .rail-base .setlink, .theme-row {
-  display: flex; align-items: center; gap: 12px; min-height: 36px; padding: 0 10px; border-radius: var(--radius-s);
-  color: var(--ink-2); text-decoration: none; font-weight: 500; font-size: var(--t-m);
+/* Every page. The first four are worked from all day; the rest sit under the part of the work they belong to. */
+.nav {
+  flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 14px; margin: -2px -12px; padding: 2px 12px;
 }
-.nav a, .rail-base .setlink { transition: background-color .12s var(--ease), color .12s var(--ease), transform .12s var(--ease); }
-.nav svg, .rail-base .setlink svg, .theme-row > svg { width: 18px; height: 18px; flex: none; color: var(--ink-3); transition: color .12s var(--ease); }
+.nav::-webkit-scrollbar { display: none; }
+.nav[data-below] { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+.nav[data-above] { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px); mask-image: linear-gradient(to bottom, transparent, #000 28px); }
+.nav[data-above][data-below] { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to bottom, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
+.nav-group, .nav-items { display: flex; flex-direction: column; gap: 1px; }
+.nav-items[hidden] { display: none; }
+.nav-label {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; height: 26px; padding: 0 9px 0 10px; margin-bottom: 1px;
+  border: 0; border-radius: var(--radius-s); background: none; cursor: pointer; text-align: left;
+  font: 500 var(--t-xs)/1 var(--font-ui); letter-spacing: .02em; color: var(--ink-3);
+  transition: color .12s var(--ease);
+}
+.nav-label:hover { color: var(--ink); }
+.nav-label svg { width: 12px; height: 12px; flex: none; opacity: 0; transform: rotate(90deg); transition: opacity .12s var(--ease), transform .16s var(--ease); }
+.nav-label:hover svg, .nav-label:focus-visible svg, .nav-label[aria-expanded="false"] svg { opacity: 1; }
+.nav-label[aria-expanded="false"] svg { transform: none; }
+.nav a, .rail-base .setlink {
+  flex: none; display: flex; align-items: center; gap: 12px; min-height: 32px; padding: 0 10px; border-radius: var(--radius-s);
+  color: var(--ink-2); text-decoration: none; font-weight: 500; font-size: var(--t-m);
+  transition: background-color .12s var(--ease), color .12s var(--ease), transform .12s var(--ease);
+}
+.nav svg, .rail-base .setlink svg { width: 18px; height: 18px; flex: none; color: var(--ink-3); transition: color .12s var(--ease); }
 .nav a:hover, .rail-base .setlink:hover { color: var(--ink); background: var(--surface-2); }
 .nav a:active, .rail-base .setlink:active { transform: scale(.985); }
 .nav a[aria-current="page"], .rail-base .setlink[aria-current="page"] { color: var(--ink); font-weight: 600; background: var(--surface); box-shadow: var(--shadow-2); }
 .nav a:hover svg, .rail-base .setlink:hover svg, .nav a[aria-current="page"] svg, .rail-base .setlink[aria-current="page"] svg { color: var(--ink); }
-.nav a .label, .setlink .label, .theme-row .label { flex: 1; min-width: 0; }
+.nav a .label, .setlink .label, .theme-row .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .count {
   min-width: 20px; height: 18px; padding: 0 6px; border-radius: var(--radius-m); display: inline-grid; place-items: center;
   background: var(--ink); color: var(--canvas); font: 600 var(--t-xs)/1 var(--font-num);
@@ -82,26 +99,37 @@ kbd {
 .fa-dot[hidden] { display: none; }
 .count.bad { background: var(--bad); color: var(--on-bad); }
 
-.rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 12px; }
-/* What is going on: Claude's line and the spending limit, one card with a hairline between them. */
-.rail-status { background: var(--surface); border-radius: var(--radius-m); box-shadow: var(--shadow-1); overflow: hidden; }
+.rail-foot { flex: none; display: flex; flex-direction: column; gap: 8px; }
+/* What is going on, as two slim rows on the nav's grid: Claude's line (its dot in the icon column) and the
+   spending limit with its meter. Their second lines are the rows' tooltips; a limit that is nearly used says so. */
+.rail-status { display: flex; flex-direction: column; gap: 1px; }
 .rail-status:not(:has(> :not([hidden], :empty))) { display: none; }
-.rail-status > a { transition: background-color .12s var(--ease); }
-.rail-status > a:hover { background: color-mix(in srgb, var(--surface-2) 55%, var(--surface)); }
-.rail-status > a:focus-visible { outline-offset: -2px; border-radius: var(--radius-m); }
-.rail-status > :not([hidden], :empty) ~ :not([hidden]) { border-top: 1px solid var(--line); }
-.cap-card { padding: 10px 12px 12px; text-decoration: none; color: var(--ink); display: block; }
-.cap-card .cap-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 8px; font-size: var(--t-xs); font-weight: 500; color: var(--ink-2); }
-.cap-card .cap-top b { color: var(--ink); font-weight: 600; white-space: nowrap; }
-.cap-card small { display: block; margin-top: 7px; font-size: var(--t-xs); color: var(--ink-3); }
+.rail-status > a { border-radius: var(--radius-s); transition: background-color .12s var(--ease); }
+.rail-status > a:hover { background: var(--surface-2); }
+.rail-status .claude-now { flex-wrap: nowrap; gap: 12px; min-height: 30px; padding: 0 10px; }
+.rail-status .claude-now-dot { margin: 0 5px; }
+.rail-status .claude-now-text b { font-size: var(--t-s); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-status .claude-now:hover .claude-now-text b { color: var(--ink); }
+.rail-status .claude-now-text small { display: none; }
+.rail-status .claude-now em { flex-basis: auto; padding-left: 0; }
+.cap-card { padding: 7px 10px 9px; text-decoration: none; color: var(--ink); display: block; }
+.cap-card .cap-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: var(--t-xs); font-weight: 500; color: var(--ink-3); }
+.cap-card .cap-top b { color: var(--ink-2); font-weight: 500; white-space: nowrap; }
+.cap-card:hover .cap-top b { color: var(--ink); }
+.cap-card small { display: none; margin-top: 6px; font-size: var(--t-xs); }
+.cap-card[data-level="warn"] small { display: block; color: var(--amber-ink); }
+.cap-card[data-level="bad"] small { display: block; color: var(--bad-ink); }
 .bar { height: 6px; border-radius: var(--radius-xs); background: var(--surface-2); overflow: hidden; margin-top: 8px; }
 .bar i { display: block; height: 100%; border-radius: var(--radius-xs); background: var(--signal); }
 .bar.ink i { background: var(--ink); }
 .bar.warn i { background: var(--amber); }
 .bar.bad i { background: var(--bad); }
+.cap-card .bar { height: 3px; margin-top: 7px; background: var(--line-strong); }
 
-/* The console's own corner: Settings, theme, you. */
-.rail-base { display: flex; flex-direction: column; gap: 2px; padding-top: 10px; border-top: 1px solid var(--line); }
+/* The console's own corner: Settings, then you. Your account, the theme and Sign out open from your name. */
+.rail-base { display: flex; flex-direction: column; gap: 2px; padding-top: 8px; border-top: 1px solid var(--line); }
+.theme-row { display: flex; align-items: center; gap: 10px; color: var(--ink-2); font-weight: 500; font-size: var(--t-s); }
+.theme-row > svg { width: 16px; height: 16px; flex: none; color: var(--ink-3); }
 .theme-switch { flex: none; display: inline-flex; gap: 2px; padding: 2px; border-radius: calc(var(--radius-s) + 2px); background: var(--surface-2); }
 .theme-switch button {
   width: 30px; height: 26px; display: grid; place-items: center; border: 0; border-radius: var(--radius-s);
@@ -110,34 +138,58 @@ kbd {
 .theme-switch button:hover { color: var(--ink); }
 .theme-switch button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-2); }
 .theme-switch svg { width: 15px; height: 15px; }
-.rail-you { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
-.me { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; min-height: 44px; padding: 0 8px 0 5px; border-radius: var(--radius-s); text-decoration: none; color: inherit; transition: background-color .12s var(--ease); }
-.me:hover, .me[aria-current="page"] { background: var(--surface-2); }
+.rail-you { position: relative; }
+.me {
+  display: flex; align-items: center; gap: 9px; min-height: 44px; padding: 0 8px 0 5px; border-radius: var(--radius-s);
+  color: inherit; cursor: pointer; user-select: none; transition: background-color .12s var(--ease);
+}
+.me:hover, .rail-you[open] > .me { background: var(--surface-2); }
+.me[data-here] { background: var(--surface); box-shadow: var(--shadow-2); }
 .avatar { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; flex: none; background: var(--surface-2); color: var(--ink-2); font-weight: 600; font-size: var(--t-xs); box-shadow: inset 0 0 0 1px var(--line); }
-.me:hover .avatar, .me[aria-current="page"] .avatar { background: var(--surface); }
-.me .who { line-height: 1.25; min-width: 0; }
+.me:hover .avatar, .rail-you[open] > .me .avatar { background: var(--surface); }
+.me .who { flex: 1; line-height: 1.25; min-width: 0; }
 .me .who b, .me .who small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .me .who b { font-size: var(--t-s); font-weight: 600; }
 .me .who small { color: var(--ink-3); font-size: var(--t-xs); }
+.me > svg { flex: none; width: 16px; height: 16px; color: var(--ink-3); }
+.rail-you > .you-pop { left: 0; right: 0; top: auto; bottom: calc(100% + 6px); min-width: 0; gap: 1px; transform-origin: 50% 100%; }
+.rail-you[open] > .you-pop { animation: you-pop .14s var(--ease); }
+@keyframes you-pop { from { opacity: 0; transform: translateY(4px) scale(.98); } }
+.you-id { margin: 0 0 4px; padding: 7px 10px 9px; border-bottom: 1px solid var(--line); line-height: 1.3; }
+.you-id b, .you-id small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.you-id b { font-size: var(--t-s); font-weight: 600; }
+.you-id small { font-size: var(--t-xs); color: var(--ink-3); }
+.rail-you .you-pop a, .rail-you .you-pop > button {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 0 8px 0 10px; border: 0; border-radius: var(--radius-s);
+  background: none; color: var(--ink); font: 500 var(--t-s)/1.2 var(--font-ui); text-align: left; text-decoration: none; cursor: pointer;
+}
+.rail-you .you-pop a:hover, .rail-you .you-pop > button:hover, .rail-you .you-pop a:focus-visible, .rail-you .you-pop > button:focus-visible, .rail-you .you-pop a[aria-current="page"] { background: var(--surface-2); }
+.you-pop a > svg, .you-pop > button > svg { width: 16px; height: 16px; flex: none; color: var(--ink-3); }
+.you-pop .label { flex: 1; min-width: 0; }
+.you-pop kbd { border: 0; background: none; padding: 0; color: var(--ink-3); }
+.you-pop .theme-row { min-height: 38px; padding: 0 4px 0 10px; color: var(--ink); }
+.you-pop .menu-sep { display: block; height: 1px; margin: 4px 6px; background: var(--line); }
 .rail-btn {
   flex: none; width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: var(--radius-s);
   background: none; color: var(--ink-3); cursor: pointer; transition: background-color .12s var(--ease), color .12s var(--ease);
 }
 .rail-btn:hover { background: var(--surface-2); color: var(--ink); }
 .rail-btn svg { width: 17px; height: 17px; }
-/* Shorter windows (laptops): rows tighten first, then the status card drops its second lines, so the whole
-   sidebar still fits without scrolling down to about 700px. */
-@media (max-height: 840px) {
+/* Shorter windows (laptops): the rows tighten so the whole list still shows down to about 820px; under that the
+   list of pages scrolls between the head and the corner, which never move. */
+@media (max-height: 880px) {
   .rail { gap: 12px; padding-top: 12px; }
-  .nav { gap: 12px; }
-  .nav-label { padding-bottom: 4px; }
-  .nav a, .rail-base .setlink, .theme-row { min-height: 32px; }
-  .rail-foot { gap: 10px; }
-  .rail-base { padding-top: 8px; }
+  .nav { gap: 10px; }
+  .nav a, .rail-base .setlink { min-height: 30px; }
+  .nav-label { height: 24px; }
   .me { min-height: 40px; }
 }
-@media (max-height: 760px) {
-  .rail-status .claude-now-text small, .rail-status .cap-card small { display: none; }
+@media (max-height: 790px) {
+  .rail { gap: 10px; padding-top: 10px; }
+  .nav { gap: 6px; }
+  .nav a, .rail-base .setlink { min-height: 28px; }
+  .nav-label { height: 22px; }
+  .rail-status .claude-now { min-height: 26px; }
 }
 
 /* Breadcrumb line above every page */
@@ -254,6 +306,8 @@ dialog.palette::backdrop { background: rgba(10, 12, 14, .35); }
 .pal-foot { display: flex; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--line); font-size: var(--t-xs); color: var(--ink-3); }
 @media (max-width: 960px) { dialog.palette { margin-top: calc(10px + env(safe-area-inset-top)); } }
 
+/* Wide screens list every page in the sidebar; a section's pills are for phones. Claude's own views stay. */
+@media (min-width: 961px) { .subnav:not(.subnav-own) { display: none; } }
 @media (max-width: 960px) { .subnav { position: sticky; top: calc(52px + env(safe-area-inset-top)); z-index: 15; background: var(--canvas); } }
 
 /* Inbox */
@@ -687,17 +741,52 @@ body.has-bulk .content { padding-bottom: 96px; }
 
 /* Settings: one section at a time (9.4f). The sections on the left, grouped This account / Whole console;
    phones get them as one row that scrolls sideways (below). */
-.set-layout { display: grid; grid-template-columns: 200px minmax(0, 720px); gap: 16px 32px; align-items: start; }
+/* Settings: its own list (grouped by what a section is for) beside one page of it. Phones have no list: the
+   overview is the menu, and a section leads back to it with the top bar's arrow. */
+.set-layout { display: grid; grid-template-columns: 196px minmax(0, 720px); gap: 16px 40px; align-items: start; }
+.set-layout[data-page="overview"] { grid-template-columns: 196px minmax(0, 940px); }
+.set-layout[data-page="team"], .set-layout[data-page="activity-panel"] { grid-template-columns: 196px minmax(0, 1fr); }
 .settings-nav { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 1px; }
-.set-group { padding: 14px 10px 4px; color: var(--ink-3); font-size: var(--t-xs); font-weight: 500; }
-.set-group:first-child { padding-top: 0; }
-.settings-nav a { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 10px; border-radius: var(--radius-s); color: var(--ink-2); font-size: var(--t-s); font-weight: 500; text-decoration: none; }
+.set-group { padding: 16px 10px 5px; color: var(--ink-3); font-size: var(--t-xs); font-weight: 500; letter-spacing: .02em; }
+.settings-nav a { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 10px; border-radius: var(--radius-s); color: var(--ink-2); font-size: var(--t-s); font-weight: 500; text-decoration: none; transition: background-color .12s var(--ease), color .12s var(--ease); }
 .settings-nav a:hover { background: var(--surface-2); color: var(--ink); }
-.settings-nav a[aria-current="page"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-2); }
+.settings-nav a[aria-current="page"] { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: var(--shadow-2); }
 .set-dirty { flex: none; width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--amber); }
 .set-pane { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .set-scope { margin: 0; color: var(--ink-3); font-size: var(--t-xs); font-weight: 500; }
-.console-group { display: flex; flex-direction: column; gap: 12px; }
+.set-all { margin-left: auto; }
+/* The overview: every section as a row under its group, with what is set there now. */
+.ov { display: flex; flex-direction: column; gap: 18px; }
+.ov-sum { margin: 0; display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: var(--t-s); }
+.ov-groups { columns: 2; column-gap: 24px; }
+.ov-group { break-inside: avoid; margin: 0 0 22px; }
+.ov-group h2 { margin: 0 0 8px; padding: 0 2px; font: 500 var(--t-xs)/1.3 var(--font-ui); letter-spacing: .02em; color: var(--ink-3); }
+.ov-list { display: flex; flex-direction: column; overflow: hidden; }
+.ov-row { display: flex; align-items: center; gap: 12px; min-height: 58px; padding: 9px 12px 9px 16px; color: var(--ink); text-decoration: none; transition: background-color .12s var(--ease); }
+.ov-row + .ov-row { border-top: 1px solid var(--line); }
+.ov-row:hover { background: color-mix(in srgb, var(--surface-2) 55%, var(--surface)); }
+.ov-row:focus-visible { outline-offset: -2px; }
+.ov-what { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.ov-what b { font-size: var(--t-m); font-weight: 500; }
+.ov-what small { font-size: var(--t-s); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-state { flex: none; max-width: 52%; display: flex; justify-content: flex-end; text-align: right; }
+.ov-state .pill { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ov-val { font-size: var(--t-s); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-row > svg { flex: none; width: 14px; height: 14px; color: var(--ink-3); transition: transform .12s var(--ease), color .12s var(--ease); }
+.ov-row:hover > svg { color: var(--ink); transform: translateX(2px); }
+.ov-you { column-span: all; margin: 0; }
+/* Team, beside the Settings list: Edit on the row, the rest behind its More button (a popover in the top layer). */
+.team-tbl th, .team-tbl td:nth-child(4) { white-space: nowrap; }
+.tm-more { padding: 0; width: 34px; justify-content: center; }
+.tm-more svg { width: 16px; height: 16px; }
+.tm-pop { position: fixed; inset: auto; margin: 0; border: 0; min-width: 190px; color: var(--ink); }
+.tm-pop:not(:popover-open) { display: none; }
+.tm-pop button { display: flex; align-items: center; width: 100%; min-height: 34px; padding: 0 10px; border: 0; border-radius: var(--radius-s); background: none;
+  color: var(--ink); font: 500 var(--t-s)/1.2 var(--font-ui); text-align: left; cursor: pointer; }
+.tm-pop button.btn-danger-text { color: var(--bad-ink); }
+.tm-pop button:hover, .tm-pop button:focus-visible { background: var(--surface-2); }
+@media (max-width: 960px) { .tm-pop button { min-height: var(--target); } .tm-more { width: var(--target); } }
+@media (max-width: 1240px) { .ov-groups { columns: 1; } .set-layout[data-page="overview"] { grid-template-columns: 196px minmax(0, 720px); } }
 .set-pane [id] { scroll-margin-top: 16px; }
 @media (max-width: 960px) { .set-pane [id] { scroll-margin-top: calc(112px + env(safe-area-inset-top)); } }
 /* Advanced: the technical part of a section, folded under one quiet line. */
@@ -883,13 +972,14 @@ dialog { max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .places .radius { min-height: var(--target); }
   .al-num .input, .sort .input, .acct-select, .rail .acct-select { min-height: var(--target); }
   /* Settings' sections: one row that scrolls sideways instead of fifteen rows of 44px links. */
-  .set-layout { grid-template-columns: minmax(0, 1fr); }
-  .settings-nav { position: static; flex-direction: row; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); }
-  .settings-nav::-webkit-scrollbar { display: none; }
-  /* The two group names stay in the row as plain words, so per-account and whole-console links read apart. */
-  .set-group { flex: none; white-space: nowrap; padding: 0 4px 0 0; font-weight: 600; }
-  .set-group.console-only { margin-left: 6px; padding-left: 12px; border-left: 1px solid var(--line-strong); }
-  .settings-nav a { flex: none; min-height: var(--target); min-width: var(--target); justify-content: center; padding: 0 12px; white-space: nowrap; }
+  .set-layout, .set-layout[data-page] { grid-template-columns: minmax(0, 1fr); }
+  .settings-nav { display: none; }
+  .ov { padding-top: 14px; }
+  .ov-groups { columns: 1; }
+  .ov-row { min-height: 64px; padding-left: 14px; }
+  .ov-what small { white-space: normal; }
+  .ov-state { max-width: 40%; }
+  .ov-val { white-space: normal; }
   details.tech > summary { min-height: var(--target); }
   /* The switch keeps its 26px track but takes a 44px tall tap area. */
   .switch, .switch[aria-checked] { height: var(--target); background: none; }

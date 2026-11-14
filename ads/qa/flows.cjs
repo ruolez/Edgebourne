@@ -455,19 +455,38 @@ db.execute(\\"INSERT INTO leads (meta_lead_id, created_time, full_name, is_test)
     rail: document.querySelector('.rail .theme-switch [aria-pressed="true"]')?.dataset.themeSet }));
   check('Your account sets the theme: Dark applies at once, is kept, and the sidebar switch shows it',
     themeNow.attr === 'dark' && themeNow.saved === 'dark' && themeNow.pressed === 'dark' && themeNow.rail === 'dark', JSON.stringify(themeNow));
+  await page.click('.rail-you > summary');
   await page.click('.rail .theme-switch [data-theme-set="light"]');
+  await page.keyboard.press('Escape');
   const themeRail = await page.evaluate(() => ({ attr: document.documentElement.dataset.theme, saved: localStorage.getItem('ebads-theme'),
     pressed: [...document.querySelectorAll('.rail .theme-switch [aria-pressed="true"]')].map((b) => b.dataset.themeSet).join(),
     account: document.querySelector('#theme-choice [aria-pressed="true"]')?.dataset.themeChoice,
     names: [...document.querySelectorAll('.rail .theme-switch button')].map((b) => b.getAttribute('aria-label')).join(),
     more: document.querySelectorAll('dialog.sheet .theme-switch button').length }));
-  check('the sidebar has the theme switch (Light, Dark, Match my device): Light applies at once, is kept, Your account follows, and the phone\'s More has it too',
+  check('the menu under your name has the theme switch (Light, Dark, Match my device): Light applies at once, is kept, Your account follows, and the phone\'s More has it too',
     themeRail.attr === 'light' && themeRail.saved === 'light' && themeRail.pressed === 'light' && themeRail.account === 'light'
     && themeRail.names === 'Light,Dark,Match my device' && themeRail.more === 3, JSON.stringify(themeRail));
   const railMap = await page.evaluate(() => ({ status: [...document.querySelectorAll('.rail-status > a')].map((a) => a.className).join(),
-    base: [...document.querySelectorAll('.rail-base > *')].map((el) => el.className).join(), out: document.querySelector('.rail [data-signout]')?.getAttribute('aria-label') }));
-  check('the sidebar ends with one status card (Claude, then the spending limit) and one corner for Settings, theme, you and Sign out',
-    railMap.status === 'claude-now,cap-card' && railMap.base === 'setlink,theme-row,rail-you' && railMap.out === 'Sign out', JSON.stringify(railMap));
+    base: [...document.querySelectorAll('.rail-base > *')].map((el) => el.className).join(), out: document.querySelector('.rail-you [data-signout]')?.textContent.trim(),
+    menu: [...document.querySelectorAll('.rail-you .you-pop .label')].map((x) => x.textContent).join(), closed: !document.querySelector('.rail-you').open,
+    groups: [...document.querySelectorAll('.rail .nav .nav-label span')].map((x) => x.textContent).join(), subnavShown: [...document.querySelectorAll('.subnav')].some((n) => n.offsetParent !== null) }));
+  check('the sidebar ends with two status rows (Claude, then the spending limit), Settings, and you: your account, shortcuts, theme and Sign out open from your name',
+    railMap.status === 'claude-now,cap-card' && railMap.base === 'setlink,menu rail-you' && railMap.out === 'Sign out' && railMap.closed
+    && /^Your account,(All accounts,)?Keyboard shortcuts,Theme,Sign out$/.test(railMap.menu), JSON.stringify(railMap));
+  check('the sidebar lists every page under Ads, Creative and Insights, so wide screens have no second row of page links', railMap.groups === 'Ads,Creative,Insights' && !railMap.subnavShown
+    && (await page.$$eval('.rail .nav a .label', (a) => a.map((x) => x.textContent).join())) === 'Today,Inbox,Leads,Claude,Campaigns and ads,Lead forms,Audiences,Gallery,Ideas,Research,Results,Compare,Tests,Reports', JSON.stringify(railMap));
+  // A folded group stays folded on the next page; the group of the open page never folds.
+  await page.click('.rail .nav-group[data-group="creative"] .nav-label');
+  await page.goto(BASE + '/home.html');
+  await page.waitForSelector('.rail .nav a');
+  const foldedHome = await page.evaluate(() => ({ creative: document.getElementById('nav-creative').hidden, ads: document.getElementById('nav-ads').hidden }));
+  await page.goto(BASE + '/ideas.html');
+  await page.waitForSelector('.rail .nav a');
+  const foldedOwn = await page.evaluate(() => document.getElementById('nav-creative').hidden);
+  await page.evaluate(() => localStorage.removeItem('ebads-nav-folded'));
+  check('a sidebar group folds and stays folded, except on its own pages', foldedHome.creative && !foldedHome.ads && !foldedOwn, JSON.stringify({ foldedHome, foldedOwn }));
+  await page.goto(BASE + '/account.html');
+  await page.waitForSelector('#me-name:not(:empty)');
   const meCard = await page.evaluate(() => ({ name: document.getElementById('me-name').textContent, email: document.getElementById('me-email').textContent,
     role: document.getElementById('me-role').textContent, out: !!document.querySelector('.me-card #account-signout') }));
   check('Your account opens on who is signed in (name, email, access) with Sign out beside it',
@@ -1438,7 +1457,7 @@ db.execute('UPDATE experiments SET meta_study = %s WHERE id = ${mtId}', (json.du
   // Lead forms: build one with a live check and phone preview, create it on the Page, use it in a new ad.
   const fake = (p) => JSON.parse(sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001/fake/${p}').read().decode())"`));
   await page.goto(BASE + '/ads.html');
-  await Promise.all([page.waitForURL('**/forms.html'), page.click('.subnav a[href="/forms.html"]')]);
+  await Promise.all([page.waitForURL('**/forms.html'), page.click('.rail .nav a[href="/forms.html"]')]);
   await page.waitForSelector('#list table');
   check('Lead forms lists the Page forms with their leads', /EB \| Free AI workflow review/.test(await page.textContent('#list')));
   // 9.4b: each form's leads (as stored here) link to Leads narrowed to that form; Meta's own count beside them.
@@ -2918,7 +2937,7 @@ with account_ctx.all_accounts():
   await Promise.all([cp.waitForURL('**/home.html**'), cp.click('button[type=submit]')]);
   await cp.waitForSelector('.rail .nav a .label');
   const nav = await cp.$$eval('.rail .nav a .label', (a) => a.map((x) => x.textContent.trim()));
-  check('a client signs in to their own account with the read-only menu', nav.join() === 'Today,Inbox,Leads,Ads,Creative,Insights' && /Burdanova QA/.test(await cp.textContent('.rail')), nav.join());
+  check('a client signs in to their own account with the read-only menu', nav.join() === 'Today,Inbox,Leads,Campaigns and ads,Gallery,Ideas,Results,Compare,Reports' && /Burdanova QA/.test(await cp.textContent('.rail')), nav.join());
   const clientBulk = await cp.evaluate(async () => (await fetch('/api/ads/bulk/preview', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ebads' },
     body: JSON.stringify({ action: 'status', level: 'ad', ids: ['x'], value: 'PAUSED' }) })).status);
   check('a client can\'t make bulk changes', clientBulk === 403, String(clientBulk));
@@ -4233,8 +4252,8 @@ print(','.join(left))
     seq.n === `2 of ${seqIds.length}` && seq.prev.startsWith(`/ad.html?id=${seqIds[0]}`) && seq.next.startsWith(`/ad.html?id=${seqIds[2]}`) && seqAfter === `3 of ${seqIds.length}`
     && (await page.locator('#cr-seq .seq-nav').count()) === 0, JSON.stringify({ seq, seqAfter, n: seqIds.length }));
   // 8.5 Signal shell: every page sits in the right section, has breadcrumbs, and ⌘K finds an ad.
-  const sections = { 'home': 'Today', 'inbox': 'Inbox', 'leads': 'Leads', 'ads': 'Ads', 'ad.html?id=120252672230740312': 'Ads', 'new-ad': 'Ads',
-    'forms': 'Ads', 'new-campaign': 'Ads', 'performance': 'Insights', 'report': 'Insights', 'experiments': 'Insights', 'desk': 'Claude', 'gallery': 'Creative', 'ideas': 'Creative', 'research': 'Creative' };
+  const sections = { 'home': 'Today', 'inbox': 'Inbox', 'leads': 'Leads', 'ads': 'Campaigns and ads', 'ad.html?id=120252672230740312': 'Campaigns and ads', 'new-ad': 'Campaigns and ads',
+    'forms': 'Lead forms', 'audiences': 'Audiences', 'new-campaign': 'Campaigns and ads', 'performance': 'Results', 'compare': 'Compare', 'report': 'Reports', 'experiments': 'Tests', 'desk': 'Claude', 'gallery': 'Gallery', 'ideas': 'Ideas', 'research': 'Research' };
   const wrongNav = [];
   for (const [p, want] of Object.entries(sections)) {
     await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
@@ -4242,7 +4261,7 @@ print(','.join(left))
     const got = await page.evaluate(() => document.querySelector('.rail .nav a[aria-current="page"] .label')?.textContent);
     if (got !== want) wrongNav.push(`${p}: ${got}`);
   }
-  check('every page highlights its own section in the sidebar', wrongNav.length === 0, wrongNav.join(' | '));
+  check('every page highlights its own link in the sidebar (a page inside Ads, its first page)', wrongNav.length === 0, wrongNav.join(' | '));
   await page.goto(BASE + '/ad.html?id=120252672230740312');
   await page.waitForFunction(() => document.querySelectorAll('.crumbs a').length >= 2);
   const crumbText = await page.textContent('.crumbs');
@@ -4283,11 +4302,12 @@ print(','.join(left))
   await page.waitForTimeout(300);
   const targetsOpen = await page.evaluate(() => ({ top: Math.round(document.getElementById('targets').getBoundingClientRect().top),
     shown: [...document.querySelectorAll('[data-section]')].filter((x) => !x.hidden).map((x) => x.id).join() }));
-  check('⌘K → "Settings: Targets" opens Settings on that section alone', targetsOpen.shown === 'targets' && targetsOpen.top >= 0 && targetsOpen.top < 300, JSON.stringify(targetsOpen));
+  check('⌘K → "Settings: Targets and limits" opens Settings on that section alone', targetsOpen.shown === 'targets' && targetsOpen.top >= 0 && targetsOpen.top < 300, JSON.stringify(targetsOpen));
   // Every address the long page had (and the links alerts stored) opens its section; a deep one opens its fold too.
   const anchors = {};
-  for (const [hash, want] of [['meta-form', 'meta'], ['mt-form', 'ab'], ['tracking', 'tracking'], ['meta', 'meta'], ['tg-targets', 'targets'], ['reports-panel', 'reports-panel'],
-    ['crm-code', 'crm'], ['smtp-form', 'email'], ['activity', 'activity-panel'], ['nonsense', 'meta'], ['', 'meta']]) {
+  // A page of Settings is one section or the few that belong together (Meta = connection + app, for the owner).
+  for (const [hash, want] of [['meta-form', 'meta,meta-app'], ['mt-form', 'auto,ab'], ['prefs', 'auto,ab'], ['tracking', 'tracking'], ['meta', 'meta,meta-app'], ['meta-app', 'meta,meta-app'], ['tg-targets', 'targets'], ['reports-panel', 'reports-panel'],
+    ['crm-code', 'crm'], ['smtp-form', 'email,telegram'], ['telegram', 'email,telegram'], ['activity', 'activity-panel'], ['nonsense', 'overview'], ['', 'overview']]) {
     await page.goto(`${BASE}/settings.html${hash ? '#' + hash : ''}`);
     await page.reload();
     await page.waitForSelector('[data-section]:not([hidden])');
@@ -4295,7 +4315,38 @@ print(','.join(left))
       fold: h === 'crm-code' ? document.getElementById('crm-adv').open : true }), hash);
     if (got.shown !== want || !got.fold) anchors[hash || '(none)'] = `${got.shown}${got.fold ? '' : ' (fold shut)'}`;
   }
-  check('every old Settings address (#meta-form, #mt-form, #tracking, #meta…) opens its section, a field inside a fold opens the fold', Object.keys(anchors).length === 0, JSON.stringify(anchors));
+  check('every old Settings address (#meta-form, #mt-form, #tracking, #meta…) opens its page, a field inside a fold opens the fold, and no address or an unknown one opens the overview', Object.keys(anchors).length === 0, JSON.stringify(anchors));
+  // A second section of a page is scrolled to; the page's first opens at the top.
+  await page.goto(`${BASE}/settings.html#meta-app`);
+  await page.reload();
+  await page.waitForSelector('#meta-app[data-section]:not([hidden])');
+  await page.waitForTimeout(400);
+  const secondSec = await page.evaluate(() => ({ top: Math.round(document.getElementById('meta-app').getBoundingClientRect().top), lit: document.querySelector('.settings-nav [aria-current="page"]')?.textContent,
+    crumbs: document.querySelector('.crumbs').textContent.replace(/\s+/g, ' ').trim(), tag: document.querySelector('#meta-app .set-all')?.textContent || '' }));
+  check('Settings › Meta shows the connection and the app; #meta-app is scrolled to, named in the list and the breadcrumb, and marked as shared by every account',
+    secondSec.top >= 0 && secondSec.top < 200 && secondSec.lit === 'Meta' && /Settings \/ Meta$/.test(secondSec.crumbs) && secondSec.tag === 'Every account', JSON.stringify(secondSec));
+  // The overview: every page of Settings as a row with what is set there now, grouped as the list beside it.
+  await page.goto(`${BASE}/settings.html`);
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll('#ov-groups .ov-row [data-ov-state]:not(:empty)').length >= 14, null, { timeout: 15000 }).catch(() => {});
+  const ov = await page.evaluate(() => ({ groups: [...document.querySelectorAll('#ov-groups .ov-group h2')].map((h) => h.textContent).join(),
+    rows: [...document.querySelectorAll('#ov-groups .ov-row')].map((a) => `${a.querySelector('b').textContent}=${a.getAttribute('href')}`).join('|'),
+    empty: [...document.querySelectorAll('#ov-groups .ov-row')].filter((a) => !a.querySelector('[data-ov-state]').textContent.trim()).map((a) => a.dataset.ov).join(),
+    list: [...document.querySelectorAll('.settings-nav > *')].map((x) => (x.matches('.set-group') ? `[${x.textContent}]` : x.textContent)).join(','),
+    lit: document.querySelector('.settings-nav [aria-current="page"]')?.textContent, sum: document.getElementById('ov-sum').textContent,
+    warn: document.querySelectorAll('#ov-groups .ov-state .pill.warn, #ov-groups .ov-state .pill.bad').length, title: document.title }));
+  check('Settings opens on its overview: five groups (Account, Leads, People, Connections, History), every page a row that says what is set, the same list beside it',
+    ov.groups === 'Account,Leads,People,Connections,History' && ov.empty === '' && ov.lit === 'Overview' && ov.title === 'Settings | Edge Bourne Ads'
+    && ov.rows === 'Targets and limits=#targets|Alerts=#alerts|Preferences=#prefs|Replies=#replies|Quality=#lead-quality|Stages to Meta=#crm|Team=/team.html|Clients and reports=#reports-panel|Accounts=#accounts-panel|Meta=#meta|Ads Manager link=#am-link|Tracking health=#tracking|Email and Telegram=#email|Activity=#activity-panel'
+    && ov.list === 'Overview,[Account],Targets and limits,Alerts,Preferences,[Leads],Replies,Quality,Stages to Meta,[People],Team,Clients and reports,Accounts,[Connections],Meta,Ads Manager link,Tracking health,Email and Telegram,[History],Activity',
+    JSON.stringify(ov));
+  check('the overview counts what needs a look from the rows\' own amber and red pills', ov.warn ? new RegExp(`^${ov.warn} thing`).test(ov.sum.trim()) : /What is set/.test(ov.sum), `${ov.warn} ${ov.sum}`);
+  await Promise.all([page.waitForURL('**/team.html'), page.click('#ov-groups .ov-row[data-ov="team"]')]);
+  await page.waitForSelector('.settings-nav [aria-current="page"]');
+  const teamIn = await page.evaluate(() => ({ lit: document.querySelector('.settings-nav [aria-current="page"]').textContent, rail: document.querySelector('.rail .setlink')?.getAttribute('aria-current'),
+    back: document.querySelector('.settings-nav [data-set="alerts"]').getAttribute('href'), crumbs: document.querySelector('.crumbs').textContent.replace(/\s+/g, ' ').trim() }));
+  check('Team is a page of Settings: the same list beside it with Team lit, Settings lit in the sidebar, and its links lead back into Settings',
+    teamIn.lit === 'Team' && teamIn.rail === 'page' && teamIn.back === '/settings.html#alerts' && /Settings \/ Team$/.test(teamIn.crumbs), JSON.stringify(teamIn));
   // A Meta test code is never saved, so typing one doesn't mark Lead stages as unsaved (nor warn on leaving).
   await page.goto(`${BASE}/settings.html#crm-code`);
   await page.reload();
@@ -4322,7 +4373,7 @@ print(' '.join(sorted(links)))`).split(' ').filter(Boolean);
     await page.waitForSelector('[data-section]:not([hidden])');
     const shown = await page.evaluate(() => [...document.querySelectorAll('[data-section]')].filter((x) => !x.hidden).map((x) => x.id).join());
     const hash = href.split('#')[1];
-    if (hash && !(await page.evaluate(([h, id]) => { const el = document.getElementById(h); return !!el && el.closest('[data-section]').id === id; }, [hash, shown]))) unresolved.push(`${href} → ${shown}`);
+    if (hash && !(await page.evaluate(([h, ids]) => { const el = document.getElementById(h); return !!el && ids.split(',').includes(el.closest('[data-section]').id); }, [hash, shown]))) unresolved.push(`${href} → ${shown}`);
   }
   check('the Settings links alerts carry (Meta connection, Tracking health) open their section', unresolved.length === 0
     && ['/settings.html#meta', '/settings.html#tracking'].every((h) => storedLinks.includes(h)), `${storedLinks.join(' ')} ${unresolved.join(' | ')}`);
@@ -4442,7 +4493,7 @@ for ad, spend, leads in (('qa-gal-copy', 500, 1), ('qa-gal-pic', 300, 1)):
         crumbs: document.querySelector('.crumbs')?.textContent, tabs: [...document.querySelectorAll('.subnav a')].map((a) => a.textContent), nav: document.querySelector('.rail .nav a[aria-current="page"]')?.textContent.trim() };
     }, [merged?.key, pic?.key]);
     check('Gallery page: the merged card says it runs as 2 ads, video cards show a hook rate, the picture card none; it sits under Creative with Gallery · Ideas · Research',
-      /Runs as 2 ads/.test(shown.copies) && shown.hook && !shown.picHook && /Creative\s*\/\s*Gallery/.test(shown.crumbs) && shown.tabs.join() === 'Gallery,Ideas,Research' && shown.nav === 'Creative', JSON.stringify(shown));
+      /Runs as 2 ads/.test(shown.copies) && shown.hook && !shown.picHook && /Creative\s*\/\s*Gallery/.test(shown.crumbs) && shown.tabs.join() === 'Gallery,Ideas,Research' && shown.nav === 'Gallery', JSON.stringify(shown));
     // A card whose copy Meta rejected shows under "Rejected or has a problem" even when another copy delivers, and says so.
     py(`import db
 db.execute('UPDATE ads SET effective_status = %s WHERE id = %s', ('DISAPPROVED', 'qa-gal-copy'))`);
@@ -4716,10 +4767,14 @@ db.execute(\\"INSERT INTO campaign_members (campaign_id, user_id, account_id) SE
   await page.reload();
   await page.waitForSelector('.ib-item');
   await page.waitForTimeout(600);
-  check('the Inbox badge and the Needs action tab count the same: what needs you and is new, not every unread note', frame.inbox_need === needList.counts.need_unread
+  // The menu's badge counts each thing once: waiting leads are the Leads badge's, Claude's suggestions the Claude badge's.
+  const needNew = (await getJson('/api/inbox?box=need&filter=unread')).items;
+  const elsewhere = needNew.filter((i) => ['new_lead', 'proposal'].includes(i.rule)).length;
+  check('the Inbox badge counts what needs you and is new, leaving out what the Leads and Claude badges already count; the Needs action tab still counts all of it',
+    frame.inbox_need === needList.counts.badge && needList.counts.badge === needList.counts.need_unread - elsewhere && needList.counts.badge === needNew.length - elsewhere
     && frame.inbox_unread === needList.counts.unread && (await page.textContent('.rail [data-inbox-count]')).trim() === String(frame.inbox_need || '')
-    && ((await page.locator('#ib-box [data-box="need"] .n').count()) ? (await page.textContent('#ib-box [data-box="need"] .n')).trim() : '') === String(frame.inbox_need || ''),
-    `${frame.inbox_need} / ${frame.inbox_unread} / ${await page.textContent('.rail [data-inbox-count]')}`);
+    && ((await page.locator('#ib-box [data-box="need"] .n').count()) ? (await page.textContent('#ib-box [data-box="need"] .n')).trim() : '') === String(needList.counts.need_unread || ''),
+    `${frame.inbox_need} / ${needList.counts.need_unread} - ${elsewhere} / ${frame.inbox_unread} / ${await page.textContent('.rail [data-inbox-count]')}`);
   // E only marks read: the item under the keyboard loses its dot, nothing opens, nothing is decided.
   const unreadRows = page.locator('#ib-list .ib-item.unread');
   const firstOpen = (await page.textContent('#ib-detail h2')).trim();
@@ -4880,10 +4935,10 @@ db.execute(\\"INSERT INTO campaign_members (campaign_id, user_id, account_id) SE
   await page.goto(BASE + `/performance.html?campaign=${C1}&range=7`);
   await page.waitForSelector('.results-table tbody tr');
   await page.goto(BASE + '/experiments.html');
-  await page.waitForSelector('.subnav a[href^="/performance.html"]');
-  const resTab = await page.getAttribute('.subnav a[href^="/performance.html"]', 'href');
+  await page.waitForSelector('.rail .nav a[href^="/performance.html"]');
+  const resTab = await page.getAttribute('.rail .nav a[href^="/performance.html"]', 'href');
   check('the Results tab reopens Results on the campaign picked there, without old dates', resTab.includes(`campaign=${C1}`) && !/range=/.test(resTab), resTab);
-  await Promise.all([page.waitForURL('**/performance.html?**'), page.click('.subnav a[href^="/performance.html"]')]);
+  await Promise.all([page.waitForURL('**/performance.html?**'), page.click('.rail .nav a[href^="/performance.html"]')]);
   await page.waitForFunction((c) => document.getElementById('campaign')?.value === c, C1);
   check('…and Results opens filtered to it', (await page.inputValue('#campaign')) === C1);
   await page.goto(BASE + '/performance.html?campaign=');
@@ -6686,6 +6741,7 @@ db.execute(\\"UPDATE users SET is_active = FALSE WHERE email IN ('qa-d1-client@e
     const mate = (await getJson('/api/team')).members.find((m) => m.email === QA_MATE);
     let pwResponse;
     if (mate) {
+      await page.click(`[popovertarget="tm-pop-${mate.id}"]`);  // Reset password and Deactivate sit behind the row's More button
       await page.click(`[data-reset="${mate.id}"]`);
       await page.waitForSelector('dialog.confirm[open]');
       [pwResponse] = await Promise.all([page.waitForResponse((r) => r.request().method() === 'PATCH' && /api\/team\//.test(r.url())), page.click('dialog.confirm[open] #cd-ok')]);
@@ -7075,14 +7131,22 @@ with account_ctx.all_accounts():
   });
   check('on a phone a "show more" summary still shows its ▸ marker', phoneLook.marker, JSON.stringify(phoneLook));
   check('on a phone charts are drawn at their real width, so 12px labels stay 12px', Math.abs(phoneLook.scale - 1) < 0.02, String(phoneLook.scale));
-  await openSettings('email', phonePage);
-  const groups = await phonePage.evaluate(() => {
-    const nav = document.querySelector('.settings-nav'), cur = nav.querySelector('[aria-current="page"]').getBoundingClientRect(), box = nav.getBoundingClientRect();
-    return { names: [...nav.querySelectorAll('.set-group')].filter((e) => e.getBoundingClientRect().width > 0).map((e) => e.textContent).join('|'),
-      oneRow: new Set([...nav.querySelectorAll('a')].map((a) => Math.round(a.getBoundingClientRect().top))).size === 1, inView: cur.left >= box.left && cur.right <= box.right };
-  });
-  check('on a phone Settings\' sections are one row that keeps "This account" and "Whole console", scrolled to the open one',
-    groups.names === 'This account|Whole console' && groups.oneRow && groups.inView, JSON.stringify(groups));
+  // Settings on a phone: the overview is the menu (no list beside it), a section is a step in with the arrow back.
+  await phonePage.goto(BASE + '/settings.html');
+  await phonePage.reload();
+  await phonePage.waitForSelector('#ov-groups .ov-row');
+  const setMenu = await phonePage.evaluate(() => ({ list: getComputedStyle(document.querySelector('.settings-nav')).display, rows: document.querySelectorAll('#ov-groups .ov-row').length,
+    small: [...document.querySelectorAll('#ov-groups .ov-row')].filter((a) => a.getBoundingClientRect().height < 44).length, up: document.querySelector('.topbar .crumb-up').hidden,
+    sideways: document.documentElement.scrollWidth - innerWidth, title: document.querySelector('.topbar .brand span').firstChild.textContent }));
+  await phonePage.click('#ov-groups .ov-row[data-ov="email"]');
+  await phonePage.waitForSelector('#email[data-section]:not([hidden])');
+  const setIn = await phonePage.evaluate(() => { const up = document.querySelector('.topbar .crumb-up');
+    return { up: !up.hidden && up.getAttribute('href'), label: up.getAttribute('aria-label'), title: document.querySelector('.topbar .brand span').firstChild.textContent, ov: document.getElementById('overview').hidden }; });
+  await phonePage.click('.topbar .crumb-up');
+  await phonePage.waitForSelector('#overview:not([hidden])');
+  check('on a phone Settings is one list of every section with what is set (44px rows, nothing sideways); a section opens alone with an arrow back to the list',
+    setMenu.list === 'none' && setMenu.rows >= 14 && setMenu.small === 0 && setMenu.up && setMenu.sideways <= 0 && setMenu.title === 'Settings'
+    && setIn.up === '/settings.html#overview' && setIn.label === 'Back to Settings' && setIn.title === 'Email and Telegram' && setIn.ov, JSON.stringify({ setMenu, setIn }));
   // Team on a phone: one card per person, nothing scrolls sideways; Team, Your account and sign-in have 44px controls.
   await phonePage.goto(BASE + '/team.html');
   await phonePage.waitForSelector('#team-table tbody tr');
@@ -7222,9 +7286,9 @@ with account_ctx.all_accounts():
   await phonePage.waitForSelector('dialog.sheet[open]');
   const sheetOrder = await phonePage.evaluate(() => ({ links: [...document.querySelectorAll('dialog.sheet nav a')].map((a) => a.querySelector('span')?.textContent || a.textContent.trim()), focus: document.activeElement?.textContent.trim() }));
   const sheetGroups = await phonePage.evaluate(() => [...document.querySelectorAll('dialog.sheet .more-group h2')].map((h) => h.textContent).join());
-  check('More lists Claude first, then every page the tab bar leaves out under its section (Creative, Insights, More in Ads, Settings, You), and opens on Claude, not on the account switcher',
-    sheetOrder.links.join().startsWith('Claude,Gallery,Ideas,Research,Results,Compare,Tests,Reports,Lead forms,Audiences,Settings,Team') && sheetOrder.links.at(-1) === 'Your account'
-    && sheetGroups === 'Creative,Insights,More in Ads,Settings,You' && /^Claude/.test(sheetOrder.focus || ''), JSON.stringify({ sheetOrder, sheetGroups }));
+  check('More lists Claude first, then every page the tab bar leaves out in the sidebar\'s order (More in Ads, Creative, Insights), then Settings and you, and opens on Claude, not on the account switcher',
+    sheetOrder.links.join().startsWith('Claude,Lead forms,Audiences,Gallery,Ideas,Research,Results,Compare,Tests,Reports,Settings,Your account')
+    && sheetGroups === 'More in Ads,Creative,Insights,You and the console' && /^Claude/.test(sheetOrder.focus || ''), JSON.stringify({ sheetOrder, sheetGroups }));
   await phonePage.keyboard.press('Escape');
   // A page that doesn't exist gets the console's own page, and the API keeps its own answer.
   const missing = await phonePage.goto(BASE + '/no-such-page.html?x=1');

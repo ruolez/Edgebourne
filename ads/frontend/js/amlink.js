@@ -82,10 +82,15 @@ function accountHtml(a, l) {
   </div>`;
 }
 
+// The link's state as its pill (the section's head, and Settings' overview).
+export function statePill(l) {
+  const [cls, label] = PILL[l.state] || ["", l.words];
+  return `<span class="pill ${cls}">${esc(label)}</span>`;
+}
+
 function paint() {
   const l = data.link;
-  const [cls, label] = PILL[l.state] || ["", l.words];
-  document.getElementById("am-state").innerHTML = `<span class="pill ${cls}">${esc(label)}</span>`;
+  document.getElementById("am-state").innerHTML = statePill(l);
   box.innerHTML = `<p class="flush muted">Reads what only Ads Manager shows (drafts, Meta's error messages, benchmarks, unusual changes, tracking quality) through Meta's own Ads tools on your Mac. It never changes anything in your ads.</p>
     ${data.owner ? connectionHtml(l) : `<p class="flush am-line" id="am-line">${stateLine(l, false)}</p>`}
     ${accountHtml(data.account, l)}`;

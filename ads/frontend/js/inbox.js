@@ -153,8 +153,10 @@ async function markRead(keys) {
       i.unread = false;
       c.unread = Math.max(0, (c.unread || 0) - 1);
       if (i.need) c.need_unread = Math.max(0, (c.need_unread || 0) - 1); else c.fyi_unread = Math.max(0, (c.fyi_unread || 0) - 1);
+      // The menu's badge leaves out what the Leads badge (and, for admins, Claude's) already counts.
+      if (i.need && i.rule !== "new_lead" && !(i.rule === "proposal" && me.role === "admin")) c.badge = Math.max(0, (c.badge || 0) - 1);
     });
-    setInboxCount(c.need_unread);
+    setInboxCount(c.badge);
   } catch (err) { toast(err.message, "bad"); }
 }
 
@@ -188,7 +190,7 @@ async function afterAlert() {
     const fresh = (await api("/api/inbox?box=all")).items.find((i) => i.key === current);
     if (fresh) { kept = fresh; renderDetail(); }
   }
-  setInboxCount(data.counts.need_unread);
+  setInboxCount(data.counts.badge);
 }
 
 // A new box or filter starts a new list: the open item and its #item= go, and the list shows its first item.
@@ -268,7 +270,7 @@ $("ib-all").addEventListener("click", async () => {
     await api("/api/inbox/read", { method: "POST", body: { all: true, kind, box } });
     toast("All marked read");
     await load();
-    setInboxCount(data.counts.need_unread);
+    setInboxCount(data.counts.badge);
   } catch (err) { toast(err.message, "bad"); }
 });
 // E marks the item under the keyboard (or the open one) read. Nothing else: no opening, no accepting.

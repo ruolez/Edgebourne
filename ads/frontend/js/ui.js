@@ -43,6 +43,11 @@ const ICONS = {
   user: '<circle cx="12" cy="8.5" r="3.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 20c1-3.6 4-5.5 7.5-5.5s6.5 1.9 7.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
   device: '<rect x="3.5" y="4.5" width="17" height="11.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 20h7M12 16v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
   file: '<path d="M7 3.5h7l4.5 4.5V19a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.5 3.5v5h5M9 13h6M9 16.5h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  form: '<rect x="5" y="3.5" width="14" height="17" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  bulb: '<path d="M9.5 17.5h5M10.5 20.5h3M12 3.5a6 6 0 0 0-3.7 10.7c.8.7 1.2 1.4 1.2 2.3v1h5v-1c0-.9.4-1.6 1.2-2.3A6 6 0 0 0 12 3.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  audience: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/>',
+  chev: '<path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  keys: '<rect x="3" y="6.5" width="18" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 10.5h.01M11 10.5h.01M15 10.5h.01M8 14h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
   contrast: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/>',
 };
 // The service worker makes the console installable and shows push notifications.
@@ -348,6 +353,7 @@ async function frameStatus() {
       const used = Math.min(cap.spent_cents / cap.limit_cents, 1);
       const $$ = (c) => (c % 100 ? money(c, { exact: true }) : moneyWhole(c));
       card.hidden = false;
+      card.dataset.level = used >= 1 ? "bad" : used >= 0.8 ? "warn" : "";
       card.innerHTML = `<span class="cap-top"><span>Spending limit</span><b>${$$(cap.spent_cents)} / ${$$(cap.limit_cents)}</b></span>
         <span class="bar ${used >= 1 ? "bad" : used >= 0.8 ? "warn" : ""}"><i data-w="${(used * 100).toFixed(1)}"></i></span>
         <small>${cap.remaining_cents <= 0 ? "Reached: every ad is paused" : `${$$(cap.remaining_cents)} left before ads pause`}</small>`;
@@ -368,10 +374,8 @@ function accountSwitch(me, where) {
   if (!me.owner || list.length < 1) {
     return list.length > 1 || me.role === "client" ? `<p class="acct-name acct-${where}" data-initial="${initial}">${esc(me.account.name)}</p>` : "";
   }
-  if (list.length === 1) {
-    return `<div class="acct acct-${where}" data-initial="${initial}"><span class="acct-only" title="${esc(me.account.name)}">${esc(me.account.name)}</span>
-      <button type="button" class="acct-add" data-acct-add aria-label="Add an account" title="Add an account">${icon("plus")}</button></div>`;
-  }
+  // One account: the console's name says it all. A second one is added in Settings › Accounts.
+  if (list.length === 1) return "";
   // FU-A: All accounts first (the overview), then each account; on the overview itself it is the one chosen.
   const all = frame.page === "accounts";
   return `<div class="acct acct-${where}" data-initial="${all ? "" : initial}"><label class="sr-only" for="acct-${where}">Ad account</label>
@@ -413,8 +417,9 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("[data-acct-add]")) addAccount().catch((err) => toast(err.message, "bad"));
 });
 
-// The frame's map: every page belongs to one section of the sidebar; some sections have sub-pages
-// shown as tabs under the breadcrumb line.
+// The frame's map. The sidebar lists every page: the four places worked from every day, then each other page
+// under the part of the work it belongs to (SUBNAV). Nothing is a click deeper than that list, so wide screens
+// have no second row of page links; phones, which have no sidebar, keep a section's pages as pills.
 const PAGE_SECTION = {
   home: "today", inbox: "inbox", leads: "leads",
   ads: "ads", ad: "ads", "new-ad": "ads", "new-adset": "ads", "new-campaign": "ads", forms: "ads", audiences: "ads", campaign: "ads", adset: "ads",
@@ -439,23 +444,31 @@ const SECTIONS = {
   settings: { href: "/settings.html", label: "Settings", icon: "settings", admin: true },
   account: { href: "/account.html", label: "Your account", icon: "user" },
 };
-// Section tabs: [page, label, who] (who: "admin" = admins only, "staff" = not clients, "all" = everyone signed in).
+// A section's pages: [page, label, who] (who: "admin" = admins only, "staff" = not clients, "all" = everyone signed in).
 const SUBNAV = {
   ads: [["ads", "Ads", "all"], ["forms", "Lead forms", "admin"], ["audiences", "Audiences", "staff"]],
   insights: [["performance", "Results", "all"], ["compare", "Compare", "all"], ["experiments", "Tests", "admin"], ["report", "Reports", "report"]],
   creative: [["gallery", "Gallery", "all"], ["ideas", "Ideas", "all"], ["research", "Research", "admin"]],
   claude: [["desk", "Claude", "admin"]],
-  settings: [["settings", "Settings", "admin"], ["team", "Team", "admin"]],
 };
+// The sidebar, in order: these links first, then one group per section with its pages under the section's name.
+const RAIL_TOP = ["today", "inbox", "leads", "claude"];
+const RAIL_GROUPS = ["ads", "creative", "insights"];
+// In the sidebar the Ads page says what is in it (its group is already called Ads).
+const RAIL_NAME = { ads: "Campaigns and ads" };
 const PAGE_HREF = { ads: "/ads.html", forms: "/forms.html", audiences: "/audiences.html", gallery: "/gallery.html", ideas: "/ideas.html", performance: "/performance.html", compare: "/compare.html",
   experiments: "/experiments.html", report: "/report.html", desk: "/desk.html", research: "/research.html",
   settings: "/settings.html", team: "/team.html" };
 
-// Each page's icon where pages are listed one by one (the phone's More sheet).
-const PAGE_ICON = { forms: "table", audiences: "team", gallery: "image", ideas: "grid", research: "research", performance: "chart", compare: "compare",
+// Each page's icon where pages are listed one by one (the sidebar, the phone's More sheet).
+const PAGE_ICON = { ads: "ads", forms: "form", audiences: "audience", gallery: "image", ideas: "bulb", research: "research", performance: "chart", compare: "compare",
   experiments: "tests", report: "file", settings: "settings", team: "team" };
-// "g" then a letter jumps to a section; the sidebar shows each letter as its link's tip.
+// "g" then a letter jumps to a page; the sidebar shows each letter as its link's tip.
 const SECTION_KEY = { today: "t", inbox: "i", leads: "l", ads: "a", creative: "e", insights: "r", claude: "c", settings: "s" };
+const PAGE_KEY = { ads: "a", forms: "f", gallery: "e", performance: "r" };
+// Sidebar groups a person has folded (kept in this browser); the group holding the open page never folds.
+const FOLD_KEY = "ebads-nav-folded";
+const foldedGroups = () => { try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY) || "[]")); } catch (e) { return new Set(); } };
 
 let frame = { page: null, section: null, cameFrom: null };
 
@@ -620,7 +633,9 @@ export function setCrumbs(items) {
   }
   const up = document.querySelector(".topbar .crumb-up");
   const parent = items.slice(0, -1).reverse().find((c) => c.href) || null;
-  const root = !frame.page || Object.values(SUBNAV).some((tabs) => tabs.some(([p]) => p === frame.page)) || ["home", "inbox", "leads", "account", "accounts"].includes(frame.page);
+  // Settings is a top page on its overview; one of its sections (or Team) is a step inside it.
+  const root = !frame.page || Object.values(SUBNAV).some((tabs) => tabs.some(([p]) => p === frame.page)) || ["home", "inbox", "leads", "account", "accounts"].includes(frame.page)
+    || (frame.page === "settings" && items.length < 2);
   if (up) {
     const back = root || !parent ? frame.cameFrom : null;
     up.hidden = !back && (!parent || root);
@@ -707,44 +722,97 @@ export async function boot({ page, admin = false }) {
   const roleLabel = me.owner ? "Admin" : isAdmin ? `Admin · ${me.account.name}` : me.role === "client" ? "Client" : "Team member";
   const showAcct = (me.accounts || []).length > 1 || !me.owner;
   const allowed = (key) => !SECTIONS[key].admin || isAdmin;
-  const groups = [["Work", ["today", "inbox", "leads"]], ["Run", ["ads", "creative", "insights", "claude"]]]
-    .map(([label, keys]) => [label, keys.filter(allowed)]);
+  const canSee = (who) => who === "all" || isAdmin || (who === "report" && me.role === "client") || (who === "staff" && me.role !== "client");
+  const pagesOf = (key) => (SUBNAV[key] || []).filter(([, , who]) => canSee(who));
   const badge = (b) => b === "leads" ? '<span class="count bad" data-new-count hidden></span>'
     : b === "claude" ? '<span class="count claude" data-claude-count hidden></span>'
     : b === "inbox" ? '<span class="count" data-inbox-count hidden></span>' : "";
   const cur = (key) => key === section ? 'aria-current="page"' : "";
   // FU-D: an amber dot next to Claude while this sign-in has full access on (only the owner who may turn it on).
   const faDot = me.full_access && me.full_access.allowed ? `<span class="fa-dot" data-fa-dot title="Full access on" ${me.full_access.on ? "" : "hidden"}><span class="sr-only">, full access on</span></span>` : "";
-  const link = (key) => { const l = SECTIONS[key]; return `<a href="${l.href}" ${cur(key)} title="Press g then ${SECTION_KEY[key]}" aria-keyshortcuts="g ${SECTION_KEY[key]}">${icon(l.icon)}<span class="label">${l.label}</span>${key === "claude" ? faDot : ""}${badge(l.badge)}</a>`; };
+  const tip = (k) => (k ? `title="Press g then ${k}" aria-keyshortcuts="g ${k}"` : "");
+  const link = (key) => { const l = SECTIONS[key]; return `<a href="${l.href}" ${cur(key)} ${tip(SECTION_KEY[key])}>${icon(l.icon)}<span class="label">${l.label}</span>${key === "claude" ? faDot : ""}${badge(l.badge)}</a>`; };
+  // A page inside a section (an ad, a campaign, New ad set) keeps its section's first page lit in the sidebar.
+  const railPage = pagesOf(section).some(([p]) => p === page) ? page : (pagesOf(section)[0] || [])[0];
+  // A page's link opens it as it was last filtered in this browser tab (Results keeps its campaign, the Gallery its view).
+  const pageHref = (p) => (p !== page ? listHref(PAGE_HREF[p]) : PAGE_HREF[p]);
+  const pageLink = ([p, label]) => `<a href="${esc(pageHref(p))}" data-page="${p}" ${p === railPage ? 'aria-current="page"' : ""} ${tip(PAGE_KEY[p])}>${icon(PAGE_ICON[p])}<span class="label">${RAIL_NAME[p] || label}</span></a>`;
+  const folded = foldedGroups();
+  const group = (key) => {
+    const pages = pagesOf(key);
+    if (!pages.length) return "";
+    const open = key === section || !folded.has(key);
+    return `<div class="nav-group" data-group="${key}"><button type="button" class="nav-label" aria-expanded="${open}" aria-controls="nav-${key}" ${key === section ? 'data-here' : ""}><span>${SECTIONS[key].label}</span>${icon("chev")}</button>
+      <div class="nav-items" id="nav-${key}" ${open ? "" : "hidden"}>${pages.map(pageLink).join("")}</div></div>`;
+  };
   const initials = me.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  const manyAccounts = me.owner && (me.accounts || []).length > 1;
+  const switcher = accountSwitch(me, "rail");
 
-  // The sidebar, top to bottom: where you are (console, ad account, search), where you can go, what is going on
-  // (Claude and the spending limit in one card), then the console's own corner (Settings, theme, you, sign out).
+  // The sidebar, top to bottom: where you are (the console or the ad account, search), every page, then one quiet
+  // corner: what is going on (Claude, the spending limit), Settings, and you (your account, theme, sign out in a menu).
   const rail = document.querySelector(".rail");
   rail.innerHTML = `
-    <div class="rail-head">
-      <a class="brand" href="/home.html"><img src="/img/favicon.svg" alt=""><span>Edge Bourne Ads</span></a>
-      ${accountSwitch(me, "rail")}
+    <div class="rail-head${switcher ? " has-acct" : ""}">
+      <a class="brand" href="/home.html" ${switcher ? 'aria-label="Edge Bourne Ads: Today"' : ""}><img src="/img/favicon.svg" alt=""><span>Edge Bourne Ads</span></a>
+      ${switcher}
       <button type="button" class="jump" data-palette>${icon("search")}<span>Search or jump to…</span><kbd>${mac ? "⌘" : "Ctrl "}K</kbd></button>
     </div>
     <nav class="nav" aria-label="Main">
-      ${groups.map(([label, keys]) => `<div class="nav-group"><span class="nav-label">${label}</span>${keys.map(link).join("")}</div>`).join("")}
+      <div class="nav-group nav-top">${RAIL_TOP.filter(allowed).map(link).join("")}</div>
+      ${RAIL_GROUPS.map(group).join("")}
     </nav>
     <div class="rail-foot">
       <div class="rail-status">${isAdmin ? '<a class="cap-card" id="cap-card" href="/settings.html#spend-limit" title="Change the spending limit" hidden></a>' : ""}</div>
       <div class="rail-base">
-        ${isAdmin ? `<a class="setlink" href="/settings.html" ${cur("settings")} title="Press g then s" aria-keyshortcuts="g s">${icon("settings")}<span class="label">Settings</span></a>` : ""}
-        <div class="theme-row">${icon("contrast")}<span class="label">Theme</span>${themeSwitch()}</div>
-        <div class="rail-you">
-          <a class="me" href="/account.html" ${cur("account")}>
+        ${isAdmin ? `<a class="setlink" href="/settings.html" ${cur("settings")} ${tip("s")}>${icon("settings")}<span class="label">Settings</span></a>` : ""}
+        <details class="menu rail-you">
+          <summary class="me" ${section === "account" || section === "accounts" ? 'data-here' : ""} aria-label="${esc(me.name)}, ${esc(roleLabel)}: your account, theme, sign out">
             <span class="avatar" aria-hidden="true">${esc(initials)}</span>
             <span class="who"><b>${esc(me.name)}</b><small>${esc(roleLabel)}</small></span>
-          </a>
-          <button type="button" class="rail-btn" data-signout aria-label="Sign out" title="Sign out">${icon("logout")}</button>
-        </div>
+            ${icon("dots")}
+          </summary>
+          <div class="menu-pop you-pop">
+            <p class="you-id"><b>${esc(me.name)}</b><small>${esc(me.email || "")}</small></p>
+            <a href="/account.html" ${cur("account")}>${icon("user")}<span class="label">Your account</span><kbd>g y</kbd></a>
+            ${manyAccounts ? `<a href="/accounts.html" ${cur("accounts")}>${icon("grid")}<span class="label">All accounts</span><kbd>g o</kbd></a>` : ""}
+            <button type="button" data-shortcuts>${icon("keys")}<span class="label">Keyboard shortcuts</span><kbd>?</kbd></button>
+            <div class="theme-row">${icon("contrast")}<span class="label">Theme</span>${themeSwitch()}</div>
+            <span class="menu-sep" role="separator"></span>
+            <button type="button" data-signout>${icon("logout")}<span class="label">Sign out</span></button>
+          </div>
+        </details>
       </div>
     </div>`;
+  // Folding a group is remembered; the menu under your name closes on a click elsewhere or Esc.
+  rail.addEventListener("click", (e) => {
+    const head = e.target.closest(".nav-label");
+    if (!head) return;
+    const open = head.getAttribute("aria-expanded") !== "true";
+    head.setAttribute("aria-expanded", String(open));
+    document.getElementById(head.getAttribute("aria-controls")).hidden = !open;
+    const set = foldedGroups();
+    const key = head.parentElement.dataset.group;
+    if (open) set.delete(key); else set.add(key);
+    try { localStorage.setItem(FOLD_KEY, JSON.stringify([...set])); } catch (err) { /* storage off */ }
+  });
+  const you = rail.querySelector(".rail-you");
+  document.addEventListener("click", (e) => { if (you.open && !you.contains(e.target)) you.open = false; });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && you.open) { you.open = false; you.querySelector("summary").focus(); } });
+  you.querySelector("[data-shortcuts]").addEventListener("click", () => { you.open = false; openShortcuts(); });
+  // The open page's link is in view even when the list is longer than a short window, and a list that goes on
+  // below (or above) fades out there instead of ending in a cut-off row.
+  const navEl = rail.querySelector(".nav");
+  navEl.querySelector('[aria-current="page"]')?.scrollIntoView({ block: "nearest" });
+  const fades = () => {
+    navEl.toggleAttribute("data-above", navEl.scrollTop > 2);
+    navEl.toggleAttribute("data-below", navEl.scrollTop + navEl.clientHeight < navEl.scrollHeight - 2);
+  };
+  navEl.addEventListener("scroll", fades, { passive: true });
+  rail.addEventListener("click", (e) => { if (e.target.closest(".nav-label")) fades(); });
+  window.addEventListener("resize", fades);
+  fades();
 
   const main = document.querySelector(".main");
   // Skip link: the first stop for the keyboard, past the sidebar to the page. It focuses the page without
@@ -768,16 +836,14 @@ export async function boot({ page, admin = false }) {
   const acctCrumb = showAcct && page !== "accounts" ? `<span class="crumb-acct">${esc(me.account.name)}</span>` : "";
   line.innerHTML = `${acctCrumb}<nav class="crumbs" aria-label="Breadcrumb"></nav><span class="grow"></span>${refreshButton()}`;
   main.prepend(line);
-  const canSee = (who) => who === "all" || isAdmin || (who === "report" && me.role === "client") || (who === "staff" && me.role !== "client");
-  const tabsFor = (SUBNAV[section] || []).filter(([, , who]) => canSee(who));
-  // Claude's page turns its one tab into its own (Conversations · By ad · Schedules), so its bar stays.
+  const tabsFor = pagesOf(section);
+  // Phones have no sidebar: a section's pages stay as pills under the top bar. Claude's page turns its one
+  // link into its own views (Conversations · By ad · Schedules), so its bar shows on every screen.
   if ((tabsFor.length > 1 || section === "claude") && tabsFor.some(([p]) => p === page)) {
     const sub = document.createElement("nav");
-    sub.className = "subnav";
+    sub.className = section === "claude" ? "subnav subnav-own" : "subnav";
     sub.setAttribute("aria-label", SECTIONS[section].label);
-    // A tab opens its page as it was last filtered in this browser tab (Results keeps its campaign, the Gallery its view).
-    const tabHref = (p) => (p !== page ? listHref(PAGE_HREF[p]) : PAGE_HREF[p]);
-    sub.innerHTML = tabsFor.map(([p, label]) => `<a href="${esc(tabHref(p))}" ${p === page ? 'aria-current="page"' : ""}>${label}</a>`).join("");
+    sub.innerHTML = tabsFor.map(([p, label]) => `<a href="${esc(pageHref(p))}" ${p === page ? 'aria-current="page"' : ""}>${label}</a>`).join("");
     line.after(sub);
   }
 
@@ -813,20 +879,20 @@ export async function boot({ page, admin = false }) {
   // map: Claude first (its count is why More has a badge), then Creative, Insights, the rest of Ads, Settings.
   const sheetLink = (href, label, ic, current, extra = "") => `<a href="${href}" ${current ? 'aria-current="page"' : ""}>${icon(ic)}<span>${label}</span>${extra}</a>`;
   const sheetGroup = (key, label = SECTIONS[key].label) => {
-    const pages = (SUBNAV[key] || []).filter(([p, , who]) => canSee(who) && !(key === "ads" && p === "ads"));
+    const pages = pagesOf(key).filter(([p]) => !(key === "ads" && p === "ads"));
     return pages.length ? `<section class="more-group" aria-label="${label}"><h2>${label}</h2><div class="more-grid">${
-      pages.map(([p, name]) => sheetLink(PAGE_HREF[p], name, PAGE_ICON[p] || SECTIONS[key].icon, p === page)).join("")}</div></section>` : "";
+      pages.map(([p, name]) => sheetLink(esc(pageHref(p)), name, PAGE_ICON[p] || SECTIONS[key].icon, p === page)).join("")}</div></section>` : "";
   };
-  const manyAccounts = me.owner && (me.accounts || []).length > 1;
   const sheet = document.createElement("dialog");
   sheet.className = "sheet";
   sheet.setAttribute("aria-label", "More");
   sheet.innerHTML = `<div class="grab"></div>${accountSwitch(me, "sheet")}<nav>
       ${allowed("claude") ? sheetLink(SECTIONS.claude.href, "Claude", "spark", page === "desk", badge("claude")) : ""}
-      ${sheetGroup("creative")}${sheetGroup("insights")}${sheetGroup("ads", "More in Ads")}${sheetGroup("settings")}
-      <section class="more-group" aria-label="You"><h2>You</h2><div class="more-grid">
-        ${manyAccounts ? sheetLink("/accounts.html", "All accounts", "grid", page === "accounts") : ""}
+      ${sheetGroup("ads", "More in Ads")}${sheetGroup("creative")}${sheetGroup("insights")}
+      <section class="more-group" aria-label="You and the console"><h2>You and the console</h2><div class="more-grid">
+        ${isAdmin ? sheetLink("/settings.html", "Settings", "settings", section === "settings") : ""}
         ${sheetLink("/account.html", "Your account", "user", page === "account")}
+        ${manyAccounts ? sheetLink("/accounts.html", "All accounts", "grid", page === "accounts") : ""}
       </div></section>
       <div class="sep"></div>
       <button type="button" class="item" data-signout>${icon("logout")}Sign out</button>
@@ -955,6 +1021,7 @@ function startClaudeNow(top) {
     [card, bar].forEach((el) => {
       el.href = href;
       el.dataset.state = m.state;
+      el.title = m.detail || "";
       el.innerHTML = `<span class="claude-now-dot" aria-hidden="true"></span><span class="claude-now-text"><b>${title}</b><small>${detail}</small></span>${line}`;
     });
     bar.hidden = !w && !n.queued;

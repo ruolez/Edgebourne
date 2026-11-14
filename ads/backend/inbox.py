@@ -165,13 +165,17 @@ def pick(items, filt, kind, box="all"):
     return [i for i in items if in_box(i, box) and (filt != "unread" or i["unread"]) and (kind in (None, "", "all") or i["category"] == kind)]
 
 
-def counts(items):
-    """unread: everything unread (the old badge). need_unread drives the badge now: what needs you and is new."""
+def counts(items, claude_badge=False):
+    """unread: everything unread. need_unread: what needs you and is new (the Needs action tab).
+    badge: the same without what another badge in the menu already counts, so nothing is counted twice: waiting
+    leads (the Leads badge) and, for admins (claude_badge), Claude's suggestions (the Claude badge)."""
     out = {"unread": sum(1 for i in items if i["unread"])}
     for c in CATEGORIES:
         out[c] = sum(1 for i in items if i["unread"] and i["category"] == c)
     out["need"] = sum(1 for i in items if i["need"])
     out["need_unread"] = sum(1 for i in items if i["need"] and i["unread"])
+    elsewhere = {"new_lead", "proposal"} if claude_badge else {"new_lead"}
+    out["badge"] = sum(1 for i in items if i["need"] and i["unread"] and i.get("rule") not in elsewhere)
     out["fyi"] = sum(1 for i in items if not i["need"])
     out["fyi_unread"] = sum(1 for i in items if not i["need"] and i["unread"])
     return out

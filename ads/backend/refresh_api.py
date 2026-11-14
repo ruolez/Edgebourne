@@ -137,9 +137,9 @@ def status():
     out = {**_status(),
            "new_leads": int(db.query(f"SELECT COUNT(*) AS n FROM leads WHERE status = 'new' AND NOT is_test AND repeat_of IS NULL AND {lw}", lp, one=True)["n"])}
     import inbox
-    counts = inbox.counts(inbox.items_for(user))
+    counts = inbox.counts(inbox.items_for(user), claude_badge=user["role"] == "admin")
     out["inbox_unread"] = counts["unread"]
-    out["inbox_need"] = counts["need_unread"]  # the badge: what needs you and is new
+    out["inbox_need"] = counts["badge"]  # the badge: what needs you and is new, apart from what the Leads and Claude badges count
     if user["role"] == "admin":
         out["proposals"] = int(db.query("SELECT COUNT(*) AS n FROM desk_proposals WHERE status = 'pending'", one=True)["n"])
         out["cap"] = cap_snapshot()

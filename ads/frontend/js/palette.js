@@ -71,22 +71,23 @@ const TABS = [
 ];
 const S = (title, hash, keys = "", who = "admin") => ({ type: "setting", title: `Settings: ${title}`, href: `/settings.html#${hash}`, who, sub: "Settings", keys });
 const SETTINGS = [
-  S("Meta connection", "meta", "token system user page id ad account sync connect"),
-  S("Targets", "targets", "cost per lead target highest daily budget ceiling goal"),
-  S("Alerts", "alerts", "rules warnings notifications"),
-  S("Clients and reports", "reports-panel", "client logins report email"),
-  S("Lead replies", "replies", "automatic reply templates email answer"),
+  S("Targets and limits", "targets", "goals cost per lead target highest daily budget ceiling goal spending limit cap"),
+  S("Alerts", "alerts", "rules warnings notifications snoozed"),
+  S("Preferences", "prefs", "automatic refresh interval a/b tests options"),
+  S("Lead replies", "replies", "automatic reply templates email answer booking link"),
   S("Lead quality", "lead-quality", "repeats duplicates junk spam fake same person"),
-  S("Tracking health", "tracking", "pixel dataset conversions api capi events"),
-  S("Ads Manager link", "am-link", "drafts mac mcp facebook login benchmarks errors check now"),
-  S("Lead stages to Meta", "crm", "crm conversion leads quality"),
-  S("Meta A/B tests", "ab", "split tests"),
-  S("Activity", "activity-panel", "log history who changed"),
-  S("Meta app", "meta-app", "app secret webhooks instant status updates", "owner"),
-  S("Automatic refresh", "auto", "interval updates every", "owner"),
-  S("Telegram", "telegram", "bot messages", "owner"),
-  S("Email", "email", "smtp mail mailbox", "owner"),
+  S("Lead stages to Meta", "crm", "crm conversion leads quality dataset"),
+  S("Clients and reports", "reports-panel", "client logins report email"),
   S("Accounts", "accounts-panel", "businesses clients add an account", "owner"),
+  S("Meta", "meta", "connection token system user page id ad account sync connect"),
+  S("Meta app", "meta-app", "app secret webhooks instant status updates", "owner"),
+  S("Ads Manager link", "am-link", "drafts mac mcp facebook login benchmarks errors check now"),
+  S("Tracking health", "tracking", "pixel dataset conversions api capi events numbers"),
+  S("Email", "email", "smtp mail mailbox", "owner"),
+  S("Telegram", "telegram", "bot messages", "owner"),
+  S("Meta A/B tests", "ab", "split tests"),
+  S("Automatic refresh", "auto", "interval updates every", "owner"),
+  S("Activity", "activity-panel", "log history who changed"),
 ];
 const A = (title, extra, who, icon_, keys = "", sub = "Do") => ({ type: "action", title, who, icon: icon_, sub, keys, ...extra });
 const ACTIONS = [

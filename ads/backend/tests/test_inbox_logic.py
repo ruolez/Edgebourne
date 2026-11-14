@@ -53,7 +53,13 @@ class BuildTests(unittest.TestCase):
         self.assertEqual([i["key"] for i in inbox.pick(items, "unread", "all")], ["lead:9", "alert:1", "proposal:4"])
         self.assertEqual([i["key"] for i in inbox.pick(items, "all", "money")], ["alert:2"])
         self.assertEqual(inbox.counts(items), {"unread": 3, "status": 1, "leads": 1, "claude": 1, "money": 0, "system": 0,
-                                               "need": 4, "need_unread": 3, "fyi": 0, "fyi_unread": 0})
+                                               "need": 4, "need_unread": 3, "badge": 2, "fyi": 0, "fyi_unread": 0})
+
+    def test_the_menu_badge_leaves_out_what_another_badge_counts(self):
+        items = inbox.build(self.alerts, self.leads, self.proposals, read_keys={"alert:2"})
+        unread_need = [i["rule"] for i in items if i["need"] and i["unread"]]
+        self.assertEqual(sorted(unread_need), ["ad_rejected", "new_lead", "proposal"])
+        self.assertEqual([inbox.counts(items)["badge"], inbox.counts(items, claude_badge=True)["badge"]], [2, 1])
 
 
 class TriageTests(unittest.TestCase):

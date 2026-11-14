@@ -1,66 +1,127 @@
 import { api } from "./api.js";
-import { money, currencySymbol } from "./format.js";
+import { money, moneyWhole, currencySymbol } from "./format.js";
 import { wake } from "./alertmenu.js";
-import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when, errorState, guardLeaving, markSaved, safePath, setCrumbs, skeleton } from "./ui.js";
+import { boot, confirmDialog, esc, fieldError, icon, switchHtml, toast, when, errorState, guardLeaving, markSaved, safePath, setCrumbs, skeleton } from "./ui.js";
+import { setHref, setItem, setItems, settingsNavHtml } from "./setnav.js";
 import { confirmBig, confirmRemove, limitBody, limitMoney, pausedWords } from "./spendlimit.js";
-import { load as loadLink } from "./amlink.js";
+import { load as loadLink, statePill as linkPill } from "./amlink.js";
 import { qualityHtml, sizeExtras } from "./mx.js";
 
 const $ = (id) => document.getElementById(id);
 let s;
 let owner = false;
 
-// One section at a time (9.4f). The address names it: #<section id>, the id of anything inside it (#meta-form,
-// #mt-form, #tg-targets… from the days of the long page, and the links stored in alerts), or a short alias.
-// Anything else, or a whole-console section for someone who isn't the console's owner, opens Meta connection.
-const SECTION_ALIASES = { "lead-quality": "lead-quality", repeats: "lead-quality", junk: "lead-quality", reports: "reports-panel", activity: "activity-panel", accounts: "accounts-panel", refresh: "auto",
-  smtp: "email", "ab-tests": "ab", stages: "crm", "ads-manager": "am-link", link: "am-link" };
+// One page of Settings at a time. A page is one section or a few that belong together (Meta = the connection and
+// the app; data-page on each section names its page). The address names it: #<page>, #<section id>, the id of
+// anything inside a section (#meta-form, #mt-form, #tg-targets… from the days of the long page, and the links
+// stored in alerts), or a short alias. No address, or one nobody here may open, shows the overview.
+const SECTION_ALIASES = { repeats: "lead-quality", junk: "lead-quality", reports: "reports-panel", activity: "activity-panel", accounts: "accounts-panel", refresh: "auto",
+  smtp: "email", "ab-tests": "ab", stages: "crm", "ads-manager": "am-link", link: "am-link", preferences: "prefs", goals: "targets", limits: "targets" };
 
-function sectionFor(hash) {
+const sections = () => [...document.querySelectorAll("[data-section]")];
+// Whole-console sections are for the console's owner only.
+const mine = (sec) => owner || !sec.hasAttribute("data-console");
+
+function pageFor(hash) {
   let id = hash;
-  try { id = decodeURIComponent(hash); } catch (e) { /* a broken address opens the first section */ }
+  try { id = decodeURIComponent(hash); } catch (e) { /* a broken address opens the overview */ }
   id = SECTION_ALIASES[id] || id;
   const el = id ? document.getElementById(id) : null;
-  const sec = el && el.closest("[data-section]");
-  return sec && (owner || !sec.closest("#grp-console")) ? { sec, target: el } : { sec: $("meta"), target: null };
+  let sec = el && el.closest("[data-section]");
+  let target = sec ? el : null;
+  if (!sec && id) sec = sections().find((x) => x.dataset.page === id) || null;  // a page's own name (#prefs)
+  // Someone who isn't the owner asking for a whole-console section gets what they may open of that page, if anything.
+  if (sec && !mine(sec)) { sec = sections().find((x) => x.dataset.page === sec.dataset.page && mine(x)) || null; target = null; }
+  return sec ? { page: sec.dataset.page, sec, target } : { page: "overview", sec: $("overview"), target: null };
 }
 
 const navLink = (id) => document.querySelector(`.settings-nav [data-set="${id}"]`);
+let shownPage = null;
+
+// Who a page's settings apply to, said only where there is more than one ad account to confuse them.
+function paintScope() {
+  const shown = sections().filter((x) => !x.hidden);
+  const several = (me.accounts || []).length > 1 || !me.owner;
+  const allConsole = shown.length > 0 && shown.every((x) => x.hasAttribute("data-console"));
+  $("set-scope").hidden = !several || shownPage === "overview";
+  $("set-scope").textContent = allConsole ? "Whole console · every account" : `This account · ${me.account.name}`;
+  document.querySelectorAll("[data-section][data-console] .panel-head").forEach((head) => {
+    let tag = head.querySelector(".set-all");
+    if (several && !allConsole && !tag) { tag = document.createElement("span"); tag.className = "pill set-all"; tag.textContent = "Every account"; head.append(tag); }
+    if (tag) tag.hidden = !several || allConsole;
+  });
+  const locked = Boolean(s && s.owner && !s.console_editable && shown.some((x) => x.hasAttribute("data-console")));
+  $("console-note").hidden = !locked;
+  $("console-note").innerHTML = !locked ? "" : `${allConsole ? "These apply to every account" : "The settings marked <b>Every account</b> are shared"}. To change them, switch to <b>Edge Bourne</b> first.`;
+}
 
 function showSection({ first = false } = {}) {
-  const { sec, target } = sectionFor(location.hash.slice(1));
-  const whole = Boolean(sec.closest("#grp-console"));
-  document.querySelectorAll("[data-section]").forEach((x) => { x.hidden = x !== sec; });
-  $("grp-console").hidden = !whole;
-  const link = navLink(sec.id);
-  document.querySelectorAll(".settings-nav [data-set]").forEach((a) => { if (a === link) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
-  const label = link.firstChild.textContent;
-  $("set-scope").textContent = whole ? "Whole console · every account" : `This account · ${me.account.name}`;
-  setCrumbs([{ label: "Settings", href: "/settings.html" }, { label }]);
-  document.title = `${label} · Settings | Edge Bourne Ads`;
-  if (sec.id === "targets") loadLimit();
+  const { page, sec, target } = pageFor(location.hash.slice(1));
+  const shown = sections().filter((x) => x.dataset.page === page && mine(x));
+  sections().forEach((x) => { x.hidden = !shown.includes(x); });
+  shownPage = page;
+  document.querySelectorAll(".settings-nav [data-set]").forEach((a) => { if (a.dataset.set === page) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+  const item = setItem(page);
+  const label = item ? item.title || item.label : "Settings";
+  // A section is a step inside Settings: its crumb (and the phone's back arrow) lead to the overview.
+  setCrumbs(page === "overview" ? [{ label: "Settings", href: "/settings.html" }] : [{ label: "Settings", href: "/settings.html#overview" }, { label }]);
+  document.title = page === "overview" ? "Settings | Edge Bourne Ads" : `${label} · Settings | Edge Bourne Ads`;
+  document.querySelector(".set-layout").dataset.page = page;
+  paintScope();
+  if (page === "targets") loadLimit();
   loadLink();
   const fold = target && (target.tagName === "DETAILS" ? target : target.closest("details"));
   if (fold) fold.open = true;
-  // A section opens at the top of the page (with the list above it on phones); only something inside it,
-  // like #crm-code, is scrolled to. The browser's own jump to #<section> on arrival is undone, also once the page has loaded.
-  const deep = target && target !== sec && (!target.matches("[data-section] > form, [data-section] > .panel-body") || target.id === "spend-limit");
+  // A page opens at its top; only something inside it (#crm-code, or a second section such as #meta-app) is
+  // scrolled to. The browser's own jump to #<section> on arrival is undone, also once the page has loaded.
+  const deep = target && target !== shown[0] && (sec !== shown[0] || !target.matches("[data-section] > form, [data-section] > .panel-body") || target.id === "spend-limit");
   const place = () => (deep ? target.scrollIntoView({ block: "start" }) : window.scrollTo(0, 0));
   if (deep || !first || location.hash) place();
   if (first && location.hash && document.readyState !== "complete") window.addEventListener("load", () => requestAnimationFrame(place), { once: true });
-  // Phones: the section row scrolls sideways; keep the open one in view.
-  const nav = link.parentElement;
-  if (nav.scrollWidth > nav.clientWidth) {
-    const l = link.getBoundingClientRect(), n = nav.getBoundingClientRect();
-    nav.scrollLeft += l.left - n.left - (n.width - l.width) / 2;
+}
+
+// The overview: every page of Settings as a row under its group, with what is set there now. The words come from
+// each section's own status pill (mirrored as it changes) or are worked out from what was loaded.
+const OV_MIRROR = { replies: "rp-state", "lead-quality": "lq-state", crm: "crm-state", "reports-panel": "rep-state", meta: "meta-state", "am-link": "am-state", tracking: "tr-state" };
+function renderOverview() {
+  $("ov-groups").innerHTML = setItems(owner).map(([name, items], g) => `<section class="ov-group" aria-labelledby="ov-g${g}"><h2 id="ov-g${g}">${esc(name)}</h2>
+    <div class="panel ov-list">${items.map((i) => `<a class="ov-row" href="${setHref(i, true)}" data-ov="${i.id}"><span class="ov-what"><b>${esc(i.label)}</b><small>${esc(i.desc)}</small></span>
+      <span class="ov-state" data-ov-state></span>${icon("chev")}</a>`).join("")}</div></section>`).join("")
+    + `<p class="ov-you muted small">Your own alerts, password and this device are in <a href="/account.html">Your account</a>.</p>`;
+  for (const [id, from] of Object.entries(OV_MIRROR)) {
+    const src = $(from);
+    const copy = () => ovSet(id, src.innerHTML);
+    new MutationObserver(copy).observe(src, { childList: true, subtree: true, characterData: true });
+    copy();
   }
+}
+function ovSet(id, html) {
+  const el = document.querySelector(`[data-ov="${id}"] [data-ov-state]`);
+  if (!el) return;
+  el.innerHTML = html;
+  const n = document.querySelectorAll("#ov-groups .ov-state .pill.warn, #ov-groups .ov-state .pill.bad").length;
+  $("ov-sum").innerHTML = n ? `<span class="pill warn">${n} ${n === 1 ? "thing needs" : "things need"} a look</span> Everything else is set.` : "What is set, and where to change it.";
+}
+const ovText = (t) => `<span class="ov-val">${esc(t)}</span>`;
+const ovMoney = (c) => (c % 100 ? money(c, { exact: true }) : moneyWhole(c));
+function paintOverview() {
+  const t = s.targets;
+  ovSet("targets", ovText(t.qualified_cents ? `${ovMoney(t.qualified_cents)} per qualified lead` : t.lead_cents ? `${ovMoney(t.lead_cents)} per lead` : "No cost target yet"));
+  const rules = Object.values(s.alerts.rules);
+  const snoozed = (s.alerts.snoozed || []).length;
+  ovSet("alerts", ovText(`${rules.filter((r) => r.on).length} of ${rules.length} on${snoozed ? ` · ${snoozed} snoozed` : ""}`));
+  ovSet("prefs", ovText(owner ? `Refresh ${every(s.auto_refresh_minutes).toLowerCase().replace("minutes", "min")}` : `A/B tests on Meta ${s.meta_ab_tests ? "on" : "off"}`));
+  api("/api/am-link").then((d) => ovSet("am-link", linkPill(d.link))).catch(() => {});
+  const use = s.smtp_in_use || { source: "none" };
+  const tg = s.telegram && s.telegram.set ? " · Telegram on" : "";
+  ovSet("email", use.source === "none" ? '<span class="pill warn">Email not set up</span>' : ovText(`${use.source === "website" ? "The website's mailbox" : "Its own mailbox"}${tg}`));
 }
 
 // A section with typed, unsaved work keeps a dot in the list, so switching away doesn't hide it.
 const unsavedForms = new Set();
 function paintUnsaved() {
   document.querySelectorAll(".settings-nav [data-set]").forEach((a) => {
-    const on = [...unsavedForms].some((f) => f.closest("[data-section]")?.id === a.dataset.set);
+    const on = [...unsavedForms].some((f) => f.closest("[data-section]")?.dataset.page === a.dataset.set);
     const dot = a.querySelector(".set-dirty");
     if (on && !dot) a.insertAdjacentHTML("beforeend", '<span class="set-dirty"><span class="sr-only">, not saved yet</span></span>');
     if (!on && dot) dot.remove();
@@ -442,7 +503,11 @@ async function load() {
   renderTelegram();
   renderAlerts();
   if (editing === null) renderReplies();
+  paintOverview();
+  paintScope();
+  api("/api/team").then((t) => { const n = (t.members || []).filter((m) => m.is_active).length; ovSet("team", ovText(`${n} ${n === 1 ? "person" : "people"}`)); }).catch(() => {});
   const rows = await api("/api/settings/activity");
+  ovSet("activity-panel", ovText(rows.length ? `Last change ${when(rows[0].at)}` : "Nothing yet"));
   $("activity").innerHTML = rows.length ? `<thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${rows.map((r) =>
     `<tr><td class="muted">${when(r.at)}</td><td>${esc(r.who || ({ meta: "Meta", claude: "Claude", system: "System" }[r.actor] || r.actor))}</td><td>${esc(describe(r))}${r.subject && !r.action.startsWith("lead.") ? ` <span class="muted">${esc(r.subject)}</span>` : ""}</td></tr>`).join("")}</tbody>`
     : '<tbody><tr><td class="muted">Nothing yet.</td></tr></tbody>';
@@ -553,17 +618,15 @@ async function removeLimit(lock) {
 
 // What every account shares: only the console's owner changes it, from Edge Bourne's own Settings.
 async function renderConsole() {
-  const group = $("grp-console");
   if (!s.owner) return;
-  const note = $("console-note");
-  note.hidden = s.console_editable;
-  note.innerHTML = s.console_editable ? "" : `These apply to every account. To change them, switch to <b>Edge Bourne</b> first.`;
-  group.querySelectorAll("#app-form, #auto-form, #tg-form, #smtp-form").forEach((f) => {
+  document.querySelectorAll("#app-form, #auto-form, #tg-form, #smtp-form").forEach((f) => {
     f.querySelectorAll("input, select, button").forEach((el) => { el.disabled = !s.console_editable; });
   });
   try {
     const r = await api("/api/accounts/all");
-    $("acp-overview").hidden = r.items.filter((a) => !a.archived).length < 2;
+    const open = r.items.filter((a) => !a.archived).length;
+    $("acp-overview").hidden = open < 2;
+    ovSet("accounts-panel", ovText(`${open} ${open === 1 ? "account" : "accounts"}`));
     $("acct-list").innerHTML = r.items.map((a) => `<li class="${a.archived ? "muted" : ""}"><span class="acct-who"><b>${esc(a.name)}</b><small class="muted">${a.ad_account_id ? `act_${esc(a.ad_account_id)} · ${esc(a.currency || "")}` : "Not connected to Meta yet"}</small></span>${a.archived ? ' <span class="pill">Closed</span>' : a.id === s.account.id ? ' <span class="pill ok">Open now</span>' : ""}
       <span class="spacer"></span><button class="btn btn-quiet btn-small" type="button" data-acct-rename="${a.id}" data-name="${esc(a.name)}">Rename</button>
       ${a.id === 1 ? "" : `<button class="btn ${a.archived ? "btn-quiet" : "btn-danger-text"} btn-small" type="button" data-acct-close="${a.id}" data-name="${esc(a.name)}" data-archived="${a.archived ? "1" : ""}">${a.archived ? "Reopen" : "Close"}</button>`}</li>`).join("");
@@ -631,7 +694,8 @@ const me = await boot({ page: "settings", admin: true });
 if (me) {
   guardLeaving();
   owner = Boolean(me.owner);
-  document.querySelectorAll(".console-only").forEach((el) => { el.hidden = !owner; });
+  document.querySelector(".settings-nav").innerHTML = settingsNavHtml({ owner, current: null, onSettings: true });
+  renderOverview();
   showSection({ first: true });
   window.addEventListener("hashchange", () => showSection());
   document.addEventListener("input", (e) => {

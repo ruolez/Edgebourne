@@ -1,5 +1,6 @@
 import { api } from "./api.js";
-import { boot, entityLink, esc, fieldError, toast, when, confirmDialog, errorState, onRefresh } from "./ui.js";
+import { settingsNavHtml } from "./setnav.js";
+import { boot, entityLink, esc, fieldError, icon, toast, when, confirmDialog, errorState, onRefresh } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let data = { members: [], campaigns: [] };
@@ -23,8 +24,9 @@ function render() {
         <td data-label="Last signed in">${m.last_login_at ? when(m.last_login_at) : '<span class="muted">Never</span>'}</td>
         <td class="tm-acts"><div class="row">
           ${m.access === "admin" && !data.owner ? "" : `<button class="btn" data-edit="${m.id}" aria-label="Edit ${esc(m.name)}">Edit</button>`}
-          ${m.id === me.id || m.keeps_own || (m.access === "admin" && !data.owner) ? "" : `<button class="btn btn-quiet" data-reset="${m.id}">Reset password</button>
-          <button class="btn btn-quiet ${m.is_active ? "btn-danger" : ""}" data-active="${m.id}">${m.is_active ? "Deactivate" : "Reactivate"}</button>`}
+          ${m.id === me.id || m.keeps_own || (m.access === "admin" && !data.owner) ? "" : `<button type="button" class="btn btn-quiet tm-more" popovertarget="tm-pop-${m.id}" aria-label="More for ${esc(m.name)}" title="More">${icon("dots")}</button>
+          <div class="menu-pop tm-pop" id="tm-pop-${m.id}" popover role="menu"><button type="button" role="menuitem" data-reset="${m.id}">Reset password</button>
+            <button type="button" role="menuitem" class="${m.is_active ? "btn-danger-text" : ""}" data-active="${m.id}">${m.is_active ? "Deactivate…" : "Reactivate"}</button></div>`}
         </div></td>
       </tr>`).join("")}</tbody>`;
 }
@@ -80,6 +82,8 @@ function showPassword(name, pw) {
 
 me = await boot({ page: "team", admin: true });
 if (me) {
+  // Team is one of Settings' pages: the same list sits beside it.
+  document.querySelector(".settings-nav").innerHTML = settingsNavHtml({ owner: Boolean(me.owner), current: "team", onSettings: false });
   $("add-btn").addEventListener("click", () => openDialog(null));
   // /team.html#new (the command menu's Add teammate) opens the dialog straight away.
   if (location.hash === "#new") { history.replaceState(null, "", location.pathname + location.search); openDialog(null); }
@@ -107,6 +111,7 @@ if (me) {
   $("team-table").addEventListener("click", async (e) => {
     const b = e.target.closest("button");
     if (!b) return;
+    b.closest(".tm-pop")?.hidePopover();
     const id = Number(b.dataset.edit || b.dataset.reset || b.dataset.active);
     const m = data.members.find((x) => x.id === id);
     try {
@@ -123,6 +128,17 @@ if (me) {
       }
     } catch (err) { toast(err.message, "bad"); }
   });
+  // A row's More menu opens in the top layer (the table's own scrolling can't cut it off), under its button and
+  // whole on screen.
+  $("team-table").addEventListener("toggle", (e) => {
+    const pop = e.target;
+    if (!pop.classList?.contains("tm-pop") || e.newState !== "open") return;
+    const b = document.querySelector(`[popovertarget="${pop.id}"]`).getBoundingClientRect();
+    const w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = `${Math.max(8, Math.min(b.right - w, innerWidth - w - 8))}px`;
+    pop.style.top = `${b.bottom + 6 + h > innerHeight - 8 ? b.top - h - 6 : b.bottom + 6}px`;
+  }, true);
+  window.addEventListener("scroll", () => document.querySelector(".tm-pop:popover-open")?.hidePopover(), { passive: true });
   onRefresh(load);
-  load().catch((err) => errorState(document.querySelector(".content"), err, () => location.reload()));
+  load().catch((err) => errorState(document.querySelector(".set-pane"), err, () => location.reload()));
 }

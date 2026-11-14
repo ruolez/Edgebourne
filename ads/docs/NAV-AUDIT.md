@@ -112,13 +112,39 @@ Today's sun). 248 px wide; shorter windows tighten the rows so it fits without s
   (`/experiments.html#new=ad:<id>,ad:<id>`).
 - **Polish tab:** Run sits in the panel's head, not under the eleven checks.
 
+### Third round: one map (Eugene, same evening: "a lot of stuff in our app is all over and hard to navigate, remove clutter and organize all functionality")
+The first two rounds kept the structure (seven sections, a second row of pills per section, a flat Settings list) and
+polished it. That was the wrong level: twelve pages were still a click behind a section, Settings was sixteen
+sections sorted by who they apply to rather than what they are for, and the sidebar's foot held five rows of chrome.
+Eugene chose all three changes from previews.
+
+- **The sidebar is the whole map.** Today, Inbox, Leads, Claude; then Ads (Campaigns and ads, Lead forms,
+  Audiences), Creative (Gallery, Ideas, Research), Insights (Results, Compare, Tests, Reports). Every page is one
+  click from anywhere, so wide screens have no pill row (phones, which have no sidebar, keep it). A group folds from
+  its heading and stays folded; the group of the open page never does. In a short window only the list scrolls.
+- **A quiet corner.** Claude's line and the spending limit are two slim rows instead of a card (the limit turns amber
+  and speaks up past 80%). Under them Settings, then your name: Your account, All accounts, Keyboard shortcuts, Theme
+  and Sign out open from it. With several ad accounts the switcher sits beside the logo in place of the console's name.
+- **Settings by what you are doing.** An overview first, then Account, Leads, People, Connections, History
+  (`js/setnav.js`). Sections that are one job are one page: Meta (connection + app), Email and Telegram, Preferences
+  (automatic refresh + A/B tests on Meta). Team is one of its pages. The overview shows what is set on every page
+  and counts what needs a look; on phones it is the menu and the sideways strip is gone. Whole-console settings are
+  marked "Every account" only where there is more than one account.
+- **Each thing counted once.** The Inbox badge no longer repeats the waiting leads (Leads badge) or, for admins,
+  Claude's suggestions (Claude badge).
+- **Team rows:** Edit stays; Reset password and Deactivate are behind the row's More button, so the table fits beside
+  the Settings list and a red button no longer repeats down the page.
+
+Decisions worth keeping: the group is still called Insights (a group named Results holding a page named Results reads
+twice), the Ads page is "Campaigns and ads" in the sidebar only (its group is already called Ads), and Settings'
+first page is "Targets and limits" because alerts and messages all over the console say "Settings → Targets".
+
 ## Left to pick from (not built)
 
 1. **Builders:** "Who sees it" folded when copying an ad set. Left out on purpose: `qa/flows.cjs` fills those fields
    directly in dozens of steps, so folding them by default means rewriting a large part of the suite for a modest
    gain. Worth doing together with a QA helper that opens the fold.
-2. **Settings on phones:** the sideways section strip was left as Phase 9 chose it (with its two group names; QA
-   guards it). A section picker would replace it if wanted.
+2. ~~Settings on phones~~: done in the third round (the overview is the menu).
 3. **Compare's picker:** ads with no spend folded under the ones worth comparing.
 4. **Smaller:** one place for the date picker on every page; one class set for page headers; the wordings of links
    to leads ("Its leads" / "All leads" / "All in Leads"); Tests and Audiences filters in the address; deactivated
