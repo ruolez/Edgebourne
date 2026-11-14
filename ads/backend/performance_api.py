@@ -300,6 +300,9 @@ def overview():
     out["campaign"] = campaign_id
     out["pacing"] = pacing_data(visible_campaign_ids(user))
     out["can_set_target"] = user["role"] == "admin"
+    if user["role"] == "admin":  # AM-E: how you compare, Meta's trend and its unusual changes (owner and account admins)
+        import meta_extras_api
+        out["meta_extras"] = meta_extras_api.results_view()
     return jsonify(out)
 
 

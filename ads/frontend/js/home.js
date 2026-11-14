@@ -5,6 +5,7 @@ import { acctHour, acctZone, clock, money, per, plural } from "./format.js";
 import { alertButtons, moreButton, runChip, wireAlerts } from "./alertmenu.js";
 import { armDial, askMeeting, askNext } from "./followup.js";
 import "./outcome.js";
+import { compareHtml } from "./mx.js";
 
 const $ = (id) => document.getElementById(id);
 let me;
@@ -325,11 +326,12 @@ function adviceHtml(a) {
       </li>`;
     }).join("")}</ul>` : '<p class="muted flush">No suggestions from Meta right now.</p>';
   const bm = a.benchmarks;
-  const bench = bm ? `<div class="bench"><h3>How you compare</h3>${bm.summary ? `<p class="flush">${esc(bm.summary)}</p>` : ""}
+  // AM-E: the link's daily comparison (newer than the Monday summary) replaces the Monday table.
+  const bench = a.compare ? `<div class="bench mx-today">${compareHtml(a.compare, { id: "mx-today-cmp" })}</div>` : bm ? `<div class="bench"><h3>How you compare</h3>${bm.summary ? `<p class="flush">${esc(bm.summary)}</p>` : ""}
       <table class="table middle"><thead><tr><th></th><th class="num">You</th><th class="num">Similar advertisers</th><th class="bench-note"></th></tr></thead>
       <tbody>${bm.items.map((i) => `<tr><th scope="row">${esc(i.label)}</th><td class="num">${esc(i.ours)}</td><td class="num">${esc(i.peers)}${i.note ? `<small class="bench-note-under">${esc(i.note)}</small>` : ""}</td><td class="muted small bench-note">${esc(i.note)}</td></tr>`).join("")}</tbody></table>
       <p class="muted small flush">From Claude's Monday summary, ${esc(bm.as_of)}.</p></div>`
-    : '<p class="muted small flush bench-empty">Benchmarks against similar advertisers come with Claude\'s Monday summary (Claude → Schedules).</p>';
+    : '<p class="muted small flush bench-empty">Benchmarks against similar advertisers come from Ads Manager through your Mac once a day (<a href="/settings.html#am-link">Settings → Ads Manager link</a>).</p>';
   return `<div class="card-head"><h2 id="h-advice">Meta's advice</h2>${score}<span class="spacer"></span>
       <button type="button" class="link-btn" id="advice-fresh">Check again</button></div>
     ${a.error_note ? `<p class="note warn">${esc(a.error_note)}</p>` : ""}${items}

@@ -4,6 +4,7 @@ import { wake } from "./alertmenu.js";
 import { boot, confirmDialog, esc, fieldError, switchHtml, toast, when, errorState, guardLeaving, markSaved, safePath, setCrumbs, skeleton } from "./ui.js";
 import { confirmBig, confirmRemove, limitBody, limitMoney, pausedWords } from "./spendlimit.js";
 import { load as loadLink } from "./amlink.js";
+import { qualityHtml, sizeExtras } from "./mx.js";
 
 const $ = (id) => document.getElementById(id);
 let s;
@@ -156,11 +157,12 @@ function trackingHtml(t) {
       <div><dt>Last event</dt><dd>${a.last ? esc(when(a.last)) : "never"}</dd></div>
       <div><dt>Received, last ${t.days} days</dt><dd>${events}</dd></div>
       <div><dt>From a server</dt><dd>${a.server_share != null ? `${a.server_share}% <span class="muted small">(Conversions API; the rest from the website)</span>` : "—"}</dd></div>
-      <div><dt>Match quality</dt><dd>${match} <span class="muted small">(6 or more is good)</span></dd></div>
+      <div><dt>Match quality, from the dataset</dt><dd>${match} <span class="muted small">(6 or more is good)</span></dd></div>
       <div><dt>Sent from here, last 7 days</dt><dd>${stages}${t.crm.pending ? ` · ${t.crm.pending} waiting` : ""}${t.crm.failed ? ` · <span class="bad-text">${t.crm.failed} failed</span>` : ""}${t.crm_on ? "" : ' <span class="muted small">(sending is off)</span>'}</dd></div>
     </dl>` : ""}
     ${a.todo.length ? `<ul class="tr-todo">${a.todo.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
-    <p class="muted small flush">Instant Form leads are counted by Meta without any website code. The dataset is how Meta learns which of those leads became clients.${t.fetched_at ? ` Checked ${esc(when(t.fetched_at))}.` : ""}</p>`;
+    <p class="muted small flush">Instant Form leads are counted by Meta without any website code. The dataset is how Meta learns which of those leads became clients.${t.fetched_at ? ` Checked ${esc(when(t.fetched_at))}.` : ""}</p>
+    ${qualityHtml(t.meta_quality)}`;
 }
 
 async function loadTracking(fresh = false) {
@@ -169,6 +171,7 @@ async function loadTracking(fresh = false) {
     const [cls, label] = TR_STATE[t.assessment.state] || ["", t.assessment.state];
     $("tr-state").innerHTML = `<span class="pill ${cls}">${esc(label)}</span>`;
     $("tr-body").innerHTML = trackingHtml(t);
+    sizeExtras($("tr-body"));
   } catch (err) { $("tr-body").innerHTML = `<p class="note warn">${esc(err.message)}</p>`; }
 }
 
@@ -356,6 +359,8 @@ const RULE_UI = [
   ["link_down", "The Ads Manager link stops reading (needs a new login, or your Mac's reads stop finishing)", [["hours", "for", "hours"]]],
   ["draft_new", "A new draft shows up in Ads Manager (Inbox only, no message)", []],
   ["draft_problems", "Meta has problems with a draft in Ads Manager (Inbox only, no message)", []],
+  ["meta_anomaly", "Unusual changes Meta spots (cost per lead jumped, delivery fell), read from Ads Manager once a day", []],
+  ["meta_ad_error", "Meta's error messages on an ad (it can't deliver, or delivery is limited)", []],
   ["events_quiet", "Lead stages stop reaching Meta's dataset (two days)", []],
 ];
 

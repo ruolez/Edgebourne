@@ -100,6 +100,7 @@ def wake(alert_id):
 
 def _names(entity_id):
     """{"ad"|"adset"|"campaign": {id, name}} for the thing an alert is about and what it sits in."""
+    entity_id = str(entity_id).split(":", 1)[0] if entity_id else entity_id  # AM-E: an anomaly's "<id>:<metric>"
     if not entity_id or entity_id == "account":
         return {}
     ad = db.query("""SELECT a.id, a.name, a.adset_id, s.name AS adset_name, a.campaign_id, c.name AS campaign_name

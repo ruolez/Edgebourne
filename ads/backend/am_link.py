@@ -26,7 +26,9 @@ RUN_OPEN = timedelta(minutes=30)    # a pass not finished by then expires
 AWAY_AFTER = timedelta(minutes=45)  # no pass for this long while connected = "the Mac has been away"
 STALE_DAILY = timedelta(hours=30)
 MAX_PUSH_BYTES = 2_000_000
+PUSH_BYTES = {"screenshots": 4_500_000}  # AM-E: one picture, up to 3 MB once decoded
 STR_MAX = 300
+FIELD_MAX = {"message": 1000}  # AM-E: the ad page shows Meta's whole error message (cut there too)
 LIST_MAX = {"drafts": 200, "ad_errors": 200, "anomalies": 50}
 LIST_DEFAULT = 100
 
@@ -58,7 +60,8 @@ LIST_KEYS = {
     "trend": ("trends", "trend", "data"), "dataset_quality": ("events", "dataset_quality", "data"),
 }
 OBJECT_KINDS = {"advertiser_context": ("context", "advertiser_context")}
-NOT_STORED = {"screenshots": "Meta's pictures aren't stored yet."}
+# AM-E: a picture is kept by meta_extras.picture into am_screens (one ad per pass), never as a snapshot.
+NOT_STORED = {"screenshots": "Meta's pictures are kept one ad at a time, not as a read of the account."}
 KIND_WORDS = {"drafts": "Drafts", "ad_errors": "Meta's error messages", "benchmarks": "benchmarks", "peers": "how you compare",
               "auction_ranking": "auction rankings", "anomalies": "unusual changes", "trend": "trends",
               "dataset_quality": "tracking quality", "advertiser_context": "business context", "screenshots": "Meta's pictures"}
@@ -117,21 +120,21 @@ def push_refusal(run, account_ad_account, body, now, size):
         return "This link pass is for another ad account."
     if digits(account_ad_account) != run["ad_account_id"]:
         return "This account was switched to another ad account after the pass was made."
-    if size is not None and size > MAX_PUSH_BYTES:
+    if size is not None and size > PUSH_BYTES.get(body.get("kind"), MAX_PUSH_BYTES):
         return "Meta's answer is too big to keep."
     if body.get("via") not in MODES:
         return "Say how it was read (direct or claude)."
     return None
 
 
-def _value(v):
+def _value(v, cut=STR_MAX):
     """A kept value: bools, finite numbers, cut strings, short lists of those. Anything else is dropped (None)."""
     if isinstance(v, bool) or v is None:
         return v
     if isinstance(v, (int, float)):
         return v if math.isfinite(v) else None
     if isinstance(v, str):
-        return v[:STR_MAX]
+        return v[:cut]
     if isinstance(v, list):
         items = [_value(x) for x in v[:20] if not isinstance(x, (dict, list))]
         return [x for x in items if x is not None]
@@ -149,7 +152,7 @@ def _row(kind, raw):
                 return None
             out[key] = ident
             continue
-        v = _value(raw[key])
+        v = _value(raw[key], FIELD_MAX.get(key, STR_MAX))
         if v is not None or raw[key] is None:
             out[key] = v
     return out

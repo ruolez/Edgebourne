@@ -51,9 +51,12 @@ DEFAULTS = {
     # AM-B: drafts read from Ads Manager through the link; FYI only, raised and closed by the link's reads.
     "draft_new": {"on": True},
     "draft_problems": {"on": True},
+    # AM-E: what Meta spots (an unusual change) and its error messages, read through the link; raised and closed by its reads.
+    "meta_anomaly": {"on": True},
+    "meta_ad_error": {"on": True},
 }
-# Conditions the link's reads own (am_link_api.push): the hourly run never closes them.
-LINK_RULES = {"draft_problems"}
+# Conditions the link's reads own (am_link_api.push): the hourly run never closes them, nor ends their snoozes.
+LINK_RULES = {"draft_problems", "meta_anomaly", "meta_ad_error"}
 # Events that stay open until someone deals with them get a Done (00-PLAN C16).
 DONE_OK = {"outside_edit", "change_result"}
 # An outside budget change that broke a money rule closes by itself once the 3-day window has passed.
@@ -467,7 +470,7 @@ def run(now=None):
 
 def unjudged(snap):
     """Rules that couldn't be judged this time: their open alerts and snoozes stay as they are."""
-    out = {"fatigue"} if snap.get("reach_7d") is None else set()
+    out = ({"fatigue"} if snap.get("reach_7d") is None else set()) | LINK_RULES
     n = snap.get("numbers") or {}
     # A Check now that finds days off neither raises nor closes: the next night or pull says whether they stay off.
     if n.get("kind") == "check" and (n.get("summary") or {}).get("state") == "off":

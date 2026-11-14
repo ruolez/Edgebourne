@@ -34,7 +34,10 @@ WORSE = {
     "junk_high": ("share_up", 15),        # % of the leads that look like junk
     "numbers_off": ("plus", 3),           # D1: days that differ from Ads Manager
     "link_down": ("plus", 24),            # AM-A: hours since the Mac last read Ads Manager
+    "meta_anomaly": ("plus", 25),         # AM-E: the size of the change Meta spotted, in %
+    "meta_ad_error": ("up", None),        # AM-E: 1 = limits delivery, 2 = blocks it (never snoozed)
 }
+DAYS_ONLY = {"meta_ad_error"}  # AM-E: Meta's error stays until it's fixed; a limited one may wait a few days, never "worse"
 DAY_AT_MOST = {"tracking"}  # leads may be getting lost: one day at most, like a red money alert
 EPS = 1e-9
 
@@ -78,9 +81,9 @@ def decide(snooze, alert, now):
     return "quiet"
 
 
-def _money_rule(rule):
+def _money_rule(rule, entity_id=None):
     import inbox  # inbox builds its items with this module: imported when asked, not at load
-    return inbox.category(rule) == "money"
+    return inbox.category(rule, entity_id) == "money"
 
 
 def choices(alert):
@@ -90,7 +93,9 @@ def choices(alert):
         return []
     if LEVELS.get(alert.get("level"), 0) == 0 or alert.get("rule") not in WORSE:
         return []
-    if alert["rule"] in DAY_AT_MOST or (alert["level"] == "bad" and _money_rule(alert["rule"])):
+    if alert["rule"] in DAYS_ONLY:  # a blocking error (bad) can't wait, like a rejection
+        return [] if alert["level"] == "bad" else [{"mode": "days", "days": DAYS_DEFAULT, "label": f"In {DAYS_DEFAULT} days"}]
+    if alert["rule"] in DAY_AT_MOST or (alert["level"] == "bad" and _money_rule(alert["rule"], alert.get("entity_id"))):
         return [{"mode": "days", "days": 1, "label": "Remind me tomorrow"}]
     return [{"mode": "days", "days": DAYS_DEFAULT, "label": f"In {DAYS_DEFAULT} days"},
             {"mode": "worse", "days": None, "label": "Only if it gets worse"}]
@@ -150,6 +155,7 @@ def worse_hint(rule, measure, money=_money):
         "junk_high": lambda: _junk_hint(m),
         "numbers_off": lambda: "You'll hear again if 3 more days differ.",
         "link_down": lambda: "You'll hear again if it still isn't reading a day from now.",
+        "meta_anomaly": lambda: f"You'll hear again if the change reaches {m + WORSE['meta_anomaly'][1]:g}%.",
     }.get(rule, lambda: "You'll hear again if it turns red.")()
 
 
@@ -192,6 +198,8 @@ def measure_words(rule, m, money=_money):
         "junk_high": lambda: f"{int(m + 0.5)}% junk",
         "numbers_off": lambda: f"{m:.0f} day that differs" if round(m) == 1 else f"{m:.0f} days that differ",
         "link_down": lambda: f"{m:.0f} hours without a read",
+        "meta_anomaly": lambda: f"a {m:g}% change",
+        "meta_ad_error": lambda: "blocking delivery" if m >= 2 else "limiting delivery",
     }.get(rule, lambda: None)()
 
 

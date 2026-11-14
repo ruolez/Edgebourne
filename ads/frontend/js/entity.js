@@ -1,7 +1,7 @@
 // Campaign and ad set pages: their numbers with "vs before", a daily chart, (ad sets) learning progress
 // and who sees it, the ad sets / ads inside in the manager table, and one History timeline.
 import { api, startLoad } from "./api.js";
-import { boot, emptyState, esc, icon, onRefresh, setCrumbs, sourceNote, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
+import { boot, emptyState, esc, icon, linkNote, onRefresh, setCrumbs, sourceNote, switchHtml, timelineHtml, toast, when, errorState, withFrom } from "./ui.js";
 import { columnChart, marksPanel } from "./charts.js";
 import { count, dayLabel, explain, money, moneyWhole, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
@@ -69,6 +69,7 @@ function render() {
     <div class="charts"><section class="panel"><div class="panel-head"><h2>Spend per day</h2></div><div class="chart" id="c-spend"></div></section>
       <section class="panel"><div class="panel-head"><h2>Leads per day</h2></div><div class="chart" id="c-leads"></div></section></div>
     <div class="fig-foot"><div class="fig-src" id="fig-src"></div><div class="fig-marks" id="chg-panel"></div></div>
+    ${data.vs_peers ? `<div class="mx-line" id="mx-camp"><p class="flush">${icon("compare")}<span>${esc(data.vs_peers.line)}</span></p>${linkNote(data.vs_peers.source)}</div>` : ""}
     ${LEVEL === "adset" ? audienceCard(e) : ""}
     <div class="cr-toolbar"><div class="tabs" role="tablist" aria-label="Show" data-tabpanel="en-panel">${tabs.map(([k, l, n]) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${state.tab === k}">${l}<span class="n">${n}</span></button>`).join("")}</div>
       <span class="spacer"></span>

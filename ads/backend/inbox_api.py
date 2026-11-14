@@ -17,8 +17,12 @@ def feed():
     kind = request.args.get("kind", "all")
     box = request.args.get("box", "all")
     box = box if box in inbox.BOXES else "all"
-    return jsonify({"items": inbox.pick(items, filt, kind, box)[:200], "counts": inbox.counts(items),
-                    "kinds": inbox.kinds(inbox.pick(items, filt, "all", box))})
+    rule = request.args.get("rule")
+    shown = inbox.pick(items, filt, kind, box)
+    if rule in inbox.RULE_FILTERS:  # AM-E: Results' "Meta noticed N unusual changes" opens just those
+        shown = [i for i in shown if i["rule"] == rule]
+    return jsonify({"items": shown[:200], "counts": inbox.counts(items),
+                    "kinds": inbox.kinds(inbox.pick(items, filt, "all", box)), "rule": rule if rule in inbox.RULE_FILTERS else None})
 
 
 @bp.post("/read")

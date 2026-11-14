@@ -100,7 +100,7 @@ class NormalizeTests(unittest.TestCase):
                           {"entity_id": "javascript:alert(1)", "summary": "bad id"}]}
         data, why = am_link.normalize("ad_errors", raw)
         self.assertEqual((why, data), (None, {"rows": [{"entity_id": "120252672229040312", "level": "ad", "code": 1487,
-                                                         "summary": "<script>alert(1)</script> stopped", "message": "x" * am_link.STR_MAX,
+                                                         "summary": "<script>alert(1)</script> stopped", "message": "x" * am_link.FIELD_MAX["message"],
                                                          "blocking": True, "since": "2026-11-12", "fix": "Update the card"}]}))
 
     def test_an_account_entity_keeps_its_digits(self):
@@ -125,8 +125,8 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual([c[0] for c in cases], [None] * 4)
         self.assertTrue(all(c[1] and c[1].endswith("unexpected shape") for c in cases), cases)
 
-    def test_a_kind_without_storage_yet_is_refused(self):
-        self.assertEqual(am_link.normalize("screenshots", {"data": "x"}), (None, "Meta's pictures aren't stored yet."))
+    def test_a_picture_is_never_a_snapshot_of_the_account(self):
+        self.assertEqual(am_link.normalize("screenshots", {"data": "x"}), (None, am_link.NOT_STORED["screenshots"]))
 
     def test_drafts_keep_how_many_were_read_and_whether_every_page_came(self):
         """AM-B: the rows go to am_drafts; the snapshot keeps the read's time, its count and whether it was complete."""

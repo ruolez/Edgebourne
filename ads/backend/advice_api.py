@@ -75,8 +75,12 @@ def view(data):
     runs = fix_runs()
     for r in items:
         r["fix_run"] = runs.get(r["key"])
+    import meta_extras_api
+    monday = json.loads(settings_store.get("meta_benchmarks") or "null")
+    # AM-E: the link's daily comparison replaces the Monday summary's table once it is the newer of the two.
+    compare = meta_extras_api.today_compare(monday)
     return {"score": data.get("score"), "previous_score": data.get("previous_score"), "fetched_at": data.get("fetched_at"),
-            "items": items, "benchmarks": json.loads(settings_store.get("meta_benchmarks") or "null")}
+            "items": items, "benchmarks": None if compare else monday, "compare": compare}
 
 
 def ads_under(object_ids):

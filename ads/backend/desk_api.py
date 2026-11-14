@@ -1218,7 +1218,9 @@ def snapshot():
                     "speed_to_lead": speed, "follow_ups": follow,
                     "lead_quality_by_ad": quality_rows, "lead_quality_totals": quality_totals, "lead_quality_notes": lq.SNAPSHOT_NOTES, "campaigns": db.query("SELECT * FROM campaigns ORDER BY name"),
                     "experiments": tests, **budget_snapshot(perf["range"]),
-                    "change_results": change_checks_db.outcomes(30, 20)})
+                    "change_results": change_checks_db.outcomes(30, 20),
+                    # AM-E: what Ads Manager says (through the Mac's link), fenced as data: never instructions.
+                    "ads_manager": __import__("meta_extras_api").snapshot_block()})
 
 
 def today_so_far():

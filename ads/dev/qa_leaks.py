@@ -98,6 +98,21 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id, adset=None):
     db.execute("UPDATE audiences SET gone_at = NULL WHERE id = %s AND account_id = %s", (audience["id"], acct))
     db.execute("UPDATE adsets SET audience_ids = array_append(array_remove(audience_ids, %s), %s) WHERE id = %s AND account_id = %s",
                (audience["id"], audience["id"], adset, acct))
+    # AM-E: Meta's extra insights read through the link (latest per kind, scope ''): a marked comparison, unusual change,
+    # error message and tracking event, the anomaly's alert and Meta's picture of the ad. Account 1's rows only when it has
+    # none of that kind yet (they go at exit); account 2 is QA's own.
+    extras = {"benchmarks": {"rows": [{"metric": "cost_per_lead", "value": 1.23, "peer_low": 2, "peer_high": 3, "industry": f"{mark} industry"}]},
+              "anomalies": {"rows": [{"entity_id": ad, "metric": "spend", "direction": "up", "change_pct": 10, "summary": f"{mark} anomaly"}]},
+              "ad_errors": {"rows": [{"entity_id": ad, "summary": f"{mark} error", "message": f"{mark} message", "blocking": True}]},
+              "dataset_quality": {"rows": [{"event": f"{mark}Lead", "match_quality": 7, "advice": f"{mark} advice"}]},
+              "advertiser_context": {"vertical": f"{mark} vertical"}}
+    for kind, data in extras.items():
+        db.execute("""INSERT INTO am_snapshots (kind, scope, data, fetched_at, via, account_id) VALUES (%s, '', %s, now(), 'direct', %s)
+                      ON CONFLICT (account_id, kind, scope) DO NOTHING""", (kind, json.dumps(data), acct))
+    once("alerts", {"rule": "meta_anomaly", "dedupe_key": f"{mark}anomaly", "level": "warn", "title": f"{mark} unusual change", "kind": "condition",
+                    "entity_id": f"{ad}:spend", "campaign_id": campaign, "account_id": acct}, "dedupe_key")
+    once("am_screens", {"ad_id": ad, "placement": "" if acct != 1 else mark, "mime": "image/png", "width": 1, "height": 1, "size_bytes": len(png),
+                        "sha256": "1" * 64, "body": png, "fetched_at": "2026-11-13T10:00:00Z", "via": "direct", "account_id": acct}, "placement")
     import settings_store
     settings_store.set("audiences_read_at", __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(), account_id=acct)
     return {"proposal": proposal["id"], "view": view["id"], "build": build["id"], "swipe": swipe["id"], "alert": problem["id"],
@@ -152,8 +167,9 @@ with account_ctx.all_accounts():
                            ("lead_notes", "body"), ("lead_replies", "subject"), ("activity", "subject"), ("inbox_reads", "item_key"),
                            ("desk_attachments", "name"), ("desk_tasks", "prompt"), ("swipes", "page_name"), ("numbers_runs", "error"),
                            ("am_link_runs", "error"), ("am_snapshots", "scope"), ("am_drafts", "source"), ("copy_jobs", "client_key"),
-                           ("audiences", "name")):
+                           ("audiences", "name"), ("am_screens", "placement")):
                 db.execute(f"DELETE FROM {t} WHERE account_id = 1 AND {col} LIKE %s", (MARK1 + "%",))
+            db.execute("DELETE FROM am_snapshots WHERE account_id = 1 AND data::text LIKE %s", ("%" + MARK1 + "%",))
             db.execute("DELETE FROM lead_events WHERE account_id = 1 AND details->>'ad' LIKE %s", (MARK1 + "%",))
             db.execute("UPDATE adsets SET audience_ids = array_remove(audience_ids, '91' || '00000000088') WHERE account_id = 1")
     drop_mark1()
@@ -633,8 +649,22 @@ drafts = {"member": [mc.get("/api/drafts").status_code, mc.get(f"/api/drafts/{tw
           "account2_admin_lists_account1": MARK1 in ac.get("/api/drafts").get_data(as_text=True),
           "account2_admin_builds_from_account1": ac.post("/api/builds", json={"draft_id": d1}).status_code,
           "member_finishes_from_draft": mc.post("/api/ads/new", json={"draft_id": two["draft"]}).status_code}
+# AM-E: Meta's picture is read only in its own account (404 elsewhere); a client sees its own ad's picture but never Meta's
+# comparison, unusual changes or error details.
+session_for(c, admin["id"], A2)
+session_for(ac, acct_admin["id"], 1)
+session_for(cc, client["id"])
+cc_ad = cc.get(f"/api/ads/ad/{two['ad']}").get_json() or {}
+mx = {"switched_owner_reads_account1_picture": c.get(f"/api/ads/ad/{one['ad']}/screenshot").status_code,
+      "account2_admin_reads_account1_picture": ac.get(f"/api/ads/ad/{one['ad']}/screenshot").status_code,
+      "client_reads_own_picture": cc.get(f"/api/ads/ad/{two['ad']}/screenshot").status_code,
+      "client_asks_for_a_picture": cc.post(f"/api/ads/ad/{two['ad']}/screenshot/refresh", json={}).status_code,
+      "account2_admin_asks_for_account1_picture": ac.post(f"/api/ads/ad/{one['ad']}/screenshot/refresh", json={}).status_code,
+      "client_gets_errors": "meta_errors" in cc_ad, "client_gets_picture_info": "meta_picture" in cc_ad,
+      "client_results_compare": "meta_extras" in (cc.get("/api/performance").get_json() or {}),
+      "client_inbox_meta": any(i["rule"].startswith("meta_") for i in (cc.get("/api/inbox?box=all").get_json() or {}).get("items", []))}
 session_for(c, admin["id"], 1)
-out.update({"leaks": l1 + l2 + l2b + l3, "full_access": fud, "am_link": am, "drafts": drafts, "routes_checked": [n1, n2, n3], "admin_sees_account2_on_account2": sees_own,
+out.update({"leaks": l1 + l2 + l2b + l3, "meta_extras": mx, "full_access": fud, "am_link": am, "drafts": drafts, "routes_checked": [n1, n2, n3], "admin_sees_account2_on_account2": sees_own,
             "client_sees_own_leads": client_sees_own, "client_switch_status": switch, "client_stays_on_own_account": still,
             "client_writes_not_refused": writes,
             "member_and_account_admin_routes": [n4, n5], "leaks_member_and_account_admin": l4 + l5,

@@ -6,6 +6,8 @@
 // (open, finished and staged-edit drafts) and New campaign filled in from a draft.
 // ONLY=audiences node qa/shots.cjs <dir>: only AM-D: Ads → Audiences, the New audience dialog (each step: website and lookalike
 // details), the pickers in New ad set and in an ad set's Edit (nothing is made).
+// ONLY=extras node qa/shots.cjs <dir>: only AM-E (Meta's extra insights from the link): Today's How you compare, Results' card,
+// trend and unusual-changes lines, the campaign line, an ad with What Meta says, an ad with Meta's picture, Tracking health's quality.
 // ONLY=edit node qa/shots.cjs <dir>: only AM-C: the Edit panel of the ad set (folded, then every section open), the review
 // with a money question (the campaign's spending cap removed), the copy dialog and the delete dialog.
 // Playwright: $PLAYWRIGHT_CORE, else the first intact copy on this Mac (the render pipeline's copy lost
@@ -63,6 +65,7 @@ db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) V
   const onlyDrafts = process.env.ONLY === 'drafts';
   const onlyEdit = process.env.ONLY === 'edit';
   const onlyAud = process.env.ONLY === 'audiences';
+  const onlyExtras = process.env.ONLY === 'extras';
   const fakeGet = (path) => sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:5001${path}').read().decode())"`);
   // AM-C: the Edit panel, the review with a money line, the copy dialog and the delete dialog (nothing is saved).
   const editShots = async (page, tag, scheme) => {
@@ -182,7 +185,51 @@ with account_ctx.use(1):
     VALUES (1, 'shots-am-1', '1025971549903293', '{ad_errors,benchmarks}', 'direct', 'done', jsonb_build_object('ad_errors', 1, 'benchmarks', 2), now() - interval '12 minutes', now() - interval '12 minutes')`);
   const amKinds = ['ad_errors', 'benchmarks', 'peers', 'auction_ranking', 'anomalies', 'trend', 'dataset_quality', 'advertiser_context'];
   const amSnapsBefore = psql("SELECT count(*) FROM am_snapshots WHERE account_id = 1 AND scope = '' AND kind <> 'drafts'");
-  if (amSnapsBefore === '0') psql(`INSERT INTO am_snapshots (account_id, kind, scope, data, fetched_at, via) SELECT 1, k, '', jsonb_build_object('rows', jsonb_build_array()), now() - interval '12 minutes', 'direct' FROM unnest('{${amKinds.join(',')}}'::text[]) k`);
+  // AM-E: the reads as the fake MCP server answers them (N3 with a blocking error, N2's unusual change), Meta's picture of N1.
+  const N1 = '120252672229040312', N2 = '120252672229400312', N3 = '120252672230740312';
+  const AM_DATA = {
+    benchmarks: { rows: [{ metric: 'cost_per_lead', value: 4.79, peer_low: 18, peer_median: 27, peer_high: 42, industry: 'Professional services', region: 'US', period: 'last_30d' },
+      { metric: 'ctr', value: 1.08, peer_low: 0.9, peer_median: 1.2, peer_high: 1.6, period: 'last_30d' }] },
+    peers: { rows: [{ metric: 'cost_per_lead', value: 4.79, peer_value: 27, percentile: 90, direction: 'better', period: 'last_30d' }] },
+    auction_ranking: { rows: [{ entity_id: N1, quality_ranking: 'ABOVE_AVERAGE', engagement_rate_ranking: 'AVERAGE', conversion_rate_ranking: 'ABOVE_AVERAGE' },
+      { entity_id: N2, quality_ranking: 'AVERAGE', engagement_rate_ranking: 'BELOW_AVERAGE_35', conversion_rate_ranking: 'AVERAGE' }] },
+    trend: { rows: [{ metric: 'cost_per_lead', direction: 'down', change_pct: -12, period: 'last_14d' }] },
+    anomalies: { rows: [{ entity_id: N2, level: 'ad', metric: 'cost_per_lead', direction: 'up', change_pct: 48, summary: 'Cost per lead rose 48% against its 7-day pattern.' }] },
+    ad_errors: { rows: [{ entity_id: N3, level: 'ad', code: 1487, summary: 'Payment method failed', blocking: true, since: '2026-11-12',
+      message: 'Update the payment method in <b>Billing</b>. Ads stay off until a payment goes through; Meta tries the card again within a day of the change.', fix: 'Open Ads Manager → Billing and add a card that works.' }] },
+    dataset_quality: { rows: [{ event: 'Lead', match_quality: 7.8, advice: 'Send email and phone with each event.' }, { event: 'PageView', match_quality: 5.1 }] },
+    advertiser_context: { vertical: 'Professional services', business_type: 'B2B services', region: 'US' },
+  };
+  if (amSnapsBefore === '0') {
+    sh('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', `import json, account_ctx, db
+data = json.loads(${JSON.stringify(JSON.stringify(AM_DATA))})
+with account_ctx.use(1):
+    for k in ${JSON.stringify(amKinds)}:
+        db.execute("INSERT INTO am_snapshots (kind, scope, data, fetched_at, via) VALUES (%s, '', %s, now() - interval '12 minutes', 'direct')",
+                   (k, json.dumps(data.get(k) or {"rows": []})))
+`);
+  }
+  const picBefore = psql(`SELECT count(*) FROM am_screens WHERE account_id = 1 AND ad_id = '${N1}' AND placement = ''`);
+  if (picBefore === '0') {
+    sh('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', `import hashlib, account_ctx, attachments, db
+data = open('/tmp/qa-preview.png', 'rb').read()
+m = attachments.measure('image/png', data)
+with account_ctx.use(1):
+    db.execute("""INSERT INTO am_screens (ad_id, placement, mime, width, height, size_bytes, sha256, body, fetched_at, via)
+                  VALUES ('${N1}', '', 'image/png', %s, %s, %s, %s, %s, now() - interval '3 hours', 'direct')""",
+               (m['width'], m['height'], len(data), hashlib.sha256(data).hexdigest(), data))
+`);
+  }
+  const shotAlerts = () => psql(`DELETE FROM alerts WHERE account_id = 1 AND dedupe_key LIKE 'shots-mx-%'`);
+  shotAlerts();
+  sh('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', `import json, account_ctx, db
+with account_ctx.use(1):
+    for key, rule, level, title, lines, ent, measure, href in (
+            ('shots-mx-1', 'meta_anomaly', 'warn', 'Meta noticed: cost per lead up 48 % on “N2”', ['Cost per lead rose 48% against its 7-day pattern.', 'Spotted Sat, Nov 14'], '${N2}:cost_per_lead', 48, '/ad.html?id=${N2}'),
+            ('shots-mx-2', 'meta_ad_error', 'bad', 'Meta: “N3” can\\'t deliver until it\\'s fixed', ['Payment method failed'], '${N3}', 2, '/ad.html?id=${N3}')):
+        db.execute("""INSERT INTO alerts (rule, dedupe_key, level, title, lines, entity_id, campaign_id, href, kind, measure)
+                      VALUES (%s, %s, %s, %s, %s, %s, '120252638288040312', %s, 'condition', %s)""", (rule, key, level, title, json.dumps(lines), ent, href, measure))
+`);
   const fullAccess = (on) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "UPDATE user_sessions SET full_until = ${on ? "now() + interval '8 hours'" : 'NULL'} WHERE user_id = 1"`);
   for (const scheme of ['light', 'dark']) {
     for (const [vw, vh, tag] of [[1440, 900, 'desk'], [390, 844, 'phone']]) {
@@ -207,6 +254,7 @@ with account_ctx.use(1):
       }
       if (onlyEdit) { await editShots(page, tag, scheme); await ctx.close(); continue; }
       if (onlyAud) { await audienceShots(page, tag, scheme); await ctx.close(); continue; }
+      if (onlyExtras) { await extrasShots(page, tag, scheme); await ctx.close(); continue; }
       for (const p of (asClient ? CLIENT_PAGES : onlyAm ? [] : onlyDrafts ? DRAFT_PAGES : [...OWNER_PAGES, ...DRAFT_PAGES.slice(1)])) {
         await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
         if (p.includes('#')) await page.reload();
@@ -296,6 +344,8 @@ with account_ctx.use(1):
     }
   }
   await browser.close();
+  shotAlerts();
+  if (picBefore === '0') psql(`DELETE FROM am_screens WHERE account_id = 1 AND ad_id = '${N1}' AND run_id IS NULL`);
   if (!asClient) {
     const was = JSON.parse(amWas);
     psql(`UPDATE am_link SET state = '${was.state}', connected_as = ${was.connected_as ? `'${was.connected_as.replace(/'/g, "''")}'` : 'NULL'}, client_kind = ${was.client_kind ? `'${was.client_kind}'` : 'NULL'},
@@ -305,4 +355,46 @@ with account_ctx.use(1):
   if (asClient) sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "UPDATE users SET is_active = FALSE WHERE email = '${login[0]}'"`);
   sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "DELETE FROM desk_reports WHERE task_id = ${fudTask}; DELETE FROM desk_tasks WHERE id = ${fudTask}"`);
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');
+
+  // AM-E: the screens that show what the link read (the link connected, reads from 12 minutes ago).
+  async function extrasShots(page, tag, scheme) {
+    amState('connected');
+    sh(`docker exec -w /app edgebourne-ads-backend python -c "import time, settings_store; settings_store.set('bridge_last_seen', str(time.time()))"`);
+    const shot = async (name, full = true) => { await page.waitForTimeout(500); await page.screenshot({ path: `${OUT}/mx-${name}-${tag}-${scheme}.png`, fullPage: full }); };
+    await page.goto(`${BASE}/home.html`);
+    await page.waitForSelector('#advice .mx-today, #advice .bench-empty', { timeout: 15000 }).catch(() => {});
+    await page.$eval('#advice', (e) => e.scrollIntoView()).catch(() => {});
+    await shot('today');
+    await page.goto(`${BASE}/performance.html`);
+    await page.waitForSelector('#mx-results', { timeout: 15000 }).catch(() => {});
+    await shot('results');
+    await page.goto(`${BASE}/campaign.html?id=120252638288040312`);
+    await page.waitForSelector('#mx-camp', { timeout: 15000 }).catch(() => {});
+    await shot('campaign');
+    await page.goto(`${BASE}/ad.html?id=${N3}`);
+    await page.waitForSelector('#mx-errors', { timeout: 15000 }).catch(() => {});
+    await shot('ad-errors');
+    await page.click('#mx-errors .mx-more:not([hidden])').catch(() => {});
+    await page.$eval('#mx-errors', (e) => e.scrollIntoView()).catch(() => {});
+    await shot('ad-errors-open', false);
+    await page.goto(`${BASE}/ad.html?id=${N1}`);
+    await page.waitForSelector('#mx-view');
+    await page.click('#mx-view [data-pv-view="picture"]');
+    await page.waitForSelector('#mx-img', { timeout: 15000 }).catch(() => {});
+    await page.waitForFunction(() => document.getElementById('mx-img')?.complete, null, { timeout: 10000 }).catch(() => {});
+    await shot('ad-picture');
+    await page.goto(`${BASE}/ad.html?id=${N3}`);
+    await page.waitForSelector('#mx-view');
+    await page.click('#mx-view [data-pv-view="picture"]');
+    await shot('ad-picture-empty');
+    await page.click('#mx-view [data-pv-view="live"]');  // the next visit opens on the live preview again
+    await page.goto(`${BASE}/settings.html#tracking`);
+    await page.reload();
+    await page.waitForSelector('#mx-quality', { timeout: 15000 }).catch(() => {});
+    await page.$eval('#mx-quality', (e) => e.scrollIntoView()).catch(() => {});
+    await shot('tracking');
+    await page.goto(`${BASE}/inbox.html?box=all&rule=meta_anomaly`);
+    await page.waitForSelector('#ib-list .ib-item', { timeout: 15000 }).catch(() => {});
+    await shot('inbox');
+  }
 })();

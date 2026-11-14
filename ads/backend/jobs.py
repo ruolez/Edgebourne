@@ -227,6 +227,8 @@ def prune():
     with account_ctx.all_accounts():
         for table, where in PRUNE:
             db.execute(f"DELETE FROM {table} WHERE {where}")
+        # AM-E: Meta's pictures keep their row ("older than 30 days: Get it again"); only the bytes go.
+        db.execute("UPDATE am_screens SET body = NULL WHERE body IS NOT NULL AND fetched_at < now() - interval '30 days'")
         # FU-D: Claude's previews keep their row ("Preview removed after 30 days"); only the bytes go.
         db.execute("""UPDATE desk_attachments SET body = NULL, pruned_at = now()
                       WHERE body IS NOT NULL AND created_at < now() - interval '30 days'""")

@@ -859,7 +859,8 @@ def ad_detail(ad_id):
                                               checks=change_checks_db.summary_for([c["id"] for c in changes], client=user["role"] == "client")),
                     **status_history.marks_payload(user, status_history.marks_scope("ad", ad), *win),
                     "formats": [{"id": f, "label": label} for f, label in PREVIEW_FORMATS],
-                    "source": __import__("numbers_check").source(user, *win, scoped=True, live=live)})
+                    "source": __import__("numbers_check").source(user, *win, scoped=True, live=live),
+                    **__import__("meta_extras_api").ad_extras(ad, user)})  # AM-E: Meta's error details and picture
 
 
 @bp.get("/ads/ad/<ad_id>/preview")

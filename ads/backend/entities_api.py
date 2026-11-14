@@ -96,6 +96,9 @@ def _detail(level, entity_id):
                  "series": _series(f"{col} = %s", [entity_id], start, end),
                  "source": numbers_check.source(current_user(), start, end, scoped=True, live=live),
                  **status_history.marks_payload(current_user(), status_history.marks_scope(level, row), start, end)})
+    if level == "campaign" and current_user()["role"] == "admin":  # AM-E: one line on how the account compares
+        import meta_extras_api
+        data["vs_peers"] = meta_extras_api.campaign_view(entity_id)
     return jsonify(data)
 
 

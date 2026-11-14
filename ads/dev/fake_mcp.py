@@ -11,7 +11,10 @@
   no_access=<act id>|reset=1 and /fake/_mcp_hits.
 - AM-B drafts (ads_get_ad_entities, object_state "draft", only for the console's own ad account): drafts=none,
   draft_drop=<id,…>, draft_add=<json draft or list> (draft_add= empties), draft_pages=<n> (split over n cursors, a campaign
-  with its subtree counts as one), draft_fail_page=1 (every page after the first fails)."""
+  with its subtree counts as one), draft_fail_page=1 (every page after the first fails).
+- AM-E insights: anomaly=none|n3_spend_up|n2_worse|<json list> (default: one on N2, cost per lead +48 %),
+  ad_error=<ad id>:blocking|<ad id>:limited|<ad id>:long[,…] (a bare id is blocking, long = blocking with a long message; none by default), screenshot=gif|big|placement (a GIF, or
+  a picture over 3 MB: both must be refused; or one Meta tags with a placement, which still shows), shape=<kind> for any kind (an answer nobody expects)."""
 import ast
 import base64
 import hashlib
@@ -330,7 +333,10 @@ def call(name, args):
     ad = str(args.get("ad_account_id") or "")
     if ad and ad not in [r["id"] for r in accounts()]:
         return {"isError": True, "content": [{"type": "text", "text": f"No access to {ad}"}]}
-    kind = {"ads_get_errors": "ad_errors", "ads_insights_industry_benchmark": "benchmarks", "ads_get_ad_entities": "drafts"}.get(name)
+    kind = {"ads_get_errors": "ad_errors", "ads_insights_industry_benchmark": "benchmarks", "ads_get_ad_entities": "drafts",
+            "ads_insights_performance_vs_peers": "peers", "ads_insights_auction_ranking_benchmarks": "auction_ranking",
+            "ads_insights_anomaly_signal": "anomalies", "ads_insights_performance_trend": "trend", "ads_get_dataset_quality": "dataset_quality",
+            "ads_insights_advertiser_context": "advertiser_context", "ads_get_ad_preview_screenshot": "screenshots"}.get(name)
     if kind and flag("shape") == kind:
         return {"content": [{"type": "text", "text": json.dumps({"surprise": "a shape nobody expected"})}],
                 "structuredContent": {"surprise": "a shape nobody expected"}}
@@ -353,9 +359,7 @@ def call(name, args):
                 "next_actions": {"actions": [{"step": 1, "tool": "ads_activate_entity", "strength": "required", "read_only": False,
                                               "requires_user_confirmation": False, "suggested_args": {"entity_id": "120252756936450312"}}]}}
     elif name == "ads_get_errors":
-        data = {"errors": [{"entity_id": e, "level": "ad", "code": 1487, "summary": "Payment method failed",
-                            "message": "Update the payment method in <b>Billing</b>.", "blocking": True, "since": "2026-11-12"}
-                           for e in (STATE["flags"].get("ad_error") or "").split(",") if e]}
+        data = {"errors": [ad_error(e) for e in (STATE["flags"].get("ad_error") or "").split(",") if e]}
     elif name == "ads_insights_industry_benchmark":
         data = benchmarks()
     elif name == "ads_insights_performance_vs_peers":
@@ -364,8 +368,7 @@ def call(name, args):
         data = {"rankings": [{"entity_id": aid, "quality_ranking": "ABOVE_AVERAGE", "engagement_rate_ranking": "AVERAGE",
                               "conversion_rate_ranking": "ABOVE_AVERAGE", "period": "last_7d"} for aid in DATA["REAL_AD_IDS"][:2]]}
     elif name == "ads_insights_anomaly_signal":
-        data = {"anomalies": [{"entity_id": DATA["REAL_AD_IDS"][1], "level": "ad", "metric": "cost_per_lead", "direction": "up",
-                               "change_pct": 48, "detected_on": time.strftime("%Y-%m-%d"), "summary": "Cost per lead rose 48% against its 7-day pattern."}]}
+        data = {"anomalies": anomalies()}
     elif name == "ads_insights_performance_trend":
         data = {"trends": [{"metric": "cost_per_lead", "direction": "down", "change_pct": -12, "period": "last_14d"}]}
     elif name == "ads_get_dataset_quality":
@@ -374,11 +377,68 @@ def call(name, args):
     elif name == "ads_insights_advertiser_context":
         data = {"context": {"vertical": "Professional services", "business_type": "B2B services", "region": "US"}}
     elif name == "ads_get_ad_preview_screenshot":
-        png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + bytes(24)).decode()
-        return {"content": [{"type": "image", "mimeType": "image/png", "data": png}]}
+        mime, raw = screenshot(str(args.get("ad_id") or ""))
+        encoded = base64.b64encode(raw).decode()
+        if flag("screenshot") == "placement":
+            data = {"placement": "INSTAGRAM_STORY", "images": [{"mime": mime, "data_b64": encoded}]}
+            return {"content": [{"type": "text", "text": json.dumps(data)}], "structuredContent": data}
+        return {"content": [{"type": "image", "mimeType": mime, "data": encoded}]}
     else:
         data = {"data": []}
     return {"content": [{"type": "text", "text": json.dumps(data)}], "structuredContent": data}
+
+
+def anomalies():
+    """AM-E: Meta's unusual changes. Default one on N2 (cost per lead +48 %)."""
+    n2, n3 = DATA["REAL_AD_IDS"][1], DATA["REAL_AD_IDS"][2]
+    day = time.strftime("%Y-%m-%d")
+    one = {"entity_id": n2, "level": "ad", "metric": "cost_per_lead", "direction": "up", "change_pct": 48, "detected_on": day,
+           "summary": "Cost per lead rose 48% against its 7-day pattern."}
+    pick = flag("anomaly")
+    if pick == "none":
+        return []
+    if pick == "n2_worse":
+        return [{**one, "change_pct": 90, "summary": "Cost per lead rose 90% against its 7-day pattern."}]
+    if pick == "n3_spend_up":
+        return [{"entity_id": n3, "level": "ad", "metric": "spend", "direction": "up", "change_pct": 35, "detected_on": day,
+                 "summary": "Spend rose 35% against its 7-day pattern."}]
+    if pick:
+        return json.loads(pick)
+    return [one]
+
+
+def ad_error(spec):
+    """AM-E: "<ad id>:blocking" (Meta's payment-style error, with markup in its message), "<ad id>:long" (the same with a
+    message past 3 lines) or "<ad id>:limited"."""
+    ad, _, how = spec.partition(":")
+    if how == "limited":
+        return {"entity_id": ad, "level": "ad", "code": 2446, "summary": "Delivery limited: text covers too much of the image",
+                "message": "Ads with less text on the image <i>usually</i> reach more people.", "blocking": False, "since": "2026-11-13",
+                "fix": "Use a picture with less text on it."}
+    message = "Update the payment method in <b>Billing</b>."
+    if how == "long":
+        message += " Meta tried to charge the card on file and the bank declined it." * 12
+    return {"entity_id": ad, "level": "ad", "code": 1487, "summary": "Payment method failed",
+            "message": message, "blocking": True, "since": "2026-11-12",
+            "fix": "Open Ads Manager → Billing and add a card that works."}
+
+
+GIF = bytes.fromhex("474946383961010001008000000000ffffff21f90401000000002c00000000010001000002024401003b")
+
+
+def screenshot(ad_id):
+    """AM-E: Meta's picture of an ad: N1 as a PNG (the rendered preview), the others as their JPEG; switches: a GIF, or
+    one over 3 MB."""
+    how = flag("screenshot")
+    if how == "gif":
+        return "image/gif", GIF
+    ids = DATA["REAL_AD_IDS"]
+    path = "/dev-tools/media/preview.png" if ad_id == ids[0] else f"/dev-tools/media/N{ids.index(ad_id) + 1 if ad_id in ids else 1}.jpg"
+    with open(path, "rb") as f:
+        raw = f.read()
+    if how == "big":
+        raw += bytes(3 * 1024 * 1024)
+    return ("image/png" if raw.startswith(b"\x89PNG") else "image/jpeg"), raw
 
 
 def rpc_result(rid, result, sse=False):
@@ -434,7 +494,7 @@ def controls():
     if request.args.get("draft_add") == "":
         STATE["draft_add"] = []
     for k in ("refuse_dcr", "refuse_client", "deny", "expire", "expires_in", "readonly_lie", "shape", "no_access", "ad_error",
-              "drafts", "draft_drop", "draft_pages", "draft_fail_page"):
+              "drafts", "draft_drop", "draft_pages", "draft_fail_page", "anomaly", "screenshot"):
         if k in request.args:
             v = request.args[k]
             if v in ("", "0"):

@@ -116,7 +116,8 @@ def close_link_down():
 # ---------------------------------------------------------------- Settings
 
 def runs_view(limit=5):
-    rows = db.query(f"SELECT {RUN_COLS} FROM am_link_runs ORDER BY id DESC LIMIT %s", (limit,))
+    # AM-E: one ad's picture is a pass of its own (up to 12 a day); Settings lists the reads of the account.
+    rows = db.query(f"SELECT {RUN_COLS} FROM am_link_runs WHERE scope IS NULL ORDER BY id DESC LIMIT %s", (limit,))
     return [{"id": r["id"], "at": r["created_at"].isoformat(), "kinds": list(r["kinds"]), "mode": r["mode"], "status": r["status"],
              "error": r["error"], "kept": sum(int(v) for v in (r["pushed"] or {}).values()), "forced": r["forced_by"] is not None}
             for r in rows]
@@ -284,8 +285,68 @@ def expire_open():
                    "WHERE status = 'open' AND created_at < now() - %s", (am_link.RUN_OPEN,))
 
 
+SCREENS_ASKED = "am_screens_asked"  # AM-E: {ad id: when Get Meta's picture was pressed}, handed out before anything else
+ASK_KEEP = 1800  # seconds an unanswered ask stays in the queue
+ASK_GAP = 120    # one ask per ad per 2 minutes
+
+
+def screens_asked():
+    try:
+        raw = json.loads(settings_store.get(SCREENS_ASKED) or "{}")
+    except ValueError:
+        raw = {}
+    now = time.time()
+    return {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, (int, float)) and now - v < ASK_KEEP}
+
+
+def ask_screen(ad_id):
+    """Get Meta's picture: the next plan reads this ad's picture first. Returns seconds to wait when asked a moment ago."""
+    asked = screens_asked()
+    last = db.query("SELECT EXTRACT(EPOCH FROM now() - MAX(created_at)) AS ago FROM am_link_runs WHERE scope = %s", (ad_id,), one=True)
+    ago = min([time.time() - asked[ad_id]] if ad_id in asked else [], default=None)
+    for a in (ago, float(last["ago"]) if last and last["ago"] is not None else None):
+        if a is not None and a < ASK_GAP:
+            return int(ASK_GAP - a) + 1
+    asked[ad_id] = time.time()
+    settings_store.set(SCREENS_ASKED, json.dumps(dict(sorted(asked.items(), key=lambda kv: kv[1])[-10:])))
+    return 0
+
+
+def asked_screen():
+    """The ad whose picture someone asked for (oldest ask first) that this account holds, or None."""
+    asked = screens_asked()
+    if not asked:
+        return None
+    held = {r["id"] for r in db.query("SELECT id FROM ads WHERE id = ANY(%s)", (list(asked),))}
+    return next((ad_id for ad_id, _ in sorted(asked.items(), key=lambda kv: kv[1]) if ad_id in held), None)
+
+
+def daily_screen(now):
+    """The next ad of the daily round (meta_extras.screenshot_targets: the busiest delivering ads), or None."""
+    import meta_extras
+    ads = db.query("""SELECT a.id, a.effective_status FROM ads a
+                      LEFT JOIN (SELECT ad_id, SUM(spend_cents) AS s FROM ad_daily WHERE day >= CURRENT_DATE - 7 GROUP BY ad_id) d
+                          ON d.ad_id = a.id
+                      WHERE a.effective_status = 'ACTIVE' ORDER BY COALESCE(d.s, 0) DESC, a.id""")
+    have = {}
+    for r in db.query("""SELECT ad_id AS id, MAX(fetched_at) AS at FROM am_screens GROUP BY ad_id
+                         UNION ALL SELECT scope, MAX(created_at) FROM am_link_runs WHERE scope IS NOT NULL GROUP BY scope"""):
+        if r["at"] is not None:
+            have[r["id"]] = max(have.get(r["id"]) or r["at"], r["at"])
+    due = meta_extras.screenshot_targets(ads, have, now)
+    return due[0] if due else None
+
+
+def drop_ask(ad_id):
+    asked = screens_asked()
+    if asked.pop(ad_id, None) is not None:
+        settings_store.set(SCREENS_ASKED, json.dumps(asked))
+
+
 def make_runs(mode):
-    """One pass per open account whose ad account is set, whose switch is on, that has no pass open and has something due."""
+    """One pass per open account whose ad account is set, whose switch is on, that has no pass open and has something due.
+    AM-E: a pass may instead read one ad's picture (scope = the ad): an ask from the ad page first, the daily round only
+    when nothing else is due. Pictures are read by the Mac's own link only (a Claude run can't pass an image on)."""
     now = utcnow()
     with account_ctx.all_accounts():
         accounts = [r["id"] for r in db.query("SELECT id FROM accounts WHERE archived_at IS NULL ORDER BY id")]
@@ -298,22 +359,31 @@ def make_runs(mode):
             if db.query("SELECT 1 FROM am_link_runs WHERE status = 'open' LIMIT 1", one=True):
                 continue
             forced = settings_store.get("am_link_force")
-            last = {k: v[0] for k, v in last_reads().items()}
-            kinds = am_link.due_kinds(last, now.astimezone(account_info.tz()), mode, bool(forced))
+            scope = asked_screen() if mode == "direct" else None
+            asked = scope is not None
+            kinds = ["screenshots"] if asked else am_link.due_kinds({k: v[0] for k, v in last_reads().items()},
+                                                                     now.astimezone(account_info.tz()), mode, bool(forced))
+            if not kinds and mode == "direct":
+                scope = daily_screen(now)
+                kinds = ["screenshots"] if scope else []
             if not kinds:
                 continue
+            account_pass = scope is None
             token = secrets.token_urlsafe(32)
             # Two plans at once (a long poll still running while the Mac asks again): the unique index on open passes
             # lets only one of them make this account's pass.
-            row = db.execute("INSERT INTO am_link_runs (account_id, pass_hash, ad_account_id, kinds, mode, forced_by) "
-                             "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (account_id) WHERE status = 'open' DO NOTHING RETURNING id",
-                             (acct, desk_api.key_hash(token), ad, kinds, mode, int(forced) if forced and forced.isdigit() else None),
+            row = db.execute("INSERT INTO am_link_runs (account_id, pass_hash, ad_account_id, kinds, scope, mode, forced_by) "
+                             "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (account_id) WHERE status = 'open' DO NOTHING RETURNING id",
+                             (acct, desk_api.key_hash(token), ad, kinds, scope, mode,
+                              int(forced) if account_pass and forced and forced.isdigit() else None),
                              returning=True)
             if not row:
                 continue
-            if forced:
+            if forced and account_pass:
                 settings_store.set("am_link_force", None)
-            out.append({"pass": token, "run_id": row["id"], "account_id": acct, "ad_account_id": ad, "kinds": kinds, "scope": None})
+            if asked:
+                drop_ask(scope)
+            out.append({"pass": token, "run_id": row["id"], "account_id": acct, "ad_account_id": ad, "kinds": kinds, "scope": scope})
     return out
 
 
@@ -431,6 +501,8 @@ def link_push():
         why = "Meta's answer names another ad account; nothing was kept."
         db.execute("UPDATE am_link_runs SET error = COALESCE(error, %s) WHERE id = %s", (f"{am_link.KIND_WORDS[kind]}: {why}", run["id"]))
         return api_error(why, 409)
+    if kind == "screenshots":
+        return keep_picture(run, body, now)
     data, why = am_link.normalize(kind, body.get("result"))
     if why:
         db.execute("UPDATE am_link_runs SET error = COALESCE(error, %s) WHERE id = %s", (f"{am_link.KIND_WORDS[kind]}: {why}", run["id"]))
@@ -451,7 +523,74 @@ def link_push():
     kept = len(data.get("rows", [])) if "rows" in data else data["drafts"] if kind == "drafts" else 1
     db.execute("UPDATE am_link_runs SET pushed = pushed || %s WHERE id = %s", (json.dumps({kind: kept}), run["id"]))
     set_link(last_ok_at=now)
+    if kind in LINK_ALERTS:
+        link_alerts(kind, data["rows"])
     return jsonify({"kept": kept, "kind": kind})
+
+
+# ---------------------------------------------------------------- AM-E: alerts and pictures from a push
+
+LINK_ALERTS = {"anomalies": "meta_anomaly", "ad_errors": "meta_ad_error"}
+
+
+def known_entities():
+    """{id: {level, name, campaign_id}} of this account's campaigns, ad sets and ads (row-level security)."""
+    out = {}
+    for level, sql in (("campaign", "SELECT id, name, id AS campaign_id FROM campaigns"),
+                       ("adset", "SELECT id, name, campaign_id FROM adsets"), ("ad", "SELECT id, name, campaign_id FROM ads")):
+        for r in db.query(sql):
+            out[r["id"]] = {"level": level, "name": r["name"], "campaign_id": r["campaign_id"]}
+    return out
+
+
+def link_alerts(kind, rows):
+    """A fresh read of Meta's unusual changes or error messages: new ones are raised (snoozes as usual), the ones it no
+    longer lists close and their snoozes end. Only a read closes them (alerts.LINK_RULES), never the hourly run."""
+    import alerts
+    import meta_extras
+    import snooze
+    rule = LINK_ALERTS[kind]
+    make = meta_extras.anomaly_alerts if kind == "anomalies" else meta_extras.error_alerts
+    found = make(rows, known_entities(), account_info.today(), on=alerts.saved_rules()[rule]["on"])
+    if found:
+        alerts.raise_found(found)
+    now = utcnow()
+    pairs = {(a["rule"], a["entity_id"]) for a in found}
+    opened = db.query("SELECT id, rule, entity_id, created_at FROM alerts WHERE resolved_at IS NULL AND kind = 'condition' AND rule = %s", (rule,))
+    gone = meta_extras.to_close(opened, pairs, now, stale=False, rules={rule})
+    if gone:
+        db.execute("UPDATE alerts SET resolved_at = now() WHERE id = ANY(%s)", (gone,))
+    live = db.query("SELECT id, rule, entity_id, mode, until FROM alert_snoozes WHERE ended_at IS NULL AND rule = %s", (rule,))
+    for sid, reason in snooze.sweep(live, pairs, now, False):
+        alerts.end_snooze(sid, reason)
+
+
+def keep_picture(run, body, now):
+    """One ad's picture as Ads Manager renders it: only for an ad of the pass's account (the pass names it), typed from its
+    bytes (PNG, JPEG or WebP), 3 MB at most. Anything else is refused and the older picture stays. The pass asks for
+    Meta's default view, so the picture is kept as that ('') whatever placement Meta's answer names."""
+    import hashlib
+    import meta_extras
+    ad_id = run.get("scope")
+    if not ad_id or not db.query("SELECT 1 FROM ads WHERE id = %s", (ad_id,), one=True):
+        why = "This ad isn't in this account; nothing was kept."
+        db.execute("UPDATE am_link_runs SET error = COALESCE(error, %s) WHERE id = %s", (f"Meta's picture: {why}", run["id"]))
+        return api_error(why, 409)
+    pic, why = meta_extras.picture(body.get("result"))
+    if why:
+        db.execute("UPDATE am_link_runs SET error = COALESCE(error, %s) WHERE id = %s", (f"Meta's picture: {why}", run["id"]))
+        return api_error(why, 422)
+    fetched = am_link.clamp_fetched(_when(body.get("fetched_at")), run["created_at"], now)
+    db.execute("""INSERT INTO am_screens (ad_id, placement, mime, width, height, size_bytes, sha256, body, fetched_at, run_id, via)
+                  VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                  ON CONFLICT (account_id, ad_id, placement) DO UPDATE SET mime = EXCLUDED.mime, width = EXCLUDED.width,
+                      height = EXCLUDED.height, size_bytes = EXCLUDED.size_bytes, sha256 = EXCLUDED.sha256, body = EXCLUDED.body,
+                      fetched_at = EXCLUDED.fetched_at, run_id = EXCLUDED.run_id, via = EXCLUDED.via""",
+               (ad_id, "", pic["mime"], pic["width"], pic["height"], len(pic["bytes"]),
+                hashlib.sha256(pic["bytes"]).hexdigest(), pic["bytes"], fetched, run["id"], body["via"]))
+    db.execute("UPDATE am_link_runs SET pushed = pushed || %s WHERE id = %s", (json.dumps({"screenshots": 1}), run["id"]))
+    set_link(last_ok_at=now)
+    return jsonify({"kept": 1, "kind": "screenshots"})
 
 
 @agent_bp.post("/finish")

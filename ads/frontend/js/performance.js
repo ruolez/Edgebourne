@@ -1,5 +1,6 @@
 import { api, startLoad } from "./api.js";
-import { boot, entityLink, esc, icon, onRefresh, pairNote, rememberList, skeleton, sourceNote, toast, when, showLoadError } from "./ui.js";
+import { boot, entityLink, esc, icon, linkNote, onRefresh, pairNote, rememberList, skeleton, sourceNote, toast, when, showLoadError } from "./ui.js";
+import { compareHtml } from "./mx.js";
 import { barList, columnChart, marksPanel } from "./charts.js";
 import { EXPLAIN, FOLLOW, LOST_REASONS, RANGES, STATUS as FORMAT_STATUS, WORDS, count, plural, dayLabel, money, pct, per, moneyWhole, currencySymbol, rangeSelect, rememberCampaign, rememberRange, sharedCampaign, sharedRange, statusPill } from "./format.js";
 
@@ -157,7 +158,14 @@ function render() {
   const ideas = `<section class="panel" id="ideas-panel"><div class="panel-head wrap"><h2>By idea</h2><p>Which hooks, angles and offers bring the cheapest leads</p><span class="spacer"></span>
       <a class="btn btn-quiet btn-small" id="ideas-open" href="/ideas.html?range=${encodeURIComponent(custom ? sharedRange() : range)}">Open Ideas</a></div>
       <div class="panel-body" id="ideas-sum">${skeleton()}</div></section>`;
-  $("perf").innerHTML = alerts + cap + figures + charts + ads + quality + ideas + extra;
+  // AM-E (owner and account admins): how you compare, Meta's trend and the unusual changes it spotted, via the Mac's link.
+  const mxd = data.meta_extras;
+  const mxCard = mxd && mxd.compare ? `<section class="panel mx-panel" id="mx-results"><div class="panel-body">${compareHtml(mxd.compare, { id: "mx-results-cmp", head: "h2" })}</div></section>` : "";
+  const mxLines = mxd ? [
+    mxd.trend && mxd.trend.line ? `<div class="mx-line" id="mx-trend"><p class="flush">${icon("chart")}<span>${esc(mxd.trend.line)}</span></p>${linkNote(mxd.trend.source)}</div>` : "",
+    mxd.anomalies && mxd.anomalies.count ? `<p class="mx-line flush" id="mx-anom">${icon("alarm")}<a href="${esc(mxd.anomalies.href)}">Meta noticed ${plural(mxd.anomalies.count, "unusual change")}</a></p>` : "",
+  ].join("") : "";
+  $("perf").innerHTML = alerts + cap + figures + mxCard + charts + mxLines + ads + quality + ideas + extra;
   loadQuality();
   loadIdeas();
   renderAds();

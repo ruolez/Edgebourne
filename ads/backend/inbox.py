@@ -19,17 +19,25 @@ CATEGORY = {
     "report_review": "system", "report_sent": "system", "numbers_off": "system", "link_down": "system",
     "draft_new": "status", "draft_problems": "status",
     "qualified_low": "leads", "junk_high": "leads",
+    "meta_ad_error": "status",  # AM-E; meta_anomaly goes by its metric (category())
 }
 CATEGORIES = ("status", "leads", "claude", "money", "system")
+RULE_FILTERS = {"meta_anomaly": "Unusual changes Meta spotted", "meta_ad_error": "Meta's error messages"}
 DAYS = 30
 
 
-def category(rule):
+def category(rule, entity_id=None):
+    """The Inbox kind of an alert. AM-E: Meta's unusual change about cost or spend is money, about delivery ad status
+    (its entity names the metric, "<id>:<metric>")."""
+    if rule == "meta_anomaly":
+        import meta_extras
+        return meta_extras.anomaly_category(str(entity_id or "").partition(":")[2])
     return CATEGORY.get(rule, "system")
 
 
 FYI_WHILE_INFO = {"numbers_off", "link_down", "draft_problems"}  # D1 / AM-A: for information at first; it needs action once it stays (warn)
-ADMIN_ONLY = {"draft_new", "draft_problems"}  # AM-B: drafts are the owner's and account admins' (clients never see them)
+ADMIN_ONLY = {"draft_new", "draft_problems",  # AM-B: drafts are the owner's and account admins' (clients never see them)
+              "meta_anomaly", "meta_ad_error"}  # AM-E: Meta's unusual changes and error details aren't for clients either
 
 
 def _alert_needs(a):
@@ -92,7 +100,7 @@ def build(alerts, leads, proposals, read_keys, can_close=False, snoozes=None, ru
                     _since(kept["open"], a["created_at"], here)
                 continue
         snoozed = snoozes.get((a["rule"], a.get("entity_id"))) if condition and a.get("resolved_at") is None else None
-        item = {"key": key, "category": category(a["rule"]), "rule": a["rule"], "level": a["level"],
+        item = {"key": key, "category": category(a["rule"], a.get("entity_id")), "rule": a["rule"], "level": a["level"],
                 "title": a["title"], "lines": a.get("lines") or [], "href": a.get("href"), "at": a["created_at"],
                 "entity_id": a.get("entity_id"), "open": a.get("resolved_at") is None, "need": _alert_needs(a) and not snoozed,
                 "resolved": condition and a.get("resolved_at") is not None,
@@ -135,8 +143,9 @@ def build(alerts, leads, proposals, read_keys, can_close=False, snoozes=None, ru
 def with_subjects(items, known):
     """Each item names the campaign, ad set or ad it is about (known: {id: {level, name}}), or None."""
     for i in items:
-        k = known.get(i.get("entity_id")) if i.get("entity_id") else None
-        i["subject"] = {"level": k["level"], "id": i["entity_id"], "name": k["name"]} if k else None
+        sid = str(i["entity_id"]).split(":", 1)[0] if i.get("entity_id") else None  # an AM-E anomaly: "<id>:<metric>"
+        k = known.get(sid) if sid else None
+        i["subject"] = {"level": k["level"], "id": sid, "name": k["name"]} if k else None
     return items
 
 
@@ -207,7 +216,7 @@ def items_for(user):
                                  WHERE p.status = 'pending' {mine} ORDER BY p.id DESC LIMIT 50""", None if ids is None else (ids,))
     client = user["role"] == "client"
     if client:
-        alerts = [a for a in alerts if category(a["rule"]) == "status" and a["rule"] not in ADMIN_ONLY]
+        alerts = [a for a in alerts if category(a["rule"], a.get("entity_id")) == "status" and a["rule"] not in ADMIN_ONLY]
     keys = item_keys(alerts, leads, proposals)
     reads = {r["item_key"] for r in db.query("SELECT item_key FROM inbox_reads WHERE user_id = %s AND item_key = ANY(%s)",
                                              (user["id"], keys))} if keys else set()
@@ -220,7 +229,7 @@ def items_for(user):
     items = build(alerts, leads, proposals, reads, can_close=admin, snoozes=snoozes, runs=runs, now=now,
                   now_local=now.astimezone(tz), client=client,
                   money=lambda c: account_info.money(round(c), currency, whole=not round(c) % 100))
-    ids = list({i["entity_id"] for i in items if i.get("entity_id")})
+    ids = list({str(i["entity_id"]).split(":", 1)[0] for i in items if i.get("entity_id")})
     known = {}
     if ids:
         for level, table in (("campaign", "campaigns"), ("adset", "adsets"), ("ad", "ads")):

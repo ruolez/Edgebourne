@@ -20,6 +20,9 @@ const legacy = params.get("show");
 let box = BOXES.some(([k]) => k === params.get("box")) ? params.get("box") : legacy ? "all" : "need";
 let kind = KINDS.some(([k]) => k === params.get("kind")) ? params.get("kind") : KINDS.some(([k]) => k === legacy) ? legacy : "all";
 let unreadOnly = params.get("unread") === "1" || legacy === "unread";
+// AM-E: Results' "Meta noticed N unusual changes" opens the Inbox on just those (?rule=meta_anomaly).
+const RULES = { meta_anomaly: "Unusual changes Meta spotted", meta_ad_error: "Meta's error messages" };
+let rule = RULES[params.get("rule")] ? params.get("rule") : null;
 let me = null;
 let data = { items: [], counts: {}, kinds: {} };
 const $ = (id) => document.getElementById(id);
@@ -49,11 +52,12 @@ function writeUrl({ clearItem = false } = {}) {
   u.searchParams.set("box", box);
   if (kind === "all") u.searchParams.delete("kind"); else u.searchParams.set("kind", kind);
   if (unreadOnly) u.searchParams.set("unread", "1"); else u.searchParams.delete("unread");
+  if (rule) u.searchParams.set("rule", rule); else u.searchParams.delete("rule");
   if (clearItem) u.hash = "";
   history.replaceState(history.state, "", u);
 }
 
-const query = () => `box=${box}&filter=${unreadOnly ? "unread" : "all"}&kind=${kind}`;
+const query = () => `box=${box}&filter=${unreadOnly ? "unread" : "all"}&kind=${kind}${rule ? `&rule=${rule}` : ""}`;
 
 function renderFilters() {
   const c = data.counts || {};
@@ -64,7 +68,8 @@ function renderFilters() {
   const kn = data.kinds || {};
   $("ib-filters").innerHTML = KINDS.filter(([k]) => k !== "claude" || me?.role !== "client")
     .map(([k, label]) => `<button type="button" class="view-chip" aria-pressed="${k === kind}" data-f="${k}">${label}${k !== "all" && kn[k] ? `<span class="n">${kn[k]}</span>` : ""}</button>`).join("")
-    + `<button type="button" class="view-chip" aria-pressed="${unreadOnly}" data-unread>Unread only</button>`;
+    + `<button type="button" class="view-chip" aria-pressed="${unreadOnly}" data-unread>Unread only</button>`
+    + (rule ? `<button type="button" class="view-chip ib-rule" aria-pressed="true" data-rule-off aria-label="Show everything, not only ${esc(RULES[rule])}">${esc(RULES[rule])} ${icon("close")}</button>` : "");
   $("ib-sub").textContent = c.need
     ? `${plural(c.need, "thing needs", "things need")} you${c.need_unread ? `, ${c.need_unread} new` : ""}. The rest is for your information.`
     : "Nothing needs you. The rest is for your information.";
@@ -84,7 +89,7 @@ function renderList() {
     const fyi = data.counts?.fyi_unread;
     $("ib-list").innerHTML = `<li class="empty compact ib-none">${box === "need" && kind === "all"
       ? `Nothing needs you right now.${fyi ? ` <button type="button" class="link-btn" data-goto-box="fyi">${plural(fyi, "new note")} for your information</button>` : ""}`
-      : kind !== "all" || unreadOnly ? `Nothing here with these filters. <button type="button" class="link-btn" data-clear-filters>Show every kind</button>` : "Nothing here yet."}</li>`;
+      : kind !== "all" || unreadOnly || rule ? `Nothing here with these filters. <button type="button" class="link-btn" data-clear-filters>Show every kind</button>` : "Nothing here yet."}</li>`;
     return;
   }
   const today = acctDay();  // the account's calendar day, wherever the browser is (FU-C)
@@ -150,7 +155,7 @@ async function load() {
     history.replaceState(history.state, "", `${listUrl()}#item=${encodeURIComponent(current)}`);
   }
   if (linked && !data.items.some((i) => i.key === linked) && (box !== "all" || kind !== "all" || unreadOnly)) {  // a read or FYI item named by a link
-    box = "all"; kind = "all"; unreadOnly = false; writeUrl(); return load();
+    box = "all"; kind = "all"; unreadOnly = false; rule = null; writeUrl(); return load();
   }
   linked = null;
   if (data.items.some((i) => i.key === current)) kept = null;
@@ -185,6 +190,7 @@ $("ib-box").addEventListener("click", (e) => {
   if (b) { box = b.dataset.box; newFilter(); }
 });
 $("ib-filters").addEventListener("click", (e) => {
+  if (e.target.closest("[data-rule-off]")) { rule = null; newFilter(); return; }
   const b = e.target.closest("[data-f], [data-unread]");
   if (!b) return;
   if (b.dataset.f) kind = b.dataset.f; else unreadOnly = !unreadOnly;
@@ -192,7 +198,7 @@ $("ib-filters").addEventListener("click", (e) => {
 });
 $("ib-list").addEventListener("click", (e) => {
   if (e.target.closest("[data-goto-box]")) { box = e.target.closest("[data-goto-box]").dataset.gotoBox; newFilter(); }
-  if (e.target.closest("[data-clear-filters]")) { kind = "all"; unreadOnly = false; newFilter(); }
+  if (e.target.closest("[data-clear-filters]")) { kind = "all"; unreadOnly = false; rule = null; newFilter(); }
 });
 function pick(li) {
   current = li.dataset.key;

@@ -55,6 +55,11 @@ def refresh_if_stale():
 
 
 def view(data):
+    import meta_extras_api
+    return {**_view(data), "meta_quality": meta_extras_api.quality_view()}  # AM-E: Meta's match quality per event (the link)
+
+
+def _view(data):
     crm = crm_events.summary()
     crm_on = settings_store.get("crm_send_enabled") == "1"
     stages = {crm_events.EVENT_NAMES.get(r["stage"], r["stage"]): int(r["n"]) for r in db.query(

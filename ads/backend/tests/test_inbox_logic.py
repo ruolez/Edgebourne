@@ -270,4 +270,5 @@ class DraftsTests(unittest.TestCase):
         self.assertEqual(got, {"alert:1": ("status", False, []), "alert:2": ("status", False, [])})
 
     def test_clients_never_get_them(self):
-        self.assertEqual(sorted(inbox.ADMIN_ONLY), ["draft_new", "draft_problems"])
+        # AM-E: Meta's unusual changes and error details are admins' too (clients see the ad's status line only).
+        self.assertEqual(sorted(inbox.ADMIN_ONLY), ["draft_new", "draft_problems", "meta_ad_error", "meta_anomaly"])

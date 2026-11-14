@@ -2121,3 +2121,74 @@ dialog.aud-dialog .aud-form { max-height: calc(100dvh - 48px); overflow-y: auto;
   .aud-usedd > summary { min-height: var(--target); display: flex; align-items: center; }
   .aud-usedl a { display: inline-flex; min-height: var(--target); align-items: center; }
 }
+
+/* AM-E: Meta's extra insights (mx-), read by the Mac's Ads Manager link. Never colour alone: a glyph and a word. */
+.mx-block { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.mx-h { margin: 0; font-size: var(--t-l); }
+h2.mx-h { font-size: var(--t-l); }
+.mx-sub { font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); text-transform: none; }
+.mx-cmp tbody th { font-weight: 600; color: var(--ink); font-size: var(--t-s); }
+.mx-cmp tr:last-child th { border-bottom: 0; }
+.mx-note { display: block; margin-top: 2px; font: 400 var(--t-xs)/1.3 var(--font-ui); color: var(--ink-3); }
+.mx-verdict { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
+.mx-glyph { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font: 700 11px/1 var(--font-ui); }
+.mx-verdict.is-good { color: var(--signal-ink); }
+.mx-verdict.is-good .mx-glyph { background: var(--signal-soft); }
+.mx-verdict.is-same { color: var(--ink-2); }
+.mx-verdict.is-same .mx-glyph { background: var(--surface-2); }
+.mx-verdict.is-bad { color: var(--bad-ink); }
+.mx-verdict.is-bad .mx-glyph { background: var(--bad-soft); }
+.mx-ranks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--t-s); }
+.mx-ranks li { overflow-wrap: anywhere; }
+.mx-ranks span { color: var(--ink-2); }
+.mx-today .mx-block { gap: 6px; }
+.mx-line { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 0; font-size: var(--t-s); color: var(--ink-2); min-width: 0; }
+.mx-line > p, p.mx-line { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; margin: 0; overflow-wrap: anywhere; }
+.mx-line svg { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--ink-3); }
+.mx-line a { font-weight: 600; }
+/* Tracking health: Meta's match quality per event */
+.mx-qs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.mx-q { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.mx-q-top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: var(--t-s); }
+.mx-bar { display: block; height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.mx-bar i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--ink-3); }
+.mx-q.is-good .mx-bar i { background: var(--signal-fill); }
+.mx-q.is-okay .mx-bar i { background: var(--amber); }
+.mx-q.is-poor .mx-bar i { background: var(--bad); }
+#mx-quality { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+/* The ad page's status card: what Meta says */
+.mx-errs { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-s); background: var(--amber-soft); color: var(--ink); }
+.mx-errs.is-blocking { background: var(--bad-soft); }
+.mx-errs .mx-h { font-size: var(--t-m); }
+.mx-stop { color: var(--bad-ink); }
+.mx-err-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.mx-err { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.mx-err + .mx-err { padding-top: 10px; border-top: 1px solid var(--line); }
+.mx-msg { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.mx-msg-text { align-self: stretch; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; color: var(--ink-2); font-size: var(--t-s); white-space: pre-wrap; }
+.mx-msg.is-open .mx-msg-text { display: block; -webkit-line-clamp: none; }
+.mx-more { font-size: var(--t-xs); text-decoration: underline; }
+.mx-more[hidden] { display: none; }
+.mx-meta { font-size: var(--t-xs); color: var(--ink-3); }
+/* Meta's picture beside the live preview */
+.mx-views { max-width: 360px; }
+.mx-pic { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.mx-pic.is-empty { padding: 16px; border: 1px dashed var(--line-strong); border-radius: var(--radius-s); }
+.mx-frame { display: flex; justify-content: center; }
+.mx-frame img { display: block; max-width: min(100%, 400px); height: auto; max-height: 70vh; object-fit: contain; border-radius: var(--radius-s);
+  box-shadow: var(--shadow-1); background: var(--surface-2); }
+.ib-rule svg { width: 14px; height: 14px; margin-left: 4px; }
+@media (max-width: 720px) {
+  .mx-cmp thead { display: none; }
+  .mx-cmp, .mx-cmp tbody { display: block; }
+  .mx-cmp tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .mx-cmp tr:last-child { border-bottom: 0; }
+  .mx-cmp th, .mx-cmp td { display: block; padding: 0; border: 0; text-align: left; }
+  .mx-cmp tbody th { grid-column: 1 / -1; }
+  .mx-cmp td.num { text-align: left; }
+  .mx-cmp td::before { content: attr(data-k); display: block; font: 500 var(--t-xs)/1.3 var(--font-ui); color: var(--ink-3); }
+  .mx-cmp td[data-k="Meta says"] { grid-column: 1 / -1; }
+  .mx-views { max-width: none; }
+  .mx-views button, #mx-get, .mx-more, .ib-rule { min-height: var(--target); }
+  .mx-frame img { max-width: 100%; }
+}

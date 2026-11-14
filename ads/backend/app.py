@@ -50,6 +50,7 @@ def create_app(run_migrations=True):
     import refresh_api
     import reports_api
     import leads_api
+    import meta_extras_api
     import numbers_api
     import performance_api
     import settings_api
@@ -60,7 +61,7 @@ def create_app(run_migrations=True):
     import versions_api
     import webhooks
 
-    for module in (accounts_api, am_link_api, alert_actions_api, audiences_api, ads_api, adsets_api, advice_api, alerts_api, auth, builds_api, bulk_api, change_checks_api, entities_api, concepts_api, copy_api, edit_api, desk_api, drafts_api, experiments_api, forms_api, gallery_api, home_api, inbox_api, insights_api, leads_api, numbers_api, polish, performance_api, push_api, refresh_api, reports_api, settings_api, spend_limit_api, swipes_api, team_api, tracking_api, versions_api, webhooks):
+    for module in (accounts_api, am_link_api, alert_actions_api, audiences_api, ads_api, adsets_api, advice_api, alerts_api, auth, builds_api, bulk_api, change_checks_api, entities_api, concepts_api, copy_api, edit_api, desk_api, drafts_api, experiments_api, forms_api, gallery_api, home_api, inbox_api, insights_api, leads_api, meta_extras_api, numbers_api, polish, performance_api, push_api, refresh_api, reports_api, settings_api, spend_limit_api, swipes_api, team_api, tracking_api, versions_api, webhooks):
         app.register_blueprint(module.bp)
     app.register_blueprint(desk_api.agent_bp)
     app.register_blueprint(am_link_api.agent_bp)

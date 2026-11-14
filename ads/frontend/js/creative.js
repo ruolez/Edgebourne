@@ -8,6 +8,7 @@ import { ACTIVE, proposalCard, taskCard, wireTaskActions } from "./tasks.js";
 import { diagnoseHtml, wireAlerts } from "./alertmenu.js";
 import { openFromUrl } from "./outcome.js";
 import { draftLeftFor, draftLeftHtml } from "./drafts.js";
+import { errorsHtml, pictureHtml, sizeExtras } from "./mx.js";
 
 const $ = (id) => document.getElementById(id);
 const adId = new URLSearchParams(location.search).get("id");
@@ -26,6 +27,10 @@ let audienceRange = AUDIENCE_RANGES.some(([k]) => k === linkRange) ? linkRange :
 let pollTimer;
 let historyShow = "all";
 let leftDraft = null;  // AM-B: the Ads Manager draft this new ad was made from ({name, open_url}), once read
+// AM-E: the Overview's preview shows Meta's live preview or Meta's picture from Ads Manager (kept per browser).
+let pvView = "live";
+try { pvView = localStorage.getItem("ebads-preview-view") === "picture" ? "picture" : "live"; } catch (e) {}
+let picWait = null;
 const openReports = new Set();
 
 const TABS = [
@@ -169,6 +174,7 @@ function statusHtml(ad, s) {
       <p class="cs-line flush">${esc(s.line)}</p>
       ${s.reasons.length ? `<ul class="cs-reasons">${s.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}
       ${learn ? `<p class="muted small flush">${esc(EXPLAIN[s.learning])}</p>` : ""}
+      ${errorsHtml(data.meta_errors, { diagnose: me.role === "admin" && data.meta_errors && data.meta_errors.alert_id })}
       ${next}
       ${me.role === "admin" && ["DISAPPROVED", "WITH_ISSUES"].includes(ad.effective_status) ? '<div class="row al-acts" id="cs-diag"></div>' : ""}
       <p class="cs-budget small flush"><span class="muted">Budget</span> ${budgetCents ? `${money(budgetCents, { exact: true })} a day, shared by the ${budgetLevel === "campaign" ? "whole campaign" : "ad set"}${can ? ' · <button class="link-btn" type="button" id="edit-budget">Change</button>' : ""}` : "set on Meta"}</p>
@@ -208,10 +214,14 @@ function renderOverview() {
       <section class="panel preview-panel" aria-labelledby="pv-h">
         <div class="panel-head"><h2 id="pv-h">Preview</h2><p>As Meta shows it</p><span class="spacer"></span><button class="btn btn-quiet btn-small" type="button" id="preview-reload">${icon("refresh")}<span>Reload</span></button></div>
         <div class="panel-body stack tight">
+          <div class="segmented fill mx-views" id="mx-view" role="group" aria-label="Which view"><button type="button" data-pv-view="live">Live preview</button><button type="button" data-pv-view="picture">Meta's picture</button></div>
+          <div class="stack tight" id="pv-live">
           <div class="format-scroll"><div class="segmented" id="formats" role="group" aria-label="Placement">${data.formats.map((f) => `<button type="button" data-format="${f.id}">${esc(f.label)}</button>`).join("")}</div></div>
           <div id="pv-note">${reviewNote}</div>
           <div class="preview-frame" id="preview-frame"></div>
           <a class="small" id="preview-open" target="_blank" rel="noopener noreferrer" hidden>Open this preview in a new tab</a>
+          </div>
+          <div id="mx-pic-box" hidden></div>
         </div>
       </section>`;
   const side = `
@@ -287,12 +297,61 @@ function renderOverview() {
   loadEnhancements();
   loadIdea();
   loadDiagnose();
+  loadMxDiagnose();
+  if ($("mx-errors")) sizeExtras($("mx-errors"));
+  showPvView();
   const budgetLevel = ad.adset_budget_cents ? "adset" : "campaign";
   const eb = $("edit-budget");
   if (eb) eb.addEventListener("click", () => editBudget({ level: budgetLevel, id: budgetLevel === "adset" ? ad.adset_id : ad.campaign_id, name: budgetLevel === "adset" ? ad.adset_name : ad.campaign_name, current: ad.adset_budget_cents || ad.campaign_budget_cents }, load));
   if (ad.adset_id) api(`/api/insights/adset/${encodeURIComponent(ad.adset_id)}/estimate`).then((e) => {
     if (e.lower && e.upper && $("estimate")) $("estimate").innerHTML = `<br><span class="muted small">Meta estimates ${count(e.lower)}–${count(e.upper)} people could see ads from this ad set.</span>`;
   }).catch(() => {});
+}
+
+// AM-E: Live preview or Meta's picture (as Ads Manager renders it, read by the Mac's link).
+function showPvView() {
+  const box = $("mx-pic-box");
+  if (!box) return;
+  const pic = pvView === "picture";
+  document.querySelectorAll("#mx-view [data-pv-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.pvView === pvView)));
+  $("pv-live").hidden = pic;
+  box.hidden = !pic;
+  if (pic && !picWait) { box.innerHTML = pictureHtml(data.meta_picture || {}, data.ad.id); sizeExtras(box); }
+}
+
+async function getPicture(btn) {
+  btn.disabled = true;
+  let asked;
+  try { asked = (await api(`/api/ads/ad/${encodeURIComponent(adId)}/screenshot/refresh`, { method: "POST", body: {} })).asked_at; }
+  catch (err) { toast(err.message, "bad"); btn.disabled = false; return; }
+  const note = $("mx-wait");
+  if (note) { note.hidden = false; note.textContent = "Asked your Mac for Meta's picture…"; }
+  const until = Date.now() + 30000;
+  picWait = setInterval(async () => {
+    let r = null;
+    try { r = await fetch(`/api/ads/ad/${encodeURIComponent(adId)}/screenshot?after=${encodeURIComponent(asked)}`); } catch (err) { /* try again */ }
+    if (r && r.status === 200) {
+      clearInterval(picWait); picWait = null;
+      try { data = { ...data, meta_picture: (await api(`/api/ads/ad/${encodeURIComponent(adId)}`)).meta_picture }; } catch (err) { /* keep the old */ }
+      showPvView();
+      toast("Meta's picture is here");
+    } else if (Date.now() > until) {
+      clearInterval(picWait); picWait = null;
+      const w = $("mx-wait");
+      if (w) { w.hidden = false; w.textContent = "Your Mac hasn't answered yet; it will be here when it does."; }
+      if ($("mx-get")) $("mx-get").disabled = false;
+    }
+  }, 2000);
+}
+
+// Diagnose with Claude on Meta's error message (admins): the alert's own run, as in the Inbox.
+function loadMxDiagnose() {
+  const box = $("mx-diag");
+  const id = data.meta_errors && data.meta_errors.alert_id;
+  if (!box || !id) return;
+  api(`/api/diagnose/draft?alert_id=${encodeURIComponent(id)}`)
+    .then((d) => { if ($("mx-diag") === box) box.innerHTML = diagnoseHtml({ alertId: id }, d.run); })
+    .catch(() => { if ($("mx-diag") === box) box.innerHTML = diagnoseHtml({ alertId: id }, null); });
 }
 
 // A rejected ad or one with issues (admins): Diagnose with Claude, or where that diagnosis is. It shares its run with
@@ -767,7 +826,8 @@ if (me) {
       if (d && !$("dr-left")) document.querySelector("#cr-main .claude-note")?.insertAdjacentHTML("afterend", draftLeftHtml(d));
     });
   }
-  wireAlerts(document.body, () => null, () => loadDiagnose());
+  wireAlerts(document.body, (id) => (data && data.meta_errors && data.meta_errors.alert_id === id ? { alert_id: id } : null),
+    () => { loadDiagnose(); loadMxDiagnose(); });
   document.addEventListener("click", async (e) => {
     const t = e.target.closest("#cr-tabs [data-tab]");
     if (t) { showTab(t.dataset.tab); return; }
@@ -776,6 +836,10 @@ if (me) {
     const f = e.target.closest("#formats button[data-format]");
     if (f) { format = f.dataset.format; try { localStorage.setItem("ebads-preview", format); } catch (err) {} loadPreview(); return; }
     if (e.target.closest("#preview-reload, [data-preview-again]")) { loadPreview(); return; }
+    const pv = e.target.closest("#mx-view [data-pv-view]");
+    if (pv) { pvView = pv.dataset.pvView; try { localStorage.setItem("ebads-preview-view", pvView); } catch (err) {} showPvView(); return; }
+    const get = e.target.closest("#mx-get");
+    if (get) { getPicture(get); return; }
     const show = e.target.closest("#hist-show [data-show]");
     if (show) { historyShow = show.dataset.show; renderHistory(); $("hist-show")?.querySelector(`[data-show="${historyShow}"]`)?.focus(); return; }
     const jump = e.target.closest("[data-jump]");
