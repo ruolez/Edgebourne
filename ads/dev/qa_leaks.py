@@ -81,8 +81,13 @@ def seed_marked(acct, mark, ad, campaign, lead, task, admin_id):
                           "error": f"{mark} link read", "account_id": acct}, "pass_hash")
     once("am_snapshots", {"kind": "advertiser_context", "scope": f"{mark}scope", "data": json.dumps({"vertical": f"{mark} context"}),
                           "fetched_at": "2026-11-13T10:00:00Z", "via": "direct", "account_id": acct}, "scope")
+    # AM-B: a draft read from Ads Manager (its name shows on Ads → Campaigns and in the builders' prefill).
+    draft = once("am_drafts", {"draft_id": f"7{acct}000000000077", "object_type": "campaign", "action": "add", "source": f"{mark}src",
+                               "fields": json.dumps({"name": {"new": f"{mark} draft"}, "objective": {"new": "OUTCOME_LEADS"}}),
+                               "last_seen_at": "2026-11-13T10:00:00Z", "account_id": acct}, "source")
+    db.execute("UPDATE am_drafts SET gone_at = NULL WHERE draft_id = %s AND account_id = %s", (draft["draft_id"], acct))  # a link read may have marked it gone
     return {"proposal": proposal["id"], "view": view["id"], "build": build["id"], "swipe": swipe["id"], "alert": problem["id"],
-            "change": change["id"], "attachment": preview["id"]}
+            "change": change["id"], "attachment": preview["id"], "draft": draft["draft_id"]}
 
 with account_ctx.all_accounts():
     acct = db.query("SELECT id FROM accounts WHERE name = 'Burdanova QA'", one=True)
@@ -132,7 +137,7 @@ with account_ctx.all_accounts():
                            ("ad_versions", "label"), ("saved_views", "name"), ("campaign_builds", "client_key"), ("alerts", "dedupe_key"),
                            ("lead_notes", "body"), ("lead_replies", "subject"), ("activity", "subject"), ("inbox_reads", "item_key"),
                            ("desk_attachments", "name"), ("desk_tasks", "prompt"), ("swipes", "page_name"), ("numbers_runs", "error"),
-                           ("am_link_runs", "error"), ("am_snapshots", "scope")):
+                           ("am_link_runs", "error"), ("am_snapshots", "scope"), ("am_drafts", "source")):
                 db.execute(f"DELETE FROM {t} WHERE account_id = 1 AND {col} LIKE %s", (MARK1 + "%",))
             db.execute("DELETE FROM lead_events WHERE account_id = 1 AND details->>'ad' LIKE %s", (MARK1 + "%",))
     drop_mark1()
@@ -170,7 +175,7 @@ def fill(rule, other):
         v = {"ad_id": other["ad"], "adset_id": other["adset"], "campaign_id": other["campaign"], "entity_id": other["ad"], "level": "ad",
              "lead_id": other["lead"], "task_id": other["task"], "exp_id": other.get("exp", 1), "id": other["lead"],
              "proposal_id": other["proposal"], "build_id": other["build"], "view_id": other["view"], "number": 900,
-             "change_id": other["change"], "att_id": other["attachment"]}.get(name, "1")
+             "change_id": other["change"], "att_id": other["attachment"], "draft_id": other["draft"]}.get(name, "1")
         url = re.sub(r"<(?:[a-z]+:)?" + name + ">", str(v), url)
     return url
 
@@ -585,8 +590,18 @@ am = {"account2_admin_status": ac.get("/api/am-link").status_code,
       "account2_admin_turns_on": ac.patch("/api/am-link/account", json={"on": True}).status_code,
       "member": mc.get("/api/am-link").status_code, "client": cc.get("/api/am-link").status_code,
       "client_check": cc.post("/api/am-link/check", json={}).status_code}
+# AM-B: drafts are the owner's and account admins'; another account's draft is nowhere (404), whatever the route.
+d1 = one["draft"]
+drafts = {"member": [mc.get("/api/drafts").status_code, mc.get(f"/api/drafts/{two['draft']}/spec").status_code,
+                     mc.post(f"/api/drafts/{two['draft']}/check", json={}).status_code, mc.post(f"/api/drafts/{two['draft']}/applied", json={"field": "status"}).status_code],
+          "client": [cc.get("/api/drafts").status_code, cc.get(f"/api/drafts/{two['draft']}/spec").status_code,
+                     cc.post(f"/api/drafts/{two['draft']}/check", json={}).status_code, cc.post(f"/api/drafts/{two['draft']}/applied", json={"field": "status"}).status_code],
+          "account2_admin_reads_account1": [ac.get(f"/api/drafts/{d1}/spec").status_code, ac.post(f"/api/drafts/{d1}/check", json={}).status_code],
+          "account2_admin_lists_account1": MARK1 in ac.get("/api/drafts").get_data(as_text=True),
+          "account2_admin_builds_from_account1": ac.post("/api/builds", json={"draft_id": d1}).status_code,
+          "member_finishes_from_draft": mc.post("/api/ads/new", json={"draft_id": two["draft"]}).status_code}
 session_for(c, admin["id"], 1)
-out.update({"leaks": l1 + l2 + l2b + l3, "full_access": fud, "am_link": am, "routes_checked": [n1, n2, n3], "admin_sees_account2_on_account2": sees_own,
+out.update({"leaks": l1 + l2 + l2b + l3, "full_access": fud, "am_link": am, "drafts": drafts, "routes_checked": [n1, n2, n3], "admin_sees_account2_on_account2": sees_own,
             "client_sees_own_leads": client_sees_own, "client_switch_status": switch, "client_stays_on_own_account": still,
             "client_writes_not_refused": writes,
             "member_and_account_admin_routes": [n4, n5], "leaks_member_and_account_admin": l4 + l5,

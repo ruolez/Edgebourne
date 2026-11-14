@@ -85,7 +85,16 @@ def view(b):
     return {"id": b["id"], "status": b["status"], "error": b["error"], "made": made, "entity_status": status,
             "spec": b["spec"], "review": cb.review(b["spec"], forms_by_id().get(b["spec"]["form_id"], b["spec"]["form_id"]),
                                                     {k: v["name"] for k, v in templates().items()}, account_info.currency()),
-            "created_at": b["created_at"].isoformat(), "published_at": b["published_at"].isoformat() if b["published_at"] else None}
+            "created_at": b["created_at"].isoformat(), "published_at": b["published_at"].isoformat() if b["published_at"] else None,
+            "draft": draft_ref(b.get("draft_id"))}
+
+
+def draft_ref(draft_id):
+    """AM-B: the Ads Manager draft this build finished (it stays there for Eugene to discard), or None."""
+    if not draft_id:
+        return None
+    import drafts_api
+    return drafts_api.draft_ref(draft_id)
 
 
 def save(build_id, made, status, error=None):
@@ -226,18 +235,32 @@ def create():
         same = db.query("SELECT id FROM campaign_builds WHERE client_key = %s", (key,), one=True)
         if same:
             return jsonify(view(load(same["id"])))
+    # AM-B: filled in from an Ads Manager draft. What is created is what the person submitted (cleaned and checked below);
+    # the draft only has to be one this account can still finish, once (Make another from this draft sends `again`).
+    draft_id = str(raw.get("draft_id") or "")[:30] or None
+    if draft_id:
+        import drafts_api
+        why = drafts_api.claim_problem(draft_id, "campaign", bool(raw.get("again")))
+        if why:
+            return api_error(why[0], why[1], **why[2])
     spec = clean(raw)
     result = check(spec)
     if result["problems"]:
         p = result["problems"][0]
         return jsonify({"error": p["message"], "field": p["step"], **result}), 400
     user = current_user()
-    b = db.execute("INSERT INTO campaign_builds (spec, created_by, client_key) VALUES (%s, %s, %s) "
-                   "ON CONFLICT DO NOTHING RETURNING id", (json.dumps(spec), user["id"], key), returning=True)
+    b = db.execute("INSERT INTO campaign_builds (spec, created_by, client_key, draft_id) VALUES (%s, %s, %s, %s) "
+                   "ON CONFLICT DO NOTHING RETURNING id", (json.dumps(spec), user["id"], key, draft_id), returning=True)
     if not b:
         b = db.query("SELECT id FROM campaign_builds WHERE client_key = %s", (key,), one=True)
         return jsonify(view(load(b["id"])))
+    if draft_id:
+        import drafts_api
+        drafts_api.mark_finished(draft_id, None, b["id"])
     run(b["id"], user)
+    made = (load(b["id"])["made"] or {}).get("campaign_id")
+    if draft_id and made:
+        drafts_api.mark_finished(draft_id, f"campaign:{made}", b["id"])
     return jsonify(view(load(b["id"]))), 201
 
 

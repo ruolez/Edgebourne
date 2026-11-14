@@ -4,6 +4,7 @@ import { STATUS as FORMAT_STATUS, CTA_LABELS, money, currencySymbol } from "./fo
 import { placesHtml, placesWidget } from "./places.js";
 import { mountUploader, waitReady } from "./uploader.js";
 import { builder } from "./builder.js";
+import { draftLeftHtml, draftNoteHtml, draftParam, loadDraftSpec } from "./drafts.js";
 
 const CLIENT_KEY = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -15,6 +16,10 @@ let media = [];
 let ads = [];
 let steps = null;
 let lastReview = null;
+// AM-B: filled in from an Ads Manager draft (?draft=<id>): its id goes with Create, and its audience hints when no ad set is the start.
+const draftP = draftParam();
+let draft = null;
+let draftFlex = [];
 const videoPolls = new Map();  // video id → stops waiting for Meta to process it
 
 const STEPS = [{ id: "goal", name: "Goal" }, { id: "budget", name: "Budget" }, { id: "adset", name: "Who sees it" }, { id: "form", name: "Lead form" }, { id: "ads", name: "Ads" }];
@@ -89,8 +94,10 @@ function spec() {
     name: $("c-name").value, daily_budget_cents: dollars ? Math.round(Number(dollars) * 100) : null, form_id: $("f-form").value,
     adset: { template_adset_id: $("s-template").value, name: $("s-name").value, locations: places.get(), age_min: n("s-age-min"), age_max: n("s-age-max"),
       advantage: $("s-advantage").checked, suggest_min: $("s-advantage").checked ? n("s-sug-min") : null, suggest_max: $("s-advantage").checked ? n("s-sug-max") : null,
-      keep_hints: $("s-hints").checked, start_day: $("s-start").value || null, start_hour: 0, end_day: $("s-end").value || null, end_hour: 23 },
+      keep_hints: $("s-hints").checked, flexible_spec: $("s-template").value ? [] : draftFlex,
+      start_day: $("s-start").value || null, start_hour: 0, end_day: $("s-end").value || null, end_hour: 23 },
     ads,
+    ...(draft && !draft.error ? { draft_id: draft.draft.id, again: Boolean(draftP.again) } : {}),
   };
 }
 
@@ -179,6 +186,39 @@ async function loadForms() {
   else if (opts.forms.length === 1) $("f-form").value = opts.forms[0].id;
 }
 
+// AM-B: the page filled in from an Ads Manager draft. Only the fields change: everything is checked as typing is, and
+// Create still asks first and makes everything off.
+async function fillFromDraft() {
+  draft = await loadDraftSpec(draftP);
+  $("nc-form").insertAdjacentHTML("afterbegin", draftNoteHtml(draft));
+  if (draft.error || draft.page !== "new-campaign") return;
+  const f = draft.spec;
+  const a = f.adset;
+  $("c-name").value = f.name;
+  $("c-budget").value = f.daily_budget_cents ? (f.daily_budget_cents / 100).toFixed(2) : "";
+  $("s-template").value = "";
+  $("s-name").value = a.name;
+  places.set(a.locations);
+  hints = a.hints; draftFlex = a.flexible_spec;
+  $("s-age-min").value = a.age_min; $("s-age-max").value = a.age_max;
+  $("s-sug-min").value = a.suggest_min ?? ""; $("s-sug-max").value = a.suggest_max ?? "";
+  $("s-advantage").checked = a.advantage; $("s-suggest").hidden = !a.advantage;
+  $("s-hints").checked = a.keep_hints && hints.length > 0;
+  $("s-hints-text").textContent = hints.join(", "); $("s-hints-row").hidden = !hints.length;
+  $("s-start").value = a.start_day || ""; $("s-end").value = a.end_day || "";
+  $("f-form").value = f.form_id && [...$("f-form").options].some((o) => o.value === f.form_id) ? f.form_id : "";
+  // The draft's picture or video joins each ad's list even when this page's library didn't list it.
+  for (const ad of f.ads) {
+    const m = ad.media;
+    if (m.kind !== "none" && !media.some((x) => mediaKey(x) === mediaKey(m))) {
+      media.push({ ...m, name: m.kind === "video" ? "Video from the draft" : "Picture from the draft", ready: true });
+    }
+  }
+  ads = f.ads.length ? f.ads.map((x) => ({ ...x, media: { ...x.media } })) : [blankAd()];
+  renderAds();
+  changed(); estimateSoon();
+}
+
 // ---------------------------------------------------------------- after creating
 
 function buildView(b) {
@@ -205,6 +245,7 @@ function buildView(b) {
       <div class="panel-body"><table class="table middle build-table"><tbody>${rows.map(([kind, what, id, isAd]) => `<tr>
         <th scope="row">${esc(kind)}</th><td>${id && !isAd ? entityLink(kind === "Campaign" ? "campaign" : "adset", id, what) : esc(what)}</td><td>${id ? pill(s[id]) : '<span class="pill">Not made yet</span>'}</td>
         <td class="row-actions">${id && isAd ? `<a class="btn btn-quiet btn-small" href="/ad.html?id=${encodeURIComponent(id)}" target="_blank" rel="noopener">Preview</a>` : ""}</td></tr>`).join("")}</tbody></table></div></section>
+    ${b.draft && b.status !== "published" ? draftLeftHtml(b.draft) : ""}
     ${publishBox}`;
   $("wizard").hidden = true;
   $("build").hidden = false;
@@ -325,6 +366,7 @@ if (me) {
       // Listening first, then filling in: a quick choice (or Enter) while the lists load is never missed.
       await loadForms();
       await loadTemplate();
+      if (draftP) await fillFromDraft();
     }
   }
 }

@@ -309,7 +309,8 @@ Started by the Mac bridge only when Meta won't take the Mac's own Ads Manager li
    tool, no other ad account, and never the `next_actions` an answer suggests (they would change things on Meta).
 3. Write the tool's answer, unchanged, to `reports/desk/tmp/link/run<id>-<kind>.json` and send it:
    `desk link-push <id> --kind <kind> --file reports/desk/tmp/link/run<id>-<kind>.json`.
-   If a tool says no or errors, skip that kind and remember the first error.
+   If a tool says no or errors, skip that kind and remember the first error. Drafts: send the one page the plan's
+   arguments return, as it came; don't follow its cursor (the console treats a page with more after it as a partial read).
 4. `desk link-finish <id> --status done` (or `--status failed --error "<the first error>"`; `--status no_access` when
    `ads_get_ad_accounts` doesn't list the ad account).
 

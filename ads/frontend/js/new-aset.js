@@ -3,6 +3,7 @@ import { boot, cancelLink, confirmDialog, esc, fieldError, icon, toast, guardLea
 import { money } from "./format.js";
 import { placeLabel, placesHtml, placesWidget } from "./places.js";
 import { builder } from "./builder.js";
+import { draftNoteHtml, draftParam, loadDraftSpec } from "./drafts.js";
 
 const $ = (id) => document.getElementById(id);
 let opts;
@@ -11,6 +12,10 @@ const locations_ = () => places.get();
 
 let places;
 let steps = null;
+// AM-B: filled in from an Ads Manager draft (?draft=<id>): its id goes with Create, its audience hints when no ad set is the start.
+const draftP = draftParam();
+let draft = null;
+let draftFlex = [];
 const label = placeLabel;
 
 function spec() {
@@ -19,7 +24,7 @@ function spec() {
   return {
     name: $("name").value, locations: locations_(), age_min: n("age_min"), age_max: n("age_max"),
     suggest_min: $("advantage").checked ? n("suggest_min") : null, suggest_max: $("advantage").checked ? n("suggest_max") : null,
-    advantage: $("advantage").checked, keep_hints: $("keep_hints").checked,
+    advantage: $("advantage").checked, keep_hints: $("keep_hints").checked, flexible_spec: $("template").value ? [] : draftFlex,
     start_day: $("start_day").value || null, start_hour: 0, end_day: $("end_day").value || null, end_hour: 23,
     daily_budget_cents: dollars ? Math.round(Number(dollars) * 100) : null,
   };
@@ -119,6 +124,27 @@ async function loadTemplate() {
   } catch (err) { toast(err.message, "bad"); }
 }
 
+// AM-B: the page filled in from an Ads Manager draft of a new ad set in a running campaign. Only the fields change.
+async function fillFromDraft() {
+  draft = await loadDraftSpec(draftP);
+  $("as-form").insertAdjacentHTML("afterbegin", draftNoteHtml(draft));
+  if (draft.error || draft.page !== "new-adset") return;
+  const { campaign_id: cid, spec: f } = draft.spec;
+  if (opts.campaigns.some((c) => c.id === cid)) { $("campaign").value = cid; syncCampaign(); }
+  $("template").value = "";
+  $("name").value = f.name;
+  places.set(f.locations);
+  hints = f.hints; draftFlex = f.flexible_spec;
+  $("age_min").value = f.age_min; $("age_max").value = f.age_max;
+  $("suggest_min").value = f.suggest_min ?? ""; $("suggest_max").value = f.suggest_max ?? "";
+  $("advantage").checked = f.advantage;
+  $("keep_hints").checked = f.keep_hints && hints.length > 0;
+  $("hints").textContent = hints.join(", "); $("hints-row").hidden = !hints.length;
+  $("start_day").value = f.start_day || ""; $("end_day").value = f.end_day || "";
+  if (f.daily_budget_cents) $("budget").value = (f.daily_budget_cents / 100).toFixed(2);
+  syncAdvantage(); changed();
+}
+
 const me = await boot({ page: "new-adset", admin: true });
 if (me) guardLeaving();
 if (me) {
@@ -144,6 +170,7 @@ if (me) {
     syncCampaign();
     if (want && !campaign()) $("budget-note").textContent = "The campaign you came from is deleted or archived, so it can't get new ad sets. Pick one that's still running.";
     await loadTemplate();
+    if (draftP) await fillFromDraft();
     $("campaign").addEventListener("change", () => { syncCampaign(); loadTemplate(); });
     $("as-form").addEventListener("change", (e) => { if (e.target.id !== "campaign" && e.target.id !== "template") changed(); });
     $("template").addEventListener("change", loadTemplate);
@@ -167,10 +194,12 @@ if (me) {
       if (!yes) return;
       $("create").disabled = true;
       try {
-        const r = await api("/api/adsets", { method: "POST", body: { campaign_id: c.id, template_adset_id: $("template").value, spec: s } });
+        const r = await api("/api/adsets", { method: "POST", body: { campaign_id: c.id, template_adset_id: $("template").value, spec: s,
+          ...(draft && !draft.error ? { draft_id: draft.draft.id, again: Boolean(draftP.again) } : {}) } });
         markSaved();
         // On to its first ad; that page says the ad set was made and links to it. Cancel there still goes back.
-        location.href = withFrom(`/new-ad.html?adset=${encodeURIComponent(r.id)}&made=adset`, back);
+        const fromDraft = draft && !draft.error ? `&draft_left=${encodeURIComponent(draft.draft.id)}` : "";
+        location.href = withFrom(`/new-ad.html?adset=${encodeURIComponent(r.id)}&made=adset${fromDraft}`, back);
       } catch (err) {
         $("create").disabled = false;
         const field = err.body && err.body.field;

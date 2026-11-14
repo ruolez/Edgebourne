@@ -258,3 +258,16 @@ class SpendLimitMismatchTests(unittest.TestCase):
         import snooze
         a = {"rule": "spend_limit_mismatch", "level": "bad", "kind": "event", "resolved_at": None, "entity_id": "account"}
         self.assertEqual((inbox.category("spend_limit_mismatch"), inbox._alert_needs(a), snooze.choices(a)), ("money", True, []))
+
+
+class DraftsTests(unittest.TestCase):
+    """AM-B: drafts read from Ads Manager are notes for the owner and account admins, never something that needs action."""
+
+    def test_category_and_both_kinds_are_for_information(self):
+        rows = [dict(alert(1, "draft_new", 5, "info"), kind="event", entity_id="900", campaign_id=None),
+                dict(alert(2, "draft_problems", 5, "info"), kind="condition", entity_id="901", campaign_id=None)]
+        got = {i["key"]: (i["category"], i["need"], i["actions"]) for i in inbox.build(rows, [], [], set(), can_close=True)}
+        self.assertEqual(got, {"alert:1": ("status", False, []), "alert:2": ("status", False, [])})
+
+    def test_clients_never_get_them(self):
+        self.assertEqual(sorted(inbox.ADMIN_ONLY), ["draft_new", "draft_problems"])

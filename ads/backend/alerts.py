@@ -48,7 +48,12 @@ DEFAULTS = {
     "numbers_off": {"on": True},
     # AM-A: the Mac's Ads Manager link needs a new login, is refused, or stopped finishing its reads (console-wide, account 1).
     "link_down": {"on": True, "hours": 6},
+    # AM-B: drafts read from Ads Manager through the link; FYI only, raised and closed by the link's reads.
+    "draft_new": {"on": True},
+    "draft_problems": {"on": True},
 }
+# Conditions the link's reads own (am_link_api.push): the hourly run never closes them.
+LINK_RULES = {"draft_problems"}
 # Events that stay open until someone deals with them get a Done (00-PLAN C16).
 DONE_OK = {"outside_edit", "change_result"}
 # An outside budget change that broke a money rule closes by itself once the 3-day window has passed.
@@ -524,7 +529,7 @@ def to_resolve(opened, found, snap):
     unique reach (reach_7d None, e.g. a rate-limit cooldown): those alerts stay open, or one hiccup would
     close them for the rest of the day (the dedupe key is per day)."""
     live = {(a["rule"], a["entity_id"]) for a in found}
-    skip = unjudged(snap)
+    skip = unjudged(snap) | LINK_RULES
     return [r["id"] for r in opened if (r["rule"], r["entity_id"]) not in live and r["rule"] not in skip]
 
 

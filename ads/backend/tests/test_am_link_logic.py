@@ -126,7 +126,16 @@ class NormalizeTests(unittest.TestCase):
         self.assertTrue(all(c[1] and c[1].endswith("unexpected shape") for c in cases), cases)
 
     def test_a_kind_without_storage_yet_is_refused(self):
-        self.assertEqual(am_link.normalize("drafts", {"ad_drafts": []}), (None, "Drafts aren't stored yet."))
+        self.assertEqual(am_link.normalize("screenshots", {"data": "x"}), (None, "Meta's pictures aren't stored yet."))
+
+    def test_drafts_keep_how_many_were_read_and_whether_every_page_came(self):
+        """AM-B: the rows go to am_drafts; the snapshot keeps the read's time, its count and whether it was complete."""
+        one = {"ad_object_id": "1", "ad_object_type": "campaign", "action": "add", "values": {}}
+        self.assertEqual([am_link.normalize("drafts", {"ad_drafts": [one, one], "complete": False}),
+                          am_link.normalize("drafts", {"ad_drafts": []}), am_link.normalize("drafts", {"surprise": 1})],
+                         [({"drafts": 2, "complete": False}, None), ({"drafts": 0, "complete": True}, None),
+                          (None, "Meta's answer had an unexpected shape")])
+        self.assertIn("drafts", am_link.STORED_KINDS)
 
 
 class ClampTests(unittest.TestCase):

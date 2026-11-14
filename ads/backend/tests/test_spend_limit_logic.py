@@ -229,9 +229,35 @@ class RatchetTests(unittest.TestCase):
 
     def test_no_dict_spend_cap_key_outside_the_rule_tables(self):
         """`data={"spend_cap": …}` or `**{"spend_cap": …}` would be a second write path: the key appears only where
-        "spend_cap" names the alert rule or the stored-column map."""
+        "spend_cap" names the alert rule, the stored-column map or a field read from an Ads Manager draft (am_drafts, AM-B:
+        a whitelist of what a draft may hold, never sent to Meta)."""
         keyed = sorted(n for n, text in self.sources().items() if re.search(r"[\"']spend_cap[\"']\s*:", text))
-        self.assertEqual(keyed, ["alerts.py", "diagnose.py", "inbox.py", "snooze.py", "status_history.py"])
+        self.assertEqual(keyed, ["alerts.py", "am_drafts.py", "diagnose.py", "inbox.py", "snooze.py", "status_history.py"])
+
+    IMPORT = re.compile(r"^\s*(?:import\s+([\w.]+)|from\s+([\w.]+)\s+import)", re.M)
+    WRITERS = {"meta_client", "requests", "urllib", "http", "httpx", "mcp", "am_link_api", "ads_api", "spend_limit"}
+
+    def local_imports(self, name, src, seen=None):
+        """The backend modules `name` imports, directly or through the modules it imports."""
+        seen = set() if seen is None else seen
+        for m in self.IMPORT.finditer(src.get(name, "")):
+            mod = (m.group(1) or m.group(2)).split(".")[0]
+            if mod not in seen:
+                seen.add(mod)
+                self.local_imports(f"{mod}.py", src, seen)
+        return seen
+
+    def test_the_draft_whitelist_module_can_never_write_to_meta(self):
+        """am_drafts.py is exempt above because it only names spend_cap as a field a draft may hold. Keep it that way:
+        neither it nor anything it imports reaches Meta (or an HTTP client) or calls .post(."""
+        src = self.sources()
+        reach = self.local_imports("am_drafts.py", src)
+        local = sorted(m for m in reach if f"{m}.py" in src)
+        self.assertEqual((sorted(reach & self.WRITERS), [m for m in ["am_drafts", *local] if ".post(" in src[f"{m}.py"]]), ([], []))
+
+    def test_the_import_walk_sees_a_writer_two_steps_away(self):
+        src = {"a.py": "import b\n", "b.py": "    from meta_client import post\n"}
+        self.assertEqual(self.local_imports("a.py", src), {"b", "meta_client"})
 
     def test_the_ratchet_sees_a_dict_write(self):
         bad = 'meta_client.post(f"act_{a}", data={"spend_cap": cents})'

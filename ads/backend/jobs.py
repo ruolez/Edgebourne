@@ -214,6 +214,8 @@ PRUNE = (
     ("alert_snoozes", "ended_at IS NOT NULL AND ended_at < now() - interval '180 days'"),
     ("numbers_runs", "started_at < now() - interval '180 days'"),
     ("am_link_runs", "created_at < now() - interval '30 days'"),
+    # AM-B: drafts gone from Ads Manager (published or discarded there) stay 30 days, so "Finished in the console" stays visible.
+    ("am_drafts", "gone_at < now() - interval '30 days'"),
     # Read marks of alerts (30 days in the Inbox) and leads (7) whose item has left the feed. A pending proposal
     # stays in it however old, so its mark stays (audit A3-131).
     ("inbox_reads", "item_key NOT LIKE 'proposal:%' AND read_at < now() - interval '35 days'"),

@@ -217,4 +217,6 @@ def home():
         out["pending_proposals"] = db.query("SELECT COUNT(*) AS n FROM desk_proposals WHERE status = 'pending'", one=True)["n"]
         out["bridge"] = bridge_with_status()
         out["cap"] = cap_snapshot()
+        import drafts_api
+        out["drafts"] = drafts_api.counts()  # AM-B: Upkeep's "N drafts in Ads Manager" line
     return jsonify(out)

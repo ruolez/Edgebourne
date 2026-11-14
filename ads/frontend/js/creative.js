@@ -7,6 +7,7 @@ import { track } from "./manager.js";
 import { ACTIVE, proposalCard, taskCard, wireTaskActions } from "./tasks.js";
 import { diagnoseHtml, wireAlerts } from "./alertmenu.js";
 import { openFromUrl } from "./outcome.js";
+import { draftLeftFor, draftLeftHtml } from "./drafts.js";
 
 const $ = (id) => document.getElementById(id);
 const adId = new URLSearchParams(location.search).get("id");
@@ -24,6 +25,7 @@ let chartRange = RANGES.some(([k]) => k === linkRange) ? linkRange : sharedRange
 let audienceRange = AUDIENCE_RANGES.some(([k]) => k === linkRange) ? linkRange : sharedRange("7", AUDIENCE_RANGES);
 let pollTimer;
 let historyShow = "all";
+let leftDraft = null;  // AM-B: the Ads Manager draft this new ad was made from ({name, open_url}), once read
 const openReports = new Set();
 
 const TABS = [
@@ -274,6 +276,7 @@ function renderOverview() {
   } else {
     $("cr-main").innerHTML = `
     ${new URLSearchParams(location.search).get("created") ? '<p class="note claude-note">Created and <b>off</b>. Check the previews, then turn it on with the switch at the top when you\'re happy.</p>' : ""}
+    ${new URLSearchParams(location.search).get("created") && leftDraft ? draftLeftHtml(leftDraft) : ""}
     <div class="cr-layout">${preview}${side}</div>`;
     loadPreview();
   }
@@ -756,6 +759,14 @@ async function load() {
 
 me = await boot({ page: "ad" });
 if (me) {
+  // Made from an Ads Manager draft (AM-B, ?created=1&draft_left=<id>): say the draft is still there to discard.
+  const q = new URLSearchParams(location.search);
+  if (q.get("created") && q.get("draft_left") && me.role === "admin") {
+    draftLeftFor(q.get("draft_left")).then((d) => {
+      leftDraft = d;
+      if (d && !$("dr-left")) document.querySelector("#cr-main .claude-note")?.insertAdjacentHTML("afterend", draftLeftHtml(d));
+    });
+  }
   wireAlerts(document.body, () => null, () => loadDiagnose());
   document.addEventListener("click", async (e) => {
     const t = e.target.closest("#cr-tabs [data-tab]");

@@ -58,6 +58,26 @@ class PayloadTests(unittest.TestCase):
                              "age_min": 25, "age_max": 65, "targeting_automation": {"advantage_audience": 0}})
 
 
+class DraftHintTests(unittest.TestCase):
+    """AM-B: an Ads Manager draft's audience hints (spec flexible_spec) only apply when the ad set starts from scratch."""
+    DRAFT_HINTS = [{"interests": [{"id": "6003", "name": "Entrepreneurship"}]}]
+
+    def spec(self):
+        return {**ab.spec_from(LIVE), "keep_hints": True, "flexible_spec": self.DRAFT_HINTS}
+
+    def test_from_scratch_the_draft_hints_are_sent(self):
+        self.assertEqual(ab.targeting(self.spec(), None)["flexible_spec"], [{"interests": [{"id": "6003", "name": "Entrepreneurship"}]}])
+
+    def test_a_template_without_hints_never_borrows_the_draft_hints(self):
+        no_hints = {k: v for k, v in LIVE["targeting"].items() if k != "flexible_spec"}
+        self.assertNotIn("flexible_spec", ab.targeting(self.spec(), no_hints))
+
+    def test_a_template_with_hints_keeps_its_own(self):
+        self.assertEqual(ab.targeting(self.spec(), LIVE["targeting"])["flexible_spec"],
+                         [{"interests": [{"id": "6003371567474", "name": "Entrepreneurship"}],
+                           "behaviors": [{"id": "6002714898572", "name": "Small business owners"}]}])
+
+
 class ProblemTests(unittest.TestCase):
     def test_the_live_copy_has_no_problems(self):
         self.assertEqual(ab.problems({**ab.spec_from(LIVE), "name": "x"}, 2000), [])

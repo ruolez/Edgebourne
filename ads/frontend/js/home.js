@@ -138,6 +138,7 @@ function render(d) {
   const noNext = d.follow && d.follow.no_next;
   const queueCard = `<section class="panel tq" aria-label="What needs you, most urgent first">${queueHtml(d)}
     ${noNext ? `<p class="tq-foot" id="fu-nonext">${plural(noNext, "open lead")} ${noNext === 1 ? "has" : "have"} no next step. <a href="/leads.html?due=none">See them</a></p>` : ""}
+    ${d.drafts && d.drafts.open ? `<p class="tq-foot" id="dr-today">${plural(d.drafts.open, "draft")} in Ads Manager${d.drafts.finishable ? `: <a href="/ads.html?level=campaign&view=drafts">Finish ${d.drafts.finishable === 1 ? "it" : "them"} here</a>` : '. <a href="/ads.html?level=campaign&view=drafts">See them</a>'}</p>` : ""}
     ${d.snoozed ? `<p class="tq-foot al-snoozed-line">${plural(d.snoozed, "snoozed alert")}. <a href="/inbox.html?box=fyi">See them</a></p>` : ""}
     <p class="tq-foot">${fyi} <a href="/inbox.html?box=fyi">Open the Inbox</a></p></section>`;
 

@@ -55,11 +55,21 @@ def clean(raw):
             return int(raw[k]) if raw.get(k) not in (None, "") else default
         except (TypeError, ValueError):
             return default
+    # Audience hints (interests, behaviours, job titles) a draft from Ads Manager carried (AM-B): ids and names only.
+    flexible = []
+    for group in (raw.get("flexible_spec") or [])[:10] if isinstance(raw.get("flexible_spec"), list) else []:
+        if not isinstance(group, dict):
+            continue
+        kept = {k: [{"id": str(i["id"]), "name": str(i.get("name") or "")[:120]} for i in (group.get(k) or [])[:50]
+                    if isinstance(i, dict) and str(i.get("id") or "").isdigit()] for k in ("interests", "behaviors", "work_positions")}
+        kept = {k: v for k, v in kept.items() if v}
+        if kept:
+            flexible.append(kept)
     start = ab.iso_local(raw["start_day"], num("start_hour", 0), account_info.tz_name()) if raw.get("start_day") else None
     end = ab.iso_local(raw["end_day"], num("end_hour", 23), account_info.tz_name()) if raw.get("end_day") else None
     return {"name": str(raw.get("name") or "")[:200], "locations": locs, "age_min": num("age_min", 18), "age_max": num("age_max", 65),
             "suggest_min": num("suggest_min"), "suggest_max": num("suggest_max"), "advantage": bool(raw.get("advantage")),
-            "keep_hints": bool(raw.get("keep_hints")), "start": start, "end": end, "daily_budget_cents": num("daily_budget_cents")}
+            "keep_hints": bool(raw.get("keep_hints")), "flexible_spec": flexible, "start": start, "end": end, "daily_budget_cents": num("daily_budget_cents")}
 
 
 @bp.get("/new/options")
@@ -160,6 +170,12 @@ def check_only():
 @admin_required
 def create():
     data = request.get_json(silent=True) or {}
+    draft_id = str(data.get("draft_id") or "")[:30] or None  # AM-B: filled in from an Ads Manager draft
+    if draft_id:
+        import drafts_api
+        why = drafts_api.claim_problem(draft_id, "adset", bool(data.get("again")))
+        if why:
+            return api_error(why[0], why[1], **why[2])
     campaign, spec, errs = check(data)
     if errs:
         return api_error(errs[0][1], 400, field=errs[0][0])
@@ -176,6 +192,8 @@ def create():
         ads_api.record(user, "adset", row, "create", None, spec["name"], False, str(exc))
         return api_error(f"Meta refused: {exc}", 400)
     ads_api.record(user, "adset", {**row, "id": made["id"]}, "create", None, f"{spec['name']} (paused)", True)
+    if draft_id:
+        drafts_api.mark_finished(draft_id, f"adset:{made['id']}")
     try:
         insights.sync_structure()
     except meta_client.MetaError:

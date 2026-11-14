@@ -17,6 +17,7 @@ CATEGORY = {
     "week_overspend": "money", "cpl_high": "money", "no_leads": "money",
     "tracking": "system", "events_quiet": "system", "stale_data": "system",
     "report_review": "system", "report_sent": "system", "numbers_off": "system", "link_down": "system",
+    "draft_new": "status", "draft_problems": "status",
     "qualified_low": "leads", "junk_high": "leads",
 }
 CATEGORIES = ("status", "leads", "claude", "money", "system")
@@ -27,7 +28,8 @@ def category(rule):
     return CATEGORY.get(rule, "system")
 
 
-FYI_WHILE_INFO = {"numbers_off", "link_down"}  # D1 / AM-A: for information at first; it needs action once it stays (warn)
+FYI_WHILE_INFO = {"numbers_off", "link_down", "draft_problems"}  # D1 / AM-A: for information at first; it needs action once it stays (warn)
+ADMIN_ONLY = {"draft_new", "draft_problems"}  # AM-B: drafts are the owner's and account admins' (clients never see them)
 
 
 def _alert_needs(a):
@@ -205,7 +207,7 @@ def items_for(user):
                                  WHERE p.status = 'pending' {mine} ORDER BY p.id DESC LIMIT 50""", None if ids is None else (ids,))
     client = user["role"] == "client"
     if client:
-        alerts = [a for a in alerts if category(a["rule"]) == "status"]
+        alerts = [a for a in alerts if category(a["rule"]) == "status" and a["rule"] not in ADMIN_ONLY]
     keys = item_keys(alerts, leads, proposals)
     reads = {r["item_key"] for r in db.query("SELECT item_key FROM inbox_reads WHERE user_id = %s AND item_key = ANY(%s)",
                                              (user["id"], keys))} if keys else set()

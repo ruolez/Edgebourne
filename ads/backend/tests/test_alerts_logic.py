@@ -332,3 +332,14 @@ class NumbersOffTests(unittest.TestCase):
         opened = [{"id": 7, "rule": "numbers_off", "entity_id": "account"}]
         self.assertEqual(alerts.to_resolve(opened, [], snap(numbers={"summary": self.OFF, "kind": "check", "off_runs": 1})), [])
         self.assertEqual(alerts.to_resolve(opened, [], snap(numbers={"summary": {"state": "match"}, "kind": "check", "off_runs": 0})), [7])
+
+
+class DraftAlertsTests(unittest.TestCase):
+    """AM-B: draft alerts are raised and closed by the link's reads (am_link_api.push), never by the hourly rules."""
+
+    def test_the_hourly_run_leaves_draft_problems_alone(self):
+        opened = [{"id": 3, "rule": "draft_problems", "entity_id": "901"}, {"id": 4, "rule": "no_leads", "entity_id": "c1"}]
+        self.assertEqual(alerts.to_resolve(opened, [], snap(reach_7d={})), [4])
+
+    def test_both_rules_can_be_switched_off(self):
+        self.assertEqual((alerts.DEFAULTS["draft_new"], alerts.DEFAULTS["draft_problems"]), ({"on": True}, {"on": True}))

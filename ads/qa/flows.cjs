@@ -696,7 +696,7 @@ desk_api.tell_finished(${sched.last_task_id})"`);
   // Alerts: rules in Settings; a rejected ad raises one alert (Telegram + Today), not twice, and it clears by itself.
   await openSettings('alerts');
   await page.waitForSelector('#al-rules li');
-  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 22);
+  check('Settings lists the alert rules', (await page.locator('#al-rules li').count()) === 24);
   check('W1b: Settings lists the two lead-quality rules, on by default, with their numbers and what junk means',
     /Few leads qualify/.test(await page.textContent('#al-rules')) && /counting only leads someone has worked \(past New, or Lost\)/.test(await page.textContent('#al-rules')) && /Many leads look like junk/.test(await page.textContent('#al-rules'))
     && await page.isChecked('[data-rule="qualified_low"][data-key="on"]') && await page.isChecked('[data-rule="junk_high"][data-key="on"]')
@@ -2204,8 +2204,8 @@ print(a[0][1] if a else '-', b[0][1] if b else '-')"`).trim();
     leak.client_writes_not_refused.slice(0, 4).join(' | '));
   check('each account still sees its own data', leak.admin_sees_account2_on_account2 && leak.client_sees_own_leads);
   // The walk only finds a leak where the other account has a marked row: each screen must show its own account's marks.
-  const markShown = { 'admin on account 1': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/am-link'],
-    'admin on account 2, own ids': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/am-link', '/api/timeline/<level>/<entity_id>',
+  const markShown = { 'admin on account 1': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/am-link', '/api/drafts'],
+    'admin on account 2, own ids': ['/api/inbox', '/api/desk', '/api/views', '/api/builds/open', '/api/settings/activity', '/api/numbers', '/api/am-link', '/api/drafts', '/api/drafts/<draft_id>/spec', '/api/timeline/<level>/<entity_id>',
       '/api/proposals/<int:proposal_id>', '/api/leads/<int:lead_id>', '/api/ads/ad/<ad_id>/tags', '/api/experiments/<int:exp_id>', '/api/builds/<int:build_id>'] };
   const unmarked = Object.entries(markShown).flatMap(([who, routes]) => routes.filter((r) => !(leak.routes_showing_own_mark[who] || []).includes(r)).map((r) => `${who}: ${r}`));
   check('the leak walk has marked rows to find in Inbox, Claude, saved views, builds, History and the timeline', unmarked.length === 0, unmarked.join(' | '));
@@ -2216,6 +2216,9 @@ print(a[0][1] if a else '-', b[0][1] if b else '-')"`).trim();
     JSON.stringify(leak.am_link) === JSON.stringify({ account2_admin_status: 200, account2_admin_sees_connected_as: false, account2_admin_sees_the_mac: false,
       account2_admin_connect: 403, account2_admin_turns_on: 403, member: 403, client: 403, client_check: 403 }),
     JSON.stringify(leak.am_link));
+  check('AM-B: drafts from Ads Manager are the owner\'s and account admins\': teammates and clients get 403 on every drafts route, another account\'s draft is 404 everywhere (refusal)',
+    JSON.stringify(leak.drafts) === JSON.stringify({ member: [403, 403, 403, 403], client: [403, 403, 403, 403], account2_admin_reads_account1: [404, 404],
+      account2_admin_lists_account1: false, account2_admin_builds_from_account1: 404, member_finishes_from_draft: 403 }), JSON.stringify(leak.drafts));
   check('every table that holds account data is limited to its account by the database (row-level security)',
     leak.tables_without_isolation.length === 0 && leak.app_role_bypasses_rls === false && leak.isolated_tables >= 28, `${leak.isolated_tables} tables; missing: ${leak.tables_without_isolation.join()}`);
   await page.goto(BASE + '/ads.html');
@@ -5514,7 +5517,7 @@ db.execute(\\"DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users
       await sp.goto(BASE + '/settings.html#alerts');
       await sp.waitForSelector('#al-rules input[data-key="on"]');
       const widths = await sp.evaluate(() => [...document.querySelectorAll('#al-rules input[data-key="on"]')].map((i) => Math.round(i.getBoundingClientRect().width)));
-      check('Settings → Alerts on a phone: every rule\'s tick box is 18px wide', widths.length === 22 && widths.every((w) => w === 18), JSON.stringify(widths));
+      check('Settings → Alerts on a phone: every rule\'s tick box is 18px wide', widths.length === 24 && widths.every((w) => w === 18), JSON.stringify(widths));
       await sp.context().close();
     }
     // Gone again: without those leads both alerts close by themselves at the next check.
@@ -7920,8 +7923,8 @@ settings_store.set('bridge_version', '3.1')`);
       'ads_insights_anomaly_signal', 'ads_insights_performance_trend', 'ads_get_dataset_quality', 'ads_insights_advertiser_context', 'ads_get_ad_preview_screenshot'];
     const toolsCalled = [...new Set(hits1.hits.filter((h) => h.tool).map((h) => h.tool))];
     check('AM-A: a pass for the owner\'s account bound to its ad account, none for an account the owner hasn\'t approved; only the link\'s read tools are called and no write ever',
-      byAcct[1] && byAcct[1].ad_account_id === '1025971549903293' && !byAcct[A2] && byAcct[1].kinds.length === 8
-      && toolsCalled.every((t) => LINK.includes(t)) && hits1.write_calls === 0 && sql("SELECT count(*) FROM am_snapshots WHERE account_id = 1 AND scope = ''") === '8',
+      byAcct[1] && byAcct[1].ad_account_id === '1025971549903293' && !byAcct[A2] && byAcct[1].kinds.length === 9
+      && toolsCalled.every((t) => LINK.includes(t)) && hits1.write_calls === 0 && sql("SELECT count(*) FROM am_snapshots WHERE account_id = 1 AND scope = ''") === '9',
       JSON.stringify({ runs: pass1.runs, toolsCalled, writes: hits1.write_calls }));
     await openLink();
     const lastCells = await page.$$eval('#am-kinds .am-last', (els) => els.map((e) => e.textContent.trim()));
@@ -7998,7 +8001,7 @@ settings_store.set('am_link_force', None, account_id=${A2})`);
     const took = Date.now() - t0;
     const again = await call('POST', '/api/am-link/check', {});
     check('AM-A: Check Ads Manager now reaches the Mac at once with every kind; pressed again right away it\'s refused (429 "Checked a moment ago") (refusal)',
-      took < 2500 && (plan3.runs.find((r) => r.account_id === 1) || {}).kinds?.length === 8 && again.status === 429 && /Checked a moment ago/.test(again.body.error),
+      took < 2500 && (plan3.runs.find((r) => r.account_id === 1) || {}).kinds?.length === 9 && again.status === 429 && /Checked a moment ago/.test(again.body.error),
       JSON.stringify({ took, runs: plan3.runs.map((r) => [r.account_id, r.kinds.length]), again }));
     for (const r of plan3.runs) agent('POST', '/api/agent/link/finish', { status: 'done' }, { 'X-Link-Pass': r.pass });
     // 6. Meta's answer in a shape nobody expects: refused (422), nothing stored, the old time stays (refusal).
@@ -8096,6 +8099,308 @@ settings_store.set('bridge_last_seen', str(time.time() - 7200))`);
     const blocked = await page.evaluate(() => [...document.querySelectorAll('#am-link [class], #am-link [id]')].filter((e) => /(^|\s)(ad-|ads-|adset|advert|sponsor|banner|promo)/i.test(`${e.className} ${e.id}`)).length
       + [...document.scripts].filter((s) => s.src && /\/(ad|ads|advert|banner|promo)[-_.]/.test(new URL(s.src).pathname)).length);
     check('AM-A: no class, id or script name in the Ads Manager link starts with an ad-blocker word', blocked === 0, String(blocked));
+    // AM-B: drafts in Ads Manager, read by the same link. The fake MCP server holds seven for Edge Bourne's ad account
+    // (dev/fake_mcp.py): the real 2026-11-13 one with an ad set Claude staged, a complete one, a staged budget + name edit of
+    // the live campaign, one Meta has problems with (markup in its name), a Sales one, a new ad set in the live campaign and
+    // a staged ad set rename. Nothing here may write to Meta through MCP; finishing goes through the builders, created off.
+    {
+      const drSeen = errors.length;
+      const CAMP = '120252638288040312';
+      const D = { real: '120252756936450312', ready: '120252756936460001', bad: '120252756936460010', sales: '120252756936460020', aset: '120252756936460030' };
+      const fakeBudget = (cents) => sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen(urllib.request.Request('http://localhost:5001/v24.0/${CAMP}?access_token=x', data=b'daily_budget=${cents}'))"`);
+      const read = () => { force(1); return linkOnce(); };
+      const openDrafts = async (p = page) => { await p.goto(`${BASE}/ads.html?level=campaign&view=drafts`); await p.waitForSelector('#dr-panel .dr-item'); };
+      py(`import time, settings_store
+settings_store.set('bridge_last_seen', str(time.time()))`);
+      sql("DELETE FROM am_drafts WHERE account_id = 1; DELETE FROM alerts WHERE rule IN ('draft_new', 'draft_problems')");
+      mcp('drafts=0&draft_drop=0&draft_pages=0&draft_fail_page=0&draft_add=');
+      fakeBudget(2000); pull(); ageBudget(4);
+      fakeGet('/fake/_mcp_hits?clear=1');
+      read();
+      // 1. Ads → Campaigns: the panel with the newest three, the source line, See all and the Drafts view.
+      await page.goto(`${BASE}/ads.html?level=campaign`);
+      await page.waitForSelector('#dr-panel');
+      const p1 = await page.evaluate(() => ({ src: document.querySelector('#dr-panel .am-src')?.textContent.trim(), items: document.querySelectorAll('#dr-panel .dr-item').length,
+        chip: document.querySelector('.view-chip[data-view="drafts"] span')?.textContent, all: document.getElementById('dr-all')?.textContent }));
+      check('AM-B: Ads → Campaigns shows "Drafts in Ads Manager" (the newest 3 and See all 7) with "From Ads Manager via your Mac", and a Drafts view of 7',
+        /^From Ads Manager via your Mac/.test(p1.src || '') && p1.items === 3 && p1.chip === '7' && /See all 7 drafts/.test(p1.all || ''), JSON.stringify(p1));
+      await page.click('#dr-all');
+      await page.waitForFunction(() => document.querySelectorAll('#dr-panel .dr-item').length === 7);
+      check('AM-B: See all opens the Drafts view with every draft', /view=drafts/.test(page.url()));
+      // 1b. An account with no campaigns synced yet (a new client's first campaign is often still a draft) shows its drafts.
+      const adsList = /\/api\/ads\?range=/;
+      // (Node can't resolve ads.localhost, so the real answer is read by the page itself, marked to pass through.)
+      await page.route(adsList, async (route) => {
+        if (route.request().headers()['x-qa-raw']) { await route.continue(); return; }
+        const real = await page.evaluate(async (u) => (await fetch(u, { headers: { 'X-QA-Raw': '1' } })).json(), route.request().url());
+        await route.fulfill({ json: { ...real, campaigns: [], archived: 0 } });
+      });
+      await page.goto(`${BASE}/ads.html?level=campaign`);
+      await page.waitForSelector('#cr-all .empty');
+      const bare = await page.evaluate(() => ({ items: document.querySelectorAll('#dr-panel .dr-item').length, empty: /No ads yet/.test(document.getElementById('cr-all').textContent),
+        finish: document.querySelector('#dr-panel [data-dr-finish]')?.getAttribute('href') || '', all: Boolean(document.getElementById('dr-all')) }));
+      if (bare.all) await page.click('#dr-all');
+      await page.waitForFunction(() => document.querySelectorAll('#dr-panel .dr-item').length === 7, null, { timeout: 10000 }).catch(() => {});
+      bare.alone = await page.evaluate(() => document.querySelectorAll('#dr-panel .dr-item').length);
+      await page.unroute(adsList);
+      check('AM-B: an account with no campaigns yet still shows its drafts (newest 3, Finish in the console) above "No ads yet", and See all lists all 7',
+        bare.items === 3 && bare.empty && /^\/new-(campaign|adset|ad)\.html\?draft=\d+/.test(bare.finish) && bare.alone === 7, JSON.stringify(bare));
+      // 2. What each holds, what's missing, Meta's problems, and a draft the console can't finish.
+      const card = (id) => page.textContent(`#draft-${id}`);
+      const t = { real: await card(D.real), ready: await card(D.ready), bad: await card(D.bad), sales: await card(D.sales),
+        salesOff: await page.$eval(`#draft-${D.sales} .btn-primary`, (b) => b.disabled) };
+      check('AM-B: the real draft lacks only ads, the complete one is "Ready to create", Meta\'s problem is shown, a Sales draft can\'t be finished here (refusal)',
+        /1 ad set · Riverside, CA \+ 25 mi, ages 25–65 · 0 ads/.test(t.real) && /No ads yet/.test(t.real) && /Ready to create/.test(t.ready)
+        && /Choose a Facebook Page for this ad\./.test(t.bad) && /No Facebook Page/.test(t.bad) && t.salesOff && /the console builds lead campaigns only/.test(t.sales),
+        JSON.stringify({ real: t.real.slice(0, 200), bad: t.bad.slice(0, 300) }));
+      // 3. Meta's text is text: the markup in a draft's name never becomes an element (refusal).
+      const xss = await page.evaluate((id) => ({ ran: window.__drXss === 1, imgs: document.querySelectorAll(`#draft-${id} img`).length,
+        text: document.querySelector(`#draft-${id} .dr-name`).textContent }), D.bad);
+      const openHref = await page.$eval(`#draft-${D.ready} [data-dr-open]`, (a) => [a.getAttribute('href'), a.target, a.rel]);
+      check('AM-B: a draft name with markup shows as text (no element made, nothing ran) and Open in Ads Manager is built from digits in a new tab (refusal)',
+        !xss.ran && xss.imgs === 0 && /<img src=x onerror=/.test(xss.text)
+        && openHref[0] === `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=1025971549903293&selected_campaign_ids=${D.ready}` && openHref[1] === '_blank' && /noopener/.test(openHref[2]),
+        JSON.stringify({ xss, openHref }));
+      // 4. Finish in the console: New campaign filled in from the draft, with the note naming it.
+      await page.click(`#draft-${D.ready} [data-dr-finish]`);
+      await page.waitForURL(/new-campaign\.html\?draft=/);
+      await page.waitForSelector('#dr-note');
+      await page.waitForFunction(() => document.getElementById('c-name').value !== '' && document.getElementById('ready').dataset.ok === 'true', null, { timeout: 20000 }).catch(() => {});
+      const filled = await page.evaluate(() => ({ name: document.getElementById('c-name').value, budget: document.getElementById('c-budget').value,
+        places: document.getElementById('places-box').textContent, form: document.getElementById('f-form').value, ready: document.getElementById('ready').textContent,
+        ads: [...document.querySelectorAll('[data-ad]')].map((c) => [c.querySelector('[data-k="name"]').value, c.querySelector('[data-k="media"]').value]),
+        note: document.getElementById('dr-note').textContent }));
+      check('AM-B: Finish in the console opens New campaign filled in (name, $20.00, Riverside + 25 mi, two ads with their picture and video, the lead form) and says where it came from',
+        filled.name === 'Edge Bourne - Order portal - Leads' && filled.budget === '20.00' && /Riverside/.test(filled.places) && filled.form === '1132280359202136'
+        && filled.ads.length === 2 && /^image:[0-9a-f]{32}$/.test(filled.ads[0][1]) && /^video:\d+$/.test(filled.ads[1][1])
+        && /Filled in from your Ads Manager draft “Edge Bourne - Order portal - Leads”/.test(filled.note) && /created off/.test(filled.note) && /^Ready to create/.test(filled.ready),
+        JSON.stringify(filled));
+      // 5. Create → the usual confirmation → everything made off with the console's key; no MCP write at all.
+      await page.click('#nc-create');
+      await page.waitForSelector('dialog.confirm #cd-ok');
+      await page.click('dialog.confirm #cd-ok');
+      await page.waitForSelector('#build:not([hidden]) #dr-left', { timeout: 40000 });
+      const buildId = new URL(page.url()).searchParams.get('build');
+      const made = (await call('GET', `/api/builds/${buildId}`)).body.made;
+      const statuses = [made.campaign_id, made.adset_id, ...Object.values(made.ads || {})].map((id) => metaObj(id).status);
+      const hitsB = fakeGet('/fake/_mcp_hits');
+      check('AM-B: Create makes the campaign, ad set and both ads switched off with the console\'s own key, says the draft is still in Ads Manager, and nothing is written through MCP',
+        statuses.length === 4 && statuses.every((x) => x === 'PAUSED') && hitsB.write_calls === 0 && !hitsB.hits.some((h) => h.tool && !LINK.includes(h.tool))
+        && /still in Ads Manager: discard it there/.test(await page.textContent('#dr-left'))
+        && sql(`SELECT finished_entity || '|' || finished_build_id FROM am_drafts WHERE draft_id = '${D.ready}'`) === `campaign:${made.campaign_id}|${buildId}`
+        && sql(`SELECT draft_id FROM campaign_builds WHERE id = ${buildId}`) === D.ready, JSON.stringify({ statuses, writes: hitsB.write_calls }));
+      // 7. Publish still asks for the typed budget: a wrong amount is refused on the field (refusal).
+      await page.fill('#pub-typed', '19.00');
+      await page.click('#pub-form button[type=submit]');
+      await page.waitForSelector('dialog.confirm #cd-ok');
+      await page.click('dialog.confirm #cd-ok');
+      await page.waitForFunction(() => /Type the daily budget/.test(document.getElementById('pub-form').textContent));
+      check('AM-B: Publish of a campaign made from a draft still needs the typed daily budget; a wrong amount is refused and nothing turns on (refusal)',
+        metaObj(made.campaign_id).status === 'PAUSED' && sql(`SELECT status FROM campaign_builds WHERE id = ${buildId}`) === 'created');
+      // 6. Back on Ads: "Finished in the console", and the next complete read still lists the draft (it is never discarded by us).
+      read();
+      await openDrafts();
+      const done = await card(D.ready);
+      check('AM-B: the draft reads "Finished in the console · Open it" and stays listed by Ads Manager (the console never discards it)',
+        /Finished in the console/.test(done) && /Open it/.test(done) && /Discard the draft in Ads Manager/.test(done)
+        && sql(`SELECT gone_at IS NULL FROM am_drafts WHERE draft_id = '${D.ready}'`) === 't', done.slice(0, 300));
+      // 8. Finished already: the spec and a second create are refused (409) unless Make another from this draft (refusal).
+      const again = { spec: await call('GET', `/api/drafts/${D.ready}/spec`), create: await call('POST', '/api/builds', { draft_id: D.ready, name: 'x' }),
+        another: await call('GET', `/api/drafts/${D.ready}/spec?again=1`) };
+      check('AM-B: finishing the same draft again is refused (409 "Already finished in the console") with a link to what was made; Make another from this draft is allowed (refusal)',
+        again.spec.status === 409 && /Already finished in the console/.test(again.spec.body.error) && /campaign\.html\?id=/.test(again.spec.body.finished.href)
+        && again.create.status === 409 && again.another.status === 200, JSON.stringify({ spec: again.spec.status, create: again.create, another: again.another.status }));
+      // 9. A draft budget over this account's ceiling stays as typed, so the budget step says so and Create refuses (refusal).
+      const ceilingWas = sql("SELECT COALESCE((SELECT value FROM settings WHERE key = 'max_daily_budget_cents'), '')");
+      py(`import settings_store
+settings_store.set('max_daily_budget_cents', '1500')`);
+      await page.goto(`${BASE}/new-campaign.html?draft=${D.real}`);
+      await page.waitForSelector('#dr-note');
+      await page.waitForFunction(() => document.getElementById('c-budget').value === '20.00');
+      await page.click('#nc-create');
+      await page.waitForFunction(() => /ceiling/.test(document.querySelector('[data-step="budget"]').textContent), null, { timeout: 15000 }).catch(() => {});
+      const ceil = { step: await page.textContent('[data-step="budget"]'), dialog: await page.$('dialog.confirm[open]') };
+      py(`import settings_store
+settings_store.set('max_daily_budget_cents', ${ceilingWas ? `'${ceilingWas}'` : 'None'})`);
+      check('AM-B: a draft\'s budget over the account ceiling is kept, the budget step says "above this account\'s ceiling" and nothing is created (refusal)',
+        /above this account's ceiling/.test(ceil.step) && !ceil.dialog && sql(`SELECT finished_at IS NULL FROM am_drafts WHERE draft_id = '${D.real}'`) === 't', ceil.step.slice(0, 300));
+      // 11. A staged budget Ads Manager changed since: the row says so and the dialog starts from Meta's amount now.
+      outside(CAMP, 'daily_budget=2200'); pull();
+      read();
+      await openDrafts();
+      const staleRow = await page.textContent(`#draft-${CAMP} tr[data-field="daily_budget"]`);
+      await page.click(`#draft-${CAMP} [data-dr-apply][data-field="daily_budget"]`);
+      await page.waitForSelector('dialog.confirm #cd-input');
+      const staleDialog = { body: await page.textContent('dialog.confirm'), value: await page.inputValue('dialog.confirm #cd-input') };
+      await page.click('dialog.confirm #cd-cancel');
+      check('AM-B: a staged budget changed in Ads Manager since the draft says "Ads Manager changed this since the draft" and the dialog starts from Meta\'s $22.00 now with the draft\'s $25.00 filled in',
+        /\$22\.00/.test(staleRow) && /\$25\.00/.test(staleRow) && /Ads Manager changed this since the draft/.test(staleRow) && /Now \$22\.00 a day/.test(staleDialog.body) && staleDialog.value === '25.00',
+        JSON.stringify({ staleRow, staleDialog: staleDialog.body.slice(0, 200) }));
+      // 10. Apply in the console: $20.00 → $25.00 through the usual budget dialog (+25%, the knowing yes), then "Applied".
+      outside(CAMP, 'daily_budget=2000'); pull(); ageBudget(4);
+      await openDrafts();
+      const row0 = await page.textContent(`#draft-${CAMP} tr[data-field="daily_budget"]`);
+      await page.click(`#draft-${CAMP} [data-dr-apply][data-field="daily_budget"]`);
+      await page.waitForSelector('dialog.confirm #cd-input');
+      await page.waitForTimeout(300);
+      const dlg = { hint: await page.textContent('dialog.confirm'), ok: (await page.textContent('dialog.confirm #cd-ok')).trim() };
+      await page.click('dialog.confirm #cd-ok');
+      await page.waitForFunction((c) => /Applied/.test(document.querySelector(`#draft-${c} tr[data-field="daily_budget"]`)?.textContent || ''), CAMP, { timeout: 15000 }).catch(() => {});
+      const nameRow = await page.textContent(`#draft-${CAMP} tr[data-field="name"]`);
+      check('AM-B: Apply in the console opens the usual budget dialog ($20.00 → $25.00, +25%, "Raise anyway"); after the yes Meta\'s budget is $25.00 and the row says Applied',
+        /\$20\.00/.test(row0) && !/changed this since/.test(row0) && /\+25%/.test(dlg.hint) && dlg.ok === 'Raise anyway' && metaObj(CAMP).daily_budget === '2500'
+        && /Applied/.test(await page.textContent(`#draft-${CAMP} tr[data-field="daily_budget"]`))
+        && sql(`SELECT (applied->>'daily_budget') IS NOT NULL FROM am_drafts WHERE draft_id = '${CAMP}'`) === 't' && /Change it in Ads Manager/.test(nameRow),
+        JSON.stringify({ row0, dlg: dlg.ok, budget: metaObj(CAMP).daily_budget }));
+      // 10b. Another amount typed in the dialog isn't the draft's: Meta gets what was typed, the row stays unapplied (409).
+      sql(`UPDATE am_drafts SET applied = '{}'::jsonb WHERE draft_id = '${CAMP}'`);
+      ageBudget(4);
+      await openDrafts();
+      await page.click(`#draft-${CAMP} [data-dr-apply][data-field="daily_budget"]`);
+      await page.waitForSelector('dialog.confirm #cd-input');
+      await page.fill('dialog.confirm #cd-input', '27.00');
+      const appliedAnswer = page.waitForResponse((r) => /\/api\/drafts\/\d+\/applied$/.test(r.url()), { timeout: 20000 }).then((r) => r.status()).catch(() => 0);
+      await page.click('dialog.confirm #cd-ok');
+      const typedApplied = await appliedAnswer;
+      await page.waitForSelector(`#draft-${CAMP} [data-dr-apply][data-field="daily_budget"]`, { timeout: 15000 }).catch(() => {});
+      const typedRow = await page.textContent(`#draft-${CAMP} tr[data-field="daily_budget"]`);
+      check('AM-B: Apply with another amount typed ($27.00, not the draft\'s $25.00) sets Meta to $27.00 but the row is not "Applied" and the route refuses it (409, refusal)',
+        typedApplied === 409 && metaObj(CAMP).daily_budget === '2700' && !/Applied/.test(typedRow)
+        && sql(`SELECT applied ? 'daily_budget' FROM am_drafts WHERE draft_id = '${CAMP}'`) === 'f', JSON.stringify({ typedApplied, budget: metaObj(CAMP).daily_budget, typedRow }));
+      const appliedAgain = await call('POST', `/api/drafts/${D.real}/applied`, { field: 'daily_budget' });
+      check('AM-B: "applied" is only recorded for a staged edit and a change this person just made (refusal)', appliedAgain.status === 404, JSON.stringify(appliedAgain));
+      fakeBudget(2000); pull();
+      // 12. The Inbox: both kinds are for information, never Needs action; a problem closes when the draft is gone.
+      const fyi = JSON.stringify((await call('GET', '/api/inbox?box=fyi')).body);
+      const need = JSON.stringify((await call('GET', '/api/inbox?box=need')).body);
+      mcp(`draft_drop=${D.bad}`);
+      read();
+      check('AM-B: Inbox lists "New draft in Ads Manager" and "Meta has problems with your draft" for information only; once Ads Manager no longer has the draft its problem closes',
+        fyi.includes('New draft in Ads Manager: “Edge Bourne - Dashboards with AI - Leads”') && fyi.includes('Meta has problems with your draft') && !/draft_(new|problems)/.test(need)
+        && sql("SELECT count(*) FROM alerts WHERE rule = 'draft_problems' AND resolved_at IS NULL") === '0'
+        && sql(`SELECT gone_at IS NOT NULL FROM am_drafts WHERE draft_id = '${D.bad}'`) === 't', need.slice(0, 200));
+      // 13. A read cut short (two pages, the second fails) never calls a draft gone (refusal of a false "gone").
+      mcp(`draft_drop=${D.bad},${D.sales}&draft_pages=2&draft_fail_page=1`);
+      read();
+      const partial = { kept: sql(`SELECT gone_at IS NULL FROM am_drafts WHERE draft_id = '${D.sales}'`),
+        run: sql("SELECT status || '|' || COALESCE(error, '') FROM am_link_runs WHERE account_id = 1 ORDER BY id DESC LIMIT 1") };
+      mcp('draft_pages=0&draft_fail_page=0');
+      read();
+      check('AM-B: a read that came back in part keeps every draft (the pass says "read only in part"); the next whole read marks the dropped one gone (refusal)',
+        partial.kept === 't' && /read only in part/.test(partial.run) && sql(`SELECT gone_at IS NOT NULL FROM am_drafts WHERE draft_id = '${D.sales}'`) === 't', JSON.stringify(partial));
+      mcp('draft_drop=0');
+      read();
+      // 13b. A draft Ads Manager no longer has (published or discarded there) is never made a second time here (refusal).
+      const readySpec = (await call('GET', `/api/drafts/${D.ready}/spec?again=1`)).body.spec;
+      mcp(`draft_drop=${D.ready},120252756936460002,120252756936460003,120252756936460004`);
+      read();
+      const buildsBefore = sql('SELECT count(*) FROM campaign_builds');
+      const goneTry = { spec: await call('GET', `/api/drafts/${D.ready}/spec?again=1`),
+        create: await call('POST', '/api/builds', { ...readySpec, draft_id: D.ready, again: true, client_key: `qa-gone-${Date.now()}` }) };
+      await page.goto(`${BASE}/new-campaign.html?draft=${D.ready}&again=1`);
+      await page.waitForSelector('#dr-note');
+      const goneNote = await page.textContent('#dr-note');
+      await openDrafts();
+      const goneCard = await card(D.ready);
+      const goneAgain = await page.$(`#draft-${D.ready} [data-dr-again]`);
+      check('AM-B: a finished draft Ads Manager no longer has can\'t be made again (409 "no longer has", nothing built, the builder says so); its card keeps what it held and offers no "Make another" (refusal)',
+        goneTry.spec.status === 409 && /no longer has this draft/.test(goneTry.spec.body.error) && goneTry.create.status === 409 && /no longer has this draft/.test(goneTry.create.body.error)
+        && sql('SELECT count(*) FROM campaign_builds') === buildsBefore && /no longer has this draft/.test(goneNote)
+        && /Gone from Ads Manager/.test(goneCard) && /Finished in the console/.test(goneCard) && /1 ad set · .* · 2 ads/.test(goneCard)
+        && !/What's missing|No ad set yet|Ready to create/.test(goneCard) && !goneAgain,
+        JSON.stringify({ spec: goneTry.spec.status, create: goneTry.create, goneNote: goneNote.slice(0, 120), goneCard: goneCard.slice(0, 300) }));
+      mcp('draft_drop=0');
+      read();
+      // 14. Today's Upkeep line, and New ad set filled in from a new ad set staged in the live campaign.
+      await page.goto(`${BASE}/home.html`);
+      await page.waitForSelector('#dr-today');
+      const today = await page.textContent('#dr-today');
+      await page.goto(`${BASE}/new-adset.html?draft=${D.aset}`);
+      await page.waitForSelector('#dr-note');
+      await page.waitForFunction(() => document.getElementById('name').value !== '');
+      const aset = await page.evaluate(() => ({ name: document.getElementById('name').value, campaign: document.getElementById('campaign').value,
+        template: document.getElementById('template').value, ages: [document.getElementById('age_min').value, document.getElementById('age_max').value] }));
+      check('AM-B: Today says "N drafts in Ads Manager: Finish them here", and New ad set fills in from a staged ad set (its campaign, name, ages, from scratch)',
+        /\d+ drafts in Ads Manager: Finish them here/.test(today) && aset.name === 'SoCal owners - Orange County' && aset.campaign === CAMP && aset.template === ''
+        && aset.ages.join('-') === '30-60', JSON.stringify({ today, aset }));
+      // 14b. Create (off) → New ad says the ad set was made and that the draft is still in Ads Manager.
+      await page.waitForFunction(() => document.querySelectorAll('#pl-list li').length > 0, null, { timeout: 15000 }).catch(() => {});
+      await page.click('#create');
+      await page.waitForSelector('dialog.confirm #cd-ok', { timeout: 15000 });
+      await Promise.all([page.waitForURL('**/new-ad.html?adset=**'), page.click('dialog.confirm #cd-ok')]);
+      await page.waitForSelector('#dr-left', { timeout: 15000 }).catch(() => {});
+      const asetLeft = { note: (await page.textContent('#dr-left').catch(() => '')) || '', made: (await page.textContent('#made-note').catch(() => '')) || '',
+        link: await page.$eval('#dr-left a', (a) => [a.target, a.getAttribute('href')]).catch(() => []), url: page.url(),
+        finished: sql(`SELECT COALESCE(finished_entity, '') FROM am_drafts WHERE draft_id = '${D.aset}'`) };
+      check('AM-B: after New ad set creates the draft\'s ad set (off), New ad says the draft “SoCal owners - Orange County” is still in Ads Manager with Open in Ads Manager, said once',
+        /created, switched off/.test(asetLeft.made) && /“SoCal owners - Orange County” is still in Ads Manager: discard it there/.test(asetLeft.note)
+        && asetLeft.link[0] === '_blank' && /^https:\/\/adsmanager\.facebook\.com\//.test(asetLeft.link[1] || '') && !/draft_left|made=/.test(asetLeft.url)
+        && /^adset:\d+$/.test(asetLeft.finished), JSON.stringify(asetLeft));
+      // 15. The Mac away: the drafts' line says since when.
+      py(`import time, settings_store
+settings_store.set('bridge_last_seen', str(time.time() - 7200))`);
+      sql("UPDATE am_link_runs SET created_at = created_at - interval '2 hours' WHERE account_id = 1; UPDATE am_snapshots SET fetched_at = fetched_at - interval '2 hours' WHERE account_id = 1");
+      await openDrafts();
+      const awayLine = (await page.textContent('#dr-panel .am-src')).trim();
+      py(`import time, settings_store
+settings_store.set('bridge_last_seen', str(time.time()))`);
+      check('AM-B: when the Mac has been away the drafts say "Your Mac has been away since …; this is from then."', /^Your Mac has been away since .+; this is from then\.$/.test(awayLine), awayLine);
+      // 16. Phones: cards, 44px actions, nothing past the edge; the builder's note wraps.
+      for (const w of [390, 320]) {
+        const pctx = await browser.newContext({ viewport: { width: w, height: 800 }, isMobile: true, hasTouch: true, storageState: await page.context().storageState() });
+        const pp = await pctx.newPage();
+        pp.on('pageerror', (e) => errors.push(`drafts ${w}: ${e.message}`));
+        await openDrafts(pp);
+        const fit = await pp.evaluate(() => ({ sideways: document.documentElement.scrollWidth - innerWidth,
+          btns: [...document.querySelectorAll('#dr-panel .btn')].filter((b) => b.offsetParent).map((b) => Math.round(b.getBoundingClientRect().height)),
+          right: Math.max(...[...document.querySelectorAll('#dr-panel *')].map((e) => e.getBoundingClientRect().right)),
+          taps: [...document.querySelectorAll('#dr-panel summary, #dr-panel .link-btn')].filter((b) => b.offsetParent).map((b) => Math.round(b.getBoundingClientRect().height)) }));
+        const small = (await pp.evaluate(guards.smallTargets)).filter((x) => /dr-|draft/.test(JSON.stringify(x)));
+        await pp.goto(`${BASE}/ads.html?level=campaign`);
+        await pp.waitForSelector('#dr-all');
+        fit.taps.push(...await pp.$$eval('#dr-panel summary, #dr-panel .link-btn', (els) => els.filter((b) => b.offsetParent).map((b) => Math.round(b.getBoundingClientRect().height))));
+        await pp.screenshot({ path: `${OUT}/drafts-phone-${w}.png`, fullPage: true });
+        await pp.goto(`${BASE}/new-campaign.html?draft=${D.real}`);
+        await pp.waitForSelector('#dr-note');
+        const noteFit = await pp.evaluate(() => ({ sideways: document.documentElement.scrollWidth - innerWidth, right: document.getElementById('dr-note').getBoundingClientRect().right }));
+        check(`AM-B: on a ${w}px phone the drafts fit (no sideways scroll), their buttons, "What else it sets" and See all are 44px and the builder's note wraps`,
+          fit.sideways <= 0 && fit.right <= w + 0.5 && fit.btns.length > 0 && fit.btns.every((h) => h >= 44) && fit.taps.length >= 2 && fit.taps.every((h) => h >= 44) && small.length === 0 && noteFit.sideways <= 0 && noteFit.right <= w + 0.5,
+          JSON.stringify({ fit, small: small.slice(0, 3), noteFit }));
+        await pctx.close();
+      }
+      // 16b. A teammate sees no drafts anywhere: no panel or Drafts chip on Ads → Campaigns (not even ?view=drafts), no Today line.
+      py(`import db
+from werkzeug.security import generate_password_hash as h
+db.execute("INSERT INTO users (email, name, password_hash, role, account_id) VALUES (%s, %s, %s, 'member', 1) ON CONFLICT (email) DO UPDATE SET is_active = TRUE, password_hash = EXCLUDED.password_hash, role = 'member', account_id = 1, must_change_password = FALSE", ('qa-amb-mate@example.com', 'QA AM-B mate', h('amb-pass-12345')))
+db.execute("INSERT INTO campaign_members (campaign_id, user_id, account_id) SELECT '${CAMP}', id, 1 FROM users WHERE email = 'qa-amb-mate@example.com' ON CONFLICT DO NOTHING")`);
+      const drMate = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+      const dm = await drMate.newPage();
+      dm.on('pageerror', (e) => errors.push(`drafts mate: ${e.message}`));
+      await dm.goto(BASE + '/login.html');
+      await dm.fill('#email', 'qa-amb-mate@example.com'); await dm.fill('#password', 'amb-pass-12345');
+      await Promise.all([dm.waitForURL('**/home.html**'), dm.click('button[type=submit]')]);
+      await dm.waitForLoadState('networkidle');
+      const mateSees = { today: await dm.$('#dr-today') };
+      for (const q of ['level=campaign', 'level=campaign&view=drafts']) {
+        await dm.goto(`${BASE}/ads.html?${q}`);
+        await dm.waitForSelector('#cr-all .cr-toolbar, #cr-all .empty');
+        await dm.waitForLoadState('networkidle');
+        mateSees[q] = await dm.evaluate(() => [Boolean(document.getElementById('dr-panel')), Boolean(document.querySelector('.view-chip[data-view="drafts"]'))]);
+      }
+      await drMate.close();
+      py(`import db;db.execute("DELETE FROM campaign_members WHERE user_id = (SELECT id FROM users WHERE email = 'qa-amb-mate@example.com')");db.execute("UPDATE users SET is_active = FALSE WHERE email = 'qa-amb-mate@example.com'")`);
+      check('AM-B: a teammate sees no drafts: no panel or Drafts chip on Ads → Campaigns (also with ?view=drafts) and no Today line',
+        !mateSees.today && JSON.stringify([mateSees['level=campaign'], mateSees['level=campaign&view=drafts']]) === '[[false,false],[false,false]]', JSON.stringify({ ...mateSees, today: Boolean(mateSees.today) }));
+      // 17. No ad-blocker words in the drafts' markup (dr- prefix, drafts.js).
+      await openDrafts();
+      const drBlocked = await page.evaluate(() => [...document.querySelectorAll('#dr-panel [class], #dr-panel [id]')].filter((e) => /(^|\s)(ad-|ads-|adset|advert|sponsor|banner|promo)/i.test(`${e.className} ${e.id}`)).length
+        + [...document.scripts].filter((x) => x.src && /\/(ad|ads|advert|banner|promo)[-_.]/.test(new URL(x.src).pathname)).length);
+      check('AM-B: no class, id or script name in the drafts starts with an ad-blocker word', drBlocked === 0, String(drBlocked));
+      check('AM-B: no MCP write tool was called anywhere in the drafts flows', fakeGet('/fake/_mcp_hits').write_calls === 0);
+      // The refusals above log their 400 (Publish's typed budget) / 404 / 409 on purpose.
+      for (let i = errors.length - 1; i >= drSeen; i--) if (/status of (400|404|409)/.test(errors[i])) errors.splice(i, 1);
+      await openLink();  // back to Settings → Ads Manager link for Disconnect
+    }
     // 12. Disconnect: the next plan says so, the Mac deletes its login, the page says "Not connected".
     await page.click('#am-disconnect');
     await page.waitForSelector('dialog.confirm #cd-ok');

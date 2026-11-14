@@ -1312,7 +1312,8 @@ def mail_sent():
 # AM-A: the stand-in for Meta's Ads MCP server (the Mac's link client) shares this process and its account.
 import fake_mcp  # noqa: E402
 
-fake_mcp.attach(app, {"ACCOUNT": ACCOUNT, "OTHER_ACCOUNTS": OTHER_ACCOUNTS, "CAMPAIGN": CAMPAIGN, "ADSET": ADSET, "REAL_AD_IDS": REAL_AD_IDS})
+fake_mcp.attach(app, {"ACCOUNT": ACCOUNT, "OTHER_ACCOUNTS": OTHER_ACCOUNTS, "CAMPAIGN": CAMPAIGN, "ADSET": ADSET, "REAL_AD_IDS": REAL_AD_IDS,
+                      "VIDEOS": VIDEOS, "PAGE": PAGE, "FORM": FORM})
 
 
 if __name__ == "__main__":

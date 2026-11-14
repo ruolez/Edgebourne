@@ -95,10 +95,12 @@ def targeting(spec, template_targeting=None):
          "targeting_automation": {"advantage_audience": 1 if spec.get("advantage") else 0}}
     if spec.get("advantage") and spec.get("suggest_min") and spec.get("suggest_max"):
         t["age_range"] = [int(spec["suggest_min"]), int(spec["suggest_max"])]
-    if spec.get("keep_hints") and template_targeting and template_targeting.get("flexible_spec"):
+    # The hints come from the ad set it starts from, or (from scratch) from an Ads Manager draft it was filled from (AM-B).
+    hints = template_targeting.get("flexible_spec") if template_targeting is not None else spec.get("flexible_spec")
+    if spec.get("keep_hints") and hints:
         t["flexible_spec"] = [{k: [{"id": str(i["id"]), "name": i.get("name")} for i in s[k]]
                                for k in ("interests", "behaviors", "work_positions") if s.get(k)}
-                              for s in template_targeting["flexible_spec"]]
+                              for s in hints]
     return t
 
 

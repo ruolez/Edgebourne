@@ -440,11 +440,15 @@ def link_push():
         db.execute("UPDATE am_link_runs SET error = COALESCE(error, %s) WHERE id = %s",
                    (f"{am_link.KIND_WORDS[kind]}: {dropped} row{'s' if dropped != 1 else ''} about ads outside this account left out", run["id"]))
     fetched = am_link.clamp_fetched(_when(body.get("fetched_at")), run["created_at"], now)
+    if kind == "drafts":  # AM-B: the drafts themselves go to am_drafts; the snapshot keeps the read's time and count
+        import am_drafts
+        import drafts_api
+        data = {"drafts": drafts_api.store(run, am_drafts.normalize(body.get("result")), data["complete"], fetched), "complete": data["complete"]}
     db.execute("""INSERT INTO am_snapshots (kind, scope, data, fetched_at, run_id, via) VALUES (%s, '', %s, %s, %s, %s)
                   ON CONFLICT (account_id, kind, scope) DO UPDATE SET data = EXCLUDED.data, fetched_at = EXCLUDED.fetched_at,
                       run_id = EXCLUDED.run_id, via = EXCLUDED.via""",
                (kind, json.dumps(data), fetched, run["id"], body["via"]))
-    kept = len(data.get("rows", [])) if "rows" in data else 1
+    kept = len(data.get("rows", [])) if "rows" in data else data["drafts"] if kind == "drafts" else 1
     db.execute("UPDATE am_link_runs SET pushed = pushed || %s WHERE id = %s", (json.dumps({kind: kept}), run["id"]))
     set_link(last_ok_at=now)
     return jsonify({"kept": kept, "kind": kind})

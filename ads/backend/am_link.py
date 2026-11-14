@@ -14,10 +14,10 @@ import words
 FAST_KINDS = ("drafts", "ad_errors")
 DAILY_KINDS = ("benchmarks", "peers", "auction_ranking", "anomalies", "trend", "dataset_quality", "advertiser_context", "screenshots")
 KINDS = FAST_KINDS + DAILY_KINDS
-# Kinds kept in am_snapshots (latest per kind and scope). Drafts get their own table in AM-B, screenshots in AM-E:
-# the plan asks only for kinds that have somewhere to go.
+# Kinds kept in am_snapshots (latest per kind and scope). Drafts have their own table (AM-B, am_drafts; the snapshot keeps
+# only the read's time and count), screenshots get theirs in AM-E: the plan asks only for kinds that have somewhere to go.
 SNAPSHOT_KINDS = ("ad_errors", "benchmarks", "peers", "auction_ranking", "anomalies", "trend", "dataset_quality", "advertiser_context")
-STORED_KINDS = SNAPSHOT_KINDS
+STORED_KINDS = ("drafts",) + SNAPSHOT_KINDS
 MODES = ("direct", "claude")
 FAST_MINUTES = {"direct": 15, "claude": 30}
 DAILY_HOUR = 6                      # account time
@@ -58,7 +58,7 @@ LIST_KEYS = {
     "trend": ("trends", "trend", "data"), "dataset_quality": ("events", "dataset_quality", "data"),
 }
 OBJECT_KINDS = {"advertiser_context": ("context", "advertiser_context")}
-NOT_STORED = {"drafts": "Drafts aren't stored yet.", "screenshots": "Meta's pictures aren't stored yet."}
+NOT_STORED = {"screenshots": "Meta's pictures aren't stored yet."}
 KIND_WORDS = {"drafts": "Drafts", "ad_errors": "Meta's error messages", "benchmarks": "benchmarks", "peers": "how you compare",
               "auction_ranking": "auction rankings", "anomalies": "unusual changes", "trend": "trends",
               "dataset_quality": "tracking quality", "advertiser_context": "business context", "screenshots": "Meta's pictures"}
@@ -159,9 +159,13 @@ def normalize(kind, raw):
     """(whitelisted data, None) or (None, why). List kinds → {"rows": [...]}; the context → one object."""
     if kind in NOT_STORED:
         return None, NOT_STORED[kind]
+    shape = "Meta's answer had an unexpected shape"
+    if kind == "drafts":  # AM-B: the rows themselves go to am_drafts (am_drafts.normalize); this is the read's summary
+        import am_drafts
+        rows = am_drafts.normalize(raw)
+        return (None, shape) if rows is None else ({"drafts": len(rows), "complete": am_drafts.is_complete(raw)}, None)
     if kind not in FIELDS:
         return None, "This isn't something the link reads."
-    shape = "Meta's answer had an unexpected shape"
     if kind in OBJECT_KINDS:
         if isinstance(raw, dict):
             inner = next((raw[k] for k in OBJECT_KINDS[kind] if isinstance(raw.get(k), dict)), raw)

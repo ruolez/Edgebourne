@@ -1371,9 +1371,21 @@ def check_new_ad():
 @bp.post("/ads/new")
 @login_required
 def create_ad():
-    ad_id, err = create_ad_from(current_user(), request.get_json(silent=True) or {})
+    data = request.get_json(silent=True) or {}
+    user = current_user()
+    draft_id = str(data.get("draft_id") or "")[:30] or None  # AM-B: filled in from an Ads Manager draft (owner and admins)
+    if draft_id:
+        import drafts_api
+        if user["role"] != "admin":
+            return api_error("Only admins finish drafts from Ads Manager", 403)
+        why = drafts_api.claim_problem(draft_id, "ad", bool(data.get("again")))
+        if why:
+            return api_error(why[0], why[1], **why[2])
+    ad_id, err = create_ad_from(user, data)
     if err:
         return api_error(err[0], err[1])
+    if draft_id:
+        drafts_api.mark_finished(draft_id, f"ad:{ad_id}")
     return jsonify({"id": ad_id}), 201
 
 

@@ -1908,3 +1908,52 @@ dialog.acp #acp-again { min-height: var(--target); }
   .am-kinds td[data-label]::before { content: attr(data-label) ": "; color: var(--ink-3); }
   .am-acts .btn { flex: 1 1 100%; }
 }
+
+/* AM-B: drafts in Ads Manager (Ads → Campaigns) and the builders' note when filled in from one. The Draft pill stays grey. */
+.dr-panel .panel-body { min-width: 0; }
+.dr-head { flex-wrap: wrap; }
+.dr-src { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; }
+.dr-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; min-width: 0; }
+.dr-item { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.4fr) minmax(0, 220px); gap: 8px 20px; padding: 14px 0;
+  border-top: 1px solid var(--line); min-width: 0; scroll-margin-top: 80px; }
+.dr-item:first-child { border-top: 0; }
+.dr-item.dr-hit { outline: 2px solid var(--signal); outline-offset: 4px; border-radius: var(--radius-s); }
+.dr-item.is-done .dr-name { color: var(--ink-2); }
+.dr-item.is-edit { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 200px); }
+.dr-main, .dr-body, .dr-acts { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.dr-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.dr-name { overflow-wrap: anywhere; font-weight: 600; }
+.dr-pill { color: var(--ink-2); }
+.dr-what, .dr-target, .dr-holds { overflow-wrap: anywhere; color: var(--ink-2); }
+.dr-k { display: block; font-size: var(--t-xs); color: var(--ink-3); font-weight: 560; }
+.dr-sec { min-width: 0; }
+.dr-missing, .dr-problems, .dr-notes { margin: 2px 0 0; padding-left: 18px; display: grid; gap: 2px; overflow-wrap: anywhere; }
+.dr-missing li::marker { color: var(--amber-ink); }
+.dr-problems li { color: var(--bad-ink); }
+.dr-ready { color: var(--signal-ink); font-weight: 560; }
+.dr-why { color: var(--ink-3); overflow-wrap: anywhere; }
+.dr-done { overflow-wrap: anywhere; }
+.dr-btns { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.dr-btns .btn { white-space: normal; text-align: center; }
+.dr-more summary { cursor: pointer; font-size: var(--t-s); color: var(--ink-3); }
+.dr-edits { width: 100%; }
+.dr-edits td { vertical-align: top; overflow-wrap: anywhere; }
+.dr-stale { display: block; font-size: var(--t-xs); color: var(--amber-ink); }
+.dr-apply-cell { text-align: right; white-space: nowrap; }
+.dr-edits th:first-child, .dr-edits td:first-child { width: 22%; }
+.dr-note { display: grid; gap: 6px; overflow-wrap: anywhere; }
+.dr-left { overflow-wrap: anywhere; }
+@media (max-width: 960px) {
+  .dr-item, .dr-item.is-edit { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .dr-btns .btn, .dr-src .btn { flex: 1 1 100%; min-height: var(--target); }
+  .dr-more summary { min-height: var(--target); line-height: var(--target); }
+  #dr-all { min-height: var(--target); }
+  .dr-edits thead { display: none; }
+  .dr-edits, .dr-edits tbody, .dr-edits tr, .dr-edits td { display: block; width: 100%; }
+  .dr-edits tr { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .dr-edits td, .dr-edits td:first-child { padding: 2px 0; border: 0; text-align: left; width: 100%; white-space: normal; }
+  .dr-edits td[data-label]::before { content: attr(data-label) ": "; color: var(--ink-3); }
+  .dr-edits .btn { width: 100%; min-height: var(--target); margin-top: 4px; }
+}

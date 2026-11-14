@@ -354,6 +354,8 @@ const RULE_UI = [
   ["numbers_off", "Our numbers differ from Ads Manager", []],
   ["stale_data", "Meta stops answering", [["hours", "for", "hours"]]],
   ["link_down", "The Ads Manager link stops reading (needs a new login, or your Mac's reads stop finishing)", [["hours", "for", "hours"]]],
+  ["draft_new", "A new draft shows up in Ads Manager (Inbox only, no message)", []],
+  ["draft_problems", "Meta has problems with a draft in Ads Manager (Inbox only, no message)", []],
   ["events_quiet", "Lead stages stop reaching Meta's dataset (two days)", []],
 ];
 

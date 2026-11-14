@@ -34,6 +34,7 @@ def create_app(run_migrations=True):
     import change_checks_api
     import concepts_api
     import desk_api
+    import drafts_api
     import entities_api
     import experiments_api
     import forms_api
@@ -56,7 +57,7 @@ def create_app(run_migrations=True):
     import versions_api
     import webhooks
 
-    for module in (accounts_api, am_link_api, alert_actions_api, ads_api, adsets_api, advice_api, alerts_api, auth, builds_api, bulk_api, change_checks_api, entities_api, concepts_api, desk_api, experiments_api, forms_api, gallery_api, home_api, inbox_api, insights_api, leads_api, numbers_api, polish, performance_api, push_api, refresh_api, reports_api, settings_api, spend_limit_api, swipes_api, team_api, tracking_api, versions_api, webhooks):
+    for module in (accounts_api, am_link_api, alert_actions_api, ads_api, adsets_api, advice_api, alerts_api, auth, builds_api, bulk_api, change_checks_api, entities_api, concepts_api, desk_api, drafts_api, experiments_api, forms_api, gallery_api, home_api, inbox_api, insights_api, leads_api, numbers_api, polish, performance_api, push_api, refresh_api, reports_api, settings_api, spend_limit_api, swipes_api, team_api, tracking_api, versions_api, webhooks):
         app.register_blueprint(module.bp)
     app.register_blueprint(desk_api.agent_bp)
     app.register_blueprint(am_link_api.agent_bp)

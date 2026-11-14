@@ -2,6 +2,8 @@
 // AS=client node qa/shots.cjs <dir>: the same as a read-only client of Edge Bourne (files named client-…), only the
 // screens a client opens; a QA client user is made for the run and switched off after it.
 // ONLY=am-link node qa/shots.cjs <dir>: only Settings → Ads Manager link (AM-A) connected, through Claude, waiting for the Mac and not connected.
+// ONLY=drafts node qa/shots.cjs <dir>: only the drafts from Ads Manager (AM-B): Ads → Campaigns with the panel, the Drafts view
+// (open, finished and staged-edit drafts) and New campaign filled in from a draft.
 // Playwright: $PLAYWRIGHT_CORE, else the first intact copy on this Mac (the render pipeline's copy lost
 // its package files on 2026-11-10; any 1.64 drives the Chromium 1248 below).
 const PW = [process.env.PLAYWRIGHT_CORE, '/Users/ruolez/Desktop/Dev/meta-ads/creatives/2026-11-07-new5/src/node_modules/playwright-core',
@@ -54,6 +56,21 @@ db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) V
         'performance.html?range=today', 'ads.html?range=today', 'ad.html?id=120252672232030312&range=7',
         ...['targets', 'alerts', 'reports-panel', 'replies', 'lead-quality', 'tracking', 'am-link', 'crm', 'ab', 'activity-panel', 'meta-app', 'auto', 'telegram', 'email', 'accounts-panel'].map((s) => `settings.html#${s}`)];
   const onlyAm = process.env.ONLY === 'am-link';
+  const onlyDrafts = process.env.ONLY === 'drafts';
+  // AM-B: the fake's drafts stored for account 1 as a link read 12 minutes ago would (kept as they are when QA left some).
+  if (!asClient) sh('docker exec -i -w /app -e WORKERS_ENABLED=0 edgebourne-ads-backend python -', `import json, urllib.request, datetime as dt, account_ctx, am_drafts, db, drafts_api
+with account_ctx.use(1):
+    raw = json.loads(urllib.request.urlopen('http://fake-meta:5001/fake/_mcp_drafts').read())
+    run = db.execute("""INSERT INTO am_link_runs (account_id, pass_hash, ad_account_id, kinds, mode, status, created_at, finished_at)
+                        VALUES (1, 'shots-am-drafts', '1025971549903293', '{drafts}', 'direct', 'done', now() - interval '12 minutes', now() - interval '12 minutes')
+                        ON CONFLICT (pass_hash) DO UPDATE SET created_at = EXCLUDED.created_at RETURNING id, created_at""", returning=True)
+    at = run['created_at']
+    n = drafts_api.store(run, am_drafts.normalize(raw), True, at)
+    db.execute("""INSERT INTO am_snapshots (kind, scope, data, fetched_at, run_id, via) VALUES ('drafts', '', %s, %s, %s, 'direct')
+                  ON CONFLICT (account_id, kind, scope) DO UPDATE SET data = EXCLUDED.data, fetched_at = EXCLUDED.fetched_at, run_id = EXCLUDED.run_id""",
+               (json.dumps({'drafts': n, 'complete': True}), at, run['id']))
+`);
+  const DRAFT_PAGES = ['ads.html?level=campaign', 'ads.html?level=campaign&view=drafts', 'new-campaign.html?draft=120252756936450312', 'new-adset.html?draft=120252756936460030'];
   // AM-A: the link in three states for its shots, with reads from 12 minutes ago (put back as it was afterwards).
   const psql = (q) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "${q}"`).trim();
   const amWas = psql('SELECT row_to_json(l) FROM am_link l');
@@ -64,7 +81,7 @@ db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) V
   psql(`DELETE FROM am_link_runs WHERE pass_hash LIKE 'shots-am-%'; INSERT INTO am_link_runs (account_id, pass_hash, ad_account_id, kinds, mode, status, pushed, created_at, finished_at)
     VALUES (1, 'shots-am-1', '1025971549903293', '{ad_errors,benchmarks}', 'direct', 'done', jsonb_build_object('ad_errors', 1, 'benchmarks', 2), now() - interval '12 minutes', now() - interval '12 minutes')`);
   const amKinds = ['ad_errors', 'benchmarks', 'peers', 'auction_ranking', 'anomalies', 'trend', 'dataset_quality', 'advertiser_context'];
-  const amSnapsBefore = psql("SELECT count(*) FROM am_snapshots WHERE account_id = 1 AND scope = ''");
+  const amSnapsBefore = psql("SELECT count(*) FROM am_snapshots WHERE account_id = 1 AND scope = '' AND kind <> 'drafts'");
   if (amSnapsBefore === '0') psql(`INSERT INTO am_snapshots (account_id, kind, scope, data, fetched_at, via) SELECT 1, k, '', jsonb_build_object('rows', jsonb_build_array()), now() - interval '12 minutes', 'direct' FROM unnest('{${amKinds.join(',')}}'::text[]) k`);
   const fullAccess = (on) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "UPDATE user_sessions SET full_until = ${on ? "now() + interval '8 hours'" : 'NULL'} WHERE user_id = 1"`);
   for (const scheme of ['light', 'dark']) {
@@ -88,15 +105,16 @@ db.execute("""INSERT INTO users (email, name, password_hash, role, account_id) V
         await page.waitForSelector('#stages');
         await page.screenshot({ path: `${OUT}/${tag0}lead-detail-${tag}-${scheme}.png`, fullPage: true });
       }
-      for (const p of (asClient ? CLIENT_PAGES : onlyAm ? [] : OWNER_PAGES)) {
+      for (const p of (asClient ? CLIENT_PAGES : onlyAm ? [] : onlyDrafts ? DRAFT_PAGES : [...OWNER_PAGES, ...DRAFT_PAGES.slice(1)])) {
         await page.goto(p.includes('.html') ? `${BASE}/${p}` : `${BASE}/${p}.html`);
         if (p.includes('#')) await page.reload();
         await page.waitForTimeout(600);
         await page.waitForTimeout(p.includes('#') ? 900 : 0);
-        const variant = (p.match(/(?:#tab=|#|level=|view=|box=|due=|range=)([\w-]+)/) || ['', ''])[1];
+        const variant = [...p.matchAll(/(?:#tab=|#|level=|view=|box=|due=|range=|draft=)([\w-]+)/g)].map((m) => m[1]).join('-');
         await page.screenshot({ path: `${OUT}/${tag0}${p.split('.')[0]}${variant ? '-' + variant : ''}-${tag}-${scheme}.png`, fullPage: true });
       }
       if (asClient) { await ctx.close(); continue; }
+      if (onlyDrafts) { await ctx.close(); continue; }
       for (const state of ['connected', 'fallback', 'connecting', 'not_connected']) {
         amState(state);
         await page.goto(`${BASE}/settings.html#am-link`);

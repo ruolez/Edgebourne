@@ -8,7 +8,10 @@
   told truthfully, an inputSchema per link tool; answered as SSE), tools/call for the link's read tools with data shaped
   like the fake Graph account. Write tools answer isError and are counted: QA asserts that count stays 0.
 - Controls: /fake/_mcp?refuse_dcr=1|refuse_client=1|deny=1|expire=1|expires_in=<s>|readonly_lie=<tool>|shape=<kind>|
-  no_access=<act id>|reset=1 and /fake/_mcp_hits."""
+  no_access=<act id>|reset=1 and /fake/_mcp_hits.
+- AM-B drafts (ads_get_ad_entities, object_state "draft", only for the console's own ad account): drafts=none,
+  draft_drop=<id,…>, draft_add=<json draft or list> (draft_add= empties), draft_pages=<n> (split over n cursors, a campaign
+  with its subtree counts as one), draft_fail_page=1 (every page after the first fails)."""
 import ast
 import base64
 import hashlib
@@ -193,29 +196,98 @@ def accounts():
     return [r for r in rows if r["id"] != hidden and r["id"][4:] != hidden]
 
 
+def _d(oid, kind, values, parent=None, action="add", at=0, errors=None, publish_error=None, source="ads_manager", validation="VALIDATED"):
+    return {"ad_object_id": oid, "ad_object_type": kind, "parent_ad_object_id": parent, "action": action, "status": "EDITING",
+            "validation_status": validation, "source": source, "time_updated": 1794594897 + at,
+            "values": {k: (v if isinstance(v, dict) and ({"new", "old"} & set(v)) else {"new": v}) for k, v in values.items()},
+            "active_errors": errors or [], "publish_error": publish_error}
+
+
+RIVERSIDE = {"geo_locations": {"cities": [{"key": "2421696", "name": "Riverside, CA", "radius": 25, "distance_unit": "mile"}],
+                               "location_types": ["home", "recent"]},
+             "age_min": 25, "age_max": 65, "targeting_automation": {"advantage_audience": 1}}
+ORANGE = {"geo_locations": {"cities": [{"key": "2420605", "name": "Irvine, CA", "radius": 20, "distance_unit": "mile"}]},
+          "age_min": 30, "age_max": 60, "targeting_automation": {"advantage_audience": 0}}
+DRAFT_IMAGE = "5f0c1a2b3c4d5e6f708192a3b4c5d6e7"  # an image hash the drafts use (not uploaded through the fake's library)
+
+
+def _image_ad(oid, parent, name, title, body, at, page=True):
+    link = {"message": body, "name": title, "image_hash": DATA.get("IMAGE_HASH") or DRAFT_IMAGE,
+            "call_to_action": {"type": "SIGN_UP", "value": {"lead_gen_form_id": DATA["FORM"]}}}
+    return _d(oid, "ad", {"name": name, "creative": {"object_story_spec": {**({"page_id": DATA["PAGE"]} if page else {}), "link_data": link}}},
+              parent=parent, at=at)
+
+
 def drafts():
-    """Shaped like the real 2026-11-13 answer (ad_drafts, values.{field}.new, active_errors, publish_error)."""
+    """AM-B: the drafts Eugene (or Claude on his Mac) staged in Ads Manager, shaped like the real 2026-11-13 answer
+    (ad_drafts, values.{field}.new/old, active_errors, publish_error). Only the console's own ad account has them."""
     c, s = DATA["CAMPAIGN"], DATA["ADSET"]
-    t = 1794594897
-    return [
+    video = next(iter(DATA["VIDEOS"]))
+    page = {"page_id": DATA["PAGE"]}
+    base = [
+        # 1. The real draft, verbatim, with an ad set Claude staged under it and no ads yet.
         {"ad_object_id": "120252756936450312", "ad_object_type": "campaign", "parent_ad_object_id": None, "action": "add", "status": "EDITING",
-         "validation_status": "VALIDATED", "source": "mcp_campaign_creation", "time_updated": t,
+         "validation_status": "VALIDATED", "source": "mcp_campaign_creation", "time_updated": 1794594897,
          "values": {"bid_strategy": {"new": "LOWEST_COST_WITHOUT_CAP"}, "buying_type": {"new": "AUCTION"}, "daily_budget": {"new": 2000},
                     "is_odax_campaign_group": {"new": True}, "name": {"new": "Edge Bourne - Dashboards with AI - Leads"},
                     "objective": {"new": "OUTCOME_LEADS"}, "special_ad_categories": {"new": []}, "status": {"new": "ACTIVE"}},
          "active_errors": [], "publish_error": None},
-        {"ad_object_id": "120252756936450313", "ad_object_type": "adset", "parent_ad_object_id": "120252756936450312", "action": "add",
-         "status": "EDITING", "validation_status": "ERROR", "source": "ads_manager", "time_updated": t + 60,
-         "values": {"name": {"new": "Dashboards - SoCal owners"}, "optimization_goal": {"new": "LEAD_GENERATION"}},
-         "active_errors": [{"error_summary": "Choose a Page", "error_message": "<b>Pick</b> the Facebook Page this ad set promotes."}],
-         "publish_error": None},
-        {"ad_object_id": c["id"], "ad_object_type": "campaign", "parent_ad_object_id": None, "action": "update", "status": "EDITING",
-         "validation_status": "VALIDATED", "source": "ads_manager", "time_updated": t + 120,
-         "values": {"daily_budget": {"old": 2000, "new": 2400}}, "active_errors": [], "publish_error": None},
-        {"ad_object_id": s["id"], "ad_object_type": "adset", "parent_ad_object_id": c["id"], "action": "update", "status": "EDITING",
-         "validation_status": "VALIDATED", "source": "ads_manager", "time_updated": t + 180,
-         "values": {"name": {"old": s["name"], "new": s["name"] + " (wider)"}}, "active_errors": [], "publish_error": None},
+        _d("120252756936450313", "adset", {"name": "Dashboards - Riverside owners", "optimization_goal": "LEAD_GENERATION",
+                                           "billing_event": "IMPRESSIONS", "destination_type": "ON_AD", "promoted_object": page,
+                                           "targeting": RIVERSIDE}, parent="120252756936450312", at=60, source="mcp_campaign_creation"),
+        # 2. Complete: a campaign, its ad set and two ads (a picture and a video) with the lead form.
+        _d("120252756936460001", "campaign", {"name": "Edge Bourne - Order portal - Leads", "objective": "OUTCOME_LEADS", "buying_type": "AUCTION",
+                                              "daily_budget": 2000, "bid_strategy": "LOWEST_COST_WITHOUT_CAP", "special_ad_categories": [],
+                                              "status": "ACTIVE"}, at=300),
+        _d("120252756936460002", "adset", {"name": "Order portal - Riverside", "optimization_goal": "LEAD_GENERATION", "billing_event": "IMPRESSIONS",
+                                           "destination_type": "ON_AD", "promoted_object": page, "targeting": RIVERSIDE},
+           parent="120252756936460001", at=310),
+        _image_ad("120252756936460003", "120252756936460002", "Portal 1 - Orders at 2 AM", "Orders that come in on their own",
+                  "Customers order any time, even at 2 AM.\nFree intro call for Southern California businesses.", 320),
+        _d("120252756936460004", "ad", {"name": "Portal 2 - Email orders", "creative": {"object_story_spec": {"page_id": DATA["PAGE"], "video_data": {
+            "message": "Email orders get read in automatically.\nFree intro call for Southern California businesses.",
+            "title": "No more retyping orders", "video_id": video,
+            "call_to_action": {"type": "SIGN_UP", "value": {"lead_gen_form_id": DATA["FORM"]}}}}}}, parent="120252756936460002", at=330),
+        # 3. A staged edit of the live campaign: budget $20 → $25 and a new name.
+        _d(c["id"], "campaign", {"daily_budget": {"old": 2000, "new": 2500}, "name": {"old": c["name"], "new": c["name"] + " (Nov)"}},
+           action="update", at=400),
+        # 4. Meta has problems with it: no Facebook Page anywhere (and a name with markup in it).
+        _d("120252756936460010", "campaign", {"name": 'Weekly report <img src=x onerror="window.__drXss=1"> - Leads', "objective": "OUTCOME_LEADS",
+                                              "buying_type": "AUCTION", "daily_budget": 1500, "bid_strategy": "LOWEST_COST_WITHOUT_CAP"}, at=500,
+           errors=[{"message": "Choose a Facebook Page for this ad."}], publish_error={"message": "Couldn't publish: the ad set has no Page."},
+           validation="ERROR"),
+        _d("120252756936460011", "adset", {"name": "Weekly report - SoCal", "destination_type": "ON_AD", "targeting": RIVERSIDE},
+           parent="120252756936460010", at=510),
+        _image_ad("120252756936460012", "120252756936460011", "Weekly 1", "Your Monday report, already done", "No more Sunday nights.", 520, page=False),
+        # 5. A Sales campaign: the console builds lead campaigns only.
+        _d("120252756936460020", "campaign", {"name": "Edge Bourne - Store - Sales", "objective": "OUTCOME_SALES", "buying_type": "AUCTION",
+                                              "daily_budget": 3000, "bid_strategy": "LOWEST_COST_WITHOUT_CAP"}, at=600),
+        # 6. A new ad set staged under the live campaign.
+        _d("120252756936460030", "adset", {"name": "SoCal owners - Orange County", "optimization_goal": "LEAD_GENERATION",
+                                           "billing_event": "IMPRESSIONS", "destination_type": "ON_AD", "promoted_object": page, "targeting": ORANGE},
+           parent=c["id"], at=700),
+        # 7. A staged edit of the live ad set's name (the console doesn't apply names yet: Change it in Ads Manager).
+        _d(s["id"], "adset", {"name": {"old": s["name"], "new": s["name"] + " (wider)"}}, parent=c["id"], action="update", at=800),
     ]
+    if flag("drafts") == "none":
+        return []
+    dropped = set((flag("draft_drop") or "").split(","))
+    return [d for d in base if d["ad_object_id"] not in dropped] + list(STATE.get("draft_add") or [])
+
+
+def draft_units(items):
+    """Meta's limit counts a campaign with everything under it as one: the answer is paged by those units."""
+    ids = {d["ad_object_id"]: d for d in items}
+
+    def top(d):
+        seen = 0
+        while d.get("parent_ad_object_id") in ids and d.get("action") == "add" and seen < 5:
+            d, seen = ids[d["parent_ad_object_id"]], seen + 1
+        return d["ad_object_id"]
+    units = {}
+    for d in items:
+        units.setdefault(top(d), []).append(d)
+    return list(units.values())
 
 
 def benchmarks():
@@ -265,12 +337,18 @@ def call(name, args):
     if name == "ads_get_ad_accounts":
         data = {"data": accounts(), "user": USER}
     elif name == "ads_get_ad_entities":
-        items = drafts() if args.get("object_state") == "draft" else []
+        mine = ad in (act(DATA["ACCOUNT"]), DATA["ACCOUNT"])
+        units = draft_units(drafts()) if args.get("object_state") == "draft" and mine else []
         limit = max(1, int(args.get("limit") or 25))
+        if flag("draft_pages"):
+            limit = max(1, -(-len(units) // int(flag("draft_pages"))))
         start = int(args.get("after") or 0)
-        page = items[start:start + limit]
+        if start and flag("draft_fail_page"):
+            return {"isError": True, "content": [{"type": "text", "text": "Please retry your request later."}]}
+        page = [d for u in units[start:start + limit] for d in u]
+        more = start + limit < len(units)
         data = {"ad_drafts": page,
-                "paging": {"cursors": {"after": str(start + limit)}} if start + limit < len(items) else {},
+                "paging": {"cursors": {"after": str(start + limit)}, "next": "https://mcp.fake/next"} if more else {},
                 # The real server asks clients to run these; the link must never do it.
                 "next_actions": {"actions": [{"step": 1, "tool": "ads_activate_entity", "strength": "required", "read_only": False,
                                               "requires_user_confirmation": False, "suggested_args": {"entity_id": "120252756936450312"}}]}}
@@ -350,7 +428,13 @@ def mcp():
 def controls():
     if request.args.get("reset"):
         reset()
-    for k in ("refuse_dcr", "refuse_client", "deny", "expire", "expires_in", "readonly_lie", "shape", "no_access", "ad_error"):
+    if request.args.get("draft_add"):  # AM-B: one more draft (or a list), as Meta would list it
+        add = json.loads(request.args["draft_add"])
+        STATE.setdefault("draft_add", []).extend(add if isinstance(add, list) else [add])
+    if request.args.get("draft_add") == "":
+        STATE["draft_add"] = []
+    for k in ("refuse_dcr", "refuse_client", "deny", "expire", "expires_in", "readonly_lie", "shape", "no_access", "ad_error",
+              "drafts", "draft_drop", "draft_pages", "draft_fail_page"):
         if k in request.args:
             v = request.args[k]
             if v in ("", "0"):
@@ -358,6 +442,12 @@ def controls():
             else:
                 STATE["flags"][k] = v
     return jsonify({"flags": STATE["flags"], "clients": len(STATE["clients"])})
+
+
+@bp.get("/fake/_mcp_drafts")
+def drafts_now():
+    """The drafts as the link would read them (QA screenshots seed the console with these; no OAuth here, dev only)."""
+    return jsonify({"ad_drafts": drafts(), "complete": True})
 
 
 @bp.get("/fake/_mcp_hits")

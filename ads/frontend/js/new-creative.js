@@ -3,6 +3,7 @@ import { boot, cancelLink, entityLink, esc, icon, toast, guardLeaving, markSaved
 import { CTA_LABELS } from "./format.js";
 import { mountUploader, waitReady } from "./uploader.js";
 import { builder } from "./builder.js";
+import { draftLeftFor, draftLeftHtml, draftNoteHtml, draftParam, loadDraftSpec } from "./drafts.js";
 
 const $ = (id) => document.getElementById(id);
 let options;
@@ -10,6 +11,9 @@ let media = null; // { kind, hash | video_id, url, name, ready }
 let stopWaiting = () => {};
 let steps = null;
 const changed = () => steps && steps.soon();
+// AM-B: filled in from an Ads Manager draft of a new ad in a running ad set (?draft=<id>, admins).
+const draftP = draftParam();
+let draft = null;
 
 // What New ad would send; the server checks it (POST /api/ads/new/check) before anything goes to Meta.
 function payload() {
@@ -17,6 +21,7 @@ function payload() {
     adset_id: $("aset-pick").value, template_ad_id: $("template").value, name: $("name").value.trim(),
     body: $("body").value, title: $("title").value, cta_type: $("cta").value, form_id: $("form").value || null,
     media: !media ? null : media.kind === "same" ? { kind: "same" } : { kind: media.kind, hash: media.hash, video_id: media.video_id },
+    ...(draft && !draft.error ? { draft_id: draft.draft.id, again: Boolean(draftP.again) } : {}),
   };
 }
 
@@ -175,8 +180,12 @@ else if (me) {
     // Arrived from New ad set: say what was just made, with a link to it.
     const made = wantSet && q0.get("made") === "adset" && options.adsets.find((x) => x.id === wantSet);
     if (made) document.querySelector("#new-form").insertAdjacentHTML("afterbegin", `<p class="note ok flush" id="made-note">Ad set ${entityLink("adset", made.id, made.name)} created, switched off. Add its first ad below.</p>`);
+    // Made from an Ads Manager draft (AM-B): that draft is still there for Eugene to discard.
+    if (made && q0.get("draft_left") && me.role === "admin") {
+      draftLeftFor(q0.get("draft_left")).then((d) => { if (d && !$("dr-left")) $("made-note")?.insertAdjacentHTML("afterend", draftLeftHtml(d)); });
+    }
     // Said once: a reload or coming back with Back doesn't announce it again.
-    if (q0.has("made")) { const u = new URL(location.href); u.searchParams.delete("made"); history.replaceState(history.state, "", u); }
+    if (q0.has("made")) { const u = new URL(location.href); u.searchParams.delete("made"); u.searchParams.delete("draft_left"); history.replaceState(history.state, "", u); }
     counter($("body"), $("body-count"), 125);
     steps = builder({ form: $("new-form"), nav: $("stepper"), check, summary, onCheck: ready,
       steps: [{ id: "where", name: "Where" }, { id: "media", name: "Image or video" }, { id: "words", name: "Words" }] });
@@ -225,6 +234,26 @@ else if (me) {
         toast("Filled in from Claude's suggestion. Edit anything, then create.");
       } catch (err) { toast(err.message, "bad"); }
     }
+    if (draftP && me.role === "admin") {
+      draft = await loadDraftSpec(draftP);
+      $("new-form").insertAdjacentHTML("afterbegin", draftNoteHtml(draft));
+      if (!draft.error && draft.page === "new-ad") {
+        const p = draft.spec;
+        if (offered(p.adset_id)) { $("aset-pick").value = p.adset_id; $("aset-pick").dataset.touched = "1"; } else toast(goneSet, "bad");
+        $("template").value = "";
+        ["body", "title", "name"].forEach((k) => { $(k).value = p[k] || ""; $(k).dataset.fromTemplate = "0"; $(k).dispatchEvent(new Event("input")); });
+        if (p.cta_type) $("cta").value = p.cta_type;
+        await loadForms();
+        if (p.form_id && [...$("form").options].some((o) => o.value === p.form_id)) $("form").value = p.form_id;
+        if (p.media && p.media.kind !== "none") {
+          media = { ...p.media, name: p.media.kind === "video" ? "Video from the draft" : "Picture from the draft", ready: p.media.kind === "image" };
+          showChosen(); pollVideo();
+          document.querySelectorAll("#media-tabs button").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.tab === "library")));
+          $("tab-upload").hidden = true; $("tab-same").hidden = true; $("tab-library").hidden = false;
+          loadLibrary(p.media);
+        } else pickTab("upload");
+      }
+    }
     changed();
 
     $("new-form").addEventListener("submit", async (e) => {
@@ -240,7 +269,8 @@ else if (me) {
       try {
         const r = await api("/api/ads/new", { method: "POST", body: payload() });
         markSaved();
-        location.href = `/ad.html?id=${encodeURIComponent(r.id)}&created=1`;
+        const fromDraft = draft && !draft.error ? `&draft_left=${encodeURIComponent(draft.draft.id)}` : "";
+        location.href = `/ad.html?id=${encodeURIComponent(r.id)}&created=1${fromDraft}`;
       } catch (err) { toast(err.message, "bad"); btn.disabled = false; btn.textContent = "Create ad (off)"; }
     });
   }

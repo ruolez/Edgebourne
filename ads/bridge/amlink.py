@@ -672,21 +672,32 @@ class Session:
 
 
 def read_kind(session, kind, ad_account_id, scope=None):
-    """One kind's raw answer. Drafts are paged (at most DRAFT_PAGES pages) and joined into one {"ad_drafts": [...]}."""
+    """One kind's raw answer. Drafts are paged (at most DRAFT_PAGES pages) and joined into one {"ad_drafts": [...],
+    "complete": bool}: only a read that reached the last page is complete (the console then marks drafts it no longer
+    lists as gone). A later page that fails sends what came, incomplete, with the reason; a first page that fails, nothing."""
     tool = LINK_TOOLS[kind]
     if kind != "drafts":
         return result_payload(session.call_tool(tool, tool_args(kind, ad_account_id, scope)))
     rows, after = [], None
-    for _ in range(DRAFT_PAGES):
-        payload = result_payload(session.call_tool(tool, tool_args(kind, ad_account_id, after=after)))
+    for page in range(DRAFT_PAGES):
+        try:
+            payload = result_payload(session.call_tool(tool, tool_args(kind, ad_account_id, after=after)))
+        except LinkError as exc:
+            if exc.state or not page:
+                raise
+            return {"ad_drafts": rows, "complete": False, "error": str(exc)}
+        except (urllib.error.URLError, OSError) as exc:
+            if not page:
+                raise
+            return {"ad_drafts": rows, "complete": False, "error": f"Couldn't reach Meta's server ({cut(exc, 120)})"}
         if not isinstance(payload, dict) or not isinstance(payload.get("ad_drafts"), list):
             return payload  # the console refuses a shape it doesn't know
         rows += payload["ad_drafts"]
         paging = payload.get("paging") or {}
         after = (paging.get("cursors") or {}).get("after")
         if not after or not (paging.get("next") or len(payload["ad_drafts"]) >= DRAFT_PAGE):
-            break
-    return {"ad_drafts": rows}
+            return {"ad_drafts": rows, "complete": True}
+    return {"ad_drafts": rows, "complete": False, "error": f"More than {DRAFT_PAGES} pages of drafts; the rest weren't read"}
 
 
 # ---------------------------------------------------------------- talking to the console
@@ -737,6 +748,8 @@ def run_pass(cfg, key, run, link, log=print):
         for kind in run["kinds"]:
             try:
                 result = read_kind(session, kind, run["ad_account_id"], run.get("scope"))
+                if isinstance(result, dict) and result.get("complete") is False:
+                    first = first or f"{kind}: read only in part ({result.pop('error', 'not every page came back')})"
                 _, answer = console(cfg, key, "POST", "/api/agent/link/push",
                                     {"kind": kind, "ad_account_id": f"act_{run['ad_account_id']}", "fetched_at": now_iso(), "via": "direct",
                                      "tool": LINK_TOOLS[kind], "result": result}, link_pass=run["pass"])

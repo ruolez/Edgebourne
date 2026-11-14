@@ -511,7 +511,7 @@ class ReadOnlyGuardTests(unittest.TestCase):
             "ad_account_id": {}, "object_state": {}, "limit": {}, "after": {}}})], rpc(answer))
         out = amlink.read_kind(session, "drafts", "123")
         called = [json.loads(d)["params"]["name"] for _, _, _, d in http.requests]
-        self.assertEqual((out, called), ({"ad_drafts": [{"ad_object_id": "1"}]}, ["ads_get_ad_entities"]))
+        self.assertEqual((out, called), ({"ad_drafts": [{"ad_object_id": "1"}], "complete": True}, ["ads_get_ad_entities"]))
 
     def test_drafts_follow_the_cursor_until_the_last_page(self):
         pages = {None: ([{"ad_object_id": str(i)} for i in range(25)], {"cursors": {"after": "p2"}, "next": "https://…"}),
@@ -523,7 +523,37 @@ class ReadOnlyGuardTests(unittest.TestCase):
             return rpc({"structuredContent": {"ad_drafts": rows, "paging": paging}})(method, url, headers, data)
         session, http = session_with([tool("ads_get_ad_entities", schema={"type": "object", "properties": {
             "ad_account_id": {}, "object_state": {}, "limit": {}, "after": {}}})], answer)
-        self.assertEqual((len(amlink.read_kind(session, "drafts", "123")["ad_drafts"]), len(http.requests)), (26, 2))
+        out = amlink.read_kind(session, "drafts", "123")
+        self.assertEqual((len(out["ad_drafts"]), out["complete"], len(http.requests)), (26, True, 2))
+
+    def test_a_later_page_that_fails_sends_what_came_marked_incomplete(self):
+        """AM-B: only a complete read may tell the console a draft is gone, so a cut-short read says so."""
+        first = ([{"ad_object_id": str(i)} for i in range(25)], {"cursors": {"after": "p2"}, "next": "https://…"})
+
+        def answer(method, url, headers, data):
+            if json.loads(data)["params"]["arguments"].get("after"):
+                return rpc({"isError": True, "content": [{"type": "text", "text": "Please retry"}]})(method, url, headers, data)
+            return rpc({"structuredContent": {"ad_drafts": first[0], "paging": first[1]}})(method, url, headers, data)
+        session, _ = session_with([tool("ads_get_ad_entities", schema={"type": "object", "properties": {
+            "ad_account_id": {}, "object_state": {}, "limit": {}, "after": {}}})], answer)
+        out = amlink.read_kind(session, "drafts", "123")
+        self.assertEqual((len(out["ad_drafts"]), out["complete"], out["error"]), (25, False, "Meta didn't answer `ads_get_ad_entities`: Please retry"))
+
+    def test_a_first_page_that_fails_sends_nothing(self):
+        session, _ = session_with([tool("ads_get_ad_entities", schema={"type": "object", "properties": {
+            "ad_account_id": {}, "object_state": {}, "limit": {}, "after": {}}})], rpc({"isError": True, "content": [{"type": "text", "text": "No"}]}))
+        with self.assertRaises(amlink.LinkError):
+            amlink.read_kind(session, "drafts", "123")
+
+    def test_more_pages_than_the_helper_reads_is_incomplete(self):
+        def answer(method, url, headers, data):
+            n = int(json.loads(data)["params"]["arguments"].get("after") or 0)
+            return rpc({"structuredContent": {"ad_drafts": [{"ad_object_id": str(n + i)} for i in range(25)],
+                                              "paging": {"cursors": {"after": str(n + 25)}, "next": "https://…"}}})(method, url, headers, data)
+        session, http = session_with([tool("ads_get_ad_entities", schema={"type": "object", "properties": {
+            "ad_account_id": {}, "object_state": {}, "limit": {}, "after": {}}})], answer)
+        out = amlink.read_kind(session, "drafts", "123")
+        self.assertEqual((len(out["ad_drafts"]), out["complete"], len(http.requests)), (25 * amlink.DRAFT_PAGES, False, amlink.DRAFT_PAGES))
 
     def test_a_changed_schema_is_reported_never_guessed(self):
         session, http = session_with([tool("ads_get_errors", schema={"type": "object", "properties": {"account": {}}, "required": ["account"]})])

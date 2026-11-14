@@ -5,6 +5,7 @@ import { boot, confirmDialog, emptyState, esc, icon, onRefresh, sourceNote, toas
 import { count, dayLabel, rangeSelect, rememberRange, sharedRange } from "./format.js";
 import * as UrlState from "./urlstate.js";
 import { COLUMN_SETS, LEVEL_WORDS, columnLabel, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, setBooked, listHtml, narrow, peek, tableHtml, hasTrack, trackLegend, unlistedNote, wire, vsWords, rangeFoot } from "./manager.js";
+import { draftCount, draftsHtml, loadDrafts, showTarget, wireDrafts } from "./drafts.js";
 
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = { level: "ad", view: "all", range: "7", vs: true, cols: "results", sort: "spend", dir: "desc", q: "", campaign: "", archived: false, display: "table", peek: "" };
@@ -78,13 +79,19 @@ function headerFigures() {
   return figuresHtml(m, prev, data.target_qualified_cents, { ...(camp ? { today: camp.today, ever: camp.ever } : { today: data.today_total, ever: data.ever_total }), cmp });
 }
 
+// AM-B: drafts from Ads Manager (owner and account admins), shown on Campaigns; the Drafts view shows them alone.
+let drafts = null;
+const draftsHere = () => state.level === "campaign" && me.role === "admin";
+const draftsAlone = () => draftsHere() && state.view === "drafts";
+
 function toolbar() {
   const level = rows[state.level] || [];
   const views = Object.entries(VIEWS).map(([k, [label, fn]]) => {
     const n = level.filter(fn).length;
     if (k !== "all" && k !== state.view && !n) return "";
     return `<button type="button" class="view-chip" data-view="${k}" aria-pressed="${state.view === k}">${label}<span>${n}</span></button>`;
-  }).join("");
+  }).join("") + (draftsHere() && (draftCount(drafts) || state.view === "drafts")
+    ? `<button type="button" class="view-chip" data-view="drafts" aria-pressed="${state.view === "drafts"}">Drafts<span>${draftCount(drafts)}</span></button>` : "");
   const mine = saved.map((v) => `<span class="sv"><button type="button" class="view-chip" data-saved="${v.id}" aria-pressed="${location.search.replace(/^\?/, "") === v.query}">${esc(v.name)}</button>${v.mine ? `<button type="button" class="sv-x" data-unsave="${v.id}" aria-label="Remove the view ${esc(v.name)}">×</button>` : ""}</span>`).join("");
   const camps = rows.campaign || [];
   return `<div class="cr-toolbar">
@@ -107,8 +114,18 @@ function render() {
   const canControl = me.role !== "client";
   document.querySelectorAll("#level [data-level]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.level === state.level)));
   $("cr-sub").textContent = `${count((rows.campaign || []).length)} ${(rows.campaign || []).length === 1 ? "campaign" : "campaigns"} · ${count((rows.adset || []).length)} ad sets · ${count((rows.ad || []).length)} ads · ${data.range.label}${vsWords(data, state.vs, state.campaign)}`;
+  // Drafts first: a new account's first campaign is often still a draft in Ads Manager, with nothing synced yet.
+  if (draftsAlone()) {
+    $("cr-all").innerHTML = toolbar() + draftsHtml(drafts, { alone: true });
+    $("bulk").innerHTML = "";
+    showTarget();
+    return;
+  }
   if (!data.campaigns.length) {
-    $("cr-all").innerHTML = `<section class="panel empty"><h3>No ads yet</h3><p>Once Meta is connected in Settings, your campaigns, ad sets and ads appear here.</p></section>`;
+    $("cr-all").innerHTML = (draftsHere() ? draftsHtml(drafts) : "")
+      + `<section class="panel empty"><h3>No ads yet</h3><p>Once Meta is connected in Settings, your campaigns, ad sets and ads appear here.</p></section>`;
+    $("bulk").innerHTML = "";
+    if (draftsHere()) showTarget();
     return;
   }
   const list = visibleRows();
@@ -117,7 +134,7 @@ function render() {
     : state.level === "ad" && state.display === "cards" ? cardsHtml(list)
     : narrow() ? listHtml({ rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), selected, sort: state.sort, dir: state.dir })
     : tableHtml({ level: state.level, rows: list.map((r) => (state.vs ? r : { ...r, prev: null })), cols: state.cols, sort: state.sort, dir: state.dir, selected, selectable: true, range: state.range });
-  $("cr-all").innerHTML = buildsNote() + headerFigures() + toolbar() + `<div class="cr-src" id="fig-src">${sourceNote(data.source)}</div>` + body + (table && hasTrack(list) ? trackLegend() : "")
+  $("cr-all").innerHTML = buildsNote() + (draftsHere() ? draftsHtml(drafts) : "") + headerFigures() + toolbar() + `<div class="cr-src" id="fig-src">${sourceNote(data.source)}</div>` + body + (table && hasTrack(list) ? trackLegend() : "")
     + `<p class="muted small flush cr-foot">${esc(rangeFoot(data))}${esc(unlistedNote(headerTotals().m, (rows.ad || []).filter((a) => !state.campaign || a.campaign?.id === state.campaign)))} Click a row for a quick look.</p>`;
   if (state.level === "campaign" && me.role === "admin") {
     document.querySelectorAll('#cr-all tr[data-row^="campaign:"] .c-name small').forEach((sm) => {
@@ -126,6 +143,7 @@ function render() {
       sm.insertAdjacentHTML("afterend", `<a class="campaign-add" href="${esc(withFrom(`/new-adset.html?campaign=${encodeURIComponent(id)}`, listHere()))}">+ New ad set</a>`);
     });
   }
+  if (draftsHere()) showTarget();
   const all = document.querySelector("#cr-all [data-all]");
   if (all && all.dataset.mixed) all.indeterminate = true;
   $("bulk").innerHTML = bulkBarHtml(state.level, picked(), canControl);
@@ -157,12 +175,15 @@ const buildsNote = () => (openBuilds.length ? `<p class="note">Not finished: ${o
 
 async function load() {
   const superseded = startLoad("ads");
-  let d;
+  let d, dr;
   try {
-    d = await api(`/api/ads?range=${encodeURIComponent(state.range)}${state.vs ? "&vs=prev" : ""}${state.archived ? "&archived=1" : ""}`);
+    [d, dr] = await Promise.all([
+      api(`/api/ads?range=${encodeURIComponent(state.range)}${state.vs ? "&vs=prev" : ""}${state.archived ? "&archived=1" : ""}`),
+      me.role === "admin" ? loadDrafts() : Promise.resolve(null)]);
   } catch (err) { if (!superseded()) showLoadError($("cr-all"), err, load); return; }
   if (superseded()) return;
   data = d;
+  drafts = dr;
   setBooked(d.tracks_bookings);
   rows = flatten(data);
   for (const id of [...selected]) if (!(rows[state.level] || []).some((r) => r.id === id)) selected.delete(id);
@@ -209,7 +230,8 @@ if (me) {
     const b = e.target.closest("[data-level]");
     if (!b || b.dataset.level === state.level) return;
     selected.clear(); dropPeek();
-    set({ level: b.dataset.level, sort: "spend", dir: "desc", display: b.dataset.level === "ad" ? state.display : "table", peek: "" });
+    set({ level: b.dataset.level, sort: "spend", dir: "desc", display: b.dataset.level === "ad" ? state.display : "table", peek: "",
+      view: state.view === "drafts" && b.dataset.level !== "campaign" ? "all" : state.view });
   });
   const root = $("cr-all");
   wire(root, {
@@ -231,6 +253,7 @@ if (me) {
     sortBy: (key) => set({ sort: key, dir: state.sort === key && state.dir === "desc" ? "asc" : "desc" }),
     peek: (key) => (state.peek === key ? closePeek() : openPeek(key)),
   });
+  wireDrafts(root, { get: () => drafts, reload: load });
   wire($("bulk"), { reload: () => { selected.clear(); load(); }, level: () => state.level, range: () => state.range, picked, clear: () => { selected.clear(); render(); }, pick() {}, pickAll() {}, sortBy() {}, peek() {} });
   root.addEventListener("click", async (e) => {
     const v = e.target.closest("[data-view]");
