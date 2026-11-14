@@ -1,7 +1,8 @@
 // Local design review: screenshots of each screen in light and dark.
 // AS=client node qa/shots.cjs <dir>: the same as a read-only client of Edge Bourne (files named client-…), only the
 // screens a client opens; a QA client user is made for the run and switched off after it.
-// ONLY=am-link node qa/shots.cjs <dir>: only Settings → Ads Manager link (AM-A) connected, through Claude, waiting for the Mac and not connected.
+// ONLY=am-link node qa/shots.cjs <dir>: only Settings → Ads Manager link (AM-A) connected, through Claude, waiting for the Mac and not connected
+// (Mac helper desk 3.1, as after the install), plus one with an older helper ("Update the Mac helper first").
 // ONLY=drafts node qa/shots.cjs <dir>: only the drafts from Ads Manager (AM-B): Ads → Campaigns with the panel, the Drafts view
 // (open, finished and staged-edit drafts) and New campaign filled in from a draft.
 // ONLY=audiences node qa/shots.cjs <dir>: only AM-D: Ads → Audiences, the New audience dialog (each step: website and lookalike
@@ -176,6 +177,8 @@ with account_ctx.use(1):
   const DRAFT_PAGES = ['ads.html?level=campaign', 'ads.html?level=campaign&view=drafts', 'new-campaign.html?draft=120252756936450312', 'new-adset.html?draft=120252756936460030'];
   // AM-A: the link in three states for its shots, with reads from 12 minutes ago (put back as it was afterwards).
   const psql = (q) => sh(`docker exec edgebourne-postgres psql -U edgebourne -d ebads -tAc "${q}"`).trim();
+  const helperVersion = (v) => sh('docker exec -i -w /app edgebourne-ads-backend python -', `import settings_store\nsettings_store.set('bridge_version', ${JSON.stringify(v)})\n`);
+  const helperWas = sh('docker exec -i -w /app edgebourne-ads-backend python -', "import settings_store\nprint(settings_store.get('bridge_version') or '0')\n").trim();
   const amWas = psql('SELECT row_to_json(l) FROM am_link l');
   const amState = (state) => psql(`UPDATE am_link SET state = '${state}', connected_as = ${state === 'connected' ? "'Eugene Ramirez'" : 'NULL'},
     client_kind = ${state === 'connected' ? "'dcr'" : state === 'fallback' ? "'claude'" : 'NULL'}, last_ok_at = ${state === 'not_connected' ? 'NULL' : "now() - interval '12 minutes'"},
@@ -265,8 +268,10 @@ with account_ctx.use(1):
       }
       if (asClient) { await ctx.close(); continue; }
       if (onlyDrafts) { await ctx.close(); continue; }
-      for (const state of ['connected', 'fallback', 'connecting', 'not_connected']) {
-        amState(state);
+      // As Eugene sees it after the desk 3.1 install; one extra shot keeps the "Update the Mac helper first" note.
+      for (const state of ['connected', 'fallback', 'connecting', 'not_connected', 'helper_behind']) {
+        amState(state === 'helper_behind' ? 'not_connected' : state);
+        helperVersion(state === 'helper_behind' ? '3.0' : '3.1');
         await page.goto(`${BASE}/settings.html#am-link`);
         await page.reload();
         await page.waitForSelector('#am-link:not([hidden]) #am-acct');
@@ -274,6 +279,7 @@ with account_ctx.use(1):
         await page.waitForTimeout(300);
         await page.screenshot({ path: `${OUT}/settings-am-${state}-${tag}-${scheme}.png`, fullPage: true });
       }
+      helperVersion(helperWas);
       if (onlyAm) { await ctx.close(); continue; }
       await editShots(page, tag, scheme);
       await audienceShots(page, tag, scheme);
@@ -363,7 +369,6 @@ with account_ctx.use(1):
     const shot = async (name, full = true) => { await page.waitForTimeout(500); await page.screenshot({ path: `${OUT}/mx-${name}-${tag}-${scheme}.png`, fullPage: full }); };
     await page.goto(`${BASE}/home.html`);
     await page.waitForSelector('#advice .mx-today, #advice .bench-empty', { timeout: 15000 }).catch(() => {});
-    await page.$eval('#advice', (e) => e.scrollIntoView()).catch(() => {});
     await shot('today');
     await page.goto(`${BASE}/performance.html`);
     await page.waitForSelector('#mx-results', { timeout: 15000 }).catch(() => {});

@@ -780,6 +780,7 @@ dialog.confirm textarea#cd-input { min-height: 240px; max-height: 52vh; resize: 
 .preview-panel { position: sticky; top: 16px; }
 .format-scroll { overflow-x: auto; margin: 0 -4px; padding: 0 4px 2px; }
 .format-scroll .segmented { flex-wrap: nowrap; width: max-content; }
+@media (min-width: 721px) { .format-scroll .segmented { flex-wrap: wrap; width: auto; } }
 .preview-frame { position: relative; display: flex; justify-content: center; min-height: 300px; background: var(--surface-2); border-radius: var(--radius-s); padding: 14px 8px; }
 .preview-frame iframe { border: 0; max-width: 100%; background: #fff; border-radius: var(--radius-s); box-shadow: var(--shadow-1); }
 .facts dd.pre { white-space: pre-wrap; }

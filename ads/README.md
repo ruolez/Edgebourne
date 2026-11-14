@@ -39,7 +39,8 @@ docker exec edgebourne-ads-backend python dev_seed.py   # optional sample data (
 
 Tests: `docker exec -e WORKERS_ENABLED=0 edgebourne-ads-backend python -m unittest discover -s tests -v`.
 End to end: `sh ads/qa/run.sh` (fresh fake Meta, then `qa/flows.cjs`; exits non-zero on any FAIL or console
-error; it stops at its first missing selector, so a UI change updates it in the same commit). Leak test:
+error; it stops at its first missing selector, so a UI change updates it in the same commit; the full run takes about 15
+minutes, `QA_ONLY='core,link,edit,audiences,extras'` runs the shared setup plus only the named blocks while iterating). Leak test:
 `dev/qa_leaks.py` (every GET route, each account and role). Screenshots of every tab and Settings section
 (light/dark, desktop/390 px, reports console errors): `node ads/qa/shots.cjs <out-dir>`; `AS=client` takes the screens a read-only client opens.
 
@@ -122,10 +123,27 @@ Eugene's requests after Phase 9 (specs in `docs/features/FU-*.md`), all built:
 - [x] FU-D (a580527) full-access owner chat with a password re-check, a sandboxed Mac run and previews in the chat
 - [x] FU-finish (2026-11-13) Gallery › Make more like these, phone label fixes, Claude › By ad / Schedules headings, client screenshots
 
-What Eugene does after the Update (run Update to migration 044, reinstall the bridge once as desk 3.0, Settings → Alerts
-thresholds, the second ad account and its read-only client, the first real spending-limit change together) and every live
-check still owed on real Meta, real phones and the Mac: **one checklist**, `docs/ROADMAP.md` → Follow-up (2026-11-12) →
-What Eugene does now.
+### Ads Manager link (2026-11-13)
+
+Eugene's request to run campaigns from the console instead of Ads Manager (specs in `docs/features/AM-*.md`, 67db270),
+all built:
+
+- [x] AM-A (0c9e21e) Ads Manager link: the Mac reads Meta's Ads tools server with Eugene's own Facebook login, read tools
+  only, per account he approves; Claude on the Mac does the same reads if Meta refuses the Mac's own client
+- [x] AM-B (0c998d8) drafts staged in Ads Manager show on Ads → Campaigns; Finish in the console makes them switched off
+  with the console's key, staged budgets and on/off go through the usual dialogs
+- [x] AM-C (8741083) Edit every campaign and ad set setting Meta lets change after publishing, paused copies, archive and delete
+- [x] AM-D (5504de5) Ads → Audiences: website, engagement and lookalike audiences, picked in New ad set, New campaign and Edit
+- [x] AM-E (8262cf3) Meta's extra insights: how you compare, unusual changes and Meta's error messages as alerts, What Meta
+  says and Meta's picture on the ad page, match quality in Tracking health
+- [x] AM-finish (2026-11-14, shipped in `feat(ads): finish the Ads Manager link…`) full QA and screenshots, docs, the merged owner checklist; the ad page's
+  placement tabs wrap on desktop instead of running past the Preview card
+
+What Eugene does after the Update (run Update to migration 049, reinstall the bridge once as desk 3.1, connect the Ads
+Manager link at the Mac, check the "Dashboards with AI - Leads" draft and finish it switched off, the first real edit and the
+first real audience with his yes, Settings → Alerts thresholds, the second ad account and its read-only client, the first
+real spending-limit change together) and every live check still owed on real Meta, the link, real phones and the Mac:
+**one checklist**, `docs/ROADMAP.md` → section 2 → What Eugene does now (below the Ads Manager link block).
 
 ### Ads Manager link (AM-A)
 

@@ -108,6 +108,14 @@ const run = (name) => !ONLY || ONLY.has(name);
   // 3. Ad page: format switch, duplicate.
   await page.goto(BASE + '/ad.html?id=120252672232030312');
   await page.waitForSelector('#formats button');
+  {
+    const clip = await page.evaluate(() => {
+      const box = document.querySelector('#formats').closest('.panel, .card, .preview-panel').getBoundingClientRect();
+      return [...document.querySelectorAll('#formats button')].map((b) => b.getBoundingClientRect())
+        .filter((r) => r.left < box.left - 0.5 || r.right > box.right + 0.5).length;
+    });
+    check('every placement tab sits inside the preview card on desktop', clip === 0, `${clip} cut`);
+  }
   await page.click('#formats button[data-format="INSTAGRAM_STORY"]');
   await page.waitForSelector('#preview-frame iframe');
   await page.waitForSelector('#preview-frame iframe:not(.preview-loading)', { timeout: 15000 });
