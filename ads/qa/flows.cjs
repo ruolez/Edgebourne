@@ -7118,8 +7118,10 @@ with account_ctx.all_accounts():
     await far.click();
     await phonePage.waitForSelector('#ib-panel.showing-detail [data-ib-back]');
     const backFocused = await phonePage.waitForFunction(() => document.activeElement?.hasAttribute('data-ib-back'), null, { timeout: 2000 }).then(() => true, () => false);
-    const gap = await phonePage.evaluate(() => { const h = document.querySelector('.main h1'); return h ? Math.round(h.getBoundingClientRect().top + window.scrollY) : -1; });
-    check('on a phone a short page (an open Inbox item) starts right under the top bar', gap > 0 && gap < 120, String(gap));
+    // The open item is the whole screen (the list's title, tabs and chips are hidden behind it): it starts right under the top bar.
+    const gap = await phonePage.evaluate(() => { const d = document.querySelector('#ib-detail'); return d ? Math.round(d.getBoundingClientRect().top + window.scrollY) : -1; });
+    const chrome = await phonePage.evaluate(() => ['.page-head', '.ib-tabs', '.ib-kinds'].filter((s) => { const el = document.querySelector(s); return el && el.getBoundingClientRect().height > 0; }).join());
+    check('on a phone an open Inbox item starts right under the top bar, with the list\'s title, tabs and chips out of the way', gap > 0 && gap < 120 && chrome === '', `${gap} ${chrome}`);
     await phonePage.click('#ib-detail [data-ib-back]');
     await phonePage.waitForFunction(() => !document.getElementById('ib-panel').classList.contains('showing-detail'));
     await phonePage.waitForTimeout(300);
@@ -7128,12 +7130,24 @@ with account_ctx.all_accounts():
       backFocused && Math.abs(back.y - y0) <= 2 && back.focus === farKey, JSON.stringify({ n, y0, backFocused, ...back, farKey }));
   }
   // 9.3b phone: Ads sorts and filters by campaign without column headers, the bulk bar fits, More says Claude has work for you.
+  await phonePage.goto(BASE + '/ads.html');
+  await phonePage.waitForSelector('.pl li');
+  const folded = await phonePage.evaluate(() => ({ toggle: document.getElementById('tb-toggle')?.getAttribute('aria-expanded'), sort: document.getElementById('sort-pick')?.getBoundingClientRect().height,
+    figures: [...document.querySelectorAll('.figs .fig')].filter((f) => f.getBoundingClientRect().height > 0).map((f) => f.querySelector('.fig-l').textContent).join(),
+    firstRow: Math.round(document.querySelector('.pl li').getBoundingClientRect().top), screen: innerHeight }));
+  check('on a phone the Ads list starts on the first screen: three key figures, and dates, sort and filters behind one button',
+    folded.toggle === 'false' && folded.sort === 0 && folded.figures === 'Spent,Leads,Cost per lead' && folded.firstRow < folded.screen, JSON.stringify(folded));
+  await phonePage.click('[data-figs-all]');
+  const allFigs = await phonePage.evaluate(() => [...document.querySelectorAll('.figs .fig')].filter((f) => f.getBoundingClientRect().height > 0).length);
+  await phonePage.click('[data-figs-all]');
+  check('All figures shows the rest of them', allFigs >= 7, String(allFigs));
   await phonePage.goto(BASE + '/ads.html?sort=ctr&dir=desc');
   await phonePage.waitForSelector('#sort-pick');
   const otherSort = await phonePage.evaluate(() => { const s = document.getElementById('sort-pick'); return s.options[s.selectedIndex].textContent; });
   check('on a phone a sort chosen on a computer says what it sorts by', otherSort === 'Sorted by click rate', otherSort);
   await phonePage.goto(BASE + '/ads.html');
   await phonePage.waitForSelector('.pl li');
+  await phonePage.click('#tb-toggle');
   await phonePage.selectOption('#sort-pick', 'cpl:asc');
   await phonePage.waitForFunction(() => /sort=cpl/.test(location.search));
   const phoneCpl = await phonePage.evaluate(() => [...document.querySelectorAll('.pl li small')].map((s) => { const m = s.textContent.match(/·\s*(\$[\d,.]+|–|—)(?:\s|$)/g); const last = m ? m[m.length - 1] : ''; const v = last.match(/\$([\d,.]+)/); return v ? Number(v[1].replace(/,/g, '')) : null; }));

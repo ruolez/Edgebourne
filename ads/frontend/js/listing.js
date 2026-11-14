@@ -83,7 +83,7 @@ function headerFigures() {
 let drafts = null;
 // Phones: the campaign, dates, sort and archived controls fold behind one button; it stays as it was left while
 // the list redraws. Wide screens show them all in the toolbar.
-let moreTools = false;
+let moreTools = null;
 const draftsHere = () => state.level === "campaign" && me.role === "admin";
 const draftsAlone = () => draftsHere() && state.view === "drafts";
 
@@ -97,6 +97,7 @@ function toolbar() {
     ? `<button type="button" class="view-chip" data-view="drafts" aria-pressed="${state.view === "drafts"}">Drafts<span>${draftCount(drafts)}</span></button>` : "");
   const mine = saved.map((v) => `<span class="sv"><button type="button" class="view-chip" data-saved="${v.id}" aria-pressed="${location.search.replace(/^\?/, "") === v.query}">${esc(v.name)}</button>${v.mine ? `<button type="button" class="sv-x" data-unsave="${v.id}" aria-label="Remove the view ${esc(v.name)}">×</button>` : ""}</span>`).join("");
   const camps = rows.campaign || [];
+  if (moreTools === null) moreTools = Boolean(state.campaign || state.archived || state.sort !== "spend" || state.dir !== "desc");
   return `<div class="cr-toolbar">
     <div class="views" role="group" aria-label="Show">${views}${mine}<button type="button" class="view-chip add" id="save-view">${icon("plus")}Save view</button></div>
     <span class="spacer"></span>
