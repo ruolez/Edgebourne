@@ -2322,10 +2322,14 @@ dialog.wt::backdrop { background: #0C0D0F; }
 .wt-paused { position: absolute; top: 50%; left: 50%; width: 64px; height: 64px; margin: -32px 0 0 -32px; display: grid; place-items: center; border-radius: 50%; background: rgba(0, 0, 0, .5); color: #fff; opacity: 0; transform: scale(.95); transition: opacity .15s, transform .15s cubic-bezier(.23, 1, .32, 1); pointer-events: none; }
 .wt-paused svg { width: 28px; height: 28px; margin-left: 3px; }
 .wt-media.is-paused .wt-paused { opacity: 1; transform: none; }
+.wt-paused b { display: none; }
+.wt-media.needs-tap .wt-paused { width: auto; height: 56px; margin: -28px 0 0; padding: 0 22px 0 18px; gap: 8px; display: flex; align-items: center; left: 50%; translate: -50% 0; border-radius: var(--radius-pill); background: #fff; color: #141619; box-shadow: 0 10px 30px rgba(0, 0, 0, .4); }
+.wt-media.needs-tap .wt-paused svg { width: 22px; height: 22px; margin: 0; }
+.wt-media.needs-tap .wt-paused b { display: inline; font: 600 var(--t-l)/1 var(--font-ui); }
 .wt-mute { position: absolute; right: 10px; bottom: 10px; z-index: 2; min-width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 8px; border: 0; border-radius: var(--radius-pill); background: rgba(0, 0, 0, .55); color: #fff; font: 500 var(--t-s)/1 var(--font-ui); cursor: pointer; }
 .wt-mute svg { width: 18px; height: 18px; }
 .wt-mute.ask { padding: 0 12px 0 10px; background: #fff; color: #141619; box-shadow: 0 6px 18px rgba(0, 0, 0, .35); }
-.wt-note { position: absolute; left: 10px; right: 10px; top: 10px; z-index: 2; margin: 0; padding: 8px 10px; border-radius: var(--radius-s); background: rgba(0, 0, 0, .65); color: #fff; font-size: var(--t-xs); line-height: 1.35; }
+.wt-note { position: absolute; left: 10px; right: 10px; top: 10px; z-index: 2; margin: 0; padding: 10px 12px; border-radius: var(--radius-s); border-left: 3px solid #F2B53A; background: rgba(12, 13, 15, .86); color: #fff; font-size: var(--t-s); line-height: 1.4; overflow-wrap: anywhere; }
 .wt-over { display: none; }
 .wt-cta { flex: none; display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 10px 12px; background: var(--post-fill); }
 .wt-headline { flex: 1; min-width: 0; font: 600 14px/1.25 var(--font-ui); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }

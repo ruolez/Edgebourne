@@ -3,6 +3,7 @@ draws for each ad (words, picture, button, the Page's name, its numbers for the 
 video from this origin: fetched from Meta once, kept in a folder and served with ranges, so the player can seek and
 the console's media-src 'self' holds. Reads only: nothing here writes to Meta."""
 import fcntl
+import logging
 import os
 import time
 
@@ -21,6 +22,7 @@ from auth import current_user, login_required, visible_campaign_ids
 from util import api_error
 
 bp = Blueprint("watch", __name__, url_prefix="/api")
+log = logging.getLogger(__name__)
 
 CACHE_DIR = os.environ.get("ADS_VIDEO_CACHE", "/tmp/ebads-videos")
 PAGE_NAMES = {}          # page id -> (name, read at)
@@ -71,16 +73,41 @@ def watch_list():
                     "range": {"key": key, "label": ranges.label(start, end, today=account_info.today())}})
 
 
-def _fetch(video_id, path):
+def video_source(video_id, story_id):
+    """The link of the video's file. Meta may keep it from the console's own key, so it is asked three ways: the video
+    with the System User's key, the video with the Page's key, the ad's post with the Page's key. LookupError says why
+    none answered."""
+    dev = bool(config.META_GRAPH_BASE)
+    why = []
+
+    def page_key():
+        return meta_client.page_token()
+
+    asks = [("the video", lambda: meta_client.get(video_id, fields="source").get("source")),
+            ("the video, as the Page", lambda: meta_client.get(video_id, token=page_key(), fields="source").get("source"))]
+    if story_id:
+        asks.append(("the ad's post, as the Page", lambda: watch.story_source(meta_client.get(
+            story_id, token=page_key(), fields="attachments{media,subattachments{media}}"))))
+    for what, ask in asks:
+        try:
+            src = ask()
+        except meta_client.MetaError as exc:
+            why.append(f"{what}: {exc}")
+            continue
+        if watch.allowed_source(src, dev=dev):
+            return src
+        why.append(f"{what}: no file link")
+    raise LookupError("Meta didn't share this video's file (" + "; ".join(why) + ")")
+
+
+def _fetch(video_id, story_id, path):
     """Download the video Meta keeps for `video_id` into `path` (once, even with two requests at the same time)."""
     os.makedirs(CACHE_DIR, exist_ok=True)
     with open(path + ".lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if os.path.exists(path):
             return
-        src = meta_client.get(video_id, fields="source").get("source")
-        if not watch.allowed_source(src, dev=bool(config.META_GRAPH_BASE)):
-            raise LookupError("Meta didn't share this video's file")
+        src = video_source(video_id, story_id)
         part = f"{path}.part"
         got = 0
         try:
@@ -102,7 +129,7 @@ def _fetch(video_id, path):
 @bp.get("/ads/ad/<ad_id>/video")
 @login_required
 def ad_video(ad_id):
-    rows = _visible(db.query("SELECT id, campaign_id, video_id FROM ads WHERE id = %s", (ad_id,)))
+    rows = _visible(db.query("SELECT id, campaign_id, video_id, story_id FROM ads WHERE id = %s", (ad_id,)))
     if not rows:
         return api_error("Ad not found", 404)
     path = watch.cache_file(CACHE_DIR, rows[0]["video_id"])
@@ -110,12 +137,12 @@ def ad_video(ad_id):
         return api_error("This ad has no video", 404)
     if not os.path.exists(path):
         try:
-            _fetch(rows[0]["video_id"], path)
-        except meta_client.MetaError as exc:
-            return api_error(f"Meta didn't share this video: {exc}", 502)
+            _fetch(rows[0]["video_id"], rows[0]["story_id"], path)
         except LookupError as exc:
+            log.warning("watch: ad %s video %s: %s", ad_id, rows[0]["video_id"], exc)
             return api_error(str(exc), 502)
-        except (requests.RequestException, OSError):
+        except (requests.RequestException, OSError) as exc:
+            log.warning("watch: ad %s video %s download: %s", ad_id, rows[0]["video_id"], exc)
             return api_error("The video couldn't be fetched from Meta. Try again in a minute.", 502)
     try:
         os.utime(path)  # recently watched videos are the last to be trimmed

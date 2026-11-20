@@ -23,6 +23,16 @@ def allowed_source(url, dev=False):
     return u.scheme == "https" and any(u.hostname.endswith(h) for h in META_MEDIA_HOSTS)
 
 
+def story_source(post):
+    """The video file link of an ad's post (GET <story id>?fields=attachments{media,subattachments}), or None."""
+    for att in (post or {}).get("attachments", {}).get("data", []):
+        for one in [att, *att.get("subattachments", {}).get("data", [])]:
+            src = (one.get("media") or {}).get("source")
+            if src:
+                return src
+    return None
+
+
 def cache_file(folder, video_id):
     """The kept file of a Meta video, or None for an id that isn't one (ids are digits)."""
     vid = str(video_id or "")

@@ -25,6 +25,16 @@ class AllowedSource(unittest.TestCase):
                          [True, False, False])
 
 
+class StorySource(unittest.TestCase):
+    def test_the_video_of_the_post_or_of_its_first_card_that_has_one(self):
+        plain = {"attachments": {"data": [{"media": {"source": CDN, "image": {"src": "x"}}}]}}
+        cards = {"attachments": {"data": [{"media": {"image": {}}, "subattachments": {"data": [{"media": {}}, {"media": {"source": CDN}}]}}]}}
+        self.assertEqual((watch.story_source(plain), watch.story_source(cards)), (CDN, CDN))
+
+    def test_a_post_without_a_video_file_gives_none(self):
+        self.assertEqual([watch.story_source(p) for p in (None, {}, {"attachments": {"data": [{"media": {"image": {}}}]}})], [None, None, None])
+
+
 class CacheFile(unittest.TestCase):
     def test_a_video_id_is_kept_as_its_own_mp4(self):
         self.assertEqual(watch.cache_file("/cache", VIDEO_ID), f"/cache/{VIDEO_ID}.mp4")

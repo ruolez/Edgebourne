@@ -44,7 +44,7 @@ export async function openWatch({ ids, startId, range = "7" }) {
   const list = [...new Set((ids || []).map(String))];
   if (!list.length) return null;
   const prefs = readPrefs();
-  let items = [], page = "", rangeLabel = "", at = 0, soundBlocked = false, picStart = 0, raf = 0, closed = false;
+  let items = [], page = "", rangeLabel = "", at = 0, soundBlocked = false, picStart = 0, raf = 0, closed = false, stallTimer = 0;
   const pool = new Map(); // ad id -> <video>, only the current ad and its two neighbours
 
   const dlg = document.createElement("dialog");
@@ -71,7 +71,7 @@ export async function openWatch({ ids, startId, range = "7" }) {
           <div class="wt-videos"></div>
           <img class="wt-pic" alt="" hidden referrerpolicy="no-referrer">
           <span class="wt-spin" aria-hidden="true"></span>
-          <span class="wt-paused" aria-hidden="true">${icon("play")}</span>
+          <span class="wt-paused" aria-hidden="true">${icon("play")}<b>Tap to play</b></span>
           <div class="wt-over"></div>
           <p class="wt-note" hidden>Meta didn't share this video's file, so its picture shows instead.</p>
           <button type="button" class="wt-mute" data-sound aria-label="Sound"></button>
@@ -111,12 +111,17 @@ export async function openWatch({ ids, startId, range = "7" }) {
     v.src = a.video;
     v.dataset.id = a.id;
     v.addEventListener("waiting", () => { if (v === videoOf(current())) media.classList.add("is-loading"); });
-    v.addEventListener("playing", () => { if (v === videoOf(current())) media.classList.remove("is-loading"); });
+    v.addEventListener("playing", () => { if (v === videoOf(current())) media.classList.remove("is-loading", "is-paused", "needs-tap"); });
     v.addEventListener("ended", () => { if (v === videoOf(current())) onEnd(); });
-    v.addEventListener("error", () => {
+    v.addEventListener("error", async () => {
       a.failed = true;
       v.remove();
       pool.delete(a.id);
+      // The server says why (Meta's answer, a download that failed); the video element can't read it.
+      try {
+        const r = await fetch(a.video, { headers: { Range: "bytes=0-0", "X-Requested-With": "ebads" }, credentials: "same-origin" });
+        if (!r.ok) a.why = (await r.json()).error;
+      } catch (e) { /* offline: the plain note */ }
       if (a === current()) show(at, { keepPool: true });
     });
     return v;
@@ -140,10 +145,14 @@ export async function openWatch({ ids, startId, range = "7" }) {
   function play(v) {
     v.loop = !prefs.auto || items.length < 2;
     v.muted = !(prefs.sound && !soundBlocked);
+    // A browser that won't start a video by itself (Safari, an iPhone in Low Power Mode) gets a big Play to tap; one
+    // that only refuses sound plays silent and offers the tap for sound.
+    const needTap = () => { if (v === videoOf(current())) media.classList.add("is-paused", "needs-tap"); };
     const p = v.play();
     if (p) p.catch((err) => {
-      // A browser that won't start sound without a tap: play silent and offer the tap.
-      if (err.name === "NotAllowedError" && !v.muted && v === videoOf(current())) { soundBlocked = true; drawSound(); v.muted = true; v.play().catch(() => {}); }
+      if (v !== videoOf(current())) return;
+      if (err.name === "NotAllowedError" && !v.muted) { soundBlocked = true; drawSound(); v.muted = true; v.play().catch(needTap); }
+      else if (err.name !== "AbortError") needTap();
     });
   }
 
@@ -180,7 +189,8 @@ export async function openWatch({ ids, startId, range = "7" }) {
       <p class="wt-keys"><kbd>←</kbd> <kbd>→</kbd> switch · <kbd>Space</kbd> pause · <kbd>M</kbd> sound</p>`;
     $(".wt-strip").querySelectorAll("[data-go]").forEach((b) => b.setAttribute("aria-current", String(Number(b.dataset.go) === at)));
     $(".wt-strip [aria-current='true']")?.scrollIntoView({ block: "nearest", inline: "center" });
-    media.classList.remove("is-paused", "is-loading");
+    media.classList.remove("is-paused", "is-loading", "needs-tap");
+    clearTimeout(stallTimer);
     const v = videoOf(a);
     pool.forEach((x) => x.classList.toggle("on", x === v));
     pic.hidden = Boolean(v);
@@ -188,9 +198,12 @@ export async function openWatch({ ids, startId, range = "7" }) {
     media.classList.toggle("no-media", !v && !picture(a));
     media.classList.toggle("no-video", !v);
     $(".wt-note").hidden = !a.failed;
+    $(".wt-note").textContent = a.why ? `The video couldn't be played here, so its picture shows. ${a.why}` : "The video couldn't be played here, so its picture shows.";
     if (v) {
       if (v.readyState < 3) media.classList.add("is-loading");
       play(v);
+      // Still on its first frame after a while: something held it (a browser setting, a slow line). Offer the tap.
+      stallTimer = setTimeout(() => { if (v === videoOf(current()) && v.currentTime < 0.05) { media.classList.remove("is-loading"); media.classList.add("is-paused", "needs-tap"); } }, 6000);
     }
     if (!dlg.contains(document.activeElement)) dlg.focus();
   }
@@ -200,7 +213,7 @@ export async function openWatch({ ids, startId, range = "7" }) {
   function togglePause() {
     const v = videoOf(current());
     if (!v) return;
-    if (v.paused) { play(v); media.classList.remove("is-paused"); } else { v.pause(); media.classList.add("is-paused"); }
+    if (v.paused) { media.classList.remove("is-paused", "needs-tap"); play(v); } else { v.pause(); media.classList.add("is-paused"); }
   }
 
   function toggleSound() {
@@ -208,7 +221,7 @@ export async function openWatch({ ids, startId, range = "7" }) {
     savePrefs(prefs);
     drawSound();
     const v = videoOf(current());
-    if (v && !v.paused) play(v);
+    if (v && (!v.paused || media.classList.contains("needs-tap"))) { media.classList.remove("is-paused", "needs-tap"); play(v); }
   }
 
   // The bar of the ad on screen fills as it plays; the ones before it stay full.
@@ -277,6 +290,7 @@ export async function openWatch({ ids, startId, range = "7" }) {
   dlg.addEventListener("close", () => {
     closed = true;
     cancelAnimationFrame(raf);
+    clearTimeout(stallTimer);
     pool.forEach((v) => { v.pause(); v.removeAttribute("src"); v.load(); });
     pool.clear();
     dlg.remove();

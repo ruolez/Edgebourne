@@ -9888,7 +9888,7 @@ for k in ('agent_key_hash', 'bridge_version', 'bridge_last_seen', 'bridge_host',
     await page.waitForFunction(() => !document.querySelector('dialog.wt'));
     check('Watch: Esc closes it and no video keeps playing', await page.evaluate(() => !document.querySelector('video')));
     // Meta refusing a video's file: its picture shows, with a line saying why.
-    sh(`docker exec edgebourne-ads-backend sh -c 'rm -f /tmp/ebads-videos/*.mp4'`);
+    sh(`docker exec edgebourne-ads-backend find /tmp/ebads-videos -name '*.mp4' -delete`);
     sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen('http://localhost:5001/fake/_video_miss')"`);
     await page.click('#watch-ads');
     await page.waitForSelector('dialog.wt.ready');
@@ -9896,6 +9896,37 @@ for k in ('agent_key_hash', 'bridge_version', 'bridge_last_seen', 'bridge_host',
     for (let i = 0; i < wIds.length && await page.isHidden('.wt-note'); i++) { await page.keyboard.press('ArrowRight'); await page.waitForTimeout(500); }
     check('Watch: a video Meta won\'t share shows its picture and says so', await page.isVisible('.wt-note') && await page.isVisible('.wt-pic'));
     await page.keyboard.press('Escape');
+    // Meta keeping the file link from the console's key once: the Page's key gets it, the video plays.
+    sh(`docker exec edgebourne-ads-backend find /tmp/ebads-videos -name '*.mp4' -delete`);
+    sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen('http://localhost:5001/fake/_video_nosource?n=1')"`);
+    await page.click(`[data-watch="${wIds[0]}"]`);
+    await page.waitForSelector('dialog.wt.ready');
+    await playing();
+    check('Watch: a video whose link Meta keeps from the System User is read with the Page\'s key', await page.isHidden('.wt-note'));
+    await page.keyboard.press('Escape');
+    // Kept everywhere: the note carries Meta's answers.
+    sh(`docker exec edgebourne-ads-backend find /tmp/ebads-videos -name '*.mp4' -delete`);
+    sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen('http://localhost:5001/fake/_video_nosource?n=50')"`);
+    await page.click(`[data-watch="${wIds[0]}"]`);
+    await page.waitForSelector('.wt-note:not([hidden])', { timeout: 20000 }).catch(() => {});
+    check('Watch: when Meta keeps the file everywhere the note says what Meta answered', /didn't share this video's file \(the video: no file link/.test(await page.textContent('.wt-note')));
+    sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen('http://localhost:5001/fake/_video_nosource?n=0')"`);
+    await page.keyboard.press('Escape');
+    // A browser that won't start a video by itself: a Tap to play, and a tap plays it.
+    const blocked = await page.context().newPage();
+    await blocked.addInitScript(() => { const real = HTMLMediaElement.prototype.play; let taps = 0;
+      document.addEventListener('pointerdown', () => { taps += 1; }, true);
+      HTMLMediaElement.prototype.play = function () { return taps > 1 ? real.call(this) : Promise.reject(new DOMException('blocked', 'NotAllowedError')); }; });
+    await blocked.goto(`${BASE}/ads.html?display=cards&view=all`);
+    await blocked.waitForSelector('.cr-grid [data-watch]');
+    await blocked.click(`[data-watch="${wIds[1]}"]`);
+    await blocked.waitForSelector('.wt-media.needs-tap', { timeout: 10000 }).catch(() => {});
+    const tapShown = await blocked.isVisible('.wt-paused b');
+    await blocked.click('.wt-media');
+    await blocked.waitForFunction(() => { const v = document.querySelector('.wt-video.on'); return v && !v.paused && v.currentTime > 0.2; }, null, { timeout: 15000 }).catch(() => {});
+    check('Watch: when the browser won\'t start it, Tap to play shows and a tap plays it',
+      tapShown && await blocked.evaluate(() => !document.querySelector('.wt-video.on').paused && !document.querySelector('.wt-media.needs-tap')));
+    await blocked.close();
     // An ad's Preview: Watch starts on that ad, within the list it was opened from.
     await page.click(`.cr-name[href*="${wIds[2]}"]`);
     await page.waitForSelector('#preview-watch');
@@ -9904,7 +9935,7 @@ for k in ('agent_key_hash', 'bridge_version', 'bridge_last_seen', 'bridge_host',
     check('Watch: an ad\'s Preview starts on that ad, within the list it was opened from', (await page.textContent('.wt-n')) === `3 of ${wIds.length}`);
     await page.keyboard.press('Escape');
     // The 502 of the refused video above is on purpose.
-    for (let i = errors.length - 1; i >= wSeen; i--) if (/status of 502/.test(errors[i])) errors.splice(i, 1);
+    for (let i = errors.length - 1; i >= wSeen; i--) if (/status of 502|blocked/.test(errors[i])) errors.splice(i, 1);
   }
 
   await browser.close();

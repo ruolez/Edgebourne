@@ -767,6 +767,13 @@ def fake_drop_form():
 # Watch: the file behind a video's `source`. dev/media/local/N<n>.mp4 (gitignored, e.g. the real renders) when it
 # exists for that ad, else the short dev/media/preview.mp4. /fake/_video_miss makes the next one fail (Meta refusing).
 VIDEO_MISS = []
+NO_SOURCE = [0]
+
+
+@app.route("/fake/_video_nosource")
+def fake_video_nosource():
+    NO_SOURCE[0] = int(request.args.get("n", "1"))
+    return jsonify({"ok": True})
 
 
 @app.route("/fake/_video_miss")
@@ -1399,8 +1406,12 @@ def graph(path):
             if obj is None:
                 return jsonify({"error": {"message": "Unsupported get request (fake)", "code": 100}}), 400
             if parts[0] in VIDEOS:
-                return jsonify({**obj, "thumbnails": {"data": [{"uri": obj["picture"], "is_preferred": True, "width": 1080}]},
-                                "source": f"{request.host_url}fake/_video/{parts[0]}.mp4"})
+                body = {**obj, "thumbnails": {"data": [{"uri": obj["picture"], "is_preferred": True, "width": 1080}]}}
+                if NO_SOURCE[0] > 0:  # Meta keeping the file link from this key (/fake/_video_nosource?n=)
+                    NO_SOURCE[0] -= 1
+                else:
+                    body["source"] = f"{request.host_url}fake/_video/{parts[0]}.mp4"
+                return jsonify(body)
             if parts[0] in ADS:
                 return jsonify({**obj, "creative": {"id": obj["creative_id"]}})
             if parts[0] in OTHER_ADS:
