@@ -6,6 +6,7 @@ import { count, dayLabel, rangeSelect, rememberRange, sharedRange } from "./form
 import * as UrlState from "./urlstate.js";
 import { COLUMN_SETS, LEVEL_WORDS, columnLabel, LIVE, VIEWS, bulkBarHtml, cardsHtml, closePeek, figuresHtml, flatten, setBooked, listHtml, narrow, peek, tableHtml, hasTrack, trackLegend, unlistedNote, wire, vsWords, rangeFoot } from "./manager.js";
 import { draftCount, draftsHtml, loadDrafts, showTarget, wireDrafts } from "./drafts.js";
+import { openWatch } from "./watch.js";
 
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = { level: "ad", view: "all", range: "7", vs: true, cols: "results", sort: "spend", dir: "desc", q: "", campaign: "", archived: false, display: "table", peek: "" };
@@ -115,6 +116,7 @@ function toolbar() {
     ${state.display === "table" ? `<select class="input tool" id="cols-pick" aria-label="Columns">${Object.entries(COLUMN_SETS).map(([k, [l]]) => `<option value="${k}" ${k === state.cols ? "selected" : ""}>Columns: ${l}</option>`).join("")}</select>` : ""}
     ${data.archived ? `<button type="button" class="view-chip" id="archived" aria-pressed="${state.archived}">${state.archived ? "Hide" : "Show"} archived <span class="n">${data.archived}</span></button>` : ""}
     </div>
+    ${state.level === "ad" && visibleRows().length ? `<button type="button" class="btn wt-launch" id="watch-ads" title="Play these ads one after another, with sound">${icon("play")}<span>Watch</span></button>` : ""}
     ${state.level === "ad" ? `<div class="segmented icon-seg" role="group" aria-label="Display">
       <button type="button" data-display="table" aria-pressed="${state.display === "table"}" title="Table">${icon("table")}<span class="sr-only">Table</span></button>
       <button type="button" data-display="cards" aria-pressed="${state.display === "cards"}" title="Cards">${icon("grid")}<span class="sr-only">Cards</span></button></div>` : ""}
@@ -278,6 +280,14 @@ if (me) {
     }
     const d = e.target.closest("[data-display]");
     if (d) { set({ display: d.dataset.display }); return; }
+    // Watch: the ads in the order they show here; a card's picture starts from that ad (Cmd/Ctrl-click still opens its page).
+    const w = e.target.closest("#watch-ads, [data-watch]");
+    if (w && !(e.metaKey || e.ctrlKey || e.shiftKey || e.button)) {
+      e.preventDefault();
+      const ids = [...root.querySelectorAll('[data-row^="ad:"]')].map((el) => el.dataset.row.slice(3));
+      openWatch({ ids: ids.length ? ids : visibleRows().map((r) => r.id), startId: w.dataset.watch, range: state.range });
+      return;
+    }
     if (e.target.closest("#tb-toggle")) { moreTools = !moreTools; $("tb-more").classList.toggle("open", moreTools); $("tb-toggle").setAttribute("aria-expanded", String(moreTools)); return; }
     if (e.target.closest("#vs")) { set({ vs: !state.vs }, true); return; }
     if (e.target.closest("#archived")) { set({ archived: !state.archived }, true); return; }

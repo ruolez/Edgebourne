@@ -214,7 +214,7 @@ export function cardsHtml(rows) {
     const img = ad.image_url || ad.thumbnail_url;
     const m = ad.m;
     return `<article class="cr-card ${PROBLEM_STATES.includes(ad.effective_status) ? "has-issue" : ""}" data-row="ad:${esc(ad.id)}">
-      <a class="cr-media" href="${href(ad)}" aria-label="Open ${esc(ad.name)}">
+      <a class="cr-media" href="${href(ad)}" data-watch="${esc(ad.id)}" aria-label="Watch ${esc(ad.name)}" title="Watch, with sound">
         ${img ? `<img src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="ph"></span>'}
         ${ad.object_type === "VIDEO" ? `<span class="play">${icon("play")}</span>` : ""}
         <span class="pill ${cls} on-media">${esc(label)}</span></a>

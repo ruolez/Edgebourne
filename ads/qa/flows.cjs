@@ -3,7 +3,7 @@
 // QA_ONLY='name,name' runs the shared setup (sign-in, helpers) plus only the named check blocks; unset runs everything
 // exactly as before. Blocks: core (everything up to the Ads Manager link), link (AM-A/AM-B: the link and drafts),
 // edit (AM-C: editing campaigns and ad sets, copies, archive and delete), audiences (AM-D: Ads → Audiences, making them, the
-// pickers), extras (AM-E: Meta's extra insights through the link). E.g. QA_ONLY=edit sh ads/qa/run.sh
+// pickers), extras (AM-E: Meta's extra insights through the link), watch (the full-screen ad player). E.g. QA_ONLY=edit sh ads/qa/run.sh
 // Playwright: $PLAYWRIGHT_CORE, else the first intact copy on this Mac (the render pipeline's copy lost
 // its package files on 2026-11-10; any 1.64 drives the Chromium 1248 below).
 const PW = [process.env.PLAYWRIGHT_CORE, '/Users/ruolez/Desktop/Dev/meta-ads/creatives/2026-11-07-new5/src/node_modules/playwright-core',
@@ -9853,6 +9853,58 @@ for k in ('agent_key_hash', 'bridge_version', 'bridge_last_seen', 'bridge_host',
     settings_store.set(k, saved.get(k))`);
     // The refusals above log their 403 / 409 / 429 on purpose.
     for (let i = errors.length - 1; i >= mxSeen; i--) if (/status of (403|409|429)/.test(errors[i])) errors.splice(i, 1);
+  }
+
+  if (run('watch')) { // QA_ONLY 'watch': the full-screen player (js/watch.js), from the cards, the toolbar and an ad's Preview
+    const wSeen = errors.length;
+    await page.setViewportSize({ width: 1360, height: 900 });
+    await page.evaluate(() => localStorage.removeItem('ebads-watch'));
+    await page.goto(`${BASE}/ads.html?display=cards&view=all`);
+    await page.waitForSelector('.cr-grid [data-watch]');
+    const wIds = await page.$$eval('.cr-grid [data-watch]', (els) => els.map((e) => e.dataset.watch));
+    const playing = () => page.waitForFunction(() => { const v = document.querySelector('.wt-video.on'); return v && !v.paused && v.currentTime > 0.2; }, null, { timeout: 20000 });
+    await page.click(`[data-watch="${wIds[1]}"]`);
+    await page.waitForSelector('dialog.wt.ready');
+    await playing();
+    const w1 = await page.evaluate(() => { const d = document.querySelector('dialog.wt'); const v = document.querySelector('.wt-video.on');
+      return { n: document.querySelector('.wt-n').textContent, muted: v.muted, scroll: d.scrollHeight - d.clientHeight, pool: document.querySelectorAll('.wt-video').length, path: location.pathname }; });
+    check('Watch: a card picture plays that ad full screen, with sound, nothing to scroll, its neighbours loaded',
+      w1.n === `2 of ${wIds.length}` && !w1.muted && w1.scroll === 0 && w1.pool === Math.min(3, wIds.length) && w1.path === '/ads.html', JSON.stringify(w1));
+    await page.keyboard.press('ArrowRight');
+    await playing();
+    await page.keyboard.press('m');
+    check('Watch: → goes to the next ad and M turns the sound off for all of them, remembered',
+      (await page.textContent('.wt-n')) === `3 of ${wIds.length}` && await page.evaluate(() => [...document.querySelectorAll('.wt-video')].every((v) => v.muted) && JSON.parse(localStorage.getItem('ebads-watch')).sound === false));
+    await page.click('.wt-bar [data-sound]');
+    await page.click('[data-look="story"]');
+    check('Watch: the Sound pill turns it back on and Story shows the words over the video',
+      await page.evaluate(() => !document.querySelector('.wt-video.on').muted && getComputedStyle(document.querySelector('.wt-over')).display !== 'none'));
+    await page.click('.wt-strip [data-go="0"]');
+    await page.waitForFunction(() => { const v = document.querySelector('.wt-video.on'); return v && isFinite(v.duration) && v.duration > 0; }, null, { timeout: 20000 });
+    await page.evaluate(() => { const v = document.querySelector('.wt-video.on'); v.currentTime = v.duration - 0.2; });
+    await page.waitForFunction(() => document.querySelector('.wt-n').textContent.startsWith('2 of'), null, { timeout: 8000 }).catch(() => {});
+    check('Watch: the strip jumps to an ad and Play all goes on to the next when it ends', (await page.textContent('.wt-n')).startsWith('2 of'));
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('dialog.wt'));
+    check('Watch: Esc closes it and no video keeps playing', await page.evaluate(() => !document.querySelector('video')));
+    // Meta refusing a video's file: its picture shows, with a line saying why.
+    sh(`docker exec edgebourne-ads-backend sh -c 'rm -f /tmp/ebads-videos/*.mp4'`);
+    sh(`docker exec edgebourne-fake-meta python -c "import urllib.request;urllib.request.urlopen('http://localhost:5001/fake/_video_miss')"`);
+    await page.click('#watch-ads');
+    await page.waitForSelector('dialog.wt.ready');
+    await page.waitForTimeout(2500);
+    for (let i = 0; i < wIds.length && await page.isHidden('.wt-note'); i++) { await page.keyboard.press('ArrowRight'); await page.waitForTimeout(500); }
+    check('Watch: a video Meta won\'t share shows its picture and says so', await page.isVisible('.wt-note') && await page.isVisible('.wt-pic'));
+    await page.keyboard.press('Escape');
+    // An ad's Preview: Watch starts on that ad, within the list it was opened from.
+    await page.click(`.cr-name[href*="${wIds[2]}"]`);
+    await page.waitForSelector('#preview-watch');
+    await page.click('#preview-watch');
+    await page.waitForSelector('dialog.wt.ready');
+    check('Watch: an ad\'s Preview starts on that ad, within the list it was opened from', (await page.textContent('.wt-n')) === `3 of ${wIds.length}`);
+    await page.keyboard.press('Escape');
+    // The 502 of the refused video above is on purpose.
+    for (let i = errors.length - 1; i >= wSeen; i--) if (/status of 502/.test(errors[i])) errors.splice(i, 1);
   }
 
   await browser.close();

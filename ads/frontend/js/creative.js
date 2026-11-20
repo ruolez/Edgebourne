@@ -1,5 +1,5 @@
 import { api, startLoad } from "./api.js";
-import { boot, confirmDialog, emptyState, entityLink, esc, icon, onRefresh, orderNav, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, sourceNote, switchHtml, timelineHtml, toast, toastNext, when, errorState, withFrom } from "./ui.js";
+import { boot, confirmDialog, emptyState, entityLink, esc, icon, onRefresh, orderList, orderNav, previewSkeleton, setCrumbs, skeleton, shortWait, showPreviewFrame, sourceNote, switchHtml, timelineHtml, toast, toastNext, when, errorState, withFrom } from "./ui.js";
 import { CTA_LABELS, EXPLAIN, JUDGED_RANGES, RANGES, WORDS, count, money, pct, per, plural, rangeSelect, rememberRange, sharedRange, statusOf, statusPill, moneyWhole } from "./format.js";
 import { barList, columnChart, marksPanel } from "./charts.js";
 import { editBudget, restoreVersion, toggleEntity } from "./controls.js";
@@ -9,6 +9,7 @@ import { diagnoseHtml, wireAlerts } from "./alertmenu.js";
 import { openFromUrl } from "./outcome.js";
 import { draftLeftFor, draftLeftHtml } from "./drafts.js";
 import { errorsHtml, pictureHtml, sizeExtras } from "./mx.js";
+import { openWatch } from "./watch.js";
 
 const $ = (id) => document.getElementById(id);
 const adId = new URLSearchParams(location.search).get("id");
@@ -234,7 +235,7 @@ function renderOverview() {
   const reviewNote = ["IN_PROCESS", "PENDING_REVIEW"].includes(ad.effective_status) ? '<p class="note preview-review">Meta is still reviewing this ad, so its preview can stay blank until the review is done (usually within a day).</p>' : "";
   const preview = `
       <section class="panel preview-panel" aria-labelledby="pv-h">
-        <div class="panel-head"><h2 id="pv-h">Preview</h2><p>As Meta shows it</p><span class="spacer"></span><button class="btn btn-quiet btn-small" type="button" id="preview-reload">${icon("refresh")}<span>Reload</span></button></div>
+        <div class="panel-head"><h2 id="pv-h">Preview</h2><p>As Meta shows it</p><span class="spacer"></span><button class="btn btn-small wt-launch" type="button" id="preview-watch" title="Play it full screen, with sound; ← → go through the list you came from">${icon("play")}<span>Watch</span></button><button class="btn btn-quiet btn-small" type="button" id="preview-reload">${icon("refresh")}<span>Reload</span></button></div>
         <div class="panel-body stack tight">
           <div class="segmented fill mx-views" id="mx-view" role="group" aria-label="Which view"><button type="button" data-pv-view="live">Live preview</button><button type="button" data-pv-view="picture">Meta's picture</button></div>
           <div class="stack tight" id="pv-live">
@@ -864,6 +865,7 @@ if (me) {
     const f = e.target.closest("#formats button[data-format]");
     if (f) { format = f.dataset.format; try { localStorage.setItem("ebads-preview", format); } catch (err) {} loadPreview(); return; }
     if (e.target.closest("#preview-reload, [data-preview-again]")) { loadPreview(); return; }
+    if (e.target.closest("#preview-watch")) { openWatch({ ids: orderList("ad", adId), startId: adId, range: chartRange }); return; }
     const pv = e.target.closest("#mx-view [data-pv-view]");
     if (pv) { pvView = pv.dataset.pvView; try { localStorage.setItem("ebads-preview-view", pvView); } catch (err) {} showPvView(); return; }
     const get = e.target.closest("#mx-get");

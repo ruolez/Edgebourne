@@ -220,7 +220,7 @@ class LiveRatchetTests(unittest.TestCase):
     snapshot, money rules, the numbers check, reports, snoozes) wired to a live window or a live read fails here."""
     import os as _os
     HERE = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-    DISPLAY = {"performance_api.py", "ads_api.py", "entities_api.py", "gallery_api.py", "concepts_api.py", "home_api.py", "accounts_api.py"}
+    DISPLAY = {"performance_api.py", "ads_api.py", "entities_api.py", "gallery_api.py", "concepts_api.py", "home_api.py", "accounts_api.py", "watch_api.py"}
     JUDGMENTS = ("alerts.py", "change_checks.py", "change_checks_db.py", "experiments.py", "experiments_api.py", "meta_tests.py",
                  "numbers_check.py", "report_logic.py", "reports_api.py", "desk_api.py", "money_rules.py", "snooze.py")
 

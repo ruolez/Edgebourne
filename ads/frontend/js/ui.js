@@ -533,10 +533,15 @@ document.addEventListener("click", (e) => {
   const ids = [...list.querySelectorAll(`[data-row^="${m[1]}:"]`)].map((el) => el.dataset.row.slice(m[1].length + 1));
   if (ids.length > 1) { try { sessionStorage.setItem(SEQ_KEY + m[1], JSON.stringify([...new Set(ids)].slice(0, 400))); } catch (err) { /* storage off */ } }
 }, true);
-// "‹ 3 of 14 ›" for the page of `id`, or nothing when it wasn't opened from a list. An ad keeps its tab (#tab=).
-export function orderNav(level, id) {
+// The list `id` was opened from (ids in its order), or just [id] when it wasn't opened from one.
+export function orderList(level, id) {
   let ids = [];
   try { ids = JSON.parse(sessionStorage.getItem(SEQ_KEY + level) || "[]"); } catch (e) { /* storage off */ }
+  return ids.includes(String(id)) ? ids : [String(id)];
+}
+// "‹ 3 of 14 ›" for the page of `id`, or nothing when it wasn't opened from a list. An ad keeps its tab (#tab=).
+export function orderNav(level, id) {
+  const ids = orderList(level, id);
   const i = ids.indexOf(String(id));
   if (i < 0 || ids.length < 2) return "";
   const what = { campaign: "campaign", adset: "ad set", ad: "ad" }[level];

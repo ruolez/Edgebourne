@@ -764,6 +764,32 @@ def fake_drop_form():
     return jsonify({"ok": True})
 
 
+# Watch: the file behind a video's `source`. dev/media/local/N<n>.mp4 (gitignored, e.g. the real renders) when it
+# exists for that ad, else the short dev/media/preview.mp4. /fake/_video_miss makes the next one fail (Meta refusing).
+VIDEO_MISS = []
+
+
+@app.route("/fake/_video_miss")
+def fake_video_miss():
+    VIDEO_MISS.append(1)
+    return jsonify({"ok": True})
+
+
+@app.route("/fake/_video/<vid>.mp4")
+def fake_video(vid):
+    import os
+    from flask import send_file
+    if VIDEO_MISS:
+        VIDEO_MISS.pop()
+        return "gone", 404
+    if vid not in VIDEOS:
+        return "unknown video", 404
+    media = os.path.join(os.path.dirname(os.path.abspath(__file__)), "media")
+    n = next((i + 1 for i, v in enumerate(list(VIDEOS)[:5]) if v == vid), None)
+    local = os.path.join(media, "local", f"N{n}.mp4") if n else None
+    return send_file(local if local and os.path.exists(local) else os.path.join(media, "preview.mp4"), mimetype="video/mp4")
+
+
 @app.route("/fake/_creative/<cid>")
 def fake_creative(cid):
     return jsonify(CREATIVES.get(cid) or {})
@@ -1373,7 +1399,8 @@ def graph(path):
             if obj is None:
                 return jsonify({"error": {"message": "Unsupported get request (fake)", "code": 100}}), 400
             if parts[0] in VIDEOS:
-                return jsonify({**obj, "thumbnails": {"data": [{"uri": obj["picture"], "is_preferred": True, "width": 1080}]}})
+                return jsonify({**obj, "thumbnails": {"data": [{"uri": obj["picture"], "is_preferred": True, "width": 1080}]},
+                                "source": f"{request.host_url}fake/_video/{parts[0]}.mp4"})
             if parts[0] in ADS:
                 return jsonify({**obj, "creative": {"id": obj["creative_id"]}})
             if parts[0] in OTHER_ADS:
