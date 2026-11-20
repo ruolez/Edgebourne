@@ -25,6 +25,23 @@ class AllowedSource(unittest.TestCase):
                          [True, False, False])
 
 
+class CreativeWords(unittest.TestCase):
+    TITLE, BODY, CTA = "Your whole business. One screen.", "Sales, purchases, shipping, cash and stock, live.", "BOOK_TRAVEL"
+
+    def test_a_creative_customised_per_placement_shows_the_first_of_its_words(self):
+        cr = {"asset_feed_spec": {"titles": [{"text": ""}, {"text": self.TITLE}, {"text": "other"}], "bodies": [{"text": self.BODY}],
+                                  "call_to_action_types": [self.CTA, "LEARN_MORE"]}}
+        self.assertEqual(watch.creative_words(cr), (self.TITLE, self.BODY, self.CTA))
+
+    def test_a_plain_video_or_link_post_shows_its_own(self):
+        video = {"object_story_spec": {"video_data": {"title": self.TITLE, "message": self.BODY, "call_to_action": {"type": self.CTA}}}}
+        link = {"object_story_spec": {"link_data": {"name": self.TITLE, "message": self.BODY, "call_to_action": {"type": self.CTA}}}}
+        self.assertEqual([watch.creative_words(video), watch.creative_words(link)], [(self.TITLE, self.BODY, self.CTA)] * 2)
+
+    def test_nothing_known_is_none(self):
+        self.assertEqual([watch.creative_words(c) for c in (None, {}, {"asset_feed_spec": {"titles": []}})], [(None, None, None)] * 3)
+
+
 class StorySource(unittest.TestCase):
     def test_the_video_of_the_post_or_of_its_first_card_that_has_one(self):
         plain = {"attachments": {"data": [{"media": {"source": CDN, "image": {"src": "x"}}}]}}

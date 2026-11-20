@@ -23,6 +23,21 @@ def allowed_source(url, dev=False):
     return u.scheme == "https" and any(u.hostname.endswith(h) for h in META_MEDIA_HOSTS)
 
 
+def creative_words(cr):
+    """(headline, text, button type) a creative shows: its post's (object_story_spec) or, for one customised per placement
+    (its words in asset_feed_spec, where the console's sync finds none), the first of each there."""
+    feed = (cr or {}).get("asset_feed_spec") or {}
+    story = (cr or {}).get("object_story_spec") or {}
+    data = story.get("video_data") or story.get("link_data") or {}
+
+    def first(key):
+        return next((x["text"] for x in feed.get(key) or [] if (x or {}).get("text")), None)
+    title = first("titles") or data.get("title") or data.get("name")
+    body = first("bodies") or data.get("message")
+    cta = next(iter(feed.get("call_to_action_types") or []), None) or (data.get("call_to_action") or {}).get("type")
+    return title, body, cta
+
+
 def story_source(post):
     """The video file link of an ad's post (GET <story id>?fields=attachments{media,subattachments}), or None."""
     for att in (post or {}).get("attachments", {}).get("data", []):

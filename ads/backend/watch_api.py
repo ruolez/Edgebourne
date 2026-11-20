@@ -44,6 +44,25 @@ def page_name():
     return name
 
 
+CREATIVE_WORDS = {}      # creative id -> (headline, text, button type); a creative's words never change
+
+
+def fill_words(rows):
+    """Ads whose words the sync didn't store (customised per placement) get them from their creative at Meta."""
+    need = [r["creative_id"] for r in rows if r.get("creative_id") and not (r["title"] and r["body"] and r["cta_type"])
+            and r["creative_id"] not in CREATIVE_WORDS]
+    for i in range(0, len(need), 50):
+        try:
+            got = meta_client.get("", ids=",".join(need[i:i + 50]), fields="asset_feed_spec,object_story_spec")
+        except meta_client.MetaError:
+            break
+        for cid, cr in (got or {}).items():
+            CREATIVE_WORDS[cid] = watch.creative_words(cr)
+    for r in rows:
+        title, body, cta = CREATIVE_WORDS.get(r.get("creative_id"), (None, None, None))
+        r["title"], r["body"], r["cta_type"] = r["title"] or title, r["body"] or body, r["cta_type"] or cta
+
+
 def _visible(rows):
     ids = visible_campaign_ids(current_user())
     return [r for r in rows if ids is None or r["campaign_id"] in ids]
@@ -56,7 +75,8 @@ def watch_list():
     if not ids:
         return api_error("Name the ads to watch", 400)
     rows = _visible(db.query("""SELECT id, name, campaign_id, status, effective_status, object_type, title, body, cta_type,
-                                       video_id, image_url, thumbnail_url FROM ads WHERE id = ANY(%s)""", (ids,)))
+                                       video_id, image_url, thumbnail_url, creative_id FROM ads WHERE id = ANY(%s)""", (ids,)))
+    fill_words(rows)
     key, start, end = ads_api.window_from(request.args, live=True)  # the dates the Ads page and the ad page show
     shown = [r["id"] for r in rows]
     metrics = ads_api._metrics("ad_id = ANY(%s)", [shown], start, end) if shown else {}

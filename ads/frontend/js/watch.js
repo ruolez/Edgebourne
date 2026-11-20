@@ -86,6 +86,7 @@ export async function openWatch({ ids, startId, range = "7" }) {
   document.body.appendChild(dlg);
   const $ = (sel) => dlg.querySelector(sel);
   const phone = $(".wt-phone"), media = $(".wt-media"), videos = $(".wt-videos"), pic = $(".wt-pic");
+  pic.addEventListener("load", () => { const a = current(); if (a && !videoOf(a) && pic.naturalWidth) { a.ratio = pic.naturalWidth / pic.naturalHeight; fitMedia(a); } });
 
   const current = () => items[at];
   const videoOf = (a) => (a && a.video && !a.failed ? pool.get(a.id) : null);
@@ -110,6 +111,7 @@ export async function openWatch({ ids, startId, range = "7" }) {
     if (picture(a)) v.poster = picture(a);
     v.src = a.video;
     v.dataset.id = a.id;
+    v.addEventListener("loadedmetadata", () => { if (v.videoWidth) { a.ratio = v.videoWidth / v.videoHeight; if (a === current()) fitMedia(a); } });
     v.addEventListener("waiting", () => { if (v === videoOf(current())) media.classList.add("is-loading"); });
     v.addEventListener("playing", () => { if (v === videoOf(current())) media.classList.remove("is-loading", "is-paused", "needs-tap"); });
     v.addEventListener("ended", () => { if (v === videoOf(current())) onEnd(); });
@@ -195,6 +197,7 @@ export async function openWatch({ ids, startId, range = "7" }) {
     pool.forEach((x) => x.classList.toggle("on", x === v));
     pic.hidden = Boolean(v);
     if (!v) { if (picture(a)) pic.src = picture(a); else pic.removeAttribute("src"); picStart = performance.now(); }
+    fitMedia(a);
     media.classList.toggle("no-media", !v && !picture(a));
     media.classList.toggle("no-video", !v);
     $(".wt-note").hidden = !a.failed;
@@ -207,6 +210,9 @@ export async function openWatch({ ids, startId, range = "7" }) {
     }
     if (!dlg.contains(document.activeElement)) dlg.focus();
   }
+
+  // The Feed look gives the video (or picture) its own shape, as a feed does: nothing is cropped.
+  function fitMedia(a) { media.style.aspectRatio = String(a.ratio || 4 / 5); }
 
   function step(d) { if (items.length > 1) show(at + d); }
 
