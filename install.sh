@@ -2,11 +2,11 @@
 #
 # EdgeBourne — one-file installer for a clean Ubuntu 24.04 server.
 #
-#   curl -fsSL https://raw.githubusercontent.com/ruolez/Edgebourne/main/install.sh | sudo bash
+#   curl -fsSL https://gitnot.site/raw/ruolez/Edgebourne/main/install.sh | sudo bash
 #
 # Options:
 #   1) Install       — Docker + app + Let's Encrypt SSL (auto-renewing)
-#   2) Update        — pull latest from GitHub, keep all data, apply migrations
+#   2) Update        — pull latest from git-Not, keep all data, apply migrations
 #                      (database and uploaded images are backed up first)
 #   3) Install SSL   — set up (or redo) the certificate on an existing install
 #   4) Renew SSL     — run a certificate renewal check right now
@@ -16,7 +16,7 @@
 #
 set -euo pipefail
 
-REPO_URL="https://github.com/ruolez/Edgebourne.git"
+REPO_URL="https://gitnot.site/ruolez/Edgebourne.git"
 APP_DIR="/opt/edgebourne"
 BACKUP_DIR="/var/backups/edgebourne"
 WEBROOT="/var/www/certbot"
@@ -405,6 +405,7 @@ cmd_install() {
 
   install_prereqs
   if [ "$resume" -eq 1 ]; then
+    git -C "$APP_DIR" remote set-url origin "$REPO_URL"
     git -C "$APP_DIR" fetch -q origin main
     git -C "$APP_DIR" reset -q --hard origin/main
   else
@@ -488,7 +489,8 @@ cmd_update() {
   backup_ads_db
   prune_backups
 
-  log "Pulling latest code from GitHub…"
+  log "Pulling latest code from $REPO_URL…"
+  git -C "$APP_DIR" remote set-url origin "$REPO_URL"
   git -C "$APP_DIR" fetch -q origin main
   git -C "$APP_DIR" reset -q --hard origin/main
 

@@ -43,7 +43,7 @@ Meta ads. It has:
 - Research page
 - AI Desk: Eugene types directions; Claude Code on his Mac does the work and posts reports and proposals; he approves
 
-**Built so far** (all on `main` of github.com/ruolez/edgebourne):
+**Built so far** (all on `main` of gitnot.site/ruolez/Edgebourne):
 
 | Commit | What |
 |---|---|

