@@ -826,7 +826,7 @@ echo -e "${C_TEAL}  ════════════════════
 echo -e "${C_TEAL}   EdgeBourne — server installer${C_OFF}"
 echo -e "${C_TEAL}  ══════════════════════════════════${C_OFF}"
 echo "   1) Install (clean Ubuntu 24 server)"
-echo "   2) Update from GitHub (keeps all data)"
+echo "   2) Update from git-Not (keeps all data)"
 echo "   3) Install SSL only (app already installed)"
 echo "   4) Renew SSL certificate now"
 echo "   5) Stripe / webhook setup info"

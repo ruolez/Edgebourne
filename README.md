@@ -235,7 +235,7 @@ The installer menu offers:
    the domain (and verifies its DNS A record points at the server), issues a Let's Encrypt
    certificate (auto-renewing via `certbot.timer` with an nginx reload hook), and brings the
    site up on HTTPS.
-2. **Update from GitHub** — backs up PostgreSQL and the uploaded images (hero photo, gallery
+2. **Update from git-Not** — backs up PostgreSQL and the uploaded images (hero photo, gallery
    and blog images, which live only in the `uploads` volume) to `/var/backups/edgebourne` as
    `edgebourne-<ts>.sql.gz` + `edgebourne-uploads-<ts>.tar.gz` (last 14 of each kept),
    pulls the latest code, rebuilds, applies any new DB migrations automatically at startup,
